@@ -16,6 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback to `streamQuery` on failure.
 - README and example updated to document and use `streamQueryBatched`.
 
+## [0.1.4] - 2026-01-26
+
+### Performance
+- Removed AddressSanitizer and UBsanitizer from default build configuration
+  (70% reduction in build time: 10-15 min → 3-5 min)
+- Added thin LTO and optimized codegen units for faster release builds
+- Reduced binary size with strip=true
+
+### Fixed
+- Corrected download URL in Native Assets hook to match GitHub release structure
+- Fixed release workflow build path for Cargo workspace structure
+- Fixed ffigen verbose flag syntax in workflows
+- Added missing libclang-dev and llvm dependencies for cbindgen in CI
+
+### Changed
+- Simplified CI/CD by removing redundant workflows (keep only release.yml)
+- Added Rust dependency caching to reduce build times in CI
+- Release workflow now uploads binaries to root level (no subdirectories)
+- Added explicit timeout and verbose output for better debugging
+
 ## [0.1.3] - 2026-01-26
 
 ### Fixed
