@@ -8,6 +8,7 @@ on:
 
 jobs:
   build-binaries:
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
@@ -28,30 +29,40 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/odbc_engine/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Install ODBC (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev
-
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 
       - name: Build Rust library
         run: |
           cd native/odbc_engine
-          cargo build --release --target ${{ matrix.target }}
+          echo "Building for target: ${{ matrix.target }}"
+          cargo build --release --target ${{ matrix.target }} --verbose
+        shell: bash
 
       - name: Rename artifact
         run: |
-          mkdir -p artifacts/${{ matrix.target }}
+          mkdir -p uploads
           cp native/odbc_engine/target/${{ matrix.target }}/release/${{ matrix.artifact }} \
-             artifacts/${{ matrix.target }}/${{ matrix.artifact }}
+             uploads/${{ matrix.artifact }}
         shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: artifacts/${{ matrix.target }}/${{ matrix.artifact }}
+          name: ${{ matrix.artifact }}
+          path: uploads/${{ matrix.artifact }}
           retention-days: 1
 
   create-release:
@@ -64,11 +75,11 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          path: uploads/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
+          files: uploads/*
           generate_release_notes: true
           draft: false

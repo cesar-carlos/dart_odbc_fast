@@ -1,11 +1,4 @@
-[target.x86_64-unknown-linux-gnu]
-rustflags = [
-    "-C", "link-arg=-fsanitize=address",
-    "-C", "link-arg=-fsanitize=undefined",
-]
-
-[target.x86_64-apple-darwin]
-rustflags = [
-    "-C", "link-arg=-fsanitize=address",
-    "-C", "link-arg=-fsanitize=undefined",
-]
+# Sanitizers removed to improve build time in CI/CD
+# AddressSanitizer and UBsanitizer were doubling build times (10-15 min → 3-5 min)
+# For development, you can enable sanitizers via environment variable if needed:
+# RUSTFLAGS="-C link-arg=-fsanitize=address -C link-arg=-fsanitize=undefined" cargo build

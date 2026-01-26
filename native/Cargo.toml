@@ -5,3 +5,10 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+
+# Release profile optimizations for workspace members
+[profile.release]
+lto = "thin"          # 2-3x faster than "fat" LTO, most optimization benefits
+codegen-units = 16    # More parallelism during compilation
+opt-level = 3         # Maximum optimization
+strip = true          # Reduce binary size
