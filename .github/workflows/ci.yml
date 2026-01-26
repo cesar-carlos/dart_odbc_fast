@@ -125,7 +125,7 @@ jobs:
         continue-on-error: true
       
       - name: Generate bindings
-        run: dart run ffigen --verbose
+        run: dart run ffigen -v info
         continue-on-error: false
       
       - name: List generated bindings (debug)
