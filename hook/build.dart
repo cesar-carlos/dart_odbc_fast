@@ -81,7 +81,8 @@ Future<Uri?> _getLibraryPath(
   }
 
   // 3. Fallback: native/odbc_engine/target/release/ (target local)
-  final devPathLocal = packageRoot.resolve('native/odbc_engine/target/release/$libName');
+  final devPathLocal =
+      packageRoot.resolve('native/odbc_engine/target/release/$libName');
   if (File.fromUri(devPathLocal).existsSync()) {
     return devPathLocal;
   }
