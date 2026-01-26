@@ -61,5 +61,8 @@ native/target/doc/
 test-results/
 *.test
 
+# Local/personal tests (machine-specific, not for CI)
+test/my_test/
+
 # AI generated files
 .claude/

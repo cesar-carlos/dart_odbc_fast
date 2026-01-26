@@ -62,6 +62,18 @@ class BinaryProtocolParser {
   /// Size of the protocol header in bytes.
   static const int headerSize = 16;
 
+  /// Returns total message length (header + payload) from the first 16 bytes.
+  /// [data] must have length >= 16. Payload size at bytes 12..16 (LE).
+  static int messageLengthFromHeader(Uint8List data) {
+    if (data.length < headerSize) {
+      throw const FormatException('Buffer too small for header');
+    }
+    final base = data.offsetInBytes;
+    final payloadSize =
+        data.buffer.asByteData().getUint32(base + 12, Endian.little);
+    return headerSize + payloadSize;
+  }
+
   /// Parses binary protocol data into a [ParsedRowBuffer].
   ///
   /// The data parameter must contain valid binary protocol data starting

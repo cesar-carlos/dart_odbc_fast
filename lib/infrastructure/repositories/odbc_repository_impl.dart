@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/connection.dart';
@@ -8,7 +9,8 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
+    show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -179,17 +181,20 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
 
     try {
-      // Use streaming to execute query and collect all results
       final allRows = <List<dynamic>>[];
       final columns = <String>[];
 
-      await for (final chunk in _native.streamQuery(nativeId, sql)) {
-        // Collect column names from first chunk
+      Stream<ParsedRowBuffer> stream;
+      try {
+        stream = _native.streamQueryBatched(nativeId, sql);
+      } on Exception {
+        stream = _native.streamQuery(nativeId, sql);
+      }
+
+      await for (final chunk in stream) {
         if (columns.isEmpty && chunk.columns.isNotEmpty) {
           columns.addAll(chunk.columns.map((c) => c.name));
         }
-
-        // Collect all rows
         allRows.addAll(chunk.rows);
       }
 

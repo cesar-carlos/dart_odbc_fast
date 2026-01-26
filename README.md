@@ -295,6 +295,12 @@ Future<void> demo(OdbcService service, String dsn) async {
 If you want direct access to native wrappers (including streaming), use
 `NativeOdbcConnection`:
 
+- **`streamQueryBatched`**: preferred for large result sets. Cursor-based batching;
+  each batch is a complete protocol message. Use `fetchSize` (rows per batch) and
+  `chunkSize` (buffer bytes).
+- **`streamQuery`**: buffer mode; fetches full result then yields in chunks.
+  Fallback when batched is unavailable.
+
 ```dart
 import 'package:odbc_fast/odbc_fast.dart';
 
@@ -310,7 +316,7 @@ Future<void> streamingDemo(String dsn) async {
     throw StateError(se?.message ?? native.getError());
   }
 
-  await for (final chunk in native.streamQuery(connId, 'SELECT 1', chunkSize: 1000)) {
+  await for (final chunk in native.streamQueryBatched(connId, 'SELECT 1')) {
     // chunk.columns / chunk.rows / chunk.rowCount
   }
 

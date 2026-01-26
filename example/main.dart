@@ -173,7 +173,8 @@ Future<void> runExampleStreaming(ServiceLocator locator, String dsn) async {
   try {
     const sql = "SELECT 1 AS id, 'a' AS x UNION ALL SELECT 2, 'b'";
     var chunkIndex = 0;
-    await for (final chunk in native.streamQuery(connId, sql, chunkSize: 100)) {
+    await for (final chunk
+        in native.streamQueryBatched(connId, sql, fetchSize: 100)) {
       chunkIndex++;
       AppLogger.fine('Chunk $chunkIndex: ${chunk.columnCount} cols, '
           '${chunk.rowCount} rows');
