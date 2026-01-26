@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-binaries:
     timeout-minutes: 60
@@ -76,6 +79,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: uploads/
+          pattern: '*'
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
