@@ -17,32 +17,32 @@ void _setNullAt(List<int> bitmap, int row) {
 }
 
 List<int> _u32Le(int v) {
-  final b = ByteData(4);
-  b.setUint32(0, v, Endian.little);
+  final b = ByteData(4)
+    ..setUint32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i32Le(int v) {
-  final b = ByteData(4);
-  b.setInt32(0, v, Endian.little);
+  final b = ByteData(4)
+    ..setInt32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i64Le(int v) {
-  final b = ByteData(8);
-  b.setInt64(0, v, Endian.little);
+  final b = ByteData(8)
+    ..setInt64(0, v, Endian.little);
   return b.buffer.asUint8List(0, 8).toList();
 }
 
 List<int> _u16Le(int v) {
-  final b = ByteData(2);
-  b.setUint16(0, v, Endian.little);
+  final b = ByteData(2)
+    ..setUint16(0, v, Endian.little);
   return b.buffer.asUint8List(0, 2).toList();
 }
 
 List<int> _i16Le(int v) {
-  final b = ByteData(2);
-  b.setInt16(0, v, Endian.little);
+  final b = ByteData(2)
+    ..setInt16(0, v, Endian.little);
   return b.buffer.asUint8List(0, 2).toList();
 }
 
@@ -136,6 +136,7 @@ class BulkTimestamp {
   final int fraction;
 
   /// Creates a [BulkTimestamp] from a [DateTime] instance.
+  // ignore: prefer_constructors_over_static_methods
   static BulkTimestamp fromDateTime(DateTime dt) {
     return BulkTimestamp(
       year: dt.year,
@@ -178,6 +179,8 @@ class BulkInsertBuilder {
   /// Returns this builder for method chaining.
   BulkInsertBuilder table(String name) {
     _table = name;
+    // Builder pattern requires returning this for method chaining.
+    // ignore: avoid_returning_this
     return this;
   }
 
@@ -201,6 +204,8 @@ class BulkInsertBuilder {
       nullable: nullable,
       maxLen: maxLen,
     ),);
+    // Builder pattern requires returning this for method chaining.
+    // ignore: avoid_returning_this
     return this;
   }
 
@@ -222,6 +227,8 @@ class BulkInsertBuilder {
       );
     }
     _rows.add(List<dynamic>.from(values));
+    // Builder pattern requires returning this for method chaining.
+    // ignore: avoid_returning_this
     return this;
   }
 
@@ -254,17 +261,19 @@ class BulkInsertBuilder {
 
     final out = <int>[];
     final tableBytes = utf8.encode(_table);
-    out.addAll(_u32Le(tableBytes.length));
-    out.addAll(tableBytes);
-    out.addAll(_u32Le(_columns.length));
+    out
+      ..addAll(_u32Le(tableBytes.length))
+      ..addAll(tableBytes)
+      ..addAll(_u32Le(_columns.length));
 
     for (final spec in _columns) {
       final nameBytes = utf8.encode(spec.name);
-      out.addAll(_u32Le(nameBytes.length));
-      out.addAll(nameBytes);
-      out.add(spec.tag);
-      out.add(spec.nullable ? 1 : 0);
-      out.addAll(_u32Le(spec.maxLen));
+      out
+        ..addAll(_u32Le(nameBytes.length))
+        ..addAll(nameBytes)
+        ..add(spec.tag)
+        ..add(spec.nullable ? 1 : 0)
+        ..addAll(_u32Le(spec.maxLen));
     }
 
     final rowCount = _rows.length;
@@ -398,13 +407,14 @@ class BulkInsertBuilder {
               second: 0,
             );
           }
-          out.addAll(_i16Le(t.year));
-          out.addAll(_u16Le(t.month));
-          out.addAll(_u16Le(t.day));
-          out.addAll(_u16Le(t.hour));
-          out.addAll(_u16Le(t.minute));
-          out.addAll(_u16Le(t.second));
-          out.addAll(_u32Le(t.fraction));
+          out
+            ..addAll(_i16Le(t.year))
+            ..addAll(_u16Le(t.month))
+            ..addAll(_u16Le(t.day))
+            ..addAll(_u16Le(t.hour))
+            ..addAll(_u16Le(t.minute))
+            ..addAll(_u16Le(t.second))
+            ..addAll(_u32Le(t.fraction));
         }
     }
   }

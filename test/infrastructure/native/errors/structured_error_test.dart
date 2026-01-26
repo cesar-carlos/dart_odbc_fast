@@ -14,8 +14,9 @@ List<int> _buildStructuredErrorBuffer({
   for (var i = 0; i < 5 && i < sqlState.length; i++) {
     buf.setUint8(i, sqlState.codeUnitAt(i));
   }
-  buf.setInt32(5, nativeCode, Endian.little);
-  buf.setUint32(9, msgBytes.length, Endian.little);
+  buf
+    ..setInt32(5, nativeCode, Endian.little)
+    ..setUint32(9, msgBytes.length, Endian.little);
   for (var i = 0; i < msgBytes.length; i++) {
     buf.setUint8(13 + i, msgBytes[i]);
   }
@@ -58,14 +59,14 @@ void main() {
     });
 
     test('returns null when message region is truncated', () {
-      final buf = ByteData(13);
-      buf.setUint8(0, 0x30);
-      buf.setUint8(1, 0x38);
-      buf.setUint8(2, 0x53);
-      buf.setUint8(3, 0x30);
-      buf.setUint8(4, 0x31);
-      buf.setInt32(5, 0, Endian.little);
-      buf.setUint32(9, 100, Endian.little);
+      final buf = ByteData(13)
+        ..setUint8(0, 0x30)
+        ..setUint8(1, 0x38)
+        ..setUint8(2, 0x53)
+        ..setUint8(3, 0x30)
+        ..setUint8(4, 0x31)
+        ..setInt32(5, 0, Endian.little)
+        ..setUint32(9, 100, Endian.little);
       expect(
         StructuredError.deserialize(buf.buffer.asUint8List().toList()),
         isNull,

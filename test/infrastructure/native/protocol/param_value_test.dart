@@ -39,6 +39,8 @@ void main() {
     });
 
     test('ParamValueInt64 produces tag 3, len 8, i64 LE', () {
+      // Test value requires large integer literal for i64 validation.
+      // ignore: avoid_js_rounded_ints
       final s = const ParamValueInt64(0x123456789abcdef0).serialize();
       expect(s[0], equals(3));
       expect(
@@ -48,6 +50,8 @@ void main() {
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getInt64(5, Endian.little),
+          // Test value requires large integer literal for i64 validation.
+          // ignore: avoid_js_rounded_ints
           equals(0x123456789abcdef0),);
     });
 

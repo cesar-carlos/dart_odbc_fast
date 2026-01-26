@@ -30,7 +30,7 @@ import 'package:result_dart/result_dart.dart';
 class OdbcRepositoryImpl implements IOdbcRepository {
   /// Creates a new [OdbcRepositoryImpl] instance.
   ///
-  /// The [native] must be a valid [NativeOdbcConnection] instance.
+  /// The native parameter must be a valid native ODBC connection instance.
   OdbcRepositoryImpl(this._native);
   final NativeOdbcConnection _native;
   final Map<String, int> _connectionIds = {};
@@ -236,7 +236,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         rows: p.rows,
         rowCount: p.rowCount,
       );
-    } catch (_) {
+    } on Exception catch (_) {
       return null;
     }
   }
@@ -625,7 +625,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -784,7 +784,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ),
         fallbackMessage: 'Failed to release connection to pool',
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(
         ConnectionError(message: e.toString()),
       );

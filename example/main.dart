@@ -31,6 +31,8 @@ void main() async {
   AppLogger.initialize();
 
   final locator = ServiceLocator();
+  // initialize() returns void, so cascade cannot be used in assignment.
+  // ignore: cascade_invocations
   locator.initialize();
 
   final dsn = _getExampleDsn();

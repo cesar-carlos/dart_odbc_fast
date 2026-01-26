@@ -13,8 +13,8 @@ import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 class TransactionHandle {
   /// Creates a new [TransactionHandle] instance.
   ///
-  /// The [backend] must be a valid [OdbcConnectionBackend] instance.
-  /// The [txnId] must be a valid transaction identifier.
+  /// The backend parameter must be a valid ODBC connection backend instance.
+  /// The txnId parameter must be a valid transaction identifier.
   TransactionHandle(this._backend, this._txnId);
 
   final OdbcConnectionBackend _backend;

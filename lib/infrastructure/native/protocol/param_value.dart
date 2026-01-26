@@ -9,20 +9,20 @@ const int _tagDecimal = 4;
 const int _tagBinary = 5;
 
 List<int> _u32Le(int v) {
-  final b = ByteData(4);
-  b.setUint32(0, v, Endian.little);
+  final b = ByteData(4)
+    ..setUint32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i32Le(int v) {
-  final b = ByteData(4);
-  b.setInt32(0, v, Endian.little);
+  final b = ByteData(4)
+    ..setInt32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i64Le(int v) {
-  final b = ByteData(8);
-  b.setInt64(0, v, Endian.little);
+  final b = ByteData(8)
+    ..setInt64(0, v, Endian.little);
   return b.buffer.asUint8List(0, 8).toList();
 }
 

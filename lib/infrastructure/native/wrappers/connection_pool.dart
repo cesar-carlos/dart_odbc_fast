@@ -15,8 +15,8 @@ import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 class ConnectionPool {
   /// Creates a new [ConnectionPool] instance.
   ///
-  /// The [backend] must be a valid [OdbcConnectionBackend] instance.
-  /// The [poolId] must be a valid pool identifier.
+  /// The backend parameter must be a valid ODBC connection backend instance.
+  /// The poolId parameter must be a valid pool identifier.
   ConnectionPool(this._backend, this._poolId);
 
   final OdbcConnectionBackend _backend;

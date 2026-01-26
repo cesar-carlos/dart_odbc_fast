@@ -80,10 +80,11 @@ Uint8List _createTestBuffer({
   const magic = 0x4F444243;
   const version = 1;
 
-  buffer.addAll(magic.toBytes(4));
-  buffer.addAll(version.toBytes(2));
-  buffer.addAll(columns.length.toBytes(2));
-  buffer.addAll(rows.length.toBytes(4));
+  buffer
+    ..addAll(magic.toBytes(4))
+    ..addAll(version.toBytes(2))
+    ..addAll(columns.length.toBytes(2))
+    ..addAll(rows.length.toBytes(4));
 
   var payloadSize = 0;
   for (final col in columns) {
@@ -102,9 +103,10 @@ Uint8List _createTestBuffer({
   buffer.addAll(payloadSize.toBytes(4));
 
   for (final col in columns) {
-    buffer.addAll(col.type.toBytes(2));
-    buffer.addAll(col.name.length.toBytes(2));
-    buffer.addAll(col.name.codeUnits);
+    buffer
+      ..addAll(col.type.toBytes(2))
+      ..addAll(col.name.length.toBytes(2))
+      ..addAll(col.name.codeUnits);
   }
 
   for (final row in rows) {
@@ -114,8 +116,9 @@ Uint8List _createTestBuffer({
       } else {
         buffer.add(0);
         final data = _cellToBytes(cell);
-        buffer.addAll(data.length.toBytes(4));
-        buffer.addAll(data);
+        buffer
+          ..addAll(data.length.toBytes(4))
+          ..addAll(data);
       }
     }
   }

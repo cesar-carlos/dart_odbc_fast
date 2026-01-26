@@ -33,7 +33,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Initializes the ODBC environment.
   ///
   /// Must be called before any other operations. This method can be called
-  /// multiple times safely - subsequent calls are ignored if already initialized.
+  /// multiple times safely - subsequent calls are ignored if already
+  /// initialized.
   ///
   /// Returns true on success, false on failure.
   bool initialize() {
@@ -86,7 +87,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [isolationLevel] should be a numeric value (0-3) corresponding
-  /// to [IsolationLevel] enum values.
+  /// to isolation level enum values (0=ReadUncommitted, 1=ReadCommitted,
+  /// 2=RepeatableRead, 3=Serializable).
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int beginTransaction(int connectionId, int isolationLevel) =>
@@ -96,7 +98,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [isolationLevel] should be a numeric value (0-3) corresponding
-  /// to [IsolationLevel] enum values.
+  /// to isolation level enum values (0=ReadUncommitted, 1=ReadCommitted,
+  /// 2=RepeatableRead, 3=Serializable).
   ///
   /// Returns a [TransactionHandle] on success, null on failure.
   TransactionHandle? beginTransactionHandle(
@@ -120,7 +123,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [sql] should be a parameterized SQL statement (e.g.,
   /// 'SELECT * FROM users WHERE id = ?').
   ///
-  /// The [timeoutMs] specifies the statement timeout in milliseconds (0 = no timeout).
+  /// The [timeoutMs] specifies the statement timeout in milliseconds
+  /// (0 = no timeout).
   /// Returns a statement ID on success, 0 on failure.
   int prepare(int connectionId, String sql, {int timeoutMs = 0}) =>
       _native.prepare(connectionId, sql, timeoutMs: timeoutMs);
@@ -130,7 +134,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [connectionId] must be a valid active connection.
   /// The [sql] should be a parameterized SQL statement.
   ///
-  /// The [timeoutMs] specifies the statement timeout in milliseconds (0 = no timeout).
+  /// The [timeoutMs] specifies the statement timeout in milliseconds
+  /// (0 = no timeout).
   /// Returns a [PreparedStatement] on success, null on failure.
   PreparedStatement? prepareStatement(
     int connectionId,
@@ -274,13 +279,17 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [connectionId] must be a valid active connection.
   /// The [sql] should be a valid SQL SELECT statement.
   ///
-  /// The [chunkSize] specifies how many rows to fetch per chunk (default: 1000).
-  /// Results are streamed as [ParsedRowBuffer] instances, allowing
-  /// efficient processing of large result sets without loading everything into memory.
+  /// The [chunkSize] specifies how many rows to fetch per chunk
+  /// (default: 1000). Results are streamed as [ParsedRowBuffer] instances,
+  /// allowing efficient processing of large result sets without loading
+  /// everything into memory.
   ///
   /// Example:
   /// ```dart
-  /// await for (final chunk in native.streamQuery(connId, 'SELECT * FROM users')) {
+  /// await for (final chunk in native.streamQuery(
+  ///   connId,
+  ///   'SELECT * FROM users',
+  /// )) {
   ///   // Process chunk
   /// }
   /// ```

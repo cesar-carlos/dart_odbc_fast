@@ -8,6 +8,8 @@ void main() {
 
   test('SELECT 1 should return 1', () async {
     final locator = ServiceLocator();
+    // initialize() returns void, so cascade cannot be used in assignment.
+    // ignore: cascade_invocations
     locator.initialize();
     final service = locator.service;
 
@@ -53,8 +55,10 @@ void main() {
         },
         (failure) async {
           final error = failure as OdbcError;
-          fail('Query execution failed: ${error.message}'
-              '${error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : ''}');
+          fail(
+            'Query execution failed: ${error.message}'
+            '${error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : ''}',
+          );
         },
       );
     } finally {

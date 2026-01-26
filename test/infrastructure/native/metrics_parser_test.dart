@@ -6,12 +6,12 @@ import 'package:test/test.dart';
 void main() {
   group('OdbcMetrics.fromBytes', () {
     test('parses 40-byte buffer correctly', () {
-      final b = ByteData(40);
-      b.setUint64(0, 100, Endian.little);
-      b.setUint64(8, 5, Endian.little);
-      b.setUint64(16, 3600, Endian.little);
-      b.setUint64(24, 50000, Endian.little);
-      b.setUint64(32, 500, Endian.little);
+      final b = ByteData(40)
+        ..setUint64(0, 100, Endian.little)
+        ..setUint64(8, 5, Endian.little)
+        ..setUint64(16, 3600, Endian.little)
+        ..setUint64(24, 50000, Endian.little)
+        ..setUint64(32, 500, Endian.little);
       final m = OdbcMetrics.fromBytes(b.buffer.asUint8List(0, 40));
       expect(m.queryCount, equals(100));
       expect(m.errorCount, equals(5));

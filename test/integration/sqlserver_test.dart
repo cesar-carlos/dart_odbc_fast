@@ -15,6 +15,8 @@ void main() {
 
     setUpAll(() async {
       locator = ServiceLocator();
+      // initialize() returns void, so cascade cannot be used in assignment.
+      // ignore: cascade_invocations
       locator.initialize();
       await locator.service.initialize();
       service = locator.service;
@@ -42,9 +44,12 @@ void main() {
 
       final connResult = await service.connect(dsn);
 
-      expect(connResult.isSuccess(), isTrue,
-          reason:
-              'Connection failed. Check if SQL Server is running and credentials are correct.',);
+      expect(
+        connResult.isSuccess(),
+        isTrue,
+        reason: 'Connection failed. Check if SQL Server is running and '
+            'credentials are correct.',
+      );
 
       await connResult.fold(
         (connection) async {
@@ -58,9 +63,11 @@ void main() {
         },
         (failure) async {
           final error = failure as OdbcError;
-          fail('Connection failed: ${error.message}'
-              '${error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : ''}'
-              '${error.nativeCode != null ? ' (Code: ${error.nativeCode})' : ''}');
+          fail(
+            'Connection failed: ${error.message}'
+            '${error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : ''}'
+            '${error.nativeCode != null ? ' (Code: ${error.nativeCode})' : ''}',
+          );
         },
       );
     });
@@ -101,8 +108,12 @@ void main() {
           },
           (failure) async {
             final error = failure as OdbcError;
-            fail('Query execution failed: ${error.message}'
-                '${error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : ''}');
+            final sqlStateMsg = error.sqlState != null
+                ? ' (SQLSTATE: ${error.sqlState})'
+                : '';
+            fail(
+              'Query execution failed: ${error.message}$sqlStateMsg',
+            );
           },
         );
       } finally {

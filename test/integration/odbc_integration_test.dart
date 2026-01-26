@@ -13,6 +13,8 @@ void main() {
 
     setUpAll(() async {
       locator = ServiceLocator();
+      // initialize() returns void, so cascade cannot be used in assignment.
+      // ignore: cascade_invocations
       locator.initialize();
       await locator.service.initialize();
       service = locator.service;

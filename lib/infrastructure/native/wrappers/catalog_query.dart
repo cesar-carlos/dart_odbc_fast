@@ -16,8 +16,8 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 class CatalogQuery {
   /// Creates a new [CatalogQuery] instance.
   ///
-  /// The [backend] must be a valid [OdbcConnectionBackend] instance.
-  /// The [connectionId] must be a valid active connection identifier.
+  /// The backend parameter must be a valid ODBC connection backend instance.
+  /// The connectionId parameter must be a valid active connection identifier.
   CatalogQuery(this._backend, this._connectionId);
 
   final OdbcConnectionBackend _backend;

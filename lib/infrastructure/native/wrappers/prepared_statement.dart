@@ -17,8 +17,8 @@ import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 class PreparedStatement {
   /// Creates a new [PreparedStatement] instance.
   ///
-  /// The [backend] must be a valid [OdbcConnectionBackend] instance.
-  /// The [stmtId] must be a valid prepared statement identifier.
+  /// The backend parameter must be a valid ODBC connection backend instance.
+  /// The stmtId parameter must be a valid prepared statement identifier.
   PreparedStatement(this._backend, this._stmtId);
 
   final OdbcConnectionBackend _backend;
