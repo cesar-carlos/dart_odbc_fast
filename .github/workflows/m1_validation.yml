@@ -62,6 +62,7 @@ jobs:
           ls -la include/ || echo "include/ directory not found"
           echo "Checking for built library:"
           ls -la target/release/ || echo "target/release/ not found"
+        shell: bash
         continue-on-error: false
       
       - name: List generated files (debug)
