@@ -237,14 +237,3 @@ String _archToString(Architecture arch) {
       throw UnsupportedError('Architecture not supported: $arch');
   }
 }
-
-/// Retorna o target triple do Rust para a plataforma.
-String _getTargetTriple(OS os, Architecture arch) {
-  if (os == OS.windows && arch == Architecture.x64) {
-    return 'x86_64-pc-windows-msvc';
-  }
-  if (os == OS.linux && arch == Architecture.x64) {
-    return 'x86_64-unknown-linux-gnu';
-  }
-  throw UnsupportedError('Unsupported platform: $os $arch');
-}

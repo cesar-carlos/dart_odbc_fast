@@ -108,9 +108,8 @@ void main() {
           },
           (failure) async {
             final error = failure as OdbcError;
-            final sqlStateMsg = error.sqlState != null
-                ? ' (SQLSTATE: ${error.sqlState})'
-                : '';
+            final sqlStateMsg =
+                error.sqlState != null ? ' (SQLSTATE: ${error.sqlState})' : '';
             fail(
               'Query execution failed: ${error.message}$sqlStateMsg',
             );

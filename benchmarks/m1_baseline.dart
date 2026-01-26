@@ -5,7 +5,6 @@ import 'package:meta/meta.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 class InitBenchmark extends BenchmarkBase {
-
   InitBenchmark() : super('ODBC Init');
   late ServiceLocator locator;
 
@@ -25,7 +24,6 @@ class InitBenchmark extends BenchmarkBase {
 }
 
 class ConnectBenchmark extends BenchmarkBase {
-
   ConnectBenchmark(this.connectionString) : super('ODBC Connect');
   late ServiceLocator locator;
   final String connectionString;

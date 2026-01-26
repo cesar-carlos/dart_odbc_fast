@@ -130,13 +130,15 @@ class ColumnarProtocolParser {
       final dataSize = reader.readUint32();
       final columnData = reader.readBytes(dataSize);
 
-      columns.add(ColumnarColumnMetadata(
-        name: name,
-        odbcType: odbcType,
-        compressed: compressed,
-        compressionType: compressionType,
-        data: Uint8List.fromList(columnData),
-      ),);
+      columns.add(
+        ColumnarColumnMetadata(
+          name: name,
+          odbcType: odbcType,
+          compressed: compressed,
+          compressionType: compressionType,
+          data: Uint8List.fromList(columnData),
+        ),
+      );
     }
 
     return ParsedColumnarBuffer(

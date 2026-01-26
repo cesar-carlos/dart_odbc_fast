@@ -14,7 +14,6 @@ String _libraryName() {
   throw UnsupportedError('Platform not supported: ${Platform.operatingSystem}');
 }
 
-
 /// Loads the ODBC engine library from the default location.
 ///
 /// Uses a priority-based loading strategy:

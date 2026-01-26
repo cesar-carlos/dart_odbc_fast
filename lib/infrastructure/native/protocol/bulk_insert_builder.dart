@@ -17,32 +17,27 @@ void _setNullAt(List<int> bitmap, int row) {
 }
 
 List<int> _u32Le(int v) {
-  final b = ByteData(4)
-    ..setUint32(0, v, Endian.little);
+  final b = ByteData(4)..setUint32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i32Le(int v) {
-  final b = ByteData(4)
-    ..setInt32(0, v, Endian.little);
+  final b = ByteData(4)..setInt32(0, v, Endian.little);
   return b.buffer.asUint8List(0, 4).toList();
 }
 
 List<int> _i64Le(int v) {
-  final b = ByteData(8)
-    ..setInt64(0, v, Endian.little);
+  final b = ByteData(8)..setInt64(0, v, Endian.little);
   return b.buffer.asUint8List(0, 8).toList();
 }
 
 List<int> _u16Le(int v) {
-  final b = ByteData(2)
-    ..setUint16(0, v, Endian.little);
+  final b = ByteData(2)..setUint16(0, v, Endian.little);
   return b.buffer.asUint8List(0, 2).toList();
 }
 
 List<int> _i16Le(int v) {
-  final b = ByteData(2)
-    ..setInt16(0, v, Endian.little);
+  final b = ByteData(2)..setInt16(0, v, Endian.little);
   return b.buffer.asUint8List(0, 2).toList();
 }
 
@@ -198,12 +193,14 @@ class BulkInsertBuilder {
     bool nullable = false,
     int maxLen = 0,
   }) {
-    _columns.add(BulkColumnSpec(
-      name: name,
-      colType: colType,
-      nullable: nullable,
-      maxLen: maxLen,
-    ),);
+    _columns.add(
+      BulkColumnSpec(
+        name: name,
+        colType: colType,
+        nullable: nullable,
+        maxLen: maxLen,
+      ),
+    );
     // Builder pattern requires returning this for method chaining.
     // ignore: avoid_returning_this
     return this;

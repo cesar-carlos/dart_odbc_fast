@@ -18,7 +18,6 @@ enum ErrorCategory {
 /// Provides categorization helpers to help applications make intelligent
 /// decisions about error handling (retry, abort, reconnect, etc.).
 sealed class OdbcError implements Exception {
-
   const OdbcError({
     required this.message,
     this.sqlState,
@@ -42,10 +41,8 @@ sealed class OdbcError implements Exception {
 
   @override
   String toString() {
-    final sqlStateStr =
-        sqlState != null ? ' (SQLSTATE: $sqlState)' : '';
-    final nativeCodeStr =
-        nativeCode != null ? ' (Code: $nativeCode)' : '';
+    final sqlStateStr = sqlState != null ? ' (SQLSTATE: $sqlState)' : '';
+    final nativeCodeStr = nativeCode != null ? ' (Code: $nativeCode)' : '';
     return 'OdbcError: $message$sqlStateStr$nativeCodeStr';
   }
 

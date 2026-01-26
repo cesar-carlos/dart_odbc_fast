@@ -6,7 +6,7 @@ benchmarks/
 tool/
 scripts/
 .github/
-native/
+/native/
 doc/m*.md
 doc/BUILD.md
 .cursor/

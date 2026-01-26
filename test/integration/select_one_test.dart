@@ -35,8 +35,11 @@ void main() {
       final queryResult =
           await service.executeQuery(connection.id, 'SELECT 1 AS value');
 
-      expect(queryResult.isSuccess(), isTrue,
-          reason: 'SELECT 1 query should succeed',);
+      expect(
+        queryResult.isSuccess(),
+        isTrue,
+        reason: 'SELECT 1 query should succeed',
+      );
 
       await queryResult.fold(
         (result) async {

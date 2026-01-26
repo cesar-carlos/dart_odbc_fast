@@ -30,8 +30,7 @@ Uint8List? callWithBuffer(BufferCallback fn) {
   var size = initialBufferSize;
   while (size <= maxBufferSize) {
     final buf = malloc<ffi.Uint8>(size);
-    final outWritten = malloc<ffi.Uint32>()
-      ..value = 0;
+    final outWritten = malloc<ffi.Uint32>()..value = 0;
     try {
       final code = fn(buf, size, outWritten);
       if (code == 0) {

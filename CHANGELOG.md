@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-01-26
+
 ### Added
 - `streamQueryBatched` on `NativeOdbcConnection` for cursor-based batched streaming
   (complete protocol messages per batch; preferred for large result sets).
@@ -15,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `executeQuery` (repository/service) now prefers `streamQueryBatched`, with
   fallback to `streamQuery` on failure.
 - README and example updated to document and use `streamQueryBatched`.
+
+### Fixed
+- Fixed `.pubignore` pattern to avoid excluding `lib/infrastructure/native/`
+  from published package.
 
 ## [0.1.5] - 2026-01-26
 

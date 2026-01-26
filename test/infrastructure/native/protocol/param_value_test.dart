@@ -11,9 +11,9 @@ void main() {
       expect(s.length, equals(5));
       expect(s[0], equals(0));
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getUint32(1, Endian.little),
-          equals(0),);
+        ByteData.sublistView(Uint8List.fromList(s)).getUint32(1, Endian.little),
+        equals(0),
+      );
     });
 
     test('ParamValueString produces tag 1, len, utf8 bytes', () {
@@ -29,13 +29,13 @@ void main() {
       final s = const ParamValueInt32(42).serialize();
       expect(s[0], equals(2));
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getUint32(1, Endian.little),
-          equals(4),);
+        ByteData.sublistView(Uint8List.fromList(s)).getUint32(1, Endian.little),
+        equals(4),
+      );
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getInt32(5, Endian.little),
-          equals(42),);
+        ByteData.sublistView(Uint8List.fromList(s)).getInt32(5, Endian.little),
+        equals(42),
+      );
     });
 
     test('ParamValueInt64 produces tag 3, len 8, i64 LE', () {
@@ -44,15 +44,15 @@ void main() {
       final s = const ParamValueInt64(0x123456789abcdef0).serialize();
       expect(s[0], equals(3));
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getUint32(1, Endian.little),
-          equals(8),);
+        ByteData.sublistView(Uint8List.fromList(s)).getUint32(1, Endian.little),
+        equals(8),
+      );
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getInt64(5, Endian.little),
-          // Test value requires large integer literal for i64 validation.
-          // ignore: avoid_js_rounded_ints
-          equals(0x123456789abcdef0),);
+        ByteData.sublistView(Uint8List.fromList(s)).getInt64(5, Endian.little),
+        // Test value requires large integer literal for i64 validation.
+        // ignore: avoid_js_rounded_ints
+        equals(0x123456789abcdef0),
+      );
     });
 
     test('ParamValueDecimal produces tag 4, len, utf8 bytes', () {
@@ -68,9 +68,9 @@ void main() {
       final s = const ParamValueBinary([1, 2, 3]).serialize();
       expect(s[0], equals(5));
       expect(
-          ByteData.sublistView(Uint8List.fromList(s))
-              .getUint32(1, Endian.little),
-          equals(3),);
+        ByteData.sublistView(Uint8List.fromList(s)).getUint32(1, Endian.little),
+        equals(3),
+      );
       expect(s.sublist(5), equals([1, 2, 3]));
     });
 
