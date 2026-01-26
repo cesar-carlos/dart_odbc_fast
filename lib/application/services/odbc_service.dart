@@ -22,14 +22,15 @@ import 'package:result_dart/result_dart.dart';
 class OdbcService {
   /// Creates a new [OdbcService] instance.
   ///
-  /// The [repository] must be a valid [IOdbcRepository] implementation.
+  /// Requires a valid repository implementation to be provided.
   OdbcService(this._repository);
   final IOdbcRepository _repository;
 
   /// Initializes the ODBC environment.
   ///
   /// Must be called before any other operations. This method can be called
-  /// multiple times safely - subsequent calls are ignored if already initialized.
+  /// multiple times safely - subsequent calls are ignored if already
+  /// initialized.
   Future<Result<Unit>> initialize() async => _repository.initialize();
 
   /// Establishes a new database connection.
@@ -77,7 +78,8 @@ class OdbcService {
   /// The [sql] must be a non-empty SQL SELECT statement.
   ///
   /// Returns a [QueryResult] containing columns and rows on success,
-  /// or a [ValidationError] if SQL is empty, or a [QueryError] if execution fails.
+  /// or a [ValidationError] if SQL is empty, or a [QueryError] if
+  /// execution fails.
   Future<Result<QueryResult>> executeQuery(
     String connectionId,
     String sql,
@@ -127,7 +129,8 @@ class OdbcService {
   /// The [sql] must be a non-empty parameterized SQL statement
   /// (e.g., 'SELECT * FROM users WHERE id = ?').
   ///
-  /// The [timeoutMs] specifies the statement timeout in milliseconds (0 = no timeout).
+  /// The [timeoutMs] specifies the statement timeout in milliseconds
+  /// (0 = no timeout).
   /// Returns a statement ID on success, which must be used with
   /// [executePrepared] and [closeStatement].
   ///
@@ -278,21 +281,54 @@ class OdbcService {
     return _repository.poolCreate(connectionString, maxSize);
   }
 
+  /// Gets a connection from the specified connection pool.
+  ///
+  /// The [poolId] must be a valid pool identifier returned by [poolCreate].
+  /// Returns a [Connection] on success, or an error if the pool is exhausted
+  /// or invalid.
   Future<Result<Connection>> poolGetConnection(int poolId) async =>
       _repository.poolGetConnection(poolId);
 
+  /// Releases a connection back to its pool.
+  ///
+  /// The [connectionId] must be a valid connection ID obtained from
+  /// [poolGetConnection]. After releasing, the connection can be reused
+  /// by other operations.
   Future<Result<Unit>> poolReleaseConnection(String connectionId) async =>
       _repository.poolReleaseConnection(connectionId);
 
+  /// Performs a health check on the specified connection pool.
+  ///
+  /// The [poolId] must be a valid pool identifier.
+  /// Returns `true` if the pool is healthy and operational, `false` otherwise.
   Future<Result<bool>> poolHealthCheck(int poolId) async =>
       _repository.poolHealthCheck(poolId);
 
+  /// Gets the current state of the specified connection pool.
+  ///
+  /// The [poolId] must be a valid pool identifier.
+  /// Returns a [PoolState] containing pool statistics and status information.
   Future<Result<PoolState>> poolGetState(int poolId) async =>
       _repository.poolGetState(poolId);
 
+  /// Closes the specified connection pool and releases all connections.
+  ///
+  /// The [poolId] must be a valid pool identifier.
+  /// All connections in the pool will be closed and the pool will be
+  /// destroyed. Returns [Unit] on success.
   Future<Result<Unit>> poolClose(int poolId) async =>
       _repository.poolClose(poolId);
 
+  /// Performs a bulk insert operation using the native ODBC bulk insert API.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the target table name.
+  /// The [columns] list specifies the column names in order.
+  /// The [dataBuffer] contains the raw data bytes in the format specified
+  /// by the BulkInsertBuilder class.
+  /// The [rowCount] specifies how many rows are in the buffer.
+  ///
+  /// Returns the number of rows inserted on success.
   Future<Result<int>> bulkInsert(
     String connectionId,
     String table,

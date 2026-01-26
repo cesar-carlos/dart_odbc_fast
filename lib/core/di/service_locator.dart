@@ -27,9 +27,10 @@ class ServiceLocator {
 
   /// Initializes all services and dependencies.
   ///
-  /// Must be called before accessing [service], [repository], or [nativeConnection].
-  /// This method initializes logging, creates the native connection, repository,
-  /// and service instances.
+  /// Must be called before accessing [service], [repository], or
+  /// [nativeConnection].
+  /// This method initializes logging, creates the native connection,
+  /// repository, and service instances.
   void initialize() {
     // Initialize logging
     AppLogger.initialize();

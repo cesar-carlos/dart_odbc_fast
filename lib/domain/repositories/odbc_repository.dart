@@ -212,6 +212,7 @@ abstract class IOdbcRepository {
 
   /// Checks if the ODBC environment has been initialized.
   ///
-  /// Returns true if [initialize] has been called successfully, false otherwise.
+  /// Returns true if [initialize] has been called successfully,
+  /// false otherwise.
   bool isInitialized();
 }

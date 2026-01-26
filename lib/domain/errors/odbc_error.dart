@@ -24,8 +24,20 @@ sealed class OdbcError implements Exception {
     this.sqlState,
     this.nativeCode,
   });
+
+  /// Human-readable error message describing what went wrong.
   final String message;
+
+  /// SQLSTATE from ODBC error (e.g., '42S02' for table not found).
+  ///
+  /// See ODBC specification for complete list of codes.
+  /// Can be null if the error doesn't originate from ODBC.
   final String? sqlState;
+
+  /// Native error code from the database driver.
+  ///
+  /// This is driver-specific and may vary between different database systems.
+  /// Can be null if not available.
   final int? nativeCode;
 
   @override
@@ -82,6 +94,11 @@ sealed class OdbcError implements Exception {
 /// Generally NOT retryable, except if SQLSTATE starts with '08'
 /// (connection errors). In that case, check [isRetryable] before retrying.
 final class ConnectionError extends OdbcError {
+  /// Creates a new [ConnectionError] instance.
+  ///
+  /// The [message] is required and should describe the connection issue.
+  /// The [sqlState] and [nativeCode] are optional and provide additional
+  /// diagnostic information from the ODBC driver.
   const ConnectionError({
     required super.message,
     super.sqlState,
@@ -101,6 +118,11 @@ final class ConnectionError extends OdbcError {
 /// Check [isRetryable] before retrying. Most query errors are NOT retryable
 /// unless they are transient (e.g., deadlock, timeout).
 final class QueryError extends OdbcError {
+  /// Creates a new [QueryError] instance.
+  ///
+  /// The [message] is required and should describe the query execution issue.
+  /// The [sqlState] and [nativeCode] are optional and provide additional
+  /// diagnostic information from the ODBC driver.
   const QueryError({
     required super.message,
     super.sqlState,
@@ -108,7 +130,15 @@ final class QueryError extends OdbcError {
   });
 }
 
+/// Error indicating invalid input or parameters.
+///
+/// This error is thrown when user-provided data fails validation
+/// (e.g., empty connection string, invalid SQL, negative pool size).
+/// These errors are NOT retryable - the input must be corrected.
 final class ValidationError extends OdbcError {
+  /// Creates a new [ValidationError] instance.
+  ///
+  /// The [message] should describe what validation rule was violated.
   const ValidationError({required super.message});
 }
 
@@ -117,6 +147,10 @@ final class ValidationError extends OdbcError {
 /// This typically occurs when trying to use ODBC functions before calling
 /// the initialization function. This is a fatal error and NOT retryable.
 final class EnvironmentNotInitializedError extends OdbcError {
+  /// Creates a new [EnvironmentNotInitializedError] instance.
+  ///
+  /// This error indicates that the ODBC service initialization has not been
+  /// called or failed to complete successfully.
   const EnvironmentNotInitializedError()
       : super(message: 'ODBC environment not initialized');
 }
