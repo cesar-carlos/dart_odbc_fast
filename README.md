@@ -286,4 +286,4 @@ See `.github/workflows/m1_validation.yml` for details.
 
 ## License
 
-[To be determined]
+MIT (see `LICENSE`).

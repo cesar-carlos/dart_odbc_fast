@@ -17,7 +17,7 @@ class StructuredError {
     required this.message,
   });
 
-  /// SQLSTATE code as a 5-byte list (e.g., [0x34, 0x32, 0x53, 0x30, 0x32]).
+  /// SQLSTATE code as a 5-byte list (e.g., `0x34, 0x32, 0x53, 0x30, 0x32`).
   final List<int> sqlState;
 
   /// Native database error code.

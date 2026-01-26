@@ -1,6 +1,7 @@
 .env
 .env.example
 analysis_report.txt
+analysis_report_final.txt
 benchmarks/
 tool/
 scripts/
@@ -10,3 +11,6 @@ doc/m*.md
 doc/BUILD.md
 .cursor/
 *.plan.md
+build/
+coverage/
+hook
