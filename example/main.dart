@@ -118,7 +118,8 @@ Future<void> runExampleBasic(ServiceLocator locator, String dsn) async {
       queryResult.fold(
         (qr) {
           AppLogger.info(
-              'Query: columns=${qr.columns} rowCount=${qr.rowCount}',);
+            'Query: columns=${qr.columns} rowCount=${qr.rowCount}',
+          );
           for (var i = 0; i < qr.rows.length; i++) {
             AppLogger.fine('  row ${i + 1}: ${qr.rows[i]}');
           }
@@ -367,7 +368,8 @@ Future<void> runExampleCatalog(ServiceLocator locator, String dsn) async {
       );
     } else {
       AppLogger.info(
-          'No table name detected from catalogTables; skipping columns demo.',);
+        'No table name detected from catalogTables; skipping columns demo.',
+      );
     }
 
     final typeInfoResult = await service.catalogTypeInfo(connection!.id);
