@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback to `streamQuery` on failure.
 - README and example updated to document and use `streamQueryBatched`.
 
+## [0.1.5] - 2026-01-26
+
+### Fixed
+- Added contents: write permission to release workflow for creating GitHub releases
+- Fixed artifact download with pattern matching and merge-multiple options
+- Release workflow now correctly uploads binaries to root level
+
+### Changed
+- Complete end-to-end automated release pipeline validated
+- Binaries automatically built and released for Windows and Linux
+
 ## [0.1.4] - 2026-01-26
 
 ### Performance
