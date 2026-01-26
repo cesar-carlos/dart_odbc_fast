@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduced topics to 5 (pub.dev limit)
 - Improved Native Assets documentation
 
+### Changed
+- Removed macOS support (now Windows and Linux only)
+- Simplified release workflow to 2 platforms
+
 ### Added
 - Automatic native binary download from GitHub Releases
 - Local cache for downloaded binaries (~/.cache/odbc_fast/)
-- Multi-platform binary support (Windows x64, Linux x64, macOS x64/ARM)
+- Multi-platform binary support (Windows x64, Linux x64)
 
 ## [0.1.0] - 2026-01-26
 
@@ -40,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Binary protocol for efficient data transfer
 - Type-safe parameter values (ParamValue hierarchy)
 - Result-based error handling using result_dart package
-- Support for Windows, Linux, and macOS platforms
+- Support for Windows and Linux platforms
 - **Native Assets**: Automatic binary distribution (no manual compilation required)
 - Multi-platform binary builds via GitHub Actions
 - Automatic library loading with intelligent fallback strategy

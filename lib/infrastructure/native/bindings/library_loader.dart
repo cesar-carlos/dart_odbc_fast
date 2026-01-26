@@ -3,17 +3,13 @@ import 'dart:io';
 
 /// Gets the platform-specific ODBC engine library name.
 ///
-/// Returns 'odbc_engine.dll' on Windows, 'libodbc_engine.so' on Linux,
-/// or 'libodbc_engine.dylib' on macOS.
+/// Returns 'odbc_engine.dll' on Windows or 'libodbc_engine.so' on Linux.
 String _libraryName() {
   if (Platform.isWindows) {
     return 'odbc_engine.dll';
   }
   if (Platform.isLinux) {
     return 'libodbc_engine.so';
-  }
-  if (Platform.isMacOS) {
-    return 'libodbc_engine.dylib';
   }
   throw UnsupportedError('Platform not supported: ${Platform.operatingSystem}');
 }

@@ -20,7 +20,7 @@ Benefits:
   issues (use-after-free, double-free, buffer overflows) in the engine layer.
 - **Thread safety**: safer concurrency primitives and a design that isolates
   errors per connection to avoid cross-thread races.
-- **Portability**: build once per target (Windows / Linux / macOS), load as a
+- **Portability**: build once per target (Windows / Linux), load as a
   native library from Dart.
 
 ## No third‑party ODBC packages
@@ -49,7 +49,7 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 ## Requirements
 
 - Dart SDK >=3.0.0
-- ODBC Driver Manager (unixODBC on Linux/macOS)
+- ODBC Driver Manager (unixODBC on Linux)
 
 ## Installation
 
@@ -57,14 +57,13 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 
 ```yaml
 dependencies:
-  odbc_fast: ^0.1.0
+  odbc_fast: ^0.1.1
 ```
 
 ### 2. Install ODBC drivers
 
 - **Windows**: Pre-installed
 - **Linux**: `sudo apt-get install unixodbc`
-- **macOS**: `brew install unixodbc`
 
 ### 3. Run pub get
 
@@ -86,14 +85,12 @@ Rust library:
    for your platform is downloaded from GitHub Releases
 2. **Local Cache**: Binaries are cached in `~/.cache/odbc_fast/`
 3. **Development**: When building from source, the local build is used
-4. **Multi-Platform**: Supports Windows (x64), Linux (x64), and macOS (x64 + ARM)
+4. **Multi-Platform**: Supports Windows (x64) and Linux (x64)
 
 ### Supported Platforms
 
 - ✅ Windows x86_64
 - ✅ Linux x86_64
-- ✅ macOS x86_64 (Intel)
-- ✅ macOS aarch64 (Apple Silicon)
 
 ## Building
 
@@ -106,7 +103,7 @@ If you want to build from source:
 .\scripts\build.ps1
 ```
 
-**Linux/macOS:**
+**Linux:**
 ```bash
 chmod +x scripts/build.sh
 ./scripts/build.sh
@@ -326,7 +323,6 @@ Future<void> streamingDemo(String dsn) async {
 Multi-platform validation runs on:
 - Ubuntu (x86_64)
 - Windows (x86_64)
-- macOS (x86_64, aarch64)
 
 See `.github/workflows/m1_validation.yml` for details.
 

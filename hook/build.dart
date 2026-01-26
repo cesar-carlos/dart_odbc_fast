@@ -48,8 +48,6 @@ String _getLibraryName(OS os) {
       return 'odbc_engine.dll';
     case OS.linux:
       return 'libodbc_engine.so';
-    case OS.macOS:
-      return 'libodbc_engine.dylib';
     default:
       throw UnsupportedError('OS not supported: $os');
   }
@@ -223,8 +221,6 @@ String _osToString(OS os) {
       return 'windows';
     case OS.linux:
       return 'linux';
-    case OS.macOS:
-      return 'macos';
     default:
       throw UnsupportedError('OS not supported: $os');
   }
@@ -249,12 +245,6 @@ String _getTargetTriple(OS os, Architecture arch) {
   }
   if (os == OS.linux && arch == Architecture.x64) {
     return 'x86_64-unknown-linux-gnu';
-  }
-  if (os == OS.macOS && arch == Architecture.x64) {
-    return 'x86_64-apple-darwin';
-  }
-  if (os == OS.macOS && arch == Architecture.arm64) {
-    return 'aarch64-apple-darwin';
   }
   throw UnsupportedError('Unsupported platform: $os $arch');
 }

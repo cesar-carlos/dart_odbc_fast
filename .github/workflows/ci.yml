@@ -3,7 +3,7 @@
 # Purpose: Complete CI validation for development and releases
 # Scope: Full validation with Rust dependency caching and multi-target support
 # Triggers: Push to main/develop branches and pull requests to main
-# Platforms: Ubuntu, Windows, macOS (with x86_64 and aarch64 targets)
+# Platforms: Ubuntu, Windows
 #
 # For simplified M1 milestone validation, see m1_validation.yml
 
@@ -19,7 +19,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
         rust: [stable]
         dart: [stable]
     
@@ -31,7 +31,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,x86_64-apple-darwin,aarch64-apple-darwin
+          targets: x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
       
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
@@ -43,12 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
-      
-      - name: Install ODBC (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install unixodbc
-      
+
       - name: Verify ODBC (Windows)
         if: matrix.os == 'windows-latest'
         run: |
