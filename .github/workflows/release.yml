@@ -46,7 +46,7 @@ jobs:
 
       - name: Build Rust library
         run: |
-          cd native/odbc_engine
+          cd native
           echo "Building for target: ${{ matrix.target }}"
           cargo build --release --target ${{ matrix.target }} --verbose
         shell: bash
@@ -54,7 +54,7 @@ jobs:
       - name: Rename artifact
         run: |
           mkdir -p uploads
-          cp native/odbc_engine/target/${{ matrix.target }}/release/${{ matrix.artifact }} \
+          cp native/target/${{ matrix.target }}/release/${{ matrix.artifact }} \
              uploads/${{ matrix.artifact }}
         shell: bash
 
