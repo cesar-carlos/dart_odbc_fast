@@ -35,7 +35,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
       
       - name: Install ODBC (macOS)
         if: matrix.os == 'macos-latest'
@@ -94,6 +94,23 @@ jobs:
       
       - name: Get Dart dependencies
         run: dart pub get
+      
+      - name: Debug - Verify ffigen prerequisites
+        run: |
+          echo "=== Checking clang/llvm installation ==="
+          which clang || echo "clang not found"
+          clang --version || echo "clang version check failed"
+          echo ""
+          echo "=== Checking header file ==="
+          ls -lh native/odbc_engine/include/odbc_engine.h
+          echo ""
+          echo "=== First 20 lines of header ==="
+          head -n 20 native/odbc_engine/include/odbc_engine.h
+          echo ""
+          echo "=== Checking ffigen.yaml ==="
+          cat ffigen.yaml
+        shell: bash
+        continue-on-error: true
       
       - name: Generate bindings
         run: dart run ffigen --verbose
