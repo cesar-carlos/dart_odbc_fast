@@ -60,3 +60,6 @@ native/target/doc/
 # Test artifacts
 test-results/
 *.test
+
+# AI generated files
+.claude/
