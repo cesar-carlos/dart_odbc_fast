@@ -1,28 +1,52 @@
-# Documentação - ODBC Fast
+# Documentation - ODBC Fast
 
-Índice da documentação do projeto.
+Index of all project documentation.
 
-## Build e desenvolvimento
+## Build & Development
 
-| Documento | Descrição |
-|-----------|-----------|
-| [BUILD.md](BUILD.md) | Guia de build (Rust + Dart), pré-requisitos, FFI, troubleshooting |
+| Document | Description |
+|----------|-------------|
+| [BUILD.md](BUILD.md) | Complete guide for building and developing (Rust + Dart, prerequisites, FFI, troubleshooting) |
 
-## Marcos do projeto
+## Release & Deployment
 
-| Documento | Descrição |
-|-----------|-----------|
-| [m1_milestone.md](m1_milestone.md) | M1: Functional Binding (conexão, FFI, API Dart) |
-| [m2_milestone.md](m2_milestone.md) | M2: Production Engine (protocolo binário, streaming, pooling) |
-| [m3_milestone.md](m3_milestone.md) | M3: Enterprise Platform (columnar, plugins, observabilidade) |
+| Document | Description |
+|----------|-------------|
+| [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | Automated release pipeline, GitHub Actions workflow, publishing to pub.dev |
 
-## Governança
+## Troubleshooting
 
-| Documento | Descrição |
-|-----------|-----------|
-| [api_governance.md](api_governance.md) | Versionamento (API, Protocol, ABI), compatibilidade, LTS |
+| Document | Description |
+|----------|-------------|
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions for development, build, runtime, and CI/CD |
 
-## Outros
+## Governance
 
-- **Rust engine**: `native/odbc_engine/ARCHITECTURE.md`
-- **FFI / overview**: `native/doc/` (quando existir)
+| Document | Description |
+|----------|-------------|
+| [api_governance.md](api_governance.md) | Versioning (API, Protocol, ABI), compatibility policy, LTS strategy |
+
+## Additional Resources
+
+- **Rust engine architecture**: `native/odbc_engine/ARCHITECTURE.md`
+- **FFI overview**: `native/doc/` (when available)
+- **Main README**: `../README.md`
+
+## Quick Links
+
+### For Users
+
+- [Installation Guide](../README.md#installation)
+- [Quick Start](../README.md#quick-start)
+- [API Documentation](https://pub.dev/documentation/odbc_fast/latest/)
+
+### For Contributors
+
+- [BUILD.md](BUILD.md) - Set up development environment
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Solve common issues
+- [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Understand the release process
+
+### For Maintainers
+
+- [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Create a new release
+- [api_governance.md](api_governance.md) - Versioning and compatibility policies
