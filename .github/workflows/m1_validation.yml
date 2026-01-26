@@ -60,6 +60,8 @@ jobs:
           cargo build --release
           echo "Build completed. Checking for generated header:"
           ls -la include/ || echo "include/ directory not found"
+          echo "Checking for built library:"
+          ls -la target/release/ || echo "target/release/ not found"
         continue-on-error: false
       
       - name: List generated files (debug)
@@ -79,6 +81,15 @@ jobs:
             exit 1
           fi
         shell: bash
+      
+      - name: Debug - Check library locations before pub get
+        run: |
+          echo "Checking for library in workspace target:"
+          ls -la native/target/release/ 2>&1 || echo "native/target/release/ not found"
+          echo "Checking for library in local target:"
+          ls -la native/odbc_engine/target/release/ 2>&1 || echo "native/odbc_engine/target/release/ not found"
+        shell: bash
+        continue-on-error: true
       
       - name: Get Dart dependencies
         run: dart pub get
