@@ -180,7 +180,7 @@ Future<void> runExampleStreaming(ServiceLocator locator, String dsn) async {
       }
     }
     AppLogger.info('Streaming done.');
-  } catch (e) {
+  } on Exception catch (e) {
     AppLogger.severe('Stream error: $e');
   } finally {
     if (native.disconnect(connId)) {

@@ -11,12 +11,31 @@ import 'package:odbc_fast/infrastructure/native/wrappers/connection_pool.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/prepared_statement.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart';
 
+/// Native ODBC connection implementation using FFI bindings.
+///
+/// Provides direct access to the Rust-based ODBC engine through FFI.
+/// This is the low-level implementation that handles all native ODBC operations
+/// including connections, queries, transactions, prepared statements,
+/// connection pooling, and streaming.
+///
+/// Example:
+/// ```dart
+/// final native = NativeOdbcConnection();
+/// native.initialize();
+/// final connId = native.connect('DSN=MyDatabase');
+/// ```
 class NativeOdbcConnection implements OdbcConnectionBackend {
-
+  /// Creates a new [NativeOdbcConnection] instance.
   NativeOdbcConnection() : _native = OdbcNative();
   final OdbcNative _native;
   bool _isInitialized = false;
 
+  /// Initializes the ODBC environment.
+  ///
+  /// Must be called before any other operations. This method can be called
+  /// multiple times safely - subsequent calls are ignored if already initialized.
+  ///
+  /// Returns true on success, false on failure.
   bool initialize() {
     if (_isInitialized) return true;
 
@@ -27,6 +46,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return result;
   }
 
+  /// Establishes a new database connection.
+  ///
+  /// The [connectionString] should be a valid ODBC connection string
+  /// (e.g., 'DSN=MyDatabase' or 'Driver={SQL Server};Server=...').
+  ///
+  /// Returns a connection ID on success, 0 on failure.
+  /// Throws [StateError] if the environment has not been initialized.
   int connect(String connectionString) {
     if (!_isInitialized) {
       throw StateError('Environment not initialized');
@@ -34,19 +60,45 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return _native.connect(connectionString);
   }
 
+  /// Closes and disconnects a connection.
+  ///
+  /// The [connectionId] must be a valid connection identifier returned
+  /// from [connect]. Returns true on success, false on failure.
   bool disconnect(int connectionId) {
     return _native.disconnect(connectionId);
   }
 
+  /// Gets the last error message from the native engine.
+  ///
+  /// Returns an empty string if no error occurred.
   String getError() => _native.getError();
 
+  /// Gets structured error information including SQLSTATE and native code.
+  ///
+  /// Returns null if no error occurred or if structured error info
+  /// is not available.
   StructuredError? getStructuredError() => _native.getStructuredError();
 
+  /// Whether the ODBC environment has been initialized.
   bool get isInitialized => _isInitialized;
 
+  /// Begins a new transaction with the specified isolation level.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [isolationLevel] should be a numeric value (0-3) corresponding
+  /// to [IsolationLevel] enum values.
+  ///
+  /// Returns a transaction ID on success, 0 on failure.
   int beginTransaction(int connectionId, int isolationLevel) =>
       _native.transactionBegin(connectionId, isolationLevel);
 
+  /// Begins a new transaction and returns a [TransactionHandle] wrapper.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [isolationLevel] should be a numeric value (0-3) corresponding
+  /// to [IsolationLevel] enum values.
+  ///
+  /// Returns a [TransactionHandle] on success, null on failure.
   TransactionHandle? beginTransactionHandle(
     int connectionId,
     int isolationLevel,
@@ -62,9 +114,24 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   @override
   bool rollbackTransaction(int txnId) => _native.transactionRollback(txnId);
 
+  /// Prepares a SQL statement for execution.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [sql] should be a parameterized SQL statement (e.g.,
+  /// 'SELECT * FROM users WHERE id = ?').
+  ///
+  /// The [timeoutMs] specifies the statement timeout in milliseconds (0 = no timeout).
+  /// Returns a statement ID on success, 0 on failure.
   int prepare(int connectionId, String sql, {int timeoutMs = 0}) =>
       _native.prepare(connectionId, sql, timeoutMs: timeoutMs);
 
+  /// Prepares a SQL statement and returns a [PreparedStatement] wrapper.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [sql] should be a parameterized SQL statement.
+  ///
+  /// The [timeoutMs] specifies the statement timeout in milliseconds (0 = no timeout).
+  /// Returns a [PreparedStatement] on success, null on failure.
   PreparedStatement? prepareStatement(
     int connectionId,
     String sql, {
@@ -82,6 +149,15 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
 
+  /// Executes a SQL query with parameters.
+  ///
+  /// Convenience method that combines prepare and execute in a single call.
+  /// The [connectionId] must be a valid active connection.
+  /// The [sql] should be a parameterized SQL statement.
+  /// The [params] list should contain [ParamValue] instances for each '?'
+  /// placeholder in [sql], in order.
+  ///
+  /// Returns binary result data on success, null on failure.
   Uint8List? executeQueryParams(
     int connectionId,
     String sql,
@@ -89,6 +165,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ) =>
       _native.execQueryParamsTyped(connectionId, sql, params);
 
+  /// Executes a SQL query that returns multiple result sets.
+  ///
+  /// Some databases support queries that return multiple result sets.
+  /// This method handles such queries and returns the first result set.
+  /// The [connectionId] must be a valid active connection.
+  ///
+  /// Returns binary result data on success, null on failure.
   Uint8List? executeQueryMulti(int connectionId, String sql) =>
       _native.execQueryMulti(connectionId, sql);
 
@@ -104,6 +187,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
         schema: schema,
       );
 
+  /// Creates a [CatalogQuery] wrapper for database catalog queries.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// Returns a [CatalogQuery] instance for querying database metadata.
   CatalogQuery catalogQuery(int connectionId) =>
       CatalogQuery(this, connectionId);
 
@@ -115,9 +202,21 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   Uint8List? catalogTypeInfo(int connectionId) =>
       _native.catalogTypeInfo(connectionId);
 
+  /// Creates a new connection pool.
+  ///
+  /// The [connectionString] is used to establish connections in the pool.
+  /// The [maxSize] specifies the maximum number of connections in the pool.
+  ///
+  /// Returns a pool ID on success, 0 on failure.
   int poolCreate(String connectionString, int maxSize) =>
       _native.poolCreate(connectionString, maxSize);
 
+  /// Creates a new connection pool and returns a [ConnectionPool] wrapper.
+  ///
+  /// The [connectionString] is used to establish connections in the pool.
+  /// The [maxSize] specifies the maximum number of connections in the pool.
+  ///
+  /// Returns a [ConnectionPool] on success, null on failure.
   ConnectionPool? createConnectionPool(String connectionString, int maxSize) {
     final poolId = poolCreate(connectionString, maxSize);
     if (poolId == 0) return null;
@@ -141,6 +240,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   @override
   bool poolClose(int poolId) => _native.poolClose(poolId);
 
+  /// Performs a bulk insert operation.
+  ///
+  /// Inserts multiple rows into [table] using the specified [columns].
+  /// The [dataBuffer] contains the data as a binary buffer created by
+  /// [BulkInsertBuilder.build()].
+  ///
+  /// The [rowCount] specifies how many rows are in [dataBuffer].
+  /// Returns the number of rows inserted on success, 0 on failure.
   int bulkInsertArray(
     int connectionId,
     String table,
@@ -156,8 +263,27 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
         rowCount,
       );
 
+  /// Gets performance and operational metrics.
+  ///
+  /// Returns [OdbcMetrics] containing query counts, error counts,
+  /// uptime, and latency information, or null on failure.
   OdbcMetrics? getMetrics() => _native.getMetrics();
 
+  /// Executes a SQL query and returns results as a stream.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [sql] should be a valid SQL SELECT statement.
+  ///
+  /// The [chunkSize] specifies how many rows to fetch per chunk (default: 1000).
+  /// Results are streamed as [ParsedRowBuffer] instances, allowing
+  /// efficient processing of large result sets without loading everything into memory.
+  ///
+  /// Example:
+  /// ```dart
+  /// await for (final chunk in native.streamQuery(connId, 'SELECT * FROM users')) {
+  ///   // Process chunk
+  /// }
+  /// ```
   Stream<ParsedRowBuffer> streamQuery(
     int connectionId,
     String sql, {
@@ -195,6 +321,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     }
   }
 
+  /// Disposes of native resources.
+  ///
+  /// Should be called when the connection is no longer needed to free
+  /// native resources. After calling this, the instance should not be used.
   void dispose() {
     _native.dispose();
   }

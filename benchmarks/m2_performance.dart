@@ -1,5 +1,7 @@
 import 'dart:io';
+
 import 'package:benchmark_harness/benchmark_harness.dart';
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 class InitBenchmark extends BenchmarkBase {
@@ -15,7 +17,7 @@ class InitBenchmark extends BenchmarkBase {
 
   @override
   void run() {
-    locator.service.initialize();
+    unawaited(locator.service.initialize());
   }
 }
 
@@ -34,7 +36,7 @@ class ConnectBenchmark extends BenchmarkBase {
 
   @override
   void run() {
-    locator.service.connect(connectionString);
+    unawaited(locator.service.connect(connectionString));
   }
 }
 

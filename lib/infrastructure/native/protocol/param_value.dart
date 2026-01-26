@@ -26,21 +26,37 @@ List<int> _i64Le(int v) {
   return b.buffer.asUint8List(0, 8).toList();
 }
 
+/// Base class for parameter values in prepared statements.
+///
+/// All parameter values must extend this sealed class and implement
+/// [serialize] to convert the value to binary format.
 sealed class ParamValue {
+  /// Creates a new [ParamValue] instance.
   const ParamValue();
 
+  /// Serializes this parameter value to binary format.
+  ///
+  /// Returns a list of bytes representing the parameter value.
   List<int> serialize();
 }
 
+/// Represents a NULL parameter value.
 class ParamValueNull extends ParamValue {
+  /// Creates a new [ParamValueNull] instance.
   const ParamValueNull();
 
   @override
   List<int> serialize() => [_tagNull, ..._u32Le(0)];
 }
 
+/// Represents a string parameter value.
 class ParamValueString extends ParamValue {
+  /// Creates a new [ParamValueString] instance.
+  ///
+  /// The [value] is the string to use as the parameter value.
   const ParamValueString(this.value);
+
+  /// The string value.
   final String value;
 
   @override
@@ -50,24 +66,42 @@ class ParamValueString extends ParamValue {
   }
 }
 
+/// Represents a 32-bit integer parameter value.
 class ParamValueInt32 extends ParamValue {
+  /// Creates a new [ParamValueInt32] instance.
+  ///
+  /// The [value] is the 32-bit integer to use as the parameter value.
   const ParamValueInt32(this.value);
+
+  /// The integer value.
   final int value;
 
   @override
   List<int> serialize() => [_tagInteger, ..._u32Le(4), ..._i32Le(value)];
 }
 
+/// Represents a 64-bit integer parameter value.
 class ParamValueInt64 extends ParamValue {
+  /// Creates a new [ParamValueInt64] instance.
+  ///
+  /// The [value] is the 64-bit integer to use as the parameter value.
   const ParamValueInt64(this.value);
+
+  /// The integer value.
   final int value;
 
   @override
   List<int> serialize() => [_tagBigInt, ..._u32Le(8), ..._i64Le(value)];
 }
 
+/// Represents a decimal/numeric parameter value as a string.
 class ParamValueDecimal extends ParamValue {
+  /// Creates a new [ParamValueDecimal] instance.
+  ///
+  /// The [value] is the decimal value as a string (e.g., '123.45').
   const ParamValueDecimal(this.value);
+
+  /// The decimal value as a string.
   final String value;
 
   @override
@@ -77,14 +111,26 @@ class ParamValueDecimal extends ParamValue {
   }
 }
 
+/// Represents a binary parameter value.
 class ParamValueBinary extends ParamValue {
+  /// Creates a new [ParamValueBinary] instance.
+  ///
+  /// The [value] is the binary data as a list of bytes.
   const ParamValueBinary(this.value);
+
+  /// The binary data.
   final List<int> value;
 
   @override
   List<int> serialize() => [_tagBinary, ..._u32Le(value.length), ...value];
 }
 
+/// Serializes a list of parameter values to binary format.
+///
+/// The [params] list should contain [ParamValue] instances in the order
+/// they appear in the prepared statement.
+///
+/// Returns a [Uint8List] containing the serialized parameters.
 Uint8List serializeParams(List<ParamValue> params) {
   final out = <int>[];
   for (final p in params) {

@@ -1,1 +1,15 @@
 include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - '**/*.g.dart'
+    - '**/*.freezed.dart'
+    - 'build/**'
+    - 'benchmarks/**'
+    - 'tool/**'
+
+linter:
+  rules:
+    # Allow print in benchmarks and tools (development tools)
+    avoid_print: false
+    discarded_futures: false

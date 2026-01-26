@@ -46,19 +46,41 @@ List<int> _i16Le(int v) {
   return b.buffer.asUint8List(0, 2).toList();
 }
 
+/// Column data types for bulk insert operations.
 enum BulkColumnType {
+  /// 32-bit integer.
   i32(_tagI32),
+
+  /// 64-bit integer.
   i64(_tagI64),
+
+  /// Text/string data.
   text(_tagText),
+
+  /// Decimal/numeric data.
   decimal(_tagDecimal),
+
+  /// Binary data.
   binary(_tagBinary),
+
+  /// Timestamp/datetime data.
   timestamp(_tagTimestamp);
 
+  /// Creates a [BulkColumnType] with the given tag.
   const BulkColumnType(this.tag);
+
+  /// The numeric tag used in the binary protocol.
   final int tag;
 }
 
+/// Specification for a column in a bulk insert operation.
 class BulkColumnSpec {
+  /// Creates a new [BulkColumnSpec] instance.
+  ///
+  /// The [name] is the column name.
+  /// The [colType] specifies the data type.
+  /// The [nullable] flag indicates if the column can contain NULL values.
+  /// The [maxLen] specifies the maximum length for variable-length types.
   BulkColumnSpec({
     required this.name,
     required this.colType,
@@ -66,13 +88,22 @@ class BulkColumnSpec {
     this.maxLen = 0,
   });
 
+  /// The column name.
   final String name;
+
+  /// The column data type.
   final BulkColumnType colType;
+
+  /// Whether the column can contain NULL values.
   final bool nullable;
+
+  /// Maximum length for variable-length types (0 = unlimited).
   final int maxLen;
 }
 
+/// Represents a timestamp value for bulk insert operations.
 class BulkTimestamp {
+  /// Creates a new [BulkTimestamp] instance.
   const BulkTimestamp({
     required this.year,
     required this.month,
@@ -83,14 +114,28 @@ class BulkTimestamp {
     this.fraction = 0,
   });
 
+  /// The year (e.g., 2024).
   final int year;
+
+  /// The month (1-12).
   final int month;
+
+  /// The day of month (1-31).
   final int day;
+
+  /// The hour (0-23).
   final int hour;
+
+  /// The minute (0-59).
   final int minute;
+
+  /// The second (0-59).
   final int second;
+
+  /// Fractional seconds in nanoseconds.
   final int fraction;
 
+  /// Creates a [BulkTimestamp] from a [DateTime] instance.
   static BulkTimestamp fromDateTime(DateTime dt) {
     return BulkTimestamp(
       year: dt.year,
@@ -104,18 +149,46 @@ class BulkTimestamp {
   }
 }
 
+/// Builder for creating bulk insert data buffers.
+///
+/// Provides a fluent API to define table structure, columns, and rows
+/// for efficient bulk insert operations.
+///
+/// Example:
+/// ```dart
+/// final builder = BulkInsertBuilder()
+///   ..table('users')
+///   ..addColumn('id', BulkColumnType.i32)
+///   ..addColumn('name', BulkColumnType.text, maxLen: 100)
+///   ..addRow([1, 'Alice'])
+///   ..addRow([2, 'Bob']);
+/// final buffer = builder.build();
+/// ```
 class BulkInsertBuilder {
+  /// Creates a new [BulkInsertBuilder] instance.
   BulkInsertBuilder();
 
   String _table = '';
   final List<BulkColumnSpec> _columns = [];
   final List<List<dynamic>> _rows = [];
 
+  /// Sets the target table name for the bulk insert.
+  ///
+  /// The [name] is the table name where rows will be inserted.
+  /// Returns this builder for method chaining.
   BulkInsertBuilder table(String name) {
     _table = name;
     return this;
   }
 
+  /// Adds a column definition to the bulk insert.
+  ///
+  /// The [name] is the column name.
+  /// The [colType] specifies the data type.
+  /// The [nullable] flag indicates if the column can contain NULL values.
+  /// The [maxLen] specifies the maximum length for variable-length types.
+  ///
+  /// Returns this builder for method chaining.
   BulkInsertBuilder addColumn(
     String name,
     BulkColumnType colType, {
@@ -131,6 +204,14 @@ class BulkInsertBuilder {
     return this;
   }
 
+  /// Adds a row of data to the bulk insert.
+  ///
+  /// The [values] list must contain values in the same order as columns
+  /// were added, and must match the column count.
+  ///
+  /// Returns this builder for method chaining.
+  /// Throws [StateError] if columns haven't been added yet.
+  /// Throws [ArgumentError] if the row length doesn't match column count.
   BulkInsertBuilder addRow(List<dynamic> values) {
     if (_columns.isEmpty) {
       throw StateError('Add columns before rows');
@@ -144,12 +225,22 @@ class BulkInsertBuilder {
     return this;
   }
 
+  /// Gets the table name.
   String get tableName => _table;
 
+  /// Gets the list of column names in the order they were added.
   List<String> get columnNames => _columns.map((c) => c.name).toList();
 
+  /// Gets the number of rows added to the builder.
   int get rowCount => _rows.length;
 
+  /// Builds the binary data buffer for bulk insert.
+  ///
+  /// Validates that table name, columns, and at least one row are present.
+  /// Returns a [Uint8List] containing the serialized bulk insert data.
+  ///
+  /// Throws [StateError] if table name is empty, no columns are defined,
+  /// or no rows have been added.
   Uint8List build() {
     if (_table.isEmpty) {
       throw StateError('Table name required');

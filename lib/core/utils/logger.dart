@@ -1,8 +1,10 @@
+import 'dart:developer' as developer;
+
 import 'package:logging/logging.dart';
 
 /// Centralized logger for ODBC Fast
 class AppLogger {
-  static Logger? _logger;
+  static late Logger _logger;
   static bool _initialized = false;
 
   /// Initialize logging system
@@ -12,15 +14,14 @@ class AppLogger {
 
     Logger.root.level = level;
     Logger.root.onRecord.listen((record) {
-      // Default console output
-      final time = record.time.toIso8601String();
-      final level = record.level.name;
-      final message = record.message;
-      final error = record.error != null ? ' | Error: ${record.error}' : '';
-      final stackTrace =
-          record.stackTrace != null ? '\n${record.stackTrace}' : '';
-
-      print('[$time] $level: $message$error$stackTrace');
+      developer.log(
+        record.message,
+        time: record.time,
+        level: record.level.value,
+        name: 'odbc_fast',
+        error: record.error,
+        stackTrace: record.stackTrace,
+      );
     });
 
     _logger = Logger('odbc_fast');
@@ -32,7 +33,7 @@ class AppLogger {
     if (!_initialized) {
       initialize();
     }
-    return _logger!;
+    return _logger;
   }
 
   /// Shorthand for logger.info

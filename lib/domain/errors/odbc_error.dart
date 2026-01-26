@@ -29,13 +29,18 @@ sealed class OdbcError implements Exception {
   final int? nativeCode;
 
   @override
-  String toString() =>
-      'OdbcError: $message${sqlState != null ? ' (SQLSTATE: $sqlState)' : ''}${nativeCode != null ? ' (Code: $nativeCode)' : ''}';
+  String toString() {
+    final sqlStateStr =
+        sqlState != null ? ' (SQLSTATE: $sqlState)' : '';
+    final nativeCodeStr =
+        nativeCode != null ? ' (Code: $nativeCode)' : '';
+    return 'OdbcError: $message$sqlStateStr$nativeCodeStr';
+  }
 
   /// Returns true if the error is transient and may be retried.
   ///
-  /// Connection errors with SQLSTATE starting with '08' are typically retryable,
-  /// as they often indicate temporary network issues or timeouts.
+  /// Connection errors with SQLSTATE starting with '08' are typically
+  /// retryable, as they often indicate temporary network issues or timeouts.
   bool get isRetryable {
     if (sqlState == null) return false;
     // Connection errors (08xxx) are often retryable
@@ -74,8 +79,8 @@ sealed class OdbcError implements Exception {
 /// - ODBC driver not found
 /// - Network issues
 ///
-/// Generally NOT retryable, except if SQLSTATE starts with '08' (connection errors).
-/// In that case, check [isRetryable] before retrying.
+/// Generally NOT retryable, except if SQLSTATE starts with '08'
+/// (connection errors). In that case, check [isRetryable] before retrying.
 final class ConnectionError extends OdbcError {
   const ConnectionError({
     required super.message,

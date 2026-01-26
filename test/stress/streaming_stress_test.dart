@@ -1,3 +1,4 @@
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
@@ -50,7 +51,7 @@ void main() {
           connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
       final native = locator.nativeConnection;
-      final streams = <Stream>[];
+      final streams = <Stream<ParsedRowBuffer>>[];
 
       for (var i = 0; i < 5; i++) {
         final stream = native.streamQuery(

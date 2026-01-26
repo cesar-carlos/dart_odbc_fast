@@ -1,0 +1,12 @@
+.env
+.env.example
+analysis_report.txt
+benchmarks/
+tool/
+scripts/
+.github/
+native/
+doc/m*.md
+doc/BUILD.md
+.cursor/
+*.plan.md

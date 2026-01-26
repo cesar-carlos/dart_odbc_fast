@@ -12,8 +12,25 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:result_dart/result_dart.dart';
 
+/// Implementation of [IOdbcRepository] using native ODBC connection.
+///
+/// Provides the concrete implementation of the repository interface,
+/// translating domain operations into native ODBC calls and converting
+/// native errors into domain error types.
+///
+/// This implementation manages connection ID mapping between domain
+/// connection IDs (strings) and native connection IDs (integers).
+///
+/// Example:
+/// ```dart
+/// final native = NativeOdbcConnection();
+/// final repository = OdbcRepositoryImpl(native);
+/// await repository.initialize();
+/// ```
 class OdbcRepositoryImpl implements IOdbcRepository {
-
+  /// Creates a new [OdbcRepositoryImpl] instance.
+  ///
+  /// The [native] must be a valid [NativeOdbcConnection] instance.
   OdbcRepositoryImpl(this._native);
   final NativeOdbcConnection _native;
   final Map<String, int> _connectionIds = {};
@@ -61,7 +78,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           EnvironmentNotInitializedError(),
         );
       }
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -106,7 +123,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       _connectionIds[connection.id] = connId;
 
       return Success(connection);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Connection, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -142,7 +159,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           fallbackMessage: 'Failed to disconnect from database',
         );
       }
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -183,7 +200,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
 
       return Success(result);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -269,7 +286,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(txnId);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<int, OdbcError>(
         QueryError(message: e.toString()),
       );
@@ -297,7 +314,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ),
         fallbackMessage: 'Failed to commit transaction',
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     }
   }
@@ -323,7 +340,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ),
         fallbackMessage: 'Failed to rollback transaction',
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     }
   }
@@ -358,7 +375,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(stmtId);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<int, OdbcError>(QueryError(message: e.toString()));
     }
   }
@@ -390,7 +407,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -425,7 +442,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ),
         fallbackMessage: 'Failed to close statement',
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     }
   }
@@ -462,7 +479,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -509,7 +526,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -561,7 +578,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -652,7 +669,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(qr);
-    } catch (e) {
+    } on Exception catch (e) {
       return _convertNativeErrorToFailure<QueryResult>(
         errorFactory: ({
           required message,
@@ -701,7 +718,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(poolId);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<int, OdbcError>(ConnectionError(message: e.toString()));
     }
   }
@@ -733,7 +750,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
       _connectionIds[c.id] = connId;
       return Success(c);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Connection, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -778,7 +795,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<bool>> poolHealthCheck(int poolId) async {
     try {
       return Success(_native.poolHealthCheck(poolId));
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<bool, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -805,7 +822,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(PoolState(size: s.size, idle: s.idle));
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<PoolState, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -830,7 +847,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ),
         fallbackMessage: 'Failed to close pool',
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<Unit, OdbcError>(
         ConnectionError(message: e.toString()),
       );
@@ -875,7 +892,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         );
       }
       return Success(n);
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<int, OdbcError>(QueryError(message: e.toString()));
     }
   }
@@ -904,7 +921,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           avgLatencyMillis: m.avgLatencyMillis,
         ),
       );
-    } catch (e) {
+    } on Exception catch (e) {
       return Failure<OdbcMetrics, OdbcError>(
         QueryError(message: e.toString()),
       );
