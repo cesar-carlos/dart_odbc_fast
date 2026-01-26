@@ -36,13 +36,5 @@ topics:
   - database
   - odbc
   - sqlserver
-  - oracle
   - postgresql
-  - mysql
-  - sqlite
-  - mariadb
-  - mssql
-  - sybase
-  - db2
-  - informix
 
