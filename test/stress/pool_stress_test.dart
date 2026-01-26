@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:test/test.dart';
 
 import '../helpers/load_env.dart';
 
@@ -23,10 +23,10 @@ void main() {
 
       final connections = <Connection>[];
 
-      for (int i = 0; i < 10; i++) {
+      for (var i = 0; i < 10; i++) {
         final connResult = await locator.service.connect(dsn);
         connResult.fold(
-          (conn) => connections.add(conn),
+          connections.add,
           (error) {
             final errorObj = error as OdbcError;
             fail('Connection $i failed: ${errorObj.message}');
@@ -46,7 +46,7 @@ void main() {
       final dsn = connectionString;
       if (dsn == null) return;
 
-      for (int i = 0; i < 50; i++) {
+      for (var i = 0; i < 50; i++) {
         final connResult = await locator.service.connect(dsn);
         final connection =
             connResult.getOrElse((_) => throw Exception('Failed to connect'));

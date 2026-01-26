@@ -1,7 +1,7 @@
-import 'package:test/test.dart';
-import 'package:result_dart/result_dart.dart';
-
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:result_dart/result_dart.dart';
+import 'package:test/test.dart';
+
 import '../helpers/load_env.dart';
 
 void main() {
@@ -44,7 +44,7 @@ void main() {
 
       expect(connResult.isSuccess(), isTrue,
           reason:
-              'Connection failed. Check if SQL Server is running and credentials are correct.');
+              'Connection failed. Check if SQL Server is running and credentials are correct.',);
 
       await connResult.fold(
         (connection) async {
@@ -127,7 +127,7 @@ void main() {
         // Query that returns multiple rows
         final queryResult = await service.executeQuery(
           connection.id,
-          'SELECT 1 AS id, \'Hello\' AS message UNION ALL SELECT 2, \'World\'',
+          "SELECT 1 AS id, 'Hello' AS message UNION ALL SELECT 2, 'World'",
         );
 
         expect(queryResult.isSuccess(), isTrue);

@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:test/test.dart';
 
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('ParamValue serialization', () {
@@ -13,7 +13,7 @@ void main() {
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getUint32(1, Endian.little),
-          equals(0));
+          equals(0),);
     });
 
     test('ParamValueString produces tag 1, len, utf8 bytes', () {
@@ -31,11 +31,11 @@ void main() {
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getUint32(1, Endian.little),
-          equals(4));
+          equals(4),);
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getInt32(5, Endian.little),
-          equals(42));
+          equals(42),);
     });
 
     test('ParamValueInt64 produces tag 3, len 8, i64 LE', () {
@@ -44,11 +44,11 @@ void main() {
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getUint32(1, Endian.little),
-          equals(8));
+          equals(8),);
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getInt64(5, Endian.little),
-          equals(0x123456789abcdef0));
+          equals(0x123456789abcdef0),);
     });
 
     test('ParamValueDecimal produces tag 4, len, utf8 bytes', () {
@@ -66,7 +66,7 @@ void main() {
       expect(
           ByteData.sublistView(Uint8List.fromList(s))
               .getUint32(1, Endian.little),
-          equals(3));
+          equals(3),);
       expect(s.sublist(5), equals([1, 2, 3]));
     });
 
@@ -79,7 +79,7 @@ void main() {
       final buf = serializeParams(params);
       expect(buf.isNotEmpty, isTrue);
       expect(buf[0], equals(0));
-      final second = 5;
+      const second = 5;
       expect(buf[second], equals(2));
     });
   });

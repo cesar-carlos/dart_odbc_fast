@@ -3,9 +3,9 @@ import 'package:benchmark_harness/benchmark_harness.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 class InitBenchmark extends BenchmarkBase {
-  late ServiceLocator locator;
 
   InitBenchmark() : super('ODBC Init');
+  late ServiceLocator locator;
 
   @override
   void setup() {
@@ -20,10 +20,10 @@ class InitBenchmark extends BenchmarkBase {
 }
 
 class ConnectBenchmark extends BenchmarkBase {
-  late ServiceLocator locator;
-  final String connectionString;
 
   ConnectBenchmark(this.connectionString) : super('ODBC Connect');
+  late ServiceLocator locator;
+  final String connectionString;
 
   @override
   void setup() {

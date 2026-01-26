@@ -13,7 +13,7 @@ typedef BufferCallback = int Function(
 );
 
 Uint8List? callWithBuffer(BufferCallback fn) {
-  int size = initialBufferSize;
+  var size = initialBufferSize;
   while (size <= maxBufferSize) {
     final buf = malloc<ffi.Uint8>(size);
     final outWritten = malloc<ffi.Uint32>();

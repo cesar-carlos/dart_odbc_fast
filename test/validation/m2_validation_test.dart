@@ -1,6 +1,6 @@
+import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
-import 'package:odbc_fast/odbc_fast.dart';
 import '../helpers/load_env.dart';
 
 void main() {

@@ -1,6 +1,5 @@
-import 'package:test/test.dart';
-
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('OdbcNative', () {

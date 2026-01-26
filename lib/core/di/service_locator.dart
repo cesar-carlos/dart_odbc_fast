@@ -1,13 +1,13 @@
-import '../../domain/repositories/odbc_repository.dart';
-import '../../infrastructure/native/native_odbc_connection.dart';
-import '../../infrastructure/repositories/odbc_repository_impl.dart';
-import '../../application/services/odbc_service.dart';
-import '../utils/logger.dart';
+import 'package:odbc_fast/application/services/odbc_service.dart';
+import 'package:odbc_fast/core/utils/logger.dart';
+import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 
 class ServiceLocator {
-  static final ServiceLocator _instance = ServiceLocator._internal();
   factory ServiceLocator() => _instance;
   ServiceLocator._internal();
+  static final ServiceLocator _instance = ServiceLocator._internal();
 
   late final NativeOdbcConnection _nativeConnection;
   late final IOdbcRepository _repository;

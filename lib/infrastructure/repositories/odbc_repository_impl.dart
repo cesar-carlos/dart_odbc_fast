@@ -1,23 +1,22 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:result_dart/result_dart.dart';
 
-import '../../domain/entities/connection.dart';
-import '../../domain/entities/odbc_metrics.dart';
-import '../../domain/entities/isolation_level.dart';
-import '../../domain/entities/pool_state.dart';
-import '../../domain/entities/query_result.dart';
-import '../../domain/errors/odbc_error.dart';
-import '../../domain/repositories/odbc_repository.dart';
-import '../native/native_odbc_connection.dart';
-import '../native/protocol/binary_protocol.dart';
-import '../native/protocol/param_value.dart';
-
 class OdbcRepositoryImpl implements IOdbcRepository {
-  final NativeOdbcConnection _native;
-  final Map<String, int> _connectionIds = {};
 
   OdbcRepositoryImpl(this._native);
+  final NativeOdbcConnection _native;
+  final Map<String, int> _connectionIds = {};
 
   /// Converts native error to Failure with proper error type.
   ///
@@ -58,7 +57,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       if (success) {
         return const Success(unit);
       } else {
-        return Failure<Unit, OdbcError>(
+        return const Failure<Unit, OdbcError>(
           EnvironmentNotInitializedError(),
         );
       }
@@ -74,7 +73,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionString,
   ) async {
     if (connectionString.isEmpty) {
-      return Failure<Connection, OdbcError>(
+      return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
       );
     }
@@ -118,7 +117,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<Unit>> disconnect(String connectionId) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<Unit, OdbcError>(
+      return const Failure<Unit, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -157,7 +156,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -248,7 +247,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -337,7 +336,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -439,7 +438,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -487,7 +486,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -535,7 +534,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -586,7 +585,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -630,7 +629,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -680,7 +679,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       final err = r.exceptionOrNull();
       if (err != null) {
         return Failure<int, OdbcError>(
-          err is OdbcError ? err : EnvironmentNotInitializedError(),
+          err is OdbcError ? err : const EnvironmentNotInitializedError(),
         );
       }
     }
@@ -745,7 +744,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<Unit>> poolReleaseConnection(String connectionId) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<Unit, OdbcError>(
+      return const Failure<Unit, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
@@ -848,7 +847,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }

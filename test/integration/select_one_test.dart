@@ -1,6 +1,6 @@
+import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
-import 'package:odbc_fast/odbc_fast.dart';
 import '../helpers/load_env.dart';
 
 void main() {
@@ -34,7 +34,7 @@ void main() {
           await service.executeQuery(connection.id, 'SELECT 1 AS value');
 
       expect(queryResult.isSuccess(), isTrue,
-          reason: 'SELECT 1 query should succeed');
+          reason: 'SELECT 1 query should succeed',);
 
       await queryResult.fold(
         (result) async {

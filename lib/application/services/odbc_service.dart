@@ -1,23 +1,22 @@
+import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
-import '../../domain/entities/connection.dart';
-import '../../domain/entities/isolation_level.dart';
-import '../../domain/entities/odbc_metrics.dart';
-import '../../domain/entities/pool_state.dart';
-import '../../domain/entities/query_result.dart';
-import '../../domain/errors/odbc_error.dart';
-import '../../domain/repositories/odbc_repository.dart';
-
 class OdbcService {
-  final IOdbcRepository _repository;
 
   OdbcService(this._repository);
+  final IOdbcRepository _repository;
 
   Future<Result<Unit>> initialize() async => _repository.initialize();
 
   Future<Result<Connection>> connect(String connectionString) async {
     if (connectionString.trim().isEmpty) {
-      return Failure<Connection, OdbcError>(
+      return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
       );
     }
@@ -46,7 +45,7 @@ class OdbcService {
     String sql,
   ) async {
     if (sql.trim().isEmpty) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'SQL query cannot be empty'),
       );
     }
@@ -77,7 +76,7 @@ class OdbcService {
     int timeoutMs = 0,
   }) async {
     if (sql.trim().isEmpty) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'SQL cannot be empty'),
       );
     }
@@ -103,7 +102,7 @@ class OdbcService {
     List<dynamic> params,
   ) async {
     if (sql.trim().isEmpty) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'SQL query cannot be empty'),
       );
     }
@@ -115,7 +114,7 @@ class OdbcService {
     String sql,
   ) async {
     if (sql.trim().isEmpty) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'SQL query cannot be empty'),
       );
     }
@@ -138,7 +137,7 @@ class OdbcService {
     String table,
   ) async {
     if (table.trim().isEmpty) {
-      return Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResult, OdbcError>(
         ValidationError(message: 'Table name cannot be empty'),
       );
     }
@@ -153,12 +152,12 @@ class OdbcService {
     int maxSize,
   ) async {
     if (connectionString.trim().isEmpty) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
       );
     }
     if (maxSize < 1) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Pool max size must be at least 1'),
       );
     }
@@ -188,17 +187,17 @@ class OdbcService {
     int rowCount,
   ) async {
     if (table.trim().isEmpty) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Table name cannot be empty'),
       );
     }
     if (columns.isEmpty) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'At least one column required'),
       );
     }
     if (rowCount < 1) {
-      return Failure<int, OdbcError>(
+      return const Failure<int, OdbcError>(
         ValidationError(message: 'Row count must be at least 1'),
       );
     }

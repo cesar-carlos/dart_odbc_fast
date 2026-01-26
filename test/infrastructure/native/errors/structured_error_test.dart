@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:test/test.dart';
-
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
+import 'package:test/test.dart';
 
 List<int> _buildStructuredErrorBuffer({
   required String sqlState,

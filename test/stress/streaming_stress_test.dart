@@ -1,6 +1,6 @@
+import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
-import 'package:odbc_fast/odbc_fast.dart';
 import '../helpers/load_env.dart';
 
 void main() {
@@ -31,7 +31,7 @@ void main() {
         'SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3',
       );
 
-      int totalRows = 0;
+      var totalRows = 0;
       await for (final chunk in stream) {
         totalRows += chunk.rowCount;
       }
@@ -52,7 +52,7 @@ void main() {
       final native = locator.nativeConnection;
       final streams = <Stream>[];
 
-      for (int i = 0; i < 5; i++) {
+      for (var i = 0; i < 5; i++) {
         final stream = native.streamQuery(
           int.parse(connection.id),
           'SELECT 1',
@@ -60,7 +60,7 @@ void main() {
         streams.add(stream);
       }
 
-      int completedStreams = 0;
+      var completedStreams = 0;
       for (final stream in streams) {
         await stream.forEach((_) {});
         completedStreams++;

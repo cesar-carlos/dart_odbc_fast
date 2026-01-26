@@ -127,7 +127,7 @@ class BulkInsertBuilder {
       colType: colType,
       nullable: nullable,
       maxLen: maxLen,
-    ));
+    ),);
     return this;
   }
 
@@ -213,7 +213,6 @@ class BulkInsertBuilder {
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
           out.addAll(_i32Le(i));
         }
-        break;
       case BulkColumnType.i64:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
@@ -226,7 +225,6 @@ class BulkInsertBuilder {
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
           out.addAll(_i64Le(i));
         }
-        break;
       case BulkColumnType.text:
       case BulkColumnType.decimal:
         if (nullBitmap != null) {
@@ -251,7 +249,6 @@ class BulkInsertBuilder {
             out.add(0);
           }
         }
-        break;
       case BulkColumnType.binary:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
@@ -277,7 +274,6 @@ class BulkInsertBuilder {
             out.add(0);
           }
         }
-        break;
       case BulkColumnType.timestamp:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
@@ -319,7 +315,6 @@ class BulkInsertBuilder {
           out.addAll(_u16Le(t.second));
           out.addAll(_u32Le(t.fraction));
         }
-        break;
     }
   }
 }

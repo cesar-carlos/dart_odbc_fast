@@ -2,15 +2,15 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class StructuredError {
-  final List<int> sqlState;
-  final int nativeCode;
-  final String message;
 
   const StructuredError({
     required this.sqlState,
     required this.nativeCode,
     required this.message,
   });
+  final List<int> sqlState;
+  final int nativeCode;
+  final String message;
 
   String get sqlStateString {
     return String.fromCharCodes(sqlState);

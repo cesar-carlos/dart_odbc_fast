@@ -1,7 +1,7 @@
-import 'package:test/test.dart';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('BinaryProtocolParser', () {
@@ -85,7 +85,7 @@ Uint8List _createTestBuffer({
   buffer.addAll(columns.length.toBytes(2));
   buffer.addAll(rows.length.toBytes(4));
 
-  int payloadSize = 0;
+  var payloadSize = 0;
   for (final col in columns) {
     payloadSize += 2 + 2 + col.name.length;
   }
@@ -135,7 +135,7 @@ List<int> _cellToBytes(dynamic cell) {
 extension IntBytes on int {
   List<int> toBytes(int length) {
     final bytes = <int>[];
-    for (int i = 0; i < length; i++) {
+    for (var i = 0; i < length; i++) {
       bytes.add((this >> (i * 8)) & 0xFF);
     }
     return bytes;

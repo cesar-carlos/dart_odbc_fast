@@ -116,7 +116,7 @@ Future<void> runExampleBasic(ServiceLocator locator, String dsn) async {
       queryResult.fold(
         (qr) {
           AppLogger.info(
-              'Query: columns=${qr.columns} rowCount=${qr.rowCount}');
+              'Query: columns=${qr.columns} rowCount=${qr.rowCount}',);
           for (var i = 0; i < qr.rows.length; i++) {
             AppLogger.fine('  row ${i + 1}: ${qr.rows[i]}');
           }
@@ -133,10 +133,12 @@ Future<void> runExampleBasic(ServiceLocator locator, String dsn) async {
     (error) async {
       if (error is OdbcError) {
         AppLogger.severe('Connect failed: ${error.message}');
-        if (error.sqlState != null)
+        if (error.sqlState != null) {
           AppLogger.fine('  SQLSTATE: ${error.sqlState}');
-        if (error.nativeCode != null)
+        }
+        if (error.nativeCode != null) {
           AppLogger.fine('  Native: ${error.nativeCode}');
+        }
       } else {
         AppLogger.severe('Connect failed: $error');
       }
@@ -271,7 +273,6 @@ Future<void> runExampleParamsAndPrepared(
     final stmtIdResult = await service.prepare(
       connection!.id,
       'SELECT ? AS id, ? AS msg',
-      timeoutMs: 0,
     );
 
     await stmtIdResult.fold((stmtId) async {
@@ -363,7 +364,7 @@ Future<void> runExampleCatalog(ServiceLocator locator, String dsn) async {
       );
     } else {
       AppLogger.info(
-          'No table name detected from catalogTables; skipping columns demo.');
+          'No table name detected from catalogTables; skipping columns demo.',);
     }
 
     final typeInfoResult = await service.catalogTypeInfo(connection!.id);

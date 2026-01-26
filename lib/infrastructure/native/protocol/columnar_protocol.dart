@@ -1,11 +1,6 @@
 import 'dart:typed_data';
 
 class ColumnarColumnMetadata {
-  final String name;
-  final int odbcType;
-  final bool compressed;
-  final int compressionType;
-  final Uint8List data;
 
   const ColumnarColumnMetadata({
     required this.name,
@@ -14,15 +9,14 @@ class ColumnarColumnMetadata {
     required this.compressionType,
     required this.data,
   });
+  final String name;
+  final int odbcType;
+  final bool compressed;
+  final int compressionType;
+  final Uint8List data;
 }
 
 class ParsedColumnarBuffer {
-  final int version;
-  final int flags;
-  final int columnCount;
-  final int rowCount;
-  final bool compressionEnabled;
-  final List<ColumnarColumnMetadata> columns;
 
   const ParsedColumnarBuffer({
     required this.version,
@@ -32,6 +26,12 @@ class ParsedColumnarBuffer {
     required this.compressionEnabled,
     required this.columns,
   });
+  final int version;
+  final int flags;
+  final int columnCount;
+  final int rowCount;
+  final bool compressionEnabled;
+  final List<ColumnarColumnMetadata> columns;
 }
 
 class ColumnarProtocolParser {
@@ -59,14 +59,14 @@ class ColumnarProtocolParser {
 
     final columns = <ColumnarColumnMetadata>[];
 
-    for (int i = 0; i < columnCount; i++) {
+    for (var i = 0; i < columnCount; i++) {
       final odbcType = reader.readUint16();
       final nameLen = reader.readUint16();
       final nameBytes = reader.readBytes(nameLen);
       final name = String.fromCharCodes(nameBytes);
 
       final compressed = reader.readUint8() != 0;
-      int compressionType = 0;
+      var compressionType = 0;
       if (compressed) {
         compressionType = reader.readUint8();
       }
@@ -80,7 +80,7 @@ class ColumnarProtocolParser {
         compressed: compressed,
         compressionType: compressionType,
         data: Uint8List.fromList(columnData),
-      ));
+      ),);
     }
 
     return ParsedColumnarBuffer(
@@ -96,7 +96,7 @@ class ColumnarProtocolParser {
   static List<List<dynamic>> decodeRows(ParsedColumnarBuffer buffer) {
     final rows = <List<dynamic>>[];
 
-    for (int rowIdx = 0; rowIdx < buffer.rowCount; rowIdx++) {
+    for (var rowIdx = 0; rowIdx < buffer.rowCount; rowIdx++) {
       rows.add(<dynamic>[]);
     }
 
@@ -107,7 +107,7 @@ class ColumnarProtocolParser {
 
       final reader = _BufferReader(data);
 
-      for (int rowIdx = 0; rowIdx < buffer.rowCount; rowIdx++) {
+      for (var rowIdx = 0; rowIdx < buffer.rowCount; rowIdx++) {
         final isNull = reader.readUint8() != 0;
 
         if (isNull) {
@@ -117,16 +117,13 @@ class ColumnarProtocolParser {
             case 2:
               final value = reader.readInt32();
               rows[rowIdx].add(value);
-              break;
             case 3:
               final value = reader.readInt64();
               rows[rowIdx].add(value);
-              break;
             default:
               final len = reader.readUint32();
               final bytes = reader.readBytes(len);
               rows[rowIdx].add(String.fromCharCodes(bytes));
-              break;
           }
         }
       }
@@ -141,10 +138,10 @@ class ColumnarProtocolParser {
 }
 
 class _BufferReader {
-  final Uint8List _data;
-  int _offset = 0;
 
   _BufferReader(this._data);
+  final Uint8List _data;
+  int _offset = 0;
 
   int readUint8() {
     if (_offset >= _data.length) {

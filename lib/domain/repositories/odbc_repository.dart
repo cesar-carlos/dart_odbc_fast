@@ -1,10 +1,9 @@
+import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:result_dart/result_dart.dart';
-
-import '../entities/connection.dart';
-import '../entities/odbc_metrics.dart';
-import '../entities/isolation_level.dart';
-import '../entities/pool_state.dart';
-import '../entities/query_result.dart';
 
 abstract class IOdbcRepository {
   Future<Result<Unit>> initialize();

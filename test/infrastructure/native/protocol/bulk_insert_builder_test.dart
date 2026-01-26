@@ -1,7 +1,7 @@
 import 'dart:typed_data';
-import 'package:test/test.dart';
 
 import 'package:odbc_fast/infrastructure/native/protocol/bulk_insert_builder.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('BulkInsertBuilder', () {

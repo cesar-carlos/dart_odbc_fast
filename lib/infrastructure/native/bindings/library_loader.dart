@@ -16,7 +16,7 @@ String _libraryName() {
 
 String _relativeLibraryPath() {
   const sep = '/';
-  return 'native${sep}target${sep}release${sep}${_libraryName()}';
+  return 'native${sep}target${sep}release$sep${_libraryName()}';
 }
 
 DynamicLibrary loadOdbcLibrary() {

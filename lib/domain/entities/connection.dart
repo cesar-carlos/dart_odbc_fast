@@ -1,8 +1,4 @@
 class Connection {
-  final String id;
-  final String connectionString;
-  final DateTime createdAt;
-  final bool isActive;
 
   const Connection({
     required this.id,
@@ -10,6 +6,10 @@ class Connection {
     required this.createdAt,
     this.isActive = false,
   });
+  final String id;
+  final String connectionString;
+  final DateTime createdAt;
+  final bool isActive;
 
   Connection copyWith({
     String? id,

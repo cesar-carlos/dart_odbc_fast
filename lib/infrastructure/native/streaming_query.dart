@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 
 class StreamingQuery {
-  final StreamController<ParsedRowBuffer> _controller;
-  bool _isPaused = false;
 
-  StreamingQuery({int chunkSize = 128})
+  StreamingQuery()
       : _controller = StreamController<ParsedRowBuffer>(
           onPause: () {},
           onResume: () {},
@@ -13,6 +11,8 @@ class StreamingQuery {
     _controller.onPause = () => _isPaused = true;
     _controller.onResume = () => _isPaused = false;
   }
+  final StreamController<ParsedRowBuffer> _controller;
+  bool _isPaused = false;
 
   Stream<ParsedRowBuffer> get stream => _controller.stream;
 

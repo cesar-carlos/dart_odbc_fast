@@ -2,20 +2,20 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
+import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
-import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/catalog_query.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/connection_pool.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/prepared_statement.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart';
-import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 
 class NativeOdbcConnection implements OdbcConnectionBackend {
-  final OdbcNative _native;
-  bool _isInitialized = false;
 
   NativeOdbcConnection() : _native = OdbcNative();
+  final OdbcNative _native;
+  bool _isInitialized = false;
 
   bool initialize() {
     if (_isInitialized) return true;
@@ -56,8 +56,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return TransactionHandle(this, txnId);
   }
 
+  @override
   bool commitTransaction(int txnId) => _native.transactionCommit(txnId);
 
+  @override
   bool rollbackTransaction(int txnId) => _native.transactionRollback(txnId);
 
   int prepare(int connectionId, String sql, {int timeoutMs = 0}) =>
@@ -73,9 +75,11 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return PreparedStatement(this, stmtId);
   }
 
+  @override
   Uint8List? executePrepared(int stmtId, [List<ParamValue>? params]) =>
       _native.executeTyped(stmtId, params);
 
+  @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
 
   Uint8List? executeQueryParams(
@@ -88,6 +92,7 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   Uint8List? executeQueryMulti(int connectionId, String sql) =>
       _native.execQueryMulti(connectionId, sql);
 
+  @override
   Uint8List? catalogTables(
     int connectionId, {
     String catalog = '',
@@ -102,9 +107,11 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   CatalogQuery catalogQuery(int connectionId) =>
       CatalogQuery(this, connectionId);
 
+  @override
   Uint8List? catalogColumns(int connectionId, String table) =>
       _native.catalogColumns(connectionId, table);
 
+  @override
   Uint8List? catalogTypeInfo(int connectionId) =>
       _native.catalogTypeInfo(connectionId);
 
@@ -117,16 +124,21 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return ConnectionPool(this, poolId);
   }
 
+  @override
   int poolGetConnection(int poolId) => _native.poolGetConnection(poolId);
 
+  @override
   bool poolReleaseConnection(int connectionId) =>
       _native.poolReleaseConnection(connectionId);
 
+  @override
   bool poolHealthCheck(int poolId) => _native.poolHealthCheck(poolId);
 
+  @override
   ({int size, int idle})? poolGetState(int poolId) =>
       _native.poolGetState(poolId);
 
+  @override
   bool poolClose(int poolId) => _native.poolClose(poolId);
 
   int bulkInsertArray(

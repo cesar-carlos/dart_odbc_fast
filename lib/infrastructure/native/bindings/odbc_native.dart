@@ -4,25 +4,25 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-import 'ffi_buffer_helper.dart'
+import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show callWithBuffer, initialBufferSize, maxBufferSize;
-import 'library_loader.dart';
-import 'odbc_bindings.dart' as bindings;
+import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart' as bindings;
 
-import '../errors/structured_error.dart';
-import '../protocol/param_value.dart';
+import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 const int _errorBufferSize = 4096;
 const int _defaultStreamChunkSize = 1000;
 
 class OdbcNative {
-  late final bindings.OdbcBindings _bindings;
-  late final ffi.DynamicLibrary _library;
 
   OdbcNative() {
     _library = loadOdbcLibrary();
     _bindings = bindings.OdbcBindings(_library);
   }
+  late final bindings.OdbcBindings _bindings;
+  late final ffi.DynamicLibrary _library;
 
   bool init() {
     final result = _bindings.odbc_init();
@@ -73,7 +73,7 @@ class OdbcNative {
   }
 
   int streamStart(int connectionId, String sql,
-      {int chunkSize = _defaultStreamChunkSize}) {
+      {int chunkSize = _defaultStreamChunkSize,}) {
     final sqlPtr = sql.toNativeUtf8();
     try {
       final streamId = _bindings.odbc_stream_start(
@@ -88,7 +88,7 @@ class OdbcNative {
   }
 
   StreamFetchResult streamFetch(int streamId) {
-    int size = initialBufferSize;
+    var size = initialBufferSize;
     const maxSize = maxBufferSize;
     while (size <= maxSize) {
       final buf = malloc<ffi.Uint8>(size);
@@ -349,7 +349,7 @@ class OdbcNative {
 
   Uint8List? executeTyped(int stmtId, [List<ParamValue>? params]) {
     if (params == null || params.isEmpty) {
-      return execute(stmtId, null);
+      return execute(stmtId);
     }
     return execute(stmtId, serializeParams(params));
   }
@@ -461,7 +461,9 @@ class OdbcNative {
         malloc.free(rowsInserted);
       }
     } finally {
-      for (final p in utf8Ptrs) malloc.free(p);
+      for (final p in utf8Ptrs) {
+        malloc.free(p);
+      }
       malloc.free(colPtrs);
       malloc.free(tablePtr);
     }
@@ -528,11 +530,6 @@ extension on OdbcNative {
 }
 
 class OdbcMetrics {
-  final int queryCount;
-  final int errorCount;
-  final int uptimeSecs;
-  final int totalLatencyMillis;
-  final int avgLatencyMillis;
 
   const OdbcMetrics({
     required this.queryCount,
@@ -541,27 +538,32 @@ class OdbcMetrics {
     required this.totalLatencyMillis,
     required this.avgLatencyMillis,
   });
+  final int queryCount;
+  final int errorCount;
+  final int uptimeSecs;
+  final int totalLatencyMillis;
+  final int avgLatencyMillis;
 
   static OdbcMetrics fromBytes(Uint8List b) {
     final d = ByteData.sublistView(b);
     return OdbcMetrics(
       queryCount: d.getUint64(0, Endian.little),
       errorCount: d.getUint64(8, Endian.little),
-      uptimeSecs: d.getUint64(16, Endian.little).toInt(),
-      totalLatencyMillis: d.getUint64(24, Endian.little).toInt(),
-      avgLatencyMillis: d.getUint64(32, Endian.little).toInt(),
+      uptimeSecs: d.getUint64(16, Endian.little),
+      totalLatencyMillis: d.getUint64(24, Endian.little),
+      avgLatencyMillis: d.getUint64(32, Endian.little),
     );
   }
 }
 
 class StreamFetchResult {
-  final bool success;
-  final List<int>? data;
-  final bool hasMore;
 
   StreamFetchResult({
     required this.success,
     required this.data,
     required this.hasMore,
   });
+  final bool success;
+  final List<int>? data;
+  final bool hasMore;
 }
