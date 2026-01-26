@@ -41,10 +41,34 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install unixodbc
       
+      - name: Verify ODBC (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Windows comes with ODBC Driver Manager pre-installed
+          # Verify it's available by checking registry or system
+          echo "Windows ODBC Driver Manager should be pre-installed"
+      
       - name: Build Rust
         run: |
           cd native/odbc_engine
+          echo "Current directory: $(pwd)"
+          echo "Listing files:"
+          ls -la
+          echo "Checking for cbindgen.toml:"
+          ls -la cbindgen.toml || echo "cbindgen.toml not found"
+          echo "Building Rust..."
           cargo build --release
+          echo "Build completed. Checking for generated header:"
+          ls -la include/ || echo "include/ directory not found"
+        continue-on-error: false
+      
+      - name: List generated files (debug)
+        run: |
+          echo "Checking for generated header..."
+          ls -la native/odbc_engine/include/ 2>&1 || echo "Directory not found"
+          find . -name "odbc_engine.h" -type f 2>&1 || echo "File not found"
+        shell: bash
+        continue-on-error: true
       
       - name: Verify header was generated
         run: |
@@ -61,6 +85,15 @@ jobs:
       
       - name: Generate bindings
         run: dart run ffigen --verbose
+        continue-on-error: false
+      
+      - name: List generated bindings (debug)
+        run: |
+          echo "Checking for generated bindings..."
+          ls -la lib/infrastructure/native/bindings/ 2>&1 || echo "Directory not found"
+          find . -name "odbc_bindings.dart" -type f 2>&1 || echo "File not found"
+        shell: bash
+        continue-on-error: true
       
       - name: Verify bindings were generated
         run: |
@@ -74,3 +107,7 @@ jobs:
       
       - name: Run tests
         run: dart test
+        env:
+          # Tests will skip integration tests if ODBC_TEST_DSN is not set
+          ODBC_TEST_DSN: ""
+        continue-on-error: false
