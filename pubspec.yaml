@@ -46,8 +46,3 @@ topics:
   - db2
   - informix
 
-native_assets:
-  version: ^1.0.0
-  blobs:
-    - path: lib/src/blobs/
-

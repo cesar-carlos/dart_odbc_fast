@@ -22,7 +22,7 @@ String _libraryName() {
 /// Loads the ODBC engine library from the default location.
 ///
 /// Uses a priority-based loading strategy:
-/// 1. Native Assets (production) - via package:odbc_fast
+/// 1. Native Assets (automatic download from GitHub Releases)
 /// 2. Development local - native/target/release/ (workspace) or native/odbc_engine/target/release/ (local)
 /// 3. System library paths - PATH/LD_LIBRARY_PATH
 ///
@@ -30,7 +30,8 @@ String _libraryName() {
 DynamicLibrary loadOdbcLibrary() {
   final name = _libraryName();
 
-  // 1. Native Assets (produção) - via package:odbc_fast
+  // 1. Native Assets (production) - baixado automaticamente da GitHub Release
+  // O hook/build.dart baixa e registra o asset, que é carregado aqui
   try {
     return DynamicLibrary.open('package:odbc_fast/$name');
   } on Object catch (_) {
@@ -63,10 +64,11 @@ DynamicLibrary loadOdbcLibrary() {
     throw StateError(
       'ODBC engine library not found.\n\n'
       'Options:\n'
-      '1. For development: Build Rust library first\n'
+      '1. Automatic download: Run "dart pub get" again\n'
+      '   (Binary will be downloaded from GitHub Releases)\n\n'
+      '2. For development: Build Rust library first\n'
       '   cd native/odbc_engine && cargo build --release\n\n'
-      '2. For production: Binaries should be bundled via Native Assets\n\n'
-      '3. Manual install: Download from GitHub Releases\n'
+      '3. Manual download: Get binary from GitHub Releases\n'
       '   https://github.com/cesar-carlos/dart_odbc_fast/releases\n\n'
       'Error: $e',
     );
@@ -84,13 +86,12 @@ DynamicLibrary loadOdbcLibraryFromPath(String path) {
 
 /// Attempts to load the ODBC engine library from application assets.
 ///
-/// Currently not implemented and always returns null.
+/// This is now handled automatically by Native Assets via the build hook.
+/// The hook downloads binaries from GitHub Releases to ~/.cache/odbc_fast/
 ///
 /// Returns the loaded [DynamicLibrary] if found, null otherwise.
 DynamicLibrary? loadOdbcLibraryFromAssets() {
-  try {
-    return null;
-  } on Exception catch (_) {
-    return null;
-  }
+  // Native Assets handles this automatically via hook/build.dart
+  // This method is kept for API compatibility but is no longer used
+  return null;
 }

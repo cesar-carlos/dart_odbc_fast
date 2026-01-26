@@ -7,7 +7,8 @@ import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show callWithBuffer, initialBufferSize, maxBufferSize;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart' as bindings;
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
+    as bindings;
 
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -111,8 +112,11 @@ class OdbcNative {
   /// The [chunkSize] specifies how many rows to fetch per chunk.
   ///
   /// Returns a stream ID on success, 0 on failure.
-  int streamStart(int connectionId, String sql,
-      {int chunkSize = _defaultStreamChunkSize,}) {
+  int streamStart(
+    int connectionId,
+    String sql, {
+    int chunkSize = _defaultStreamChunkSize,
+  }) {
     final sqlPtr = sql.toNativeUtf8();
     try {
       final streamId = _bindings.odbc_stream_start(
@@ -736,12 +740,16 @@ class OdbcMetrics {
     required this.totalLatencyMillis,
     required this.avgLatencyMillis,
   });
+
   /// Total number of queries executed.
   final int queryCount;
+
   /// Total number of errors encountered.
   final int errorCount;
+
   /// Uptime in seconds.
   final int uptimeSecs;
+
   /// Total query latency in milliseconds.
   final int totalLatencyMillis;
 

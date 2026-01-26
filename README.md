@@ -66,9 +66,34 @@ dependencies:
 - **Linux**: `sudo apt-get install unixodbc`
 - **macOS**: `brew install unixodbc`
 
-### 3. That's it!
+### 3. Run pub get
 
-Native binaries are automatically downloaded and bundled via Native Assets.
+```bash
+dart pub get
+```
+
+The native library will be **automatically downloaded** from GitHub Releases
+on first run and cached locally (~/.cache/odbc_fast/).
+
+## How It Works
+
+### Native Assets with Automatic Download
+
+This package uses Dart Native Assets to automatically manage the native
+Rust library:
+
+1. **Automatic Download**: On first `dart pub get`, the appropriate binary
+   for your platform is downloaded from GitHub Releases
+2. **Local Cache**: Binaries are cached in `~/.cache/odbc_fast/`
+3. **Development**: When building from source, the local build is used
+4. **Multi-Platform**: Supports Windows (x64), Linux (x64), and macOS (x64 + ARM)
+
+### Supported Platforms
+
+- ✅ Windows x86_64
+- ✅ Linux x86_64
+- ✅ macOS x86_64 (Intel)
+- ✅ macOS aarch64 (Apple Silicon)
 
 ## Building
 
