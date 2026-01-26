@@ -151,9 +151,8 @@ Future<Uri?> _downloadFromGitHub(
       return null;
     }
 
-    final targetTriple = _getTargetTriple(os, arch);
     final url = 'https://github.com/cesar-carlos/dart_odbc_fast'
-        '/releases/download/v$version/$targetTriple/$libName';
+        '/releases/download/v$version/$libName';
 
     print('[odbc_fast] Downloading native library from $url');
 
