@@ -30,3 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Type-safe parameter values (ParamValue hierarchy)
 - Result-based error handling using result_dart package
 - Support for Windows, Linux, and macOS platforms
+- **Native Assets**: Automatic binary distribution (no manual compilation required)
+- Multi-platform binary builds via GitHub Actions
+- Automatic library loading with intelligent fallback strategy
