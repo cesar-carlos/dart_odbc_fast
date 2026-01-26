@@ -22,27 +22,46 @@ jobs:
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
       
-      - name: Install ODBC
+      - name: Install ODBC (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            sudo apt-get update
-            sudo apt-get install -y unixodbc unixodbc-dev
-          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            brew install unixodbc
-          fi
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev
+      
+      - name: Install ODBC (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install unixodbc
       
       - name: Build Rust
         run: |
           cd native/odbc_engine
           cargo build --release
       
+      - name: Verify header was generated
+        run: |
+          if [ -f "native/odbc_engine/include/odbc_engine.h" ]; then
+            echo "✓ Header file generated successfully"
+          else
+            echo "✗ Header file not found"
+            exit 1
+          fi
+        shell: bash
+      
       - name: Get Dart dependencies
         run: dart pub get
       
       - name: Generate bindings
-        run: dart run ffigen
+        run: dart run ffigen --verbose
+      
+      - name: Verify bindings were generated
+        run: |
+          if [ -f "lib/infrastructure/native/bindings/odbc_bindings.dart" ]; then
+            echo "✓ Bindings generated successfully"
+          else
+            echo "✗ Bindings not found"
+            exit 1
+          fi
+        shell: bash
       
       - name: Run tests
         run: dart test
-        env:
-          ODBC_TEST_DSN: ${{ secrets.ODBC_TEST_DSN }}

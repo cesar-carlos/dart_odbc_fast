@@ -54,11 +54,31 @@ jobs:
           cd native/odbc_engine
           cargo build --release
       
+      - name: Verify header was generated
+        run: |
+          if [ -f "native/odbc_engine/include/odbc_engine.h" ]; then
+            echo "✓ Header file generated successfully"
+          else
+            echo "✗ Header file not found"
+            exit 1
+          fi
+        shell: bash
+      
       - name: Get Dart dependencies
         run: dart pub get
       
       - name: Generate bindings
-        run: dart run ffigen
+        run: dart run ffigen --verbose
+      
+      - name: Verify bindings were generated
+        run: |
+          if [ -f "lib/infrastructure/native/bindings/odbc_bindings.dart" ]; then
+            echo "✓ Bindings generated successfully"
+          else
+            echo "✗ Bindings not found"
+            exit 1
+          fi
+        shell: bash
       
       - name: Run tests
         run: dart test
