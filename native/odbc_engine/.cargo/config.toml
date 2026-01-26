@@ -1,0 +1,11 @@
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-fsanitize=address",
+    "-C", "link-arg=-fsanitize=undefined",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fsanitize=address",
+    "-C", "link-arg=-fsanitize=undefined",
+]

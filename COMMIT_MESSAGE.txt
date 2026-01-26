@@ -1,0 +1,172 @@
+Initial commit: Enterprise ODBC Data Platform
+
+Enterprise-grade ODBC data platform built with Rust (native engine) and Dart (clean, testable API).
+
+## Architecture
+
+- Clean Architecture with Domain/Application/Infrastructure layers
+- Rust native engine for direct ODBC driver communication via FFI
+- Dart FFI bindings with type-safe API
+- No third-party ODBC packages - in-repo implementation
+
+## Rust Engine (native/odbc_engine)
+
+### Core Features
+- Direct ODBC API access via odbc_api crate
+- Binary protocol for efficient data transfer (reduces allocations)
+- Streaming queries with chunked results
+- Connection pooling via r2d2
+- Transaction support with isolation levels and SQL savepoints
+- Thread-safe error handling with connection-specific error isolation
+- Structured error information (SQLSTATE, native codes, messages)
+
+### Advanced Features
+- Columnar data encoding/decoding
+- Protocol compression
+- Buffer arenas for memory management
+- Disk spill for large result sets
+- Metadata cache (TTL + LRU)
+- Prepared statement cache (LRU)
+- Driver-aware plugins (SQL Server, Oracle, PostgreSQL, MySQL, Sybase)
+- Observability (metrics, logging, tracing)
+- Security layer (secure buffers, secret manager, audit logger)
+- Versioning (ABI, API, Protocol versions)
+
+## Dart API (lib/)
+
+### Domain Layer
+- Entities: Connection, QueryResult, OdbcMetrics, PoolState, IsolationLevel
+- Error hierarchy: OdbcError (ConnectionError, QueryError, ValidationError)
+- Repository interfaces with Result<T> pattern
+
+### Application Layer
+- OdbcService: High-level API for all operations
+- Service locator for dependency injection
+
+### Infrastructure Layer
+- Native ODBC connection wrapper
+- FFI bindings with automatic library loading
+- Binary protocol parser
+- Bulk insert payload builder
+- Parameter value serialization
+- Streaming query implementation
+- Catalog query wrapper
+- Connection pool wrapper
+- Prepared statement wrapper
+- Transaction handle wrapper
+
+### Core Utilities
+- Structured logging
+- Error conversion utilities
+
+## Features
+
+### Connection Management
+- Initialize ODBC environment
+- Connect/disconnect with connection strings
+- Connection-specific error isolation
+- Thread-safe concurrent access
+
+### Query Execution
+- Execute queries (single result set)
+- Execute queries with multiple result sets
+- Streaming queries (chunked results)
+- Parameterized queries (positional parameters)
+- Prepared statements with typed parameters
+- Query timeout support
+
+### Transactions
+- Begin transaction with isolation levels
+- Commit transaction
+- Rollback transaction
+- SQL savepoints support
+
+### Metadata & Catalog
+- Catalog tables
+- Catalog columns
+- Catalog type information
+
+### Connection Pooling
+- Create connection pools
+- Get connection from pool
+- Release connection to pool
+- Pool health check
+- Pool state monitoring
+- Close pool
+
+### Bulk Operations
+- Bulk insert payload builder (binary protocol)
+- Support for multiple column types (i32, i64, text, binary, timestamp)
+- Null bitmap handling
+- Bulk insert execution
+
+### Observability
+- Metrics collection (query count, errors, latency, uptime)
+- Structured error information (SQLSTATE, native codes)
+- Intelligent error categorization (Transient, Fatal, Validation, ConnectionLost)
+- Logging integration
+
+### Error Handling
+- Structured errors with SQLSTATE and native codes
+- UTF-8 error message decoding
+- Error type classification for retry logic
+- Connection-specific error isolation
+
+## Testing
+
+- Unit tests for protocol parsers
+- Integration tests for SQL Server
+- E2E tests for Rust engine
+- Stress tests for streaming and pooling
+- Validation tests
+
+## Documentation
+
+- Comprehensive README with examples
+- Build documentation (BUILD.md)
+- Milestone documentation (M1, M2, M3)
+- API governance documentation
+- Rust engine architecture documentation
+- FFI API documentation
+
+## Build System
+
+- Rust build scripts with cbindgen for C header generation
+- Dart build hooks for native assets
+- Cross-platform build scripts (PowerShell/Bash)
+- Validation scripts
+- Test scripts
+
+## Examples
+
+- Complete example application demonstrating all features
+- Examples for: basic queries, streaming, transactions, prepared statements,
+  catalog queries, connection pooling, bulk inserts, metrics
+
+## Project Status
+
+✅ All 16 phases implemented
+✅ Rust Engine: 0 errors, build OK
+✅ Dart API: 0 errors, clean analysis
+✅ FFI Artifacts: DLL/Shared library, Header, Bindings OK
+✅ M1 Complete - Functional Binding
+✅ M2 Complete - Production Engine
+✅ M3 Complete - Enterprise Platform
+
+## Supported Databases
+
+- SQL Server
+- Oracle
+- PostgreSQL
+- MySQL
+- Sybase Anywhere
+- SQLite
+- MariaDB
+- DB2
+- Informix
+
+## Requirements
+
+- Rust stable
+- Dart SDK >=3.0.0
+- ODBC Driver Manager (unixODBC on Linux/macOS)

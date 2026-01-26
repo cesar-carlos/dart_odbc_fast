@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable]
+        dart: [stable]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,x86_64-apple-darwin,aarch64-apple-darwin
+      
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ matrix.dart }}
+      
+      - name: Install ODBC (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev
+      
+      - name: Install ODBC (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install unixodbc
+      
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/odbc_engine/target
+          key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build Rust
+        run: |
+          cd native/odbc_engine
+          cargo build --release
+      
+      - name: Get Dart dependencies
+        run: dart pub get
+      
+      - name: Generate bindings
+        run: dart run ffigen
+      
+      - name: Run tests
+        run: dart test

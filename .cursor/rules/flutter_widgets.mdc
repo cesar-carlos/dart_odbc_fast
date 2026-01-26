@@ -1,0 +1,932 @@
+---
+description: Flutter Widgets - Modern best practices (2026) with Material 3
+globs: ["lib/presentation/**/*.dart", "lib/shared/**/*.dart", "lib/page/**/*.dart"]
+alwaysApply: true
+---
+
+# Flutter Widgets - Modern Best Practices
+
+**Based on**: [Flutter AI Rules](https://docs.flutter.dev/ai/rules) and Material 3 Guidelines
+
+## Stateless vs Stateful
+
+### StatelessWidget
+- ✅ Use `StatelessWidget` when widget doesn't need to manage state
+- ✅ Use `const` constructor whenever possible for better performance
+- ✅ Prefer composition over inheritance
+
+```dart
+// ✅ Good: StatelessWidget with const
+class UserCard extends StatelessWidget {
+  final User user;
+
+  const UserCard({
+    super.key,
+    required this.user,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        title: Text(user.name),
+        subtitle: Text(user.email),
+      ),
+    );
+  }
+}
+```
+
+### StatefulWidget
+- ✅ Use `StatefulWidget` only when necessary to manage state
+- ✅ Keep state minimal (only what's needed)
+- ✅ Separate business logic from UI state
+- ✅ Dispose resources properly (FocusNode, controllers, streams)
+
+```dart
+// ✅ Good: StatefulWidget with minimal state
+class CounterWidget extends StatefulWidget {
+  const CounterWidget({super.key});
+
+  @override
+  State<CounterWidget> createState() => _CounterWidgetState();
+}
+
+class _CounterWidgetState extends State<CounterWidget> {
+  int _counter = 0;
+  final FocusNode _focusNode = FocusNode();
+
+  void _increment() {
+    setState(() {
+      _counter++;
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text('Counter: $_counter'),
+        ElevatedButton(
+          onPressed: _increment,
+          child: const Text('Increment'),
+        ),
+      ],
+    );
+  }
+}
+```
+
+## Widget Structure & UI
+
+### Components
+
+- ✅ **Break down large widgets into smaller, focused components**
+- ✅ **Create small, private widget classes** instead of methods like `Widget _build...`
+- ✅ **Avoid deeply nested widget trees** - flatten structure where possible
+- ✅ **Use const constructors wherever possible** to reduce rebuilds
+- ✅ **Implement proper padding and layout considerations**
+
+```dart
+// ✅ Good: small, private widget classes
+class UserListPage extends StatelessWidget {
+  final List<User> users;
+
+  const UserListPage({super.key, required this.users});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Users')),
+      body: ListView.builder(
+        itemCount: users.length,
+        itemBuilder: (context, index) {
+          return _UserListItem(user: users[index]);
+        },
+      ),
+    );
+  }
+}
+
+class _UserListItem extends StatelessWidget {
+  final User user;
+
+  const _UserListItem({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Card(
+        child: ListTile(
+          leading: _UserAvatar(user: user),
+          title: Text(user.name),
+          subtitle: Text(user.email),
+        ),
+      ),
+    );
+  }
+}
+
+class _UserAvatar extends StatelessWidget {
+  final User user;
+
+  const _UserAvatar({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      child: Text(user.name[0]),
+    );
+  }
+}
+
+// ❌ Avoid: helper methods that return widgets
+@override
+Widget build(BuildContext context) {
+  return ListView.builder(
+    itemCount: users.length,
+    itemBuilder: (context, index) {
+      return _buildUserCard(users[index]); // Helper method - avoid this
+    },
+  );
+}
+
+Widget _buildUserCard(User user) {
+  return Card(
+    child: ListTile(
+      title: Text(user.name),
+    ),
+  );
+}
+```
+
+### Flatten Widget Trees
+
+- ✅ **Extract widgets** to reduce nesting depth
+- ✅ **Use const variables** for repeated widgets
+- ✅ **Use local widget functions** (sparingly) for one-off widgets
+- ✅ Keep widget trees readable and maintainable
+
+```dart
+// ✅ Good: flattened structure with extracted widgets
+class ProfilePage extends StatelessWidget {
+  final User user;
+
+  const ProfilePage({super.key, required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: _buildAppBar(),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            _ProfileHeader(user: user),
+            const SizedBox(height: 16),
+            _ProfileStats(user: user),
+            const SizedBox(height: 16),
+            _ProfileActions(user: user),
+          ],
+        ),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: Text(user.name),
+      actions: [
+        IconButton(icon: const Icon(Icons.settings), onPressed: () {}),
+      ],
+    );
+  }
+}
+
+// ❌ Avoid: deeply nested structure
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    appBar: AppBar(
+      title: Text(user.name),
+    ),
+    body: SingleChildScrollView(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  child: Text(user.name[0]),
+                ),
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(user.name),
+                    Text(user.email),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          // ... more deeply nested widgets
+        ],
+      ),
+    ),
+  );
+}
+```
+
+### Proper Padding and Layout
+
+- ✅ **Use EdgeInsets consistently** for padding and margins
+- ✅ **Prefer symmetric padding** (horizontal, vertical) for consistency
+- ✅ **Use SizedBox** for explicit spacing between widgets
+- ✅ **Consider responsive design** with LayoutBuilder
+
+```dart
+// ✅ Good: consistent padding and spacing
+class UserInfoCard extends StatelessWidget {
+  final User user;
+
+  const UserInfoCard({super.key, required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(user.name, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(user.email),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {},
+                    child: const Text('Call'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {},
+                    child: const Text('Email'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+## Performance
+
+### Const Widgets
+- ✅ Use `const` constructor for immutable widgets
+- ✅ Use `const` for child widgets when possible
+- ✅ Reduces unnecessary rebuilds
+
+```dart
+// ✅ Good: const widgets
+class MyWidget extends StatelessWidget {
+  const MyWidget({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        Text('Hello'),
+        Text('World'),
+      ],
+    );
+  }
+}
+
+// ❌ Avoid: missing const when possible
+class MyWidget extends StatelessWidget {
+  MyWidget({super.key}); // Should be const
+
+  @override
+  Widget build(BuildContext context) {
+    return Column( // Should be const
+      children: [
+        Text('Hello'), // Should be const
+        Text('World'), // Should be const
+      ],
+    );
+  }
+}
+```
+
+### ListView Performance
+- ✅ Use `ListView.builder` or `SliverList` for long lists
+- ✅ Creates lazy-loaded lists for performance
+- ❌ Avoid using `ListView()` with children for long lists
+
+```dart
+// ✅ Good: ListView.builder for long lists
+ListView.builder(
+  itemCount: users.length,
+  itemBuilder: (context, index) {
+    return UserCard(user: users[index]);
+  },
+)
+
+// ✅ Good: SliverList for CustomScrollView
+CustomScrollView(
+  slivers: [
+    SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          return UserCard(user: users[index]);
+        },
+        childCount: users.length,
+      ),
+    ),
+  ],
+)
+
+// ❌ Avoid: ListView with children for many items
+ListView(
+  children: users.map((user) => UserCard(user: user)).toList(),
+)
+```
+
+### Expensive Operations
+- ✅ Use `compute()` to run expensive calculations in a separate isolate
+- ✅ Avoid performing expensive operations in `build()` methods
+- ✅ Use `FutureBuilder` for async operations
+
+```dart
+// ✅ Good: use compute for expensive operations
+class DataProcessor extends StatelessWidget {
+  final List<int> data;
+
+  const DataProcessor({super.key, required this.data});
+
+  Future<List<int>> _processData() async {
+    return compute(_heavyComputation, data);
+  }
+
+  static List<int> _heavyComputation(List<int> input) {
+    // Expensive computation here
+    return input.map((n) => n * n).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<int>>(
+      future: _processData(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const CircularProgressIndicator();
+        }
+        if (snapshot.hasError) {
+          return Text('Error: ${snapshot.error}');
+        }
+        return ListView.builder(
+          itemCount: snapshot.data?.length ?? 0,
+          itemBuilder: (context, index) => Text('${snapshot.data![index]}'),
+        );
+      },
+    );
+  }
+}
+
+// ❌ Avoid: expensive computation in build
+@override
+Widget build(BuildContext context) {
+  final processed = data.map((n) => n * n).toList(); // Expensive!
+  return ListView.builder(
+    itemCount: processed.length,
+    itemBuilder: (context, index) => Text('${processed[index]}'),
+  );
+}
+```
+
+### RepaintBoundary
+- ✅ Use `RepaintBoundary` for complex widgets that repaint frequently
+- ✅ Isolates repaints to specific widget subtrees
+
+```dart
+// ✅ Good: RepaintBoundary for frequently updating widget
+RepaintBoundary(
+  child: AnimatedBuilder(
+    animation: _controller,
+    builder: (context, child) {
+      return CustomPaint(
+        painter: MyComplexPainter(_controller.value),
+      );
+    },
+  ),
+)
+```
+
+## Widget Composition
+
+### Private Widget Classes
+- ✅ Use small, private `Widget` classes instead of private helper methods
+- ✅ Break down large `build()` methods into smaller, reusable private Widget classes
+- ✅ Improves readability and performance
+
+```dart
+// ✅ Good: private widget classes
+class UserListPage extends StatelessWidget {
+  final List<User> users;
+
+  const UserListPage({super.key, required this.users});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Users')),
+      body: ListView.builder(
+        itemCount: users.length,
+        itemBuilder: (context, index) {
+          return _UserListItem(user: users[index]);
+        },
+      ),
+    );
+  }
+}
+
+class _UserListItem extends StatelessWidget {
+  final User user;
+
+  const _UserListItem({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: _UserAvatar(user: user),
+      title: Text(user.name),
+      subtitle: Text(user.email),
+    );
+  }
+}
+
+class _UserAvatar extends StatelessWidget {
+  final User user;
+
+  const _UserAvatar({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      child: Text(user.name[0]),
+    );
+  }
+}
+
+// ❌ Avoid: helper methods that return widgets
+@override
+Widget build(BuildContext context) {
+  return ListView.builder(
+    itemCount: users.length,
+    itemBuilder: (context, index) {
+      return _buildUserCard(users[index]); // Helper method
+    },
+  );
+}
+
+Widget _buildUserCard(User user) {
+  return Card(
+    child: ListTile(
+      title: Text(user.name),
+    ),
+  );
+}
+```
+
+### Tear-offs for Widgets
+- ✅ **NEVER return Widget from a function** - use tear-off instead
+- ✅ Use tear-off to pass widget constructors directly
+- ✅ Improves performance and code clarity
+
+```dart
+// ❌ Bad: returning Widget from function
+Widget buildUserCard(User user) {
+  return UserCard(user: user);
+}
+
+// Usage
+itemBuilder: (context, index) => buildUserCard(users[index])
+
+// ✅ Good: use tear-off
+itemBuilder: (context, index) => UserCard(user: users[index])
+
+// Or with .new
+itemBuilder: UserCard.new
+
+// ✅ Good: tear-off for named constructors
+builder: UserCard.fromJson
+
+// ✅ Good: tear-off in callbacks
+onTap: () => Navigator.push(
+  context,
+  MaterialPageRoute(builder: UserDetailPage.new),
+)
+```
+
+## Layout Best Practices
+
+### Rows and Columns
+- ✅ Use `Expanded` to make a child fill remaining space along main axis
+- ✅ Use `Flexible` when you want a widget to shrink to fit, but not necessarily grow
+- ❌ Don't combine `Flexible` and `Expanded` in the same `Row` or `Column`
+- ✅ Use `Wrap` when widgets would overflow a `Row` or `Column`
+
+```dart
+// ✅ Good: Expanded and Flexible
+Row(
+  children: [
+    const Expanded(
+      flex: 2,
+      child: Text('Title'),
+    ),
+    Flexible(
+      child: ElevatedButton(
+        onPressed: () {},
+        child: const Text('Action'),
+      ),
+    ),
+  ],
+)
+
+// ✅ Good: Wrap for overflow
+Wrap(
+  spacing: 8,
+  children: tags.map((tag) => Chip(label: Text(tag))).toList(),
+)
+```
+
+### SingleChildScrollView
+- ✅ Use when content is intrinsically larger than viewport, but is a fixed size
+
+```dart
+// ✅ Good: SingleChildScrollView for fixed content
+SingleChildScrollView(
+  child: Column(
+    children: [
+      Header(),
+      Content(),
+      Footer(),
+    ],
+  ),
+)
+```
+
+### LayoutBuilder
+- ✅ Use for complex, responsive layouts
+- ✅ Make decisions based on available space
+
+```dart
+// ✅ Good: LayoutBuilder for responsive design
+LayoutBuilder(
+  builder: (context, constraints) {
+    if (constraints.maxWidth > 600) {
+      return const DesktopLayout();
+    }
+    return const MobileLayout();
+  },
+)
+```
+
+### FittedBox
+- ✅ Use to scale or fit a single child widget within its parent
+
+```dart
+// ✅ Good: FittedBox to fit content
+FittedBox(
+  fit: BoxFit.contain,
+  child: Text('Very long text that needs to fit'),
+)
+```
+
+### Stack and Positioning
+- ✅ Use `Positioned` to precisely place a child within a `Stack`
+- ✅ Use `Align` to position a child using alignments like `Alignment.center`
+
+```dart
+// ✅ Good: Stack with Positioned
+Stack(
+  children: [
+    Image.asset('background.png'),
+    const Positioned(
+      top: 10,
+      left: 10,
+      child: Text('Overlay Text'),
+    ),
+    const Align(
+      alignment: Alignment.bottomCenter,
+      child: Text('Bottom Text'),
+    ),
+  ],
+)
+```
+
+### OverlayPortal
+- ✅ Use to show UI elements (like custom dropdowns or tooltips) "on top" of everything
+- ✅ Manages the `OverlayEntry` for you
+
+```dart
+class MyDropdown extends StatefulWidget {
+  const MyDropdown({super.key});
+
+  @override
+  State createState() => _MyDropdownState();
+}
+
+class _MyDropdownState extends State<MyDropdown> {
+  final _controller = OverlayPortalController();
+
+  @override
+  Widget build(BuildContext context) {
+    return OverlayPortal(
+      controller: _controller,
+      overlayChildBuilder: (BuildContext context) {
+        return const Positioned(
+          top: 50,
+          left: 10,
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text('I am an overlay!'),
+            ),
+          ),
+        );
+      },
+      child: ElevatedButton(
+        onPressed: _controller.toggle,
+        child: const Text('Toggle Overlay'),
+      ),
+    );
+  }
+}
+```
+
+## Theming - Material 3
+
+### ColorScheme.fromSeed
+- ✅ Use `ColorScheme.fromSeed()` to generate complete color palette
+- ✅ Define both light and dark themes
+- ✅ Centralize component styles within `ThemeData`
+
+```dart
+// ✅ Good: Material 3 theming
+MaterialApp(
+  theme: ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: Colors.deepPurple,
+      brightness: Brightness.light,
+    ),
+    textTheme: const TextTheme(
+      displayLarge: TextStyle(fontSize: 57.0, fontWeight: FontWeight.bold),
+      bodyMedium: TextStyle(fontSize: 14.0, height: 1.4),
+    ),
+    useMaterial3: true,
+  ),
+  darkTheme: ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: Colors.deepPurple,
+      brightness: Brightness.dark,
+    ),
+    useMaterial3: true,
+  ),
+  themeMode: ThemeMode.system,
+  home: const HomePage(),
+)
+```
+
+### ThemeExtension for Custom Tokens
+- ✅ Use `ThemeExtension` for custom styles not in standard `ThemeData`
+- ✅ Implement `copyWith` and `lerp` methods
+- ✅ Register in `ThemeData.extensions`
+
+```dart
+// ✅ Good: ThemeExtension for custom colors
+@immutable
+class MyColors extends ThemeExtension<MyColors> {
+  const MyColors({
+    required this.success,
+    required this.danger,
+  });
+
+  final Color? success;
+  final Color? danger;
+
+  @override
+  ThemeExtension<MyColors> copyWith({Color? success, Color? danger}) {
+    return MyColors(
+      success: success ?? this.success,
+      danger: danger ?? this.danger,
+    );
+  }
+
+  @override
+  ThemeExtension<MyColors> lerp(
+    ThemeExtension<MyColors>? other,
+    double t,
+  ) {
+    if (other is! MyColors) {
+      return this;
+    }
+    return MyColors(
+      success: Color.lerp(success, other.success, t),
+      danger: Color.lerp(danger, other.danger, t),
+    );
+  }
+}
+
+// Register in ThemeData
+MaterialApp(
+  theme: ThemeData(
+    extensions: const [
+      MyColors(success: Colors.green, danger: Colors.red),
+    ],
+  ),
+)
+
+// Use in widget
+Container(
+  color: Theme.of(context).extension<MyColors>()!.success,
+)
+```
+
+### WidgetStateProperty
+- ✅ Use `WidgetStateProperty.resolveWith` for state-dependent styling
+- ✅ Use `WidgetStateProperty.all` for same value across all states
+
+```dart
+// ✅ Good: WidgetStateProperty for button styling
+final ButtonStyle myButtonStyle = ButtonStyle(
+  backgroundColor: WidgetStateProperty.resolveWith(
+    (Set<WidgetState> states) {
+      if (states.contains(WidgetState.pressed)) {
+        return Colors.green; // Color when pressed
+      }
+      return Colors.red; // Default color
+    },
+  ),
+);
+
+// ✅ Good: WidgetStateProperty.all for consistent value
+ElevatedButton(
+  style: ElevatedButton.styleFrom(
+    backgroundColor: WidgetStateProperty.all(Colors.blue),
+  ),
+  onPressed: () {},
+  child: const Text('Button'),
+)
+```
+
+### Text Styles
+- ✅ Use `Theme.of(context).textTheme` for text styles
+- ✅ Define text styles in theme
+- ✅ Avoid hardcoded text styles
+
+```dart
+// ✅ Good: use textTheme
+Text(
+  'Hello',
+  style: Theme.of(context).textTheme.displayLarge,
+)
+
+// ✅ Good: custom text styles in theme
+ThemeData(
+  textTheme: const TextTheme(
+    displayLarge: TextStyle(fontSize: 57.0, fontWeight: FontWeight.bold),
+    titleLarge: TextStyle(fontSize: 22.0, fontWeight: FontWeight.bold),
+    bodyMedium: TextStyle(fontSize: 14.0, height: 1.4),
+  ),
+)
+```
+
+## Typography & Accessibility
+
+- ✅ For design-level guidance (palette, typography scale, contrast), follow `ui_ux_design.mdc`
+- ✅ In widgets, ensure:
+  - semantic labels for icon-only actions
+  - scalable text (avoid hardcoded sizes when possible)
+  - clear focus/keyboard navigation for desktop flows
+
+## Spacing
+
+### Spacing Constants
+- ✅ Use `SizedBox` for explicit spacing
+- ✅ Avoid magic numbers (create constants)
+
+```dart
+// ✅ Good: spacing constants
+class AppSpacing {
+  static const double small = 8.0;
+  static const double medium = 16.0;
+  static const double large = 24.0;
+}
+
+// Usage
+Column(
+  children: [
+    const Text('Title'),
+    const SizedBox(height: AppSpacing.medium),
+    const Text('Content'),
+  ],
+)
+```
+
+## General Best Practices
+
+### Keep Widgets Small
+- ✅ Keep widgets under 150 lines
+- ✅ Extract widgets when `build()` gets large
+- ✅ Single responsibility per widget
+
+### Avoid Rebuilds
+- ✅ Use `const` widgets when possible
+- ✅ Extract widgets that change frequently
+- ✅ Use `RepaintBoundary` for complex widgets
+
+### Dispose Resources
+- ✅ Always dispose FocusNode, TextEditingController, StreamController, etc.
+
+```dart
+@override
+void dispose() {
+  _focusNode.dispose();
+  _controller.dispose();
+  _streamController.close();
+  super.dispose();
+}
+```
+
+### Keys
+- ✅ Use `Key` only when necessary (lists, animations)
+- ✅ Use `ValueKey` for unique values
+- ✅ Use `ObjectKey` for complex objects
+
+```dart
+// ✅ Good: using keys for lists
+ListView.builder(
+  itemCount: users.length,
+  itemBuilder: (context, index) {
+    return UserCard(
+      key: ValueKey(users[index].id),
+      user: users[index],
+    );
+  },
+)
+```
+
+## Network Images
+- ✅ Always include `loadingBuilder` and `errorBuilder`
+
+```dart
+// ✅ Good: network image with handlers
+Image.network(
+  'https://example.com/image.png',
+  loadingBuilder: (context, child, progress) {
+    if (progress == null) return child;
+    return const Center(child: CircularProgressIndicator());
+  },
+  errorBuilder: (context, error, stackTrace) {
+    return const Icon(Icons.error);
+  },
+)
+```
+
+## Text Fields
+
+- ✅ Set `textCapitalization`, `keyboardType`, and `textInputAction` appropriately
+- ✅ Prefer `onSubmitted` + focus traversal for keyboard-first desktop flows
+- ✅ Keep validation + error presentation near the field (avoid “hidden” errors)
+
+```dart
+TextField(
+  textCapitalization: TextCapitalization.none,
+  keyboardType: TextInputType.emailAddress,
+  textInputAction: TextInputAction.next,
+  onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+)
+```
+
+## References
+- [Flutter AI Rules](https://docs.flutter.dev/ai/ai-rules)
+- [Effective Dart: Style Guide](https://dart.dev/effective-dart/style)
+- [Material 3 Guidelines](https://m3.material.io/)

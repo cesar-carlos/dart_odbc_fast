@@ -1,0 +1,62 @@
+# Dart
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Rust
+target/
+target_test/
+Cargo.lock
+**/*.rs.bk
+
+# Generated files
+native/odbc_engine/include/odbc_engine.h
+lib/infrastructure/native/bindings/odbc_bindings.dart
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Environment variables (sensitive credentials)
+.env
+.env.local
+.env.*
+!.env.example
+
+# Coverage reports
+coverage/
+*.lcov
+native/coverage/
+native/target/tarpaulin/
+
+# Rust documentation (generated)
+native/target/doc/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Test artifacts
+test-results/
+*.test

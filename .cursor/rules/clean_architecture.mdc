@@ -1,0 +1,43 @@
+---
+description: Clean Architecture - Generic dependency and layer boundary rules
+globs: ["lib/**/*.dart"]
+alwaysApply: true
+---
+
+# Clean Architecture (Generic)
+
+## Layers
+
+- **Domain**: pure business rules (no Flutter, no IO, no infrastructure)
+- **Application**: orchestration/use-case coordination (depends on Domain + Core)
+- **Infrastructure**: implementations (depends on Domain + Core)
+- **Presentation**: UI/state (depends on Application + Domain + Core)
+- **Core/Shared**: cross-cutting code (no dependency on business layers)
+
+## Dependency Rules (imports)
+
+- ✅ **Domain**
+  - may import only **core/shared** and other domain files
+  - must not import **application/infrastructure/presentation**
+  - must not import Flutter/framework packages
+
+- ✅ **Application**
+  - may import **domain** and **core**
+  - must not import **infrastructure** or **presentation**
+  - depends on **interfaces** from Domain (DIP)
+
+- ✅ **Infrastructure**
+  - may import **domain** and **core**
+  - must not import **application** or **presentation**
+  - implements **Domain interfaces** (repositories, data sources contracts)
+
+- ✅ **Presentation**
+  - may import **application**, **domain**, and **core**
+  - must not import **infrastructure**
+  - contains UI concerns only (rendering + UI state)
+
+## Guidance
+
+- Prefer **small, focused** entities/use cases/services (SRP)
+- Keep Domain **technology-agnostic**
+- Push side effects (IO, DB, network) to Infrastructure
