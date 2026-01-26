@@ -1,6 +1,6 @@
 # Roadmap de Melhorias - ODBC Fast
 
-**Versão**: 0.1.5
+**Versão**: 0.1.6
 **Data**: 2026-01-26
 **Status**: Production-Ready (4.5/5 estrelas)
 
