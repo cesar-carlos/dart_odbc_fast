@@ -14,3 +14,4 @@ doc/BUILD.md
 build/
 coverage/
 hook
+lib/src/blobs/

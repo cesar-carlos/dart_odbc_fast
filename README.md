@@ -48,13 +48,33 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 
 ## Requirements
 
-- Rust stable
 - Dart SDK >=3.0.0
 - ODBC Driver Manager (unixODBC on Linux/macOS)
 
+## Installation
+
+### 1. Add dependency
+
+```yaml
+dependencies:
+  odbc_fast: ^0.1.0
+```
+
+### 2. Install ODBC drivers
+
+- **Windows**: Pre-installed
+- **Linux**: `sudo apt-get install unixodbc`
+- **macOS**: `brew install unixodbc`
+
+### 3. That's it!
+
+Native binaries are automatically downloaded and bundled via Native Assets.
+
 ## Building
 
-### Quick Start
+### For Development
+
+If you want to build from source:
 
 **Windows:**
 ```powershell
@@ -129,6 +149,7 @@ dart_odbc_fast/
 ## Documentation
 
 - **Build**: [doc/BUILD.md](doc/BUILD.md)
+- **Native Assets**: [doc/NATIVE_ASSETS.md](doc/NATIVE_ASSETS.md)
 - **Milestones**: [doc/m1_milestone.md](doc/m1_milestone.md), [doc/m2_milestone.md](doc/m2_milestone.md), [doc/m3_milestone.md](doc/m3_milestone.md)
 - **API governance**: [doc/api_governance.md](doc/api_governance.md)
 - **Index**: [doc/README.md](doc/README.md)

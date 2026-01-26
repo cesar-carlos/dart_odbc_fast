@@ -18,32 +18,59 @@ String _libraryName() {
   throw UnsupportedError('Platform not supported: ${Platform.operatingSystem}');
 }
 
-/// Gets the relative path to the ODBC engine library.
-///
-/// Returns a path relative to the project root in the format:
-/// 'native/target/release/{library_name}'.
-String _relativeLibraryPath() {
-  const sep = '/';
-  return 'native${sep}target${sep}release$sep${_libraryName()}';
-}
 
 /// Loads the ODBC engine library from the default location.
 ///
-/// First tries to load from the relative path in the project directory,
-/// then falls back to loading by name from system library paths.
+/// Uses a priority-based loading strategy:
+/// 1. Native Assets (production) - via package:odbc_fast
+/// 2. Development local - native/target/release/ (workspace) or native/odbc_engine/target/release/ (local)
+/// 3. System library paths - PATH/LD_LIBRARY_PATH
 ///
 /// Returns the loaded [DynamicLibrary] instance.
 DynamicLibrary loadOdbcLibrary() {
   final name = _libraryName();
-  final relative = _relativeLibraryPath();
-  final cwd = Directory.current.path;
-  final path = '$cwd${Platform.pathSeparator}'
-      '${relative.replaceAll("/", Platform.pathSeparator)}';
-  final file = File(path);
-  if (file.existsSync()) {
-    return DynamicLibrary.open(path);
+
+  // 1. Native Assets (produção) - via package:odbc_fast
+  try {
+    return DynamicLibrary.open('package:odbc_fast/$name');
+  } on Object catch (_) {
+    // Native Assets não disponível, continua para próxima opção
   }
-  return DynamicLibrary.open(name);
+
+  // 2. Desenvolvimento local - native/target/release/ (workspace target)
+  final cwd = Directory.current.path;
+  final devPathWorkspace = '$cwd${Platform.pathSeparator}native'
+      '${Platform.pathSeparator}target${Platform.pathSeparator}release'
+      '${Platform.pathSeparator}$name';
+
+  if (File(devPathWorkspace).existsSync()) {
+    return DynamicLibrary.open(devPathWorkspace);
+  }
+
+  // 2b. Fallback: native/odbc_engine/target/release/ (local target)
+  final devPathLocal = '$cwd${Platform.pathSeparator}native'
+      '${Platform.pathSeparator}odbc_engine${Platform.pathSeparator}target'
+      '${Platform.pathSeparator}release${Platform.pathSeparator}$name';
+
+  if (File(devPathLocal).existsSync()) {
+    return DynamicLibrary.open(devPathLocal);
+  }
+
+  // 3. Sistema - PATH/LD_LIBRARY_PATH
+  try {
+    return DynamicLibrary.open(name);
+  } catch (e) {
+    throw StateError(
+      'ODBC engine library not found.\n\n'
+      'Options:\n'
+      '1. For development: Build Rust library first\n'
+      '   cd native/odbc_engine && cargo build --release\n\n'
+      '2. For production: Binaries should be bundled via Native Assets\n\n'
+      '3. Manual install: Download from GitHub Releases\n'
+      '   https://github.com/cesar-carlos/dart_odbc_fast/releases\n\n'
+      'Error: $e',
+    );
+  }
 }
 
 /// Loads the ODBC engine library from a specific file path.

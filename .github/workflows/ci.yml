@@ -122,6 +122,10 @@ jobs:
           fi
         shell: bash
       
+      - name: Test Native Assets build
+        run: dart run hook/build.dart
+        continue-on-error: true
+
       - name: Run tests
         run: dart test
         env:
