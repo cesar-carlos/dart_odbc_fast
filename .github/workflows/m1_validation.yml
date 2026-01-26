@@ -1,3 +1,12 @@
+# M1 Validation Workflow
+# 
+# Purpose: Validates Milestone 1 (Functional Binding) - basic Rust <-> Dart FFI connectivity
+# Scope: Simplified validation without caching for quick milestone verification
+# Triggers: Push to main branch or manual dispatch
+# Platforms: Ubuntu, Windows, macOS
+#
+# For full CI with caching and multi-branch support, see ci.yml
+
 name: M1 Validation
 
 on:

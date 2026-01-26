@@ -101,6 +101,6 @@ Formato: `MAJOR.MINOR`
 - [ ] Changelog criado
 - [ ] Migration guide (se necessário)
 - [ ] Release notes preparadas
-- [ ] CI/CD validado em todas as plataformas
+- [x] CI/CD validado em todas as plataformas (Ubuntu, Windows, macOS)
 - [ ] Version numbers atualizados
 - [ ] Tags Git criadas

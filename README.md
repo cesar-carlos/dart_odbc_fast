@@ -1,5 +1,8 @@
 # ODBC Fast - Enterprise ODBC Data Platform
 
+[![M1 Validation](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/m1_validation.yml/badge.svg)](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/m1_validation.yml)
+[![CI](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/ci.yml/badge.svg)](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/ci.yml)
+
 Enterprise-grade ODBC data platform built with **Rust (native engine)** and
 **Dart (clean, testable API)**.
 

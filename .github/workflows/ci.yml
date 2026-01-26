@@ -1,3 +1,12 @@
+# Continuous Integration Workflow
+#
+# Purpose: Complete CI validation for development and releases
+# Scope: Full validation with Rust dependency caching and multi-target support
+# Triggers: Push to main/develop branches and pull requests to main
+# Platforms: Ubuntu, Windows, macOS (with x86_64 and aarch64 targets)
+#
+# For simplified M1 milestone validation, see m1_validation.yml
+
 name: CI
 
 on:
