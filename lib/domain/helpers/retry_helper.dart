@@ -9,19 +9,20 @@ import 'package:result_dart/result_dart.dart';
 class RetryHelper {
   RetryHelper._();
 
-  /// Executes [operation] with retries and exponential backoff on retryable failures.
+  /// Executes [operation] with retries and exponential backoff on retryable
+  /// failures.
   ///
-  /// Uses [options.shouldRetry] or [OdbcError.isRetryable] when the failure
+  /// Uses `options.shouldRetry` or [OdbcError.isRetryable] when the failure
   /// is an [OdbcError]. Non-[OdbcError] exceptions are not retried.
-  /// Delays between attempts follow [options.initialDelay], [options.backoffMultiplier],
-  /// and [options.maxDelay].
+  /// Delays between attempts follow `options.initialDelay`,
+  /// `options.backoffMultiplier`, and `options.maxDelay`.
   static Future<Result<T>> execute<T extends Object>(
     Future<Result<T>> Function() operation,
     RetryOptions options,
   ) async {
     var attempt = 1;
     var delay = options.initialDelay;
-    Result<T> result = await operation();
+    var result = await operation();
 
     while (true) {
       final err = result.exceptionOrNull();

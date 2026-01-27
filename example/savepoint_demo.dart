@@ -18,8 +18,7 @@ Future<void> main() async {
     return;
   }
 
-  final locator = ServiceLocator();
-  locator.initialize();
+  final locator = ServiceLocator()..initialize();
   await locator.service.initialize();
 
   final service = locator.service;

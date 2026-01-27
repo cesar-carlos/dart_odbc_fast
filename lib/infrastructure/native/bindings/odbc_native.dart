@@ -348,12 +348,16 @@ class OdbcNative {
 
   /// Creates a savepoint within an active transaction.
   ///
-  /// The [txnId] must be a valid transaction identifier from [transactionBegin].
-  /// Returns true on success, false on failure.
+  /// The [txnId] must be a valid transaction identifier from
+  /// [transactionBegin]. Returns true on success, false on failure.
   bool savepointCreate(int txnId, String name) {
     final namePtr = name.toNativeUtf8();
     try {
-      return _bindings.odbc_savepoint_create(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+      return _bindings.odbc_savepoint_create(
+            txnId,
+            namePtr.cast<bindings.Utf8>(),
+          ) ==
+          0;
     } finally {
       malloc.free(namePtr);
     }
@@ -366,7 +370,11 @@ class OdbcNative {
   bool savepointRollback(int txnId, String name) {
     final namePtr = name.toNativeUtf8();
     try {
-      return _bindings.odbc_savepoint_rollback(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+      return _bindings.odbc_savepoint_rollback(
+            txnId,
+            namePtr.cast<bindings.Utf8>(),
+          ) ==
+          0;
     } finally {
       malloc.free(namePtr);
     }
@@ -379,7 +387,11 @@ class OdbcNative {
   bool savepointRelease(int txnId, String name) {
     final namePtr = name.toNativeUtf8();
     try {
-      return _bindings.odbc_savepoint_release(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+      return _bindings.odbc_savepoint_release(
+            txnId,
+            namePtr.cast<bindings.Utf8>(),
+          ) ==
+          0;
     } finally {
       malloc.free(namePtr);
     }

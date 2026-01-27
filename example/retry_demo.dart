@@ -2,7 +2,8 @@ import 'dart:io';
 
 import 'package:odbc_fast/odbc_fast.dart';
 
-/// Retry usage demo: connect and execute with automatic retry on transient errors.
+/// Retry usage demo: connect and execute with automatic retry
+/// on transient errors.
 ///
 /// Uses [OdbcService.withRetry] and [RetryOptions] to retry on retryable
 /// [OdbcError]s (e.g. connection timeouts, SQLSTATE 08xxx).
@@ -18,8 +19,7 @@ Future<void> main() async {
     return;
   }
 
-  final locator = ServiceLocator();
-  locator.initialize();
+  final locator = ServiceLocator()..initialize();
   await locator.service.initialize();
 
   final service = locator.service;
@@ -27,10 +27,7 @@ Future<void> main() async {
   final connResult = await service.withRetry(
     () => service.connect(dsn),
     options: const RetryOptions(
-      maxAttempts: 3,
-      initialDelay: Duration(seconds: 1),
       maxDelay: Duration(seconds: 10),
-      backoffMultiplier: 2.0,
     ),
   );
 

@@ -13,8 +13,7 @@ void main() {
     String? getConnectionString() => getTestEnv('ODBC_TEST_DSN');
 
     setUpAll(() async {
-      locator = ServiceLocator();
-      locator.initialize();
+      locator = ServiceLocator()..initialize();
       await locator.service.initialize();
       service = locator.service;
     });
@@ -48,7 +47,7 @@ void main() {
       final result = await service.connect(dsn);
 
       expect(result.isSuccess(), isTrue);
-      result.fold(
+      await result.fold(
         (conn) => service.disconnect(conn.id),
         (_) => fail('connect without options should succeed'),
       );

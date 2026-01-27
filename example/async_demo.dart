@@ -15,8 +15,7 @@ Future<void> main() async {
   AppLogger.initialize();
   print('=== ODBC Fast - TRUE Non-Blocking Demo ===\n');
 
-  final locator = ServiceLocator();
-  locator.initialize(useAsync: true);
+  final locator = ServiceLocator()..initialize(useAsync: true);
 
   final service = locator.asyncService;
   await service.initialize();

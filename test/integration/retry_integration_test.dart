@@ -14,8 +14,7 @@ void main() {
     String? getConnectionString() => getTestEnv('ODBC_TEST_DSN');
 
     setUpAll(() async {
-      locator = ServiceLocator();
-      locator.initialize();
+      locator = ServiceLocator()..initialize();
       await locator.service.initialize();
       service = locator.service;
     });
@@ -36,7 +35,8 @@ void main() {
       );
     });
 
-    test('withRetry does not retry on ValidationError (empty connection string)',
+    test(
+        'withRetry does not retry on ValidationError (empty connection string)',
         () async {
       var callCount = 0;
       Future<Result<Connection>> operation() async {

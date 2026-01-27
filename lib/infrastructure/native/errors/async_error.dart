@@ -107,25 +107,25 @@ class AsyncError implements Exception {
   OdbcError toOdbcError() {
     return switch (code) {
       AsyncErrorCode.connectionFailed => ConnectionError(
-        message: message,
-        sqlState: sqlState,
-        nativeCode: nativeCode,
-      ),
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
       AsyncErrorCode.queryFailed => QueryError(
-        message: message,
-        sqlState: sqlState,
-        nativeCode: nativeCode,
-      ),
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
       AsyncErrorCode.transactionFailed => QueryError(
-        message: message,
-        sqlState: sqlState,
-        nativeCode: nativeCode,
-      ),
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
       AsyncErrorCode.prepareFailed => QueryError(
-        message: message,
-        sqlState: sqlState,
-        nativeCode: nativeCode,
-      ),
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
       AsyncErrorCode.invalidParameter => ValidationError(message: message),
       AsyncErrorCode.notInitialized => const EnvironmentNotInitializedError(),
     };

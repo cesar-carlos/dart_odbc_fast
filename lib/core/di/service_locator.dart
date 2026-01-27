@@ -12,7 +12,7 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 ///
 /// ## Sync vs Async Mode
 ///
-/// By default, operates in sync mode (blocking operations). Set [useAsync]
+/// By default, operates in sync mode (blocking operations). Set `useAsync`
 /// to true during initialization for non-blocking async operations, which is
 /// recommended for Flutter applications to prevent UI freezing.
 ///
@@ -58,9 +58,9 @@ class ServiceLocator {
   /// Must be called before accessing [service], [repository], or
   /// [nativeConnection].
   ///
-  /// Set [useAsync] to true for non-blocking operations (recommended for Flutter).
-  /// When [useAsync] is true, all database operations execute in background
-  /// isolates, preventing UI freezes during long-running queries.
+  /// Set `useAsync` to true for non-blocking operations (recommended for
+  /// Flutter). When `useAsync` is true, all database operations execute in
+  /// background isolates, preventing UI freezes during long-running queries.
   ///
   /// ## Sync Mode (useAsync: false, default)
   /// - Operations are blocking but slightly faster (no isolate overhead)
@@ -94,30 +94,33 @@ class ServiceLocator {
 
   /// Gets the appropriate service based on initialization mode.
   ///
-  /// If [initialize] was called with [useAsync: true], returns the async service.
-  /// Otherwise returns the sync service.
+  /// If [initialize] was called with `useAsync: true`, returns the async
+  /// service. Otherwise returns the sync service.
   ///
   /// Throws if [initialize] has not been called.
   ///
   /// See also:
   /// - [syncService] - Always returns sync service
-  /// - [asyncService] - Always returns async service (throws if not initialized)
+  /// - [asyncService] - Always returns async service (throws if not
+  ///   initialized)
   OdbcService get service => _useAsync ? _asyncService : _service;
 
   /// Gets the sync [OdbcService] instance.
   ///
-  /// Always available regardless of [useAsync] setting. Use this when you
-  /// explicitly want blocking operations (e.g., for fast queries or CLI tools).
+  /// Always available regardless of `useAsync` setting. Use this when you
+  /// explicitly want blocking operations (e.g., for fast queries or CLI
+  /// tools).
   ///
   /// Throws if [initialize] has not been called.
   OdbcService get syncService => _service;
 
   /// Gets the async [OdbcService] instance.
   ///
-  /// Only available if [initialize] was called with [useAsync: true].
+  /// Only available if [initialize] was called with `useAsync: true`.
   /// Use this for non-blocking database operations in Flutter apps.
   ///
-  /// Throws [StateError] if [initialize] was not called with [useAsync: true].
+  /// Throws [StateError] if [initialize] was not called with
+  /// `useAsync: true`.
   OdbcService get asyncService {
     if (!_useAsync) {
       throw StateError(
@@ -130,8 +133,8 @@ class ServiceLocator {
 
   /// Gets the appropriate repository based on initialization mode.
   ///
-  /// If [initialize] was called with [useAsync: true], returns the async repository.
-  /// Otherwise returns the sync repository.
+  /// If [initialize] was called with `useAsync: true`, returns the async
+  /// repository. Otherwise returns the sync repository.
   ///
   /// Throws if [initialize] has not been called.
   IOdbcRepository get repository => _useAsync ? _asyncRepository : _repository;
@@ -146,10 +149,11 @@ class ServiceLocator {
 
   /// Gets the [AsyncNativeOdbcConnection] instance.
   ///
-  /// Only available if [initialize] was called with [useAsync: true].
+  /// Only available if [initialize] was called with `useAsync: true`.
   /// This provides direct access to the async wrapper for advanced use cases.
   ///
-  /// Throws [StateError] if [initialize] was not called with [useAsync: true].
+  /// Throws [StateError] if [initialize] was not called with
+  /// `useAsync: true`.
   AsyncNativeOdbcConnection get asyncNativeConnection {
     if (!_useAsync) {
       throw StateError(
@@ -162,7 +166,7 @@ class ServiceLocator {
 
   /// Whether the locator was initialized with async mode.
   ///
-  /// Returns true if [initialize] was called with [useAsync: true],
+  /// Returns true if [initialize] was called with `useAsync: true`,
   /// indicating that async operations are available.
   bool get isAsyncMode => _useAsync;
 

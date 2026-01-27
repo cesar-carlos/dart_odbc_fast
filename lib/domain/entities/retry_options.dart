@@ -2,7 +2,8 @@ import 'package:odbc_fast/domain/errors/odbc_error.dart';
 
 /// Configuration for automatic retry with exponential backoff.
 ///
-/// Used by [RetryHelper.execute] to decide when and how to retry failed operations.
+/// Used by `RetryHelper.execute` to decide when and how to retry failed
+/// operations.
 class RetryOptions {
   const RetryOptions({
     this.maxAttempts = 3,

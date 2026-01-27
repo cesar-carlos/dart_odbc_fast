@@ -10,6 +10,7 @@ analyzer:
 
 linter:
   rules:
-    # Allow print in benchmarks and tools (development tools)
     avoid_print: false
+    avoid_returning_this: false
     discarded_futures: false
+    public_member_api_docs: false

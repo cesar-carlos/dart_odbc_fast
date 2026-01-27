@@ -174,8 +174,6 @@ class BulkInsertBuilder {
   /// Returns this builder for method chaining.
   BulkInsertBuilder table(String name) {
     _table = name;
-    // Builder pattern requires returning this for method chaining.
-    // ignore: avoid_returning_this
     return this;
   }
 
@@ -201,8 +199,6 @@ class BulkInsertBuilder {
         maxLen: maxLen,
       ),
     );
-    // Builder pattern requires returning this for method chaining.
-    // ignore: avoid_returning_this
     return this;
   }
 
@@ -224,8 +220,6 @@ class BulkInsertBuilder {
       );
     }
     _rows.add(List<dynamic>.from(values));
-    // Builder pattern requires returning this for method chaining.
-    // ignore: avoid_returning_this
     return this;
   }
 

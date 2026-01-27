@@ -38,7 +38,8 @@ class OdbcService {
 
   /// Runs [operation] with automatic retry on retryable [OdbcError]s.
   ///
-  /// Uses [RetryHelper.execute] with [options] or [RetryOptions.defaultOptions].
+  /// Uses [RetryHelper.execute] with [options] or
+  /// [RetryOptions.defaultOptions].
   /// Use for operations that may fail transiently (e.g. connection timeouts).
   Future<Result<T>> withRetry<T extends Object>(
     Future<Result<T>> Function() operation, {

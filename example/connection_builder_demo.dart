@@ -1,6 +1,7 @@
 import 'package:odbc_fast/odbc_fast.dart';
 
-/// Connection string builder demo: build ODBC connection strings with a fluent DSL.
+/// Connection string builder demo: build ODBC connection strings
+/// with a fluent DSL.
 ///
 /// Run: dart run example/connection_builder_demo.dart
 void main() {

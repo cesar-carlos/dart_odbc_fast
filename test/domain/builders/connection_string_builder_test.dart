@@ -31,18 +31,13 @@ void main() {
     });
 
     test('trusted adds Trusted_Connection=yes', () {
-      final s = ConnectionStringBuilder()
-          .server('x')
-          .trusted()
-          .build();
+      final s = ConnectionStringBuilder().server('x').trusted().build();
       expect(s, contains('Trusted_Connection=yes'));
     });
 
     test('port is included when set', () {
-      final s = ConnectionStringBuilder()
-          .server('localhost')
-          .port(1433)
-          .build();
+      final s =
+          ConnectionStringBuilder().server('localhost').port(1433).build();
       expect(s, contains('Port=1433'));
     });
   });
@@ -54,7 +49,7 @@ void main() {
           .database('AdventureWorks')
           .credentials('sa', 'secret')
           .build();
-      expect(s, contains(r'Driver={SQL Server}'));
+      expect(s, contains('Driver={SQL Server}'));
       expect(s, contains('Server=localhost'));
       expect(s, contains('Database=AdventureWorks'));
       expect(s, contains('Uid=sa'));
@@ -80,16 +75,13 @@ void main() {
           .database('testdb')
           .credentials('postgres', 'pw')
           .build();
-      expect(s, contains(r'Driver={PostgreSQL Unicode}'));
+      expect(s, contains('Driver={PostgreSQL Unicode}'));
       expect(s, contains('Port=5432'));
       expect(s, contains('Database=testdb'));
     });
 
     test('port can be overridden', () {
-      final s = PostgreSqlBuilder()
-          .server('localhost')
-          .port(5433)
-          .build();
+      final s = PostgreSqlBuilder().server('localhost').port(5433).build();
       expect(s, contains('Port=5433'));
     });
   });
@@ -101,16 +93,13 @@ void main() {
           .database('mydb')
           .credentials('root', 'pw')
           .build();
-      expect(s, contains(r'Driver={MySQL ODBC 8.0 Driver}'));
+      expect(s, contains('Driver={MySQL ODBC 8.0 Driver}'));
       expect(s, contains('Port=3306'));
       expect(s, contains('Database=mydb'));
     });
 
     test('port can be overridden', () {
-      final s = MySqlBuilder()
-          .server('localhost')
-          .port(3307)
-          .build();
+      final s = MySqlBuilder().server('localhost').port(3307).build();
       expect(s, contains('Port=3307'));
     });
   });

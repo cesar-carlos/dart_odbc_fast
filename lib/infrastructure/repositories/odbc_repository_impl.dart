@@ -47,14 +47,15 @@ import 'package:result_dart/result_dart.dart';
 class OdbcRepositoryImpl implements IOdbcRepository {
   /// Creates a new [OdbcRepositoryImpl] instance.
   ///
-  /// The [native] parameter can be either [NativeOdbcConnection] or
+  /// The `native` parameter can be either [NativeOdbcConnection] or
   /// [AsyncNativeOdbcConnection]. When using async connection, all operations
   /// execute in background isolates for non-blocking behavior.
   OdbcRepositoryImpl(this._native);
 
   /// Can be either sync or async connection.
   /// Use [NativeOdbcConnection] for blocking operations (CLI tools).
-  /// Use [AsyncNativeOdbcConnection] for non-blocking operations (Flutter apps).
+  /// Use [AsyncNativeOdbcConnection] for non-blocking operations (Flutter
+  /// apps).
   final dynamic _native;
   final Map<String, int> _connectionIds = {};
 

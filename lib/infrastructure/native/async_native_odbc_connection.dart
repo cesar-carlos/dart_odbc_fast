@@ -13,20 +13,23 @@ import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 /// Non-blocking wrapper around ODBC using a long-lived worker isolate.
 ///
 /// **Architecture**: All FFI/ODBC operations run in a dedicated worker isolate.
-/// The main thread stays responsive; no blocking FFI calls run on the UI thread.
+/// The main thread stays responsive; no blocking FFI calls run on the UI
+/// thread.
 ///
 /// ## How it works
 ///
 /// 1. [initialize] spawns a worker isolate and loads the ODBC driver.
 /// 2. Each operation sends a request (via [SendPort]) to the worker.
-/// 3. The worker runs the FFI call and sends back the result (via [ReceivePort]).
+/// 3. The worker runs the FFI call and sends back the result (via
+///    [ReceivePort]).
 /// 4. The main thread never blocks on ODBC.
 ///
 /// ## Performance
 ///
 /// - Worker spawn (one-time): ~50–100 ms.
 /// - Per-operation overhead: ~1–3 ms.
-/// - Parallel queries: N queries complete in the time of the longest (not the sum).
+/// - Parallel queries: N queries complete in the time of the longest (not
+///   the sum).
 ///
 /// ## Example
 ///
@@ -87,11 +90,12 @@ class AsyncNativeOdbcConnection {
     final initResp = await _sendRequest<InitializeResponse>(
       InitializeRequest(_nextRequestId()),
     );
-    _isInitialized = initResp.success;
-    return _isInitialized;
+    return _isInitialized = initResp.success;
   }
 
-  Future<T> _sendRequest<T extends WorkerResponse>(WorkerRequest request) async {
+  Future<T> _sendRequest<T extends WorkerResponse>(
+    WorkerRequest request,
+  ) async {
     if (_workerSendPort == null) {
       throw StateError('Worker not initialized');
     }
@@ -149,7 +153,8 @@ class AsyncNativeOdbcConnection {
 
   /// Returns the last error message from the worker (plain text).
   Future<String> getError() async {
-    final r = await _sendRequest<GetErrorResponse>(GetErrorRequest(_nextRequestId()));
+    final r =
+        await _sendRequest<GetErrorResponse>(GetErrorRequest(_nextRequestId()));
     return r.message;
   }
 
@@ -202,7 +207,8 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
-  /// Rolls back to savepoint [name] in transaction [txnId]. Transaction stays active.
+  /// Rolls back to savepoint [name] in transaction [txnId].
+  /// Transaction stays active.
   Future<bool> rollbackToSavepoint(int txnId, String name) async {
     final r = await _sendRequest<BoolResponse>(
       SavepointRollbackRequest(_nextRequestId(), txnId, name),
@@ -210,7 +216,8 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
-  /// Releases savepoint [name] in transaction [txnId]. Transaction stays active.
+  /// Releases savepoint [name] in transaction [txnId].
+  /// Transaction stays active.
   Future<bool> releaseSavepoint(int txnId, String name) async {
     final r = await _sendRequest<BoolResponse>(
       SavepointReleaseRequest(_nextRequestId(), txnId, name),
@@ -235,9 +242,8 @@ class AsyncNativeOdbcConnection {
     int stmtId,
     List<ParamValue>? params,
   ) async {
-    final bytes = params == null || params.isEmpty
-        ? null
-        : serializeParams(params);
+    final bytes =
+        params == null || params.isEmpty ? null : serializeParams(params);
     final r = await _sendRequest<QueryResponse>(
       ExecutePreparedRequest(
         _nextRequestId(),
@@ -358,7 +364,8 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
-  /// Returns the current state (size, idle) of pool [poolId], or `null` on error.
+  /// Returns the current state (size, idle) of pool [poolId],
+  /// or `null` on error.
   Future<({int size, int idle})?> poolGetState(int poolId) async {
     final r = await _sendRequest<PoolStateResponse>(
       PoolGetStateRequest(_nextRequestId(), poolId),

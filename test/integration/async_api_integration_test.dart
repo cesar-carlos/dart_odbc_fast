@@ -40,7 +40,8 @@ void main() {
 
     test('should handle getStructuredError async', () async {
       final error = await async.getStructuredError();
-      // Returns null when no error, or StructuredError when worker has last error
+      // Returns null when no error, or StructuredError when worker has
+      // last error.
       expect(error, anyOf(isNull, isA<StructuredError>()));
     });
 

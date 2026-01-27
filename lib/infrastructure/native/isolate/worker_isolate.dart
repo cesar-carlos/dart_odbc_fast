@@ -15,8 +15,8 @@ void workerEntry(SendPort mainSendPort) {
   late NativeOdbcConnection conn;
   try {
     conn = NativeOdbcConnection();
-  } catch (e) {
-    mainSendPort.send(InitializeResponse(0, false));
+  } on Object catch (_) {
+    mainSendPort.send(const InitializeResponse(0, success: false));
     return;
   }
 
@@ -41,7 +41,7 @@ void _handleRequest(
     switch (request) {
       case InitializeRequest():
         final ok = conn.initialize();
-        sendPort.send(InitializeResponse(request.requestId, ok));
+        sendPort.send(InitializeResponse(request.requestId, success: ok));
 
       case ConnectRequest():
         try {
@@ -53,25 +53,29 @@ void _handleRequest(
               : conn.connect(request.connectionString);
           if (connId == 0) {
             final err = conn.getError();
-            sendPort.send(ConnectResponse(
-              request.requestId,
-              0,
-              error: err.isNotEmpty ? err : 'Connect failed',
-            ));
+            sendPort.send(
+              ConnectResponse(
+                request.requestId,
+                0,
+                error: err.isNotEmpty ? err : 'Connect failed',
+              ),
+            );
           } else {
             sendPort.send(ConnectResponse(request.requestId, connId));
           }
-        } catch (e) {
-          sendPort.send(ConnectResponse(
-            request.requestId,
-            0,
-            error: e.toString(),
-          ));
+        } on Object catch (e) {
+          sendPort.send(
+            ConnectResponse(
+              request.requestId,
+              0,
+              error: e.toString(),
+            ),
+          );
         }
 
       case DisconnectRequest():
         final ok = conn.disconnect(request.connectionId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case ExecuteQueryParamsRequest():
         final data = conn.executeQueryParamsRaw(
@@ -83,10 +87,12 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: err.isNotEmpty ? err : 'Query failed',
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: err.isNotEmpty ? err : 'Query failed',
+            ),
+          );
         }
 
       case ExecuteQueryMultiRequest():
@@ -95,10 +101,12 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: err.isNotEmpty ? err : 'Query failed',
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: err.isNotEmpty ? err : 'Query failed',
+            ),
+          );
         }
 
       case BeginTransactionRequest():
@@ -110,23 +118,23 @@ void _handleRequest(
 
       case CommitTransactionRequest():
         final ok = conn.commitTransaction(request.txnId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case RollbackTransactionRequest():
         final ok = conn.rollbackTransaction(request.txnId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case SavepointCreateRequest():
         final ok = conn.createSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case SavepointRollbackRequest():
         final ok = conn.rollbackToSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case SavepointReleaseRequest():
         final ok = conn.releaseSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case PrepareRequest():
         final stmtId = conn.prepare(
@@ -137,23 +145,24 @@ void _handleRequest(
         sendPort.send(IntResponse(request.requestId, stmtId));
 
       case ExecutePreparedRequest():
-        final bytes = request.serializedParams.isEmpty
-            ? null
-            : request.serializedParams;
+        final bytes =
+            request.serializedParams.isEmpty ? null : request.serializedParams;
         final data = conn.executePreparedRaw(request.stmtId, bytes);
         if (data != null && data.isNotEmpty) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: err.isNotEmpty ? err : 'Execute prepared failed',
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: err.isNotEmpty ? err : 'Execute prepared failed',
+            ),
+          );
         }
 
       case CloseStatementRequest():
         final ok = conn.closeStatement(request.stmtId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case PoolCreateRequest():
         final poolId = conn.poolCreate(
@@ -168,30 +177,34 @@ void _handleRequest(
 
       case PoolReleaseConnectionRequest():
         final ok = conn.poolReleaseConnection(request.connectionId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case PoolHealthCheckRequest():
         final ok = conn.poolHealthCheck(request.poolId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case PoolGetStateRequest():
         final state = conn.poolGetState(request.poolId);
         if (state != null) {
-          sendPort.send(PoolStateResponse(
-            request.requestId,
-            size: state.size,
-            idle: state.idle,
-          ));
+          sendPort.send(
+            PoolStateResponse(
+              request.requestId,
+              size: state.size,
+              idle: state.idle,
+            ),
+          );
         } else {
-          sendPort.send(PoolStateResponse(
-            request.requestId,
-            error: conn.getError(),
-          ));
+          sendPort.send(
+            PoolStateResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
         }
 
       case PoolCloseRequest():
         final ok = conn.poolClose(request.poolId);
-        sendPort.send(BoolResponse(request.requestId, ok));
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case BulkInsertArrayRequest():
         final rows = conn.bulkInsertArray(
@@ -206,19 +219,23 @@ void _handleRequest(
       case GetMetricsRequest():
         final m = conn.getMetrics();
         if (m != null) {
-          sendPort.send(MetricsResponse(
-            request.requestId,
-            queryCount: m.queryCount,
-            errorCount: m.errorCount,
-            uptimeSecs: m.uptimeSecs,
-            totalLatencyMillis: m.totalLatencyMillis,
-            avgLatencyMillis: m.avgLatencyMillis,
-          ));
+          sendPort.send(
+            MetricsResponse(
+              request.requestId,
+              queryCount: m.queryCount,
+              errorCount: m.errorCount,
+              uptimeSecs: m.uptimeSecs,
+              totalLatencyMillis: m.totalLatencyMillis,
+              avgLatencyMillis: m.avgLatencyMillis,
+            ),
+          );
         } else {
-          sendPort.send(MetricsResponse(
-            request.requestId,
-            error: conn.getError(),
-          ));
+          sendPort.send(
+            MetricsResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
         }
 
       case CatalogTablesRequest():
@@ -230,10 +247,12 @@ void _handleRequest(
         if (data != null && data.isNotEmpty) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: conn.getError(),
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
         }
 
       case CatalogColumnsRequest():
@@ -244,10 +263,12 @@ void _handleRequest(
         if (data != null && data.isNotEmpty) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: conn.getError(),
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
         }
 
       case CatalogTypeInfoRequest():
@@ -255,10 +276,12 @@ void _handleRequest(
         if (data != null && data.isNotEmpty) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(QueryResponse(
-            request.requestId,
-            error: conn.getError(),
-          ));
+          sendPort.send(
+            QueryResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
         }
 
       case GetErrorRequest():
@@ -268,17 +291,19 @@ void _handleRequest(
       case GetStructuredErrorRequest():
         final se = conn.getStructuredError();
         if (se != null) {
-          sendPort.send(StructuredErrorResponse(
-            request.requestId,
-            message: se.message,
-            sqlStateString: se.sqlStateString,
-            nativeCode: se.nativeCode,
-          ));
+          sendPort.send(
+            StructuredErrorResponse(
+              request.requestId,
+              message: se.message,
+              sqlStateString: se.sqlStateString,
+              nativeCode: se.nativeCode,
+            ),
+          );
         } else {
           sendPort.send(StructuredErrorResponse(request.requestId));
         }
     }
-  } catch (e, st) {
+  } on Object catch (e, st) {
     _sendErrorResponse(request, sendPort, '$e\n$st');
   }
 }
@@ -291,7 +316,7 @@ void _sendErrorResponse(
   final id = request.requestId;
   switch (request) {
     case InitializeRequest():
-      sendPort.send(InitializeResponse(id, false));
+      sendPort.send(InitializeResponse(id, success: false));
     case ConnectRequest():
       sendPort.send(ConnectResponse(id, 0, error: error));
     case DisconnectRequest():
@@ -304,7 +329,7 @@ void _sendErrorResponse(
     case SavepointCreateRequest():
     case SavepointRollbackRequest():
     case SavepointReleaseRequest():
-      sendPort.send(BoolResponse(id, false));
+      sendPort.send(BoolResponse(id, value: false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
     case ExecutePreparedRequest():
@@ -329,4 +354,3 @@ void _sendErrorResponse(
       sendPort.send(StructuredErrorResponse(id, message: error, error: error));
   }
 }
-

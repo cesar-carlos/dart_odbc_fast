@@ -13,8 +13,7 @@ void main() {
     String? getConnectionString() => getTestEnv('ODBC_TEST_DSN');
 
     setUpAll(() async {
-      locator = ServiceLocator();
-      locator.initialize();
+      locator = ServiceLocator()..initialize();
       await locator.service.initialize();
       service = locator.service;
     });
@@ -51,7 +50,8 @@ void main() {
           'INSERT INTO sp_int_test VALUES (1)',
         );
 
-        final createSp = await service.createSavepoint(connection.id, txnId, 'sp1');
+        final createSp =
+            await service.createSavepoint(connection.id, txnId, 'sp1');
         if (createSp.fold((_) => false, (_) => true)) {
           await service.rollbackTransaction(connection.id, txnId);
           await service.disconnect(connection.id);
@@ -76,7 +76,8 @@ void main() {
           'INSERT INTO sp_int_test VALUES (3)',
         );
 
-        final commitResult = await service.commitTransaction(connection.id, txnId);
+        final commitResult =
+            await service.commitTransaction(connection.id, txnId);
         expect(commitResult.isSuccess(), isTrue);
 
         final queryResult = await service.executeQuery(
@@ -125,10 +126,12 @@ void main() {
       final txnId = beginResult.getOrElse((_) => throw Exception('no txn'));
 
       try {
-        final createSp = await service.createSavepoint(connection.id, txnId, 'sp_r');
+        final createSp =
+            await service.createSavepoint(connection.id, txnId, 'sp_r');
         expect(createSp.isSuccess(), isTrue);
 
-        final releaseSp = await service.releaseSavepoint(connection.id, txnId, 'sp_r');
+        final releaseSp =
+            await service.releaseSavepoint(connection.id, txnId, 'sp_r');
         expect(releaseSp.isSuccess(), isTrue);
 
         await service.commitTransaction(connection.id, txnId);

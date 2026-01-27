@@ -129,77 +129,88 @@ void main() {
       }
     });
 
-    test('should not block main thread during long operation', () async {
-      await async.initialize();
+    test(
+      'should not block main thread during long operation',
+      () async {
+        await async.initialize();
 
-      // Simulate UI thread responsiveness
-      final uiResponder = Completer<void>();
-      Timer(const Duration(milliseconds: 50), uiResponder.complete);
+        // Simulate UI thread responsiveness
+        final uiResponder = Completer<void>();
+        Timer(const Duration(milliseconds: 50), uiResponder.complete);
 
-      // Run operation (even if it takes time)
-      // Note: This will fail with invalid DSN but that's ok for the test
-      try {
-        await async.connect('DSN=InvalidDSNThatMightTimeout');
-      } on Exception {
-        // Expected - invalid DSN
-      }
+        // Run operation (even if it takes time)
+        // Note: This will fail with invalid DSN but that's ok for the test
+        try {
+          await async.connect('DSN=InvalidDSNThatMightTimeout');
+        } on Exception {
+          // Expected - invalid DSN
+        }
 
-      // UI should have responded even if connect took time
-      await expectLater(uiResponder.future, completes);
-    }, timeout: const Timeout(Duration(seconds: 10)));
+        // UI should have responded even if connect took time
+        await expectLater(uiResponder.future, completes);
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
 
-    test('should NOT block main thread during long query', () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) return;
+    test(
+      'should NOT block main thread during long query',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) return;
 
-      await async.initialize();
-      final connId = await async.connect(dsn);
+        await async.initialize();
+        final connId = await async.connect(dsn);
 
-      final timerCompleted = Completer<void>();
-      Timer(const Duration(milliseconds: 100), timerCompleted.complete);
+        final timerCompleted = Completer<void>();
+        Timer(const Duration(milliseconds: 100), timerCompleted.complete);
 
-      final queryFuture = async.executeQueryParams(
-        connId,
-        "WAITFOR DELAY '00:00:05'; SELECT 1",
-        [],
-      );
+        final queryFuture = async.executeQueryParams(
+          connId,
+          "WAITFOR DELAY '00:00:05'; SELECT 1",
+          [],
+        );
 
-      await expectLater(
-        timerCompleted.future,
-        completes,
-        reason: 'Timer should complete before long query finishes',
-      );
-      await queryFuture;
-      await async.disconnect(connId);
-    }, timeout: const Timeout(Duration(seconds: 10)));
+        await expectLater(
+          timerCompleted.future,
+          completes,
+          reason: 'Timer should complete before long query finishes',
+        );
+        await queryFuture;
+        await async.disconnect(connId);
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
 
-    test('should execute multiple queries (all complete without deadlock)',
-        () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) return;
+    test(
+      'should execute multiple queries (all complete without deadlock)',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) return;
 
-      await async.initialize();
-      final connId1 = await async.connect(dsn);
-      final connId2 = await async.connect(dsn);
-      final connId3 = await async.connect(dsn);
+        await async.initialize();
+        final connId1 = await async.connect(dsn);
+        final connId2 = await async.connect(dsn);
+        final connId3 = await async.connect(dsn);
 
-      final stopwatch = Stopwatch()..start();
-      await Future.wait([
-        async.executeQueryParams(connId1, "WAITFOR DELAY '00:00:02'", []),
-        async.executeQueryParams(connId2, "WAITFOR DELAY '00:00:02'", []),
-        async.executeQueryParams(connId3, "WAITFOR DELAY '00:00:02'", []),
-      ]);
-      stopwatch.stop();
+        final stopwatch = Stopwatch()..start();
+        await Future.wait([
+          async.executeQueryParams(connId1, "WAITFOR DELAY '00:00:02'", []),
+          async.executeQueryParams(connId2, "WAITFOR DELAY '00:00:02'", []),
+          async.executeQueryParams(connId3, "WAITFOR DELAY '00:00:02'", []),
+        ]);
+        stopwatch.stop();
 
-      expect(
-        stopwatch.elapsedMilliseconds,
-        lessThan(10000),
-        reason: 'All three 2s queries should complete without deadlock',
-      );
-      await async.disconnect(connId1);
-      await async.disconnect(connId2);
-      await async.disconnect(connId3);
-    }, timeout: const Timeout(Duration(seconds: 15)));
+        expect(
+          stopwatch.elapsedMilliseconds,
+          lessThan(10000),
+          reason: 'All three 2s queries should complete without deadlock',
+        );
+        await async.disconnect(connId1);
+        await async.disconnect(connId2);
+        await async.disconnect(connId3);
+      },
+      timeout: const Timeout(Duration(seconds: 15)),
+    );
 
     test('should handle errors gracefully', () async {
       await async.initialize();

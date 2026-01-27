@@ -23,7 +23,7 @@ class ConnectionStringBuilder {
         _pwd = pwd,
         _trustedConnection = trustedConnection;
 
-  String? _driver;
+  final String? _driver;
   String? _server;
   int? _port;
   String? _database;
@@ -97,8 +97,7 @@ class ConnectionStringBuilder {
 /// Default driver is `{SQL Server}`. Use [server], [database], [credentials]
 /// or [trusted], and [option] for extra keys.
 class SqlServerBuilder extends ConnectionStringBuilder {
-  SqlServerBuilder()
-      : super(driver: r'{SQL Server}');
+  SqlServerBuilder() : super(driver: '{SQL Server}');
 }
 
 /// Builder preconfigured for PostgreSQL.
@@ -106,8 +105,7 @@ class SqlServerBuilder extends ConnectionStringBuilder {
 /// Default driver is `{PostgreSQL Unicode}`. Use [server], [port], [database],
 /// [credentials], and [option] for extra keys.
 class PostgreSqlBuilder extends ConnectionStringBuilder {
-  PostgreSqlBuilder()
-      : super(driver: r'{PostgreSQL Unicode}', port: 5432);
+  PostgreSqlBuilder() : super(driver: '{PostgreSQL Unicode}', port: 5432);
 }
 
 /// Builder preconfigured for MySQL.
@@ -115,6 +113,5 @@ class PostgreSqlBuilder extends ConnectionStringBuilder {
 /// Default driver is `{MySQL ODBC 8.0 Driver}`. Use [server], [port],
 /// [database], [credentials], and [option] for extra keys.
 class MySqlBuilder extends ConnectionStringBuilder {
-  MySqlBuilder()
-      : super(driver: r'{MySQL ODBC 8.0 Driver}', port: 3306);
+  MySqlBuilder() : super(driver: '{MySQL ODBC 8.0 Driver}', port: 3306);
 }

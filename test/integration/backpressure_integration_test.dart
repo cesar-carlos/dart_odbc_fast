@@ -12,10 +12,10 @@ void main() {
       const maxBufferSize = 2;
       final query = StreamingQuery(maxBufferSize: maxBufferSize);
 
-      final chunk = ParsedRowBuffer(
-        columns: const [ColumnMetadata(name: 'a', odbcType: 2)],
+      const chunk = ParsedRowBuffer(
+        columns: [ColumnMetadata(name: 'a', odbcType: 2)],
         rows: [
-          [1]
+          [1],
         ],
         rowCount: 1,
         columnCount: 1,
@@ -27,23 +27,23 @@ void main() {
       final addFuture3 = query.addChunk(chunk).whenComplete(() {
         thirdCompleted = true;
       });
-      await Future<void>.delayed(Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(thirdCompleted, isFalse);
 
       final received = <ParsedRowBuffer>[];
-      query.stream.listen((c) => received.add(c));
+      query.stream.listen(received.add);
       await addFuture3;
-      await Future<void>.delayed(Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(received.length, 3);
       query.close();
     });
 
     test('clearBuffer unblocks waiting addChunk', () async {
       final query = StreamingQuery(maxBufferSize: 2);
-      final chunk = ParsedRowBuffer(
-        columns: const [ColumnMetadata(name: 'a', odbcType: 2)],
+      const chunk = ParsedRowBuffer(
+        columns: [ColumnMetadata(name: 'a', odbcType: 2)],
         rows: [
-          [1]
+          [1],
         ],
         rowCount: 1,
         columnCount: 1,
@@ -54,7 +54,7 @@ void main() {
 
       final addFuture = query.addChunk(chunk);
       final cleared = Completer<void>();
-      Future<void>.delayed(Duration(milliseconds: 20), () {
+      Future<void>.delayed(const Duration(milliseconds: 20), () {
         query.clearBuffer();
         cleared.complete();
       });

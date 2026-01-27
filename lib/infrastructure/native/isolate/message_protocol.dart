@@ -42,7 +42,8 @@ sealed class WorkerRequest {
 
 /// Initialize ODBC environment.
 class InitializeRequest extends WorkerRequest {
-  const InitializeRequest(int requestId) : super(requestId, RequestType.initialize);
+  const InitializeRequest(int requestId)
+      : super(requestId, RequestType.initialize);
 }
 
 /// Establish database connection.
@@ -229,7 +230,8 @@ class BulkInsertArrayRequest extends WorkerRequest {
 
 /// Get metrics.
 class GetMetricsRequest extends WorkerRequest {
-  const GetMetricsRequest(int requestId) : super(requestId, RequestType.getMetrics);
+  const GetMetricsRequest(int requestId)
+      : super(requestId, RequestType.getMetrics);
 }
 
 /// Catalog tables.
@@ -279,7 +281,7 @@ sealed class WorkerResponse {
 
 /// Response for initialize.
 class InitializeResponse extends WorkerResponse {
-  const InitializeResponse(super.requestId, this.success);
+  const InitializeResponse(super.requestId, {required this.success});
   final bool success;
 }
 
@@ -292,7 +294,7 @@ class ConnectResponse extends WorkerResponse {
 
 /// Response for operations returning bool.
 class BoolResponse extends WorkerResponse {
-  const BoolResponse(super.requestId, this.value);
+  const BoolResponse(super.requestId, {required this.value});
   final bool value;
 }
 

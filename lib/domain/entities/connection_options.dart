@@ -18,11 +18,11 @@ class ConnectionOptions {
   final Duration? loginTimeout;
 
   /// Timeout for individual queries. Applied when using prepared statements
-  /// with a timeout (e.g. [prepare] with [timeoutMs]).
+  /// with a timeout (e.g. `prepare` with `timeoutMs`).
   final Duration? queryTimeout;
 
-  /// Effective login timeout in milliseconds: [loginTimeout] ?? [connectionTimeout],
-  /// or 0 if neither is set.
+  /// Effective login timeout in milliseconds:
+  /// [loginTimeout] ?? [connectionTimeout], or 0 if neither is set.
   int get loginTimeoutMs {
     final d = loginTimeout ?? connectionTimeout;
     if (d == null) return 0;
