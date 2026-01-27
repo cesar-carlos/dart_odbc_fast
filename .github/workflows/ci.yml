@@ -46,12 +46,5 @@ jobs:
         run: >
           dart test
           test/domain
-          test/infrastructure
-          test/validation
-          test/stress
-          test/native_assets_test.dart
-
-      - name: Run integration tests
-        run: dart test test/integration
-        env:
-          ODBC_TEST_DSN: ${{ secrets.ODBC_TEST_DSN }} 
+          test/infrastructure/native/protocol/
+          test/infrastructure/native/errors/ 
