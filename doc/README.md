@@ -26,11 +26,18 @@ Index of all project documentation.
 |----------|-------------|
 | [api_governance.md](api_governance.md) | Versioning (API, Protocol, ABI), compatibility policy, LTS strategy |
 
+## Future Implementations
+
+| Document | Description |
+|----------|-------------|
+| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Itens documentados e deixados para implementação futura: bulk insert paralelo, Schema PK/FK/Indexes, queryTimeout global |
+
 ## Additional Resources
 
 - **Rust engine architecture**: `native/odbc_engine/ARCHITECTURE.md`
 - **FFI overview**: `native/doc/` (when available)
 - **Main README**: `../README.md`
+- **Examples index**: [example/README.md](../example/README.md)
 
 ## Quick Links
 

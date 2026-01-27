@@ -45,6 +45,65 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 - **Connection pooling** helpers (create/get/release/health/state/close)
 - **Bulk insert payload builder** (binary protocol) + bulk insert execution
 - **Metrics/observability** (query count, errors, latency, uptime)
+- **Savepoints** (nested transaction markers)
+- **Automatic retry** with exponential backoff for transient errors
+- **Connection timeouts** (login/connection timeout configuration)
+- **Connection String Builder** (fluent API)
+- **Backpressure control** in streaming queries
+
+## What's New in v0.3.0
+
+### Savepoints (Nested Transactions)
+Create rollback points within transactions:
+
+```dart
+final txnId = await service.beginTransaction(connId, IsolationLevel.readCommitted);
+await service.createSavepoint(connId, txnId, 'sp1');
+// ... operations
+await service.rollbackToSavepoint(connId, txnId, 'sp1'); // or releaseSavepoint
+```
+
+### Automatic Retry with Exponential Backoff
+Automatic retry for transient errors (connection lost, timeouts):
+
+```dart
+final result = await service.withRetry(
+  () => service.connect(dsn),
+  options: RetryOptions(maxAttempts: 3, initialDelay: Duration(milliseconds: 100)),
+);
+```
+
+### Connection Timeouts
+Configure login/connection timeouts:
+
+```dart
+await service.connect(
+  dsn,
+  options: ConnectionOptions(loginTimeout: Duration(seconds: 30)),
+);
+```
+
+### Connection String Builder
+Fluent API for building connection strings:
+
+```dart
+final connStr = SqlServerBuilder()
+  .server('localhost')
+  .port(1433)
+  .database('MyDB')
+  .credentials('user', 'pass')
+  .build();
+```
+
+### Backpressure Control
+Streaming queries with configurable buffer size:
+
+```dart
+final stream = StreamingQuery(maxBufferSize: 1000);
+```
+
+**Migration Guide**: See [doc/MIGRATION_ASYNC.md](doc/MIGRATION_ASYNC.md)  
+**Examples**: Run `dart run example/savepoint_demo.dart`, `dart run example/retry_demo.dart`, `dart run example/connection_builder_demo.dart`
 
 ## Requirements
 

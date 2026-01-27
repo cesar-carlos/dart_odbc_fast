@@ -1,3 +1,8 @@
+// Comprehensive demo: connect, query, transactions, streaming, catalog, pool, bulk insert.
+// For v0.3.0 features (savepoints, retry, timeouts, connection builder), see:
+//   example/savepoint_demo.dart, example/retry_demo.dart, example/connection_builder_demo.dart
+// See example/README.md for index of all examples.
+
 import 'dart:io';
 
 import 'package:dotenv/dotenv.dart';

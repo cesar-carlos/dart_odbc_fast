@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 /// Demonstration of TRUE non-blocking Async API.
@@ -91,7 +90,9 @@ Future<void> _demoParallelQueries(OdbcService service) async {
 
     stopwatch.stop();
 
-    print('3 queries (2s each) completed in ${stopwatch.elapsedMilliseconds}ms');
+    print(
+      '3 queries (2s each) completed in ${stopwatch.elapsedMilliseconds}ms',
+    );
     print('Expected: ~2000ms+ (worker processes requests)\n');
 
     await service.disconnect(conn.id);
