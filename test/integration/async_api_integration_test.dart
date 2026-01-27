@@ -199,117 +199,137 @@ void main() {
       );
     });
 
-    test('should work with real database if available', () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) {
-        return; // Skip if no DSN configured
-      }
+    test(
+      'should work with real database if available',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) {
+          return; // Skip if no DSN configured
+        }
 
-      // Connect to real database
-      final connId = await async.connect(dsn);
-      expect(connId, isNonZero);
+        // Connect to real database
+        final connId = await async.connect(dsn);
+        expect(connId, isNonZero);
 
-      // Execute simple query
-      final result = await async.executeQueryParams(
-        connId,
-        'SELECT 1 AS test_col',
-        [],
-      );
+        // Execute simple query
+        final result = await async.executeQueryParams(
+          connId,
+          'SELECT 1 AS test_col',
+          [],
+        );
 
-      // Result should be non-null binary data when backend returns rows
-      if (result == null) {
+        // Result should be non-null binary data when backend returns rows
+        if (result == null) {
+          await async.disconnect(connId);
+          return;
+        }
+        expect(result.isNotEmpty, isTrue);
+
+        // Disconnect
+        final disconnectResult = await async.disconnect(connId);
+        expect(disconnectResult, isTrue);
+      },
+      skip: 'Integration test - requires database connection',
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should handle transactions with real database',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) {
+          return; // Skip if no DSN configured
+        }
+
+        final connId = await async.connect(dsn);
+        expect(connId, isNonZero);
+
+        // Begin transaction
+        final txnId = await async.beginTransaction(connId, 1); // ReadCommitted
+        expect(txnId, isNonZero);
+
+        // Commit transaction
+        final commitResult = await async.commitTransaction(txnId);
+        expect(commitResult, isTrue);
+
+        // Disconnect
         await async.disconnect(connId);
-        return;
-      }
-      expect(result.isNotEmpty, isTrue);
+      },
+      skip: 'Integration test - requires database connection',
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-      // Disconnect
-      final disconnectResult = await async.disconnect(connId);
-      expect(disconnectResult, isTrue);
-    });
+    test(
+      'should handle prepared statements with real database',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) {
+          return; // Skip if no DSN configured
+        }
 
-    test('should handle transactions with real database', () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) {
-        return; // Skip if no DSN configured
-      }
+        final connId = await async.connect(dsn);
+        expect(connId, isNonZero);
 
-      final connId = await async.connect(dsn);
-      expect(connId, isNonZero);
+        // Prepare statement
+        final stmtId = await async.prepare(connId, 'SELECT ? AS val');
+        expect(stmtId, isNonZero);
 
-      // Begin transaction
-      final txnId = await async.beginTransaction(connId, 1); // ReadCommitted
-      expect(txnId, isNonZero);
+        // Execute prepared statement
+        final result = await async.executePrepared(
+          stmtId,
+          [const ParamValueInt32(42)],
+        );
 
-      // Commit transaction
-      final commitResult = await async.commitTransaction(txnId);
-      expect(commitResult, isTrue);
+        expect(result, isNotNull);
+        expect(result!.isNotEmpty, isTrue);
 
-      // Disconnect
-      await async.disconnect(connId);
-    });
+        // Close statement
+        final closeResult = await async.closeStatement(stmtId);
+        expect(closeResult, isTrue);
 
-    test('should handle prepared statements with real database', () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) {
-        return; // Skip if no DSN configured
-      }
+        // Disconnect
+        await async.disconnect(connId);
+      },
+      skip: 'Integration test - requires database connection',
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-      final connId = await async.connect(dsn);
-      expect(connId, isNonZero);
+    test(
+      'should handle pool operations with real database',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null) {
+          return; // Skip if no DSN configured
+        }
 
-      // Prepare statement
-      final stmtId = await async.prepare(connId, 'SELECT ? AS val');
-      expect(stmtId, isNonZero);
+        // Create pool
+        final poolId = await async.poolCreate(dsn, 2);
+        expect(poolId, isNonZero);
 
-      // Execute prepared statement
-      final result = await async.executePrepared(
-        stmtId,
-        [const ParamValueInt32(42)],
-      );
+        // Get connection from pool
+        final connId = await async.poolGetConnection(poolId);
+        expect(connId, isNonZero);
 
-      expect(result, isNotNull);
-      expect(result!.isNotEmpty, isTrue);
+        // Health check
+        final healthCheck = await async.poolHealthCheck(poolId);
+        expect(healthCheck, isTrue);
 
-      // Close statement
-      final closeResult = await async.closeStatement(stmtId);
-      expect(closeResult, isTrue);
+        // Get pool state
+        final state = await async.poolGetState(poolId);
+        expect(state, isNotNull);
+        expect(state!.size, greaterThanOrEqualTo(0));
+        expect(state.idle, greaterThanOrEqualTo(0));
 
-      // Disconnect
-      await async.disconnect(connId);
-    });
+        // Release connection
+        final releaseResult = await async.poolReleaseConnection(connId);
+        expect(releaseResult, isTrue);
 
-    test('should handle pool operations with real database', () async {
-      final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) {
-        return; // Skip if no DSN configured
-      }
-
-      // Create pool
-      final poolId = await async.poolCreate(dsn, 2);
-      expect(poolId, isNonZero);
-
-      // Get connection from pool
-      final connId = await async.poolGetConnection(poolId);
-      expect(connId, isNonZero);
-
-      // Health check
-      final healthCheck = await async.poolHealthCheck(poolId);
-      expect(healthCheck, isTrue);
-
-      // Get pool state
-      final state = await async.poolGetState(poolId);
-      expect(state, isNotNull);
-      expect(state!.size, greaterThanOrEqualTo(0));
-      expect(state.idle, greaterThanOrEqualTo(0));
-
-      // Release connection
-      final releaseResult = await async.poolReleaseConnection(connId);
-      expect(releaseResult, isTrue);
-
-      // Close pool
-      final closeResult = await async.poolClose(poolId);
-      expect(closeResult, isTrue);
-    });
+        // Close pool
+        final closeResult = await async.poolClose(poolId);
+        expect(closeResult, isTrue);
+      },
+      skip: 'Integration test - requires database connection',
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
 }

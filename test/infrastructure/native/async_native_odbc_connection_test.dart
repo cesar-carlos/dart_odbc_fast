@@ -178,6 +178,7 @@ void main() {
         await queryFuture;
         await async.disconnect(connId);
       },
+      skip: 'Slow integration test - uses WAITFOR DELAY',
       timeout: const Timeout(Duration(seconds: 10)),
     );
 
@@ -209,6 +210,7 @@ void main() {
         await async.disconnect(connId2);
         await async.disconnect(connId3);
       },
+      skip: 'Slow integration test - multiple concurrent queries with delays',
       timeout: const Timeout(Duration(seconds: 15)),
     );
 

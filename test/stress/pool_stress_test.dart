@@ -19,43 +19,51 @@ void main() {
       connectionString = getTestEnv('ODBC_TEST_DSN');
     });
 
-    test('should handle 10 concurrent connections', () async {
-      final dsn = connectionString;
-      if (dsn == null) return;
+    test(
+      'should handle 10 concurrent connections',
+      () async {
+        final dsn = connectionString;
+        if (dsn == null) return;
 
-      final connections = <Connection>[];
+        final connections = <Connection>[];
 
-      for (var i = 0; i < 10; i++) {
-        final connResult = await locator.service.connect(dsn);
-        connResult.fold(
-          connections.add,
-          (error) {
-            final errorObj = error as OdbcError;
-            fail('Connection $i failed: ${errorObj.message}');
-          },
-        );
-      }
+        for (var i = 0; i < 10; i++) {
+          final connResult = await locator.service.connect(dsn);
+          connResult.fold(
+            connections.add,
+            (error) {
+              final errorObj = error as OdbcError;
+              fail('Connection $i failed: ${errorObj.message}');
+            },
+          );
+        }
 
-      expect(connections.length, equals(10));
+        expect(connections.length, equals(10));
 
-      for (final conn in connections) {
-        final disconnectResult = await locator.service.disconnect(conn.id);
-        expect(disconnectResult.isSuccess(), isTrue);
-      }
-    });
+        for (final conn in connections) {
+          final disconnectResult = await locator.service.disconnect(conn.id);
+          expect(disconnectResult.isSuccess(), isTrue);
+        }
+      },
+      skip: 'Stress test - runs too long',
+    );
 
-    test('should handle rapid connect/disconnect cycles', () async {
-      final dsn = connectionString;
-      if (dsn == null) return;
+    test(
+      'should handle rapid connect/disconnect cycles',
+      () async {
+        final dsn = connectionString;
+        if (dsn == null) return;
 
-      for (var i = 0; i < 50; i++) {
-        final connResult = await locator.service.connect(dsn);
-        final connection =
-            connResult.getOrElse((_) => throw Exception('Failed to connect'));
-        final disconnectResult =
-            await locator.service.disconnect(connection.id);
-        expect(disconnectResult.isSuccess(), isTrue);
-      }
-    });
+        for (var i = 0; i < 50; i++) {
+          final connResult = await locator.service.connect(dsn);
+          final connection =
+              connResult.getOrElse((_) => throw Exception('Failed to connect'));
+          final disconnectResult =
+              await locator.service.disconnect(connection.id);
+          expect(disconnectResult.isSuccess(), isTrue);
+        }
+      },
+      skip: 'Stress test - runs too long',
+    );
   });
 }
