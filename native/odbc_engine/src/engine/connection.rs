@@ -18,10 +18,29 @@ impl OdbcConnection {
         }
 
         let conn_id = {
-            let mut handles = handles.lock().map_err(|_| {
+            let mut h = handles.lock().map_err(|_| {
                 OdbcError::InternalError("Failed to lock handles mutex".to_string())
             })?;
-            handles.create_connection(conn_str)?
+            h.create_connection(conn_str)?
+        };
+
+        Ok(Self::new(conn_id, handles))
+    }
+
+    pub fn connect_with_timeout(
+        handles: SharedHandleManager,
+        conn_str: &str,
+        timeout_secs: u32,
+    ) -> Result<Self> {
+        if conn_str.is_empty() {
+            return Err(OdbcError::EmptyConnectionString);
+        }
+
+        let conn_id = {
+            let mut h = handles.lock().map_err(|_| {
+                OdbcError::InternalError("Failed to lock handles mutex".to_string())
+            })?;
+            h.create_connection_with_timeout(conn_str, timeout_secs)?
         };
 
         Ok(Self::new(conn_id, handles))

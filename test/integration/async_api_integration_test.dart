@@ -41,7 +41,7 @@ void main() {
     test('should handle getStructuredError async', () async {
       final error = await async.getStructuredError();
       // Returns null when no error, or StructuredError when worker has last error
-      expect(error == null || error is StructuredError, isTrue);
+      expect(error, anyOf(isNull, isA<StructuredError>()));
     });
 
     test('should handle disconnect with non-existent connection', () async {

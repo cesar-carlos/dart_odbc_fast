@@ -61,6 +61,23 @@ class OdbcNative {
     }
   }
 
+  /// Establishes a connection with a login timeout.
+  ///
+  /// [timeoutMs] is the login timeout in milliseconds (0 = driver default).
+  /// Returns a connection ID on success, 0 on failure.
+  int connectWithTimeout(String connectionString, int timeoutMs) {
+    final connStrPtr = connectionString.toNativeUtf8();
+    try {
+      final connId = _bindings.odbc_connect_with_timeout(
+        connStrPtr.cast<bindings.Utf8>(),
+        timeoutMs,
+      );
+      return connId;
+    } finally {
+      malloc.free(connStrPtr);
+    }
+  }
+
   /// Closes and disconnects a connection.
   ///
   /// The [connectionId] must be a valid connection identifier.
@@ -327,6 +344,45 @@ class OdbcNative {
   /// Returns true on success, false on failure.
   bool transactionRollback(int txnId) {
     return _bindings.odbc_transaction_rollback(txnId) == 0;
+  }
+
+  /// Creates a savepoint within an active transaction.
+  ///
+  /// The [txnId] must be a valid transaction identifier from [transactionBegin].
+  /// Returns true on success, false on failure.
+  bool savepointCreate(int txnId, String name) {
+    final namePtr = name.toNativeUtf8();
+    try {
+      return _bindings.odbc_savepoint_create(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+    } finally {
+      malloc.free(namePtr);
+    }
+  }
+
+  /// Rolls back to a savepoint. The transaction remains active.
+  ///
+  /// The [txnId] must be a valid transaction identifier.
+  /// Returns true on success, false on failure.
+  bool savepointRollback(int txnId, String name) {
+    final namePtr = name.toNativeUtf8();
+    try {
+      return _bindings.odbc_savepoint_rollback(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+    } finally {
+      malloc.free(namePtr);
+    }
+  }
+
+  /// Releases a savepoint. The transaction remains active.
+  ///
+  /// The [txnId] must be a valid transaction identifier.
+  /// Returns true on success, false on failure.
+  bool savepointRelease(int txnId, String name) {
+    final namePtr = name.toNativeUtf8();
+    try {
+      return _bindings.odbc_savepoint_release(txnId, namePtr.cast<bindings.Utf8>()) == 0;
+    } finally {
+      malloc.free(namePtr);
+    }
   }
 
   /// Gets performance and operational metrics.

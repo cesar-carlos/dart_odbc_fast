@@ -2097,12 +2097,12 @@ jobs:
 | Melhoria | Unit Tests | Integration Tests | E2E Tests | Performance Tests | Doc | Example | CHANGELOG | Status |
 |----------|-----------|------------------|-----------|-------------------|-----|---------|-----------|--------|
 | Async API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟢 Completo (v0.2.0) |
-| Connection Timeouts | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 Não iniciado |
-| Automatic Retry | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 Não iniciado |
-| Savepoints | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
-| Schema Reflection | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
-| Connection String Builder | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
-| Backpressure | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
+| Savepoints | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ✅ | 🟢 Completo (v0.3.0) |
+| Automatic Retry | ✅ | ✅ | ⬜ | ⬜ | ✅ | ✅ | ✅ | 🟢 Completo (v0.3.0) |
+| Connection Timeouts | ✅ | ✅ | ⬜ | ⬜ | ✅ | ⬜ | ✅ | 🟢 Completo (v0.3.0) |
+| Connection String Builder | ✅ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | 🟢 Completo (v0.3.0) |
+| Backpressure | ⬜ | ✅ | ⬜ | ⬜ | ✅ | ⬜ | ✅ | 🟢 Completo (v0.3.0) |
+| Schema Reflection | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | 🟡 Parcial (entities v0.3.0) |
 | Query Builder DSL | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |
 | Reactive Streams | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |
 | Multi-Host Failover | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |

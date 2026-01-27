@@ -61,6 +61,17 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return _native.connect(connectionString);
   }
 
+  /// Establishes a connection with a login timeout.
+  ///
+  /// [timeoutMs] is the login timeout in milliseconds (0 = driver default).
+  /// Returns a connection ID on success, 0 on failure.
+  int connectWithTimeout(String connectionString, int timeoutMs) {
+    if (!_isInitialized) {
+      throw StateError('Environment not initialized');
+    }
+    return _native.connectWithTimeout(connectionString, timeoutMs);
+  }
+
   /// Closes and disconnects a connection.
   ///
   /// The [connectionId] must be a valid connection identifier returned
@@ -116,6 +127,18 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
 
   @override
   bool rollbackTransaction(int txnId) => _native.transactionRollback(txnId);
+
+  @override
+  bool createSavepoint(int txnId, String name) =>
+      _native.savepointCreate(txnId, name);
+
+  @override
+  bool rollbackToSavepoint(int txnId, String name) =>
+      _native.savepointRollback(txnId, name);
+
+  @override
+  bool releaseSavepoint(int txnId, String name) =>
+      _native.savepointRelease(txnId, name);
 
   /// Prepares a SQL statement for execution.
   ///

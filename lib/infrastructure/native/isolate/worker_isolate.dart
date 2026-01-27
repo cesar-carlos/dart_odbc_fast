@@ -45,7 +45,12 @@ void _handleRequest(
 
       case ConnectRequest():
         try {
-          final connId = conn.connect(request.connectionString);
+          final connId = request.timeoutMs > 0
+              ? conn.connectWithTimeout(
+                  request.connectionString,
+                  request.timeoutMs,
+                )
+              : conn.connect(request.connectionString);
           if (connId == 0) {
             final err = conn.getError();
             sendPort.send(ConnectResponse(
@@ -109,6 +114,18 @@ void _handleRequest(
 
       case RollbackTransactionRequest():
         final ok = conn.rollbackTransaction(request.txnId);
+        sendPort.send(BoolResponse(request.requestId, ok));
+
+      case SavepointCreateRequest():
+        final ok = conn.createSavepoint(request.txnId, request.name);
+        sendPort.send(BoolResponse(request.requestId, ok));
+
+      case SavepointRollbackRequest():
+        final ok = conn.rollbackToSavepoint(request.txnId, request.name);
+        sendPort.send(BoolResponse(request.requestId, ok));
+
+      case SavepointReleaseRequest():
+        final ok = conn.releaseSavepoint(request.txnId, request.name);
         sendPort.send(BoolResponse(request.requestId, ok));
 
       case PrepareRequest():
@@ -284,6 +301,9 @@ void _sendErrorResponse(
     case PoolCloseRequest():
     case CommitTransactionRequest():
     case RollbackTransactionRequest():
+    case SavepointCreateRequest():
+    case SavepointRollbackRequest():
+    case SavepointReleaseRequest():
       sendPort.send(BoolResponse(id, false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():

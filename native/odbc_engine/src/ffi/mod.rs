@@ -260,6 +260,65 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
     }
 }
 
+/// Connect to database with login timeout.
+/// conn_str: null-terminated UTF-8 connection string
+/// timeout_ms: login timeout in milliseconds (0 = use default)
+/// Returns: connection ID (>0) on success, 0 on failure
+#[no_mangle]
+pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms: c_uint) -> c_uint {
+    if conn_str.is_null() {
+        return 0;
+    }
+
+    let c_str = unsafe { CStr::from_ptr(conn_str) };
+    let conn_str_rust = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let timeout_secs = if timeout_ms == 0 {
+        1u32
+    } else {
+        (timeout_ms / 1000).max(1)
+    };
+
+    let Some(mut state) = try_lock_global_state() else {
+        return 0;
+    };
+
+    let env = match &state.env {
+        Some(e) => e.clone(),
+        None => {
+            set_error(&mut state, "Environment not initialized".to_string());
+            return 0;
+        }
+    };
+
+    let handles = {
+        let Some(env_guard) = env.lock().ok() else {
+            set_error(&mut state, "Failed to lock environment mutex".to_string());
+            return 0;
+        };
+        env_guard.get_handles()
+    };
+
+    match crate::engine::OdbcConnection::connect_with_timeout(
+        handles,
+        conn_str_rust,
+        timeout_secs,
+    ) {
+        Ok(conn) => {
+            let conn_id = conn.get_connection_id();
+            state.connections.insert(conn_id, conn);
+            conn_id
+        }
+        Err(e) => {
+            set_error(&mut state, format!("odbc_connect_with_timeout failed: {}", e));
+            0
+        }
+    }
+}
+
 /// Disconnect from database
 /// conn_id: connection ID returned by odbc_connect
 /// Returns: 0 on success, non-zero on failure
@@ -400,6 +459,120 @@ pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
     } else {
         set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
         1
+    }
+}
+
+/// Create a savepoint within an active transaction.
+/// txn_id: transaction ID from odbc_transaction_begin
+/// name: savepoint name (UTF-8, null-terminated)
+/// Returns: 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn odbc_savepoint_create(txn_id: c_uint, name: *const c_char) -> c_int {
+    if name.is_null() {
+        return 1;
+    }
+    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
+    let res = state
+        .transactions
+        .get(&txn_id)
+        .map(|txn| txn.execute_sql(&format!("SAVEPOINT {}", name_str)));
+    match (conn_id, res) {
+        (Some(_cid), Some(Ok(_))) => 0,
+        (Some(cid), Some(Err(e))) => {
+            set_connection_error(
+                &mut state,
+                cid,
+                format!("Savepoint create failed: {}", e),
+            );
+            1
+        }
+        _ => {
+            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
+            1
+        }
+    }
+}
+
+/// Rollback to a savepoint. Transaction remains active.
+/// txn_id: transaction ID from odbc_transaction_begin
+/// name: savepoint name (UTF-8, null-terminated)
+/// Returns: 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn odbc_savepoint_rollback(txn_id: c_uint, name: *const c_char) -> c_int {
+    if name.is_null() {
+        return 1;
+    }
+    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
+    let res = state
+        .transactions
+        .get(&txn_id)
+        .map(|txn| txn.execute_sql(&format!("ROLLBACK TO SAVEPOINT {}", name_str)));
+    match (conn_id, res) {
+        (Some(_cid), Some(Ok(_))) => 0,
+        (Some(cid), Some(Err(e))) => {
+            set_connection_error(
+                &mut state,
+                cid,
+                format!("Savepoint rollback failed: {}", e),
+            );
+            1
+        }
+        _ => {
+            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
+            1
+        }
+    }
+}
+
+/// Release a savepoint. Transaction remains active.
+/// txn_id: transaction ID from odbc_transaction_begin
+/// name: savepoint name (UTF-8, null-terminated)
+/// Returns: 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn odbc_savepoint_release(txn_id: c_uint, name: *const c_char) -> c_int {
+    if name.is_null() {
+        return 1;
+    }
+    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
+    let res = state
+        .transactions
+        .get(&txn_id)
+        .map(|txn| txn.execute_sql(&format!("RELEASE SAVEPOINT {}", name_str)));
+    match (conn_id, res) {
+        (Some(_cid), Some(Ok(_))) => 0,
+        (Some(cid), Some(Err(e))) => {
+            set_connection_error(
+                &mut state,
+                cid,
+                format!("Savepoint release failed: {}", e),
+            );
+            1
+        }
+        _ => {
+            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
+            1
+        }
     }
 }
 

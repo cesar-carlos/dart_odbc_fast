@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
@@ -9,8 +10,6 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
-    as native show OdbcMetrics;
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
@@ -123,8 +122,9 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   @override
   Future<Result<Connection>> connect(
-    String connectionString,
-  ) async {
+    String connectionString, {
+    ConnectionOptions? options,
+  }) async {
     if (connectionString.isEmpty) {
       return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
@@ -132,10 +132,14 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
 
     try {
+      final timeoutMs = options?.loginTimeoutMs ?? 0;
       final connId = _isAsync
           ? await (_native as AsyncNativeOdbcConnection)
-              .connect(connectionString)
-          : (_native as NativeOdbcConnection).connect(connectionString);
+              .connect(connectionString, timeoutMs: timeoutMs)
+          : (timeoutMs > 0
+              ? (_native as NativeOdbcConnection)
+                  .connectWithTimeout(connectionString, timeoutMs)
+              : (_native as NativeOdbcConnection).connect(connectionString));
 
       if (connId == 0) {
         return await _convertNativeErrorToFailure<Connection>(
@@ -406,6 +410,99 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           nativeCode: nativeCode,
         ),
         fallbackMessage: 'Failed to rollback transaction',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<Unit>> createSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .createSavepoint(txnId, name)
+          : (_native as NativeOdbcConnection).createSavepoint(txnId, name);
+
+      if (ok) return const Success(unit);
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to create savepoint',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<Unit>> rollbackToSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .rollbackToSavepoint(txnId, name)
+          : (_native as NativeOdbcConnection).rollbackToSavepoint(txnId, name);
+
+      if (ok) return const Success(unit);
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to rollback to savepoint',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<Unit>> releaseSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .releaseSavepoint(txnId, name)
+          : (_native as NativeOdbcConnection).releaseSavepoint(txnId, name);
+
+      if (ok) return const Success(unit);
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to release savepoint',
       );
     } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));

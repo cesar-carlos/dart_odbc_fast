@@ -226,6 +226,22 @@ cargo build --release
 ```
 
 **Solução 2**: Verificar caminho da biblioteca
+
+### Erro: "failed to remove file ... odbc_engine.dll" / "Acesso negado" (DLL em uso)
+
+A DLL antiga está em uso (IDE, processo Dart, antivírus). Para gerar a nova DLL sem sobrescrever:
+
+**PowerShell (workspace = `native/`):**
+```powershell
+cd native
+$env:CARGO_TARGET_DIR = "target_release_new"
+cargo build -p odbc_engine --release
+```
+
+A nova DLL fica em `native/target_release_new/release/odbc_engine.dll`. Depois:
+1. Feche Cursor/IDE e qualquer processo que use a DLL.
+2. Copie `target_release_new\release\odbc_engine.dll` para `target\release\odbc_engine.dll`, ou
+3. Rode de novo `cargo build -p odbc_engine --release` (sem CARGO_TARGET_DIR) para gravar em `target/release/`.
 ```dart
 // lib/infrastructure/native/bindings/library_loader.dart
 // Confira que os caminhos estão corretos para seu sistema

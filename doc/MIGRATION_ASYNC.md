@@ -126,6 +126,20 @@ locator.initialize(useAsync: true);
 final service = locator.asyncService;
 ```
 
+## Savepoints
+
+Savepoints (nested transaction markers) work with both sync and async:
+
+```dart
+final txnId = (await service.beginTransaction(connId, IsolationLevel.readCommitted)).getOrElse(...);
+await service.createSavepoint(connId, txnId, 'sp1');
+// ... work ...
+await service.rollbackToSavepoint(connId, txnId, 'sp1');  // or releaseSavepoint
+await service.commitTransaction(connId, txnId);
+```
+
+Requires a database that supports `SAVEPOINT` (e.g. PostgreSQL, MySQL). SQL Server uses different syntax. See [`example/savepoint_demo.dart`](../example/savepoint_demo.dart).
+
 ## Examples
 
 See [`example/async_demo.dart`](../example/async_demo.dart) for a full demonstration.

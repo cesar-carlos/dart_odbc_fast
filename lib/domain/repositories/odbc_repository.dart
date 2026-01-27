@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
@@ -24,10 +25,14 @@ abstract class IOdbcRepository {
   ///
   /// The [connectionString] should be a valid ODBC connection string
   /// (e.g., 'DSN=MyDatabase' or 'Driver={SQL Server};Server=...').
+  /// [options] can specify connection/login timeout.
   ///
   /// Returns a [Connection] on success or an error [Result] if the connection
   /// cannot be established.
-  Future<Result<Connection>> connect(String connectionString);
+  Future<Result<Connection>> connect(
+    String connectionString, {
+    ConnectionOptions? options,
+  });
 
   /// Closes and disconnects a connection.
   ///
@@ -74,6 +79,34 @@ abstract class IOdbcRepository {
   Future<Result<Unit>> rollbackTransaction(
     String connectionId,
     int txnId,
+  );
+
+  /// Creates a savepoint within an active transaction.
+  ///
+  /// The [connectionId] and [txnId] must be valid and correspond to
+  /// an active transaction started with [beginTransaction].
+  Future<Result<Unit>> createSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  );
+
+  /// Rolls back to a savepoint. The transaction remains active.
+  ///
+  /// The [connectionId] and [txnId] must be valid.
+  Future<Result<Unit>> rollbackToSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  );
+
+  /// Releases a savepoint. The transaction remains active.
+  ///
+  /// The [connectionId] and [txnId] must be valid.
+  Future<Result<Unit>> releaseSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
   );
 
   /// Prepares a SQL statement for execution.

@@ -12,6 +12,7 @@ build/
 # Rust
 target/
 target_test/
+target_release_new/
 Cargo.lock
 **/*.rs.bk
 

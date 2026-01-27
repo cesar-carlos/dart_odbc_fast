@@ -113,11 +113,12 @@ class AsyncNativeOdbcConnection {
 
   /// Opens a connection in the worker using [connectionString].
   ///
+  /// [timeoutMs] is the login timeout in milliseconds (0 = driver default).
   /// Throws [AsyncError] with [AsyncErrorCode.connectionFailed] if the
   /// connection fails. Call [initialize] before [connect].
   ///
   /// Returns the native connection ID (positive integer) on success.
-  Future<int> connect(String connectionString) async {
+  Future<int> connect(String connectionString, {int timeoutMs = 0}) async {
     if (!_isInitialized) {
       throw const AsyncError(
         code: AsyncErrorCode.notInitialized,
@@ -125,7 +126,7 @@ class AsyncNativeOdbcConnection {
       );
     }
     final r = await _sendRequest<ConnectResponse>(
-      ConnectRequest(_nextRequestId(), connectionString),
+      ConnectRequest(_nextRequestId(), connectionString, timeoutMs: timeoutMs),
     );
     if (r.error != null) {
       throw AsyncError(
@@ -189,6 +190,30 @@ class AsyncNativeOdbcConnection {
   Future<bool> rollbackTransaction(int txnId) async {
     final r = await _sendRequest<BoolResponse>(
       RollbackTransactionRequest(_nextRequestId(), txnId),
+    );
+    return r.value;
+  }
+
+  /// Creates a savepoint [name] within the transaction [txnId] in the worker.
+  Future<bool> createSavepoint(int txnId, String name) async {
+    final r = await _sendRequest<BoolResponse>(
+      SavepointCreateRequest(_nextRequestId(), txnId, name),
+    );
+    return r.value;
+  }
+
+  /// Rolls back to savepoint [name] in transaction [txnId]. Transaction stays active.
+  Future<bool> rollbackToSavepoint(int txnId, String name) async {
+    final r = await _sendRequest<BoolResponse>(
+      SavepointRollbackRequest(_nextRequestId(), txnId, name),
+    );
+    return r.value;
+  }
+
+  /// Releases savepoint [name] in transaction [txnId]. Transaction stays active.
+  Future<bool> releaseSavepoint(int txnId, String name) async {
+    final r = await _sendRequest<BoolResponse>(
+      SavepointReleaseRequest(_nextRequestId(), txnId, name),
     );
     return r.value;
   }

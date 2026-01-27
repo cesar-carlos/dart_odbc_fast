@@ -20,6 +20,24 @@ abstract class OdbcConnectionBackend {
   /// Returns true on success, false on failure.
   bool rollbackTransaction(int txnId);
 
+  /// Creates a savepoint within an active transaction.
+  ///
+  /// The [txnId] must be a valid transaction identifier.
+  /// Returns true on success, false on failure.
+  bool createSavepoint(int txnId, String name);
+
+  /// Rolls back to a savepoint. The transaction remains active.
+  ///
+  /// The [txnId] must be a valid transaction identifier.
+  /// Returns true on success, false on failure.
+  bool rollbackToSavepoint(int txnId, String name);
+
+  /// Releases a savepoint. The transaction remains active.
+  ///
+  /// The [txnId] must be a valid transaction identifier.
+  /// Returns true on success, false on failure.
+  bool releaseSavepoint(int txnId, String name);
+
   /// Executes a prepared statement with optional parameters.
   ///
   /// The [stmtId] must be a valid prepared statement identifier.

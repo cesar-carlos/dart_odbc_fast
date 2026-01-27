@@ -12,6 +12,9 @@ enum RequestType {
   beginTransaction,
   commitTransaction,
   rollbackTransaction,
+  savepointCreate,
+  savepointRollback,
+  savepointRelease,
   prepare,
   executePrepared,
   closeStatement,
@@ -44,9 +47,13 @@ class InitializeRequest extends WorkerRequest {
 
 /// Establish database connection.
 class ConnectRequest extends WorkerRequest {
-  const ConnectRequest(int requestId, this.connectionString)
-      : super(requestId, RequestType.connect);
+  const ConnectRequest(
+    int requestId,
+    this.connectionString, {
+    this.timeoutMs = 0,
+  }) : super(requestId, RequestType.connect);
   final String connectionString;
+  final int timeoutMs;
 }
 
 /// Disconnect and close connection.
@@ -100,6 +107,30 @@ class RollbackTransactionRequest extends WorkerRequest {
   const RollbackTransactionRequest(int requestId, this.txnId)
       : super(requestId, RequestType.rollbackTransaction);
   final int txnId;
+}
+
+/// Create savepoint.
+class SavepointCreateRequest extends WorkerRequest {
+  const SavepointCreateRequest(int requestId, this.txnId, this.name)
+      : super(requestId, RequestType.savepointCreate);
+  final int txnId;
+  final String name;
+}
+
+/// Rollback to savepoint.
+class SavepointRollbackRequest extends WorkerRequest {
+  const SavepointRollbackRequest(int requestId, this.txnId, this.name)
+      : super(requestId, RequestType.savepointRollback);
+  final int txnId;
+  final String name;
+}
+
+/// Release savepoint.
+class SavepointReleaseRequest extends WorkerRequest {
+  const SavepointReleaseRequest(int requestId, this.txnId, this.name)
+      : super(requestId, RequestType.savepointRelease);
+  final int txnId;
+  final String name;
 }
 
 /// Prepare SQL statement.

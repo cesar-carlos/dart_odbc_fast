@@ -1,9 +1,12 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/retry_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/helpers/retry_helper.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -33,15 +36,29 @@ class OdbcService {
   /// initialized.
   Future<Result<Unit>> initialize() async => _repository.initialize();
 
+  /// Runs [operation] with automatic retry on retryable [OdbcError]s.
+  ///
+  /// Uses [RetryHelper.execute] with [options] or [RetryOptions.defaultOptions].
+  /// Use for operations that may fail transiently (e.g. connection timeouts).
+  Future<Result<T>> withRetry<T extends Object>(
+    Future<Result<T>> Function() operation, {
+    RetryOptions? options,
+  }) =>
+      RetryHelper.execute<T>(operation, options ?? RetryOptions.defaultOptions);
+
   /// Establishes a new database connection.
   ///
   /// The [connectionString] must be a non-empty ODBC connection string
   /// (e.g., 'DSN=MyDatabase' or 'Driver={SQL Server};Server=...').
+  /// [options] can specify connection/login timeout.
   ///
   /// Automatically initializes the ODBC environment if not already initialized.
   /// Returns a [Connection] on success or a [ValidationError] if the
   /// connection string is empty, or a [ConnectionError] if connection fails.
-  Future<Result<Connection>> connect(String connectionString) async {
+  Future<Result<Connection>> connect(
+    String connectionString, {
+    ConnectionOptions? options,
+  }) async {
     if (connectionString.trim().isEmpty) {
       return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
@@ -61,7 +78,7 @@ class OdbcService {
       }
     }
 
-    return _repository.connect(connectionString);
+    return _repository.connect(connectionString, options: options);
   }
 
   /// Closes and disconnects a connection.
@@ -122,6 +139,33 @@ class OdbcService {
     int txnId,
   ) async =>
       _repository.rollbackTransaction(connectionId, txnId);
+
+  /// Creates a savepoint within an active transaction.
+  ///
+  /// The [connectionId] and [txnId] must be valid and correspond to
+  /// an active transaction started with [beginTransaction].
+  Future<Result<Unit>> createSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async =>
+      _repository.createSavepoint(connectionId, txnId, name);
+
+  /// Rolls back to a savepoint. The transaction remains active.
+  Future<Result<Unit>> rollbackToSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async =>
+      _repository.rollbackToSavepoint(connectionId, txnId, name);
+
+  /// Releases a savepoint. The transaction remains active.
+  Future<Result<Unit>> releaseSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async =>
+      _repository.releaseSavepoint(connectionId, txnId, name);
 
   /// Prepares a SQL statement for execution.
   ///
