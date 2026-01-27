@@ -1,110 +1,39 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.2.0] - 2026-01-27
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Added – true non-blocking implementation
 
-## [Unreleased]
+- **Worker isolate**: Long-lived background isolate for all FFI operations
+- **Message protocol**: SendPort/ReceivePort-based request/response system
+- **True parallelism**: Multiple requests are queued and processed by the worker
+- **Lifecycle management**: Proper isolate spawn, initialization, and shutdown
+- **Error recovery**: [WorkerCrashRecovery](lib/infrastructure/native/isolate/error_recovery.dart) for worker crash handling
+- **ServiceLocator.shutdown()**: Cleanup worker isolate on app exit when using async
 
-## [0.1.6] - 2026-01-26
+### Changed – breaking
 
-### Added
-- `streamQueryBatched` on `NativeOdbcConnection` for cursor-based batched streaming
-  (complete protocol messages per batch; preferred for large result sets).
-
-### Changed
-- `executeQuery` (repository/service) now prefers `streamQueryBatched`, with
-  fallback to `streamQuery` on failure.
-- README and example updated to document and use `streamQueryBatched`.
-
-### Fixed
-- Fixed `.pubignore` pattern to avoid excluding `lib/infrastructure/native/`
-  from published package.
-
-## [0.1.5] - 2026-01-26
+- `AsyncNativeOdbcConnection()` now takes no constructor argument (worker owns its native connection)
+- `ServiceLocator.initialize(useAsync: true)` required for async; use `locator.asyncService` when async
+- All async operations run in the worker isolate (main thread stays responsive)
+- Call `ServiceLocator().shutdown()` on app exit when using async
 
 ### Fixed
-- Added contents: write permission to release workflow for creating GitHub releases
-- Fixed artifact download with pattern matching and merge-multiple options
-- Release workflow now correctly uploads binaries to root level
 
-### Changed
-- Complete end-to-end automated release pipeline validated
-- Binaries automatically built and released for Windows and Linux
-
-## [0.1.4] - 2026-01-26
+- UI freezing during long queries in Flutter applications
+- Tests that did not validate true non-blocking behavior
+- Documentation that claimed non-blocking while operations were still synchronous
 
 ### Performance
-- Removed AddressSanitizer and UBsanitizer from default build configuration
-  (70% reduction in build time: 10-15 min → 3-5 min)
-- Added thin LTO and optimized codegen units for faster release builds
-- Reduced binary size with strip=true
 
-### Fixed
-- Corrected download URL in Native Assets hook to match GitHub release structure
-- Fixed release workflow build path for Cargo workspace structure
-- Fixed ffigen verbose flag syntax in workflows
-- Added missing libclang-dev and llvm dependencies for cbindgen in CI
+- One-time worker spawn: ~50–100ms
+- Per-operation overhead: ~1–3ms
+- Event loop ticks normally during database operations
 
-### Changed
-- Simplified CI/CD by removing redundant workflows (keep only release.yml)
-- Added Rust dependency caching to reduce build times in CI
-- Release workflow now uploads binaries to root level (no subdirectories)
-- Added explicit timeout and verbose output for better debugging
+### Migration
 
-## [0.1.3] - 2026-01-26
-
-### Fixed
-- Corrected download URL in Native Assets hook to match GitHub release structure
-
-## [0.1.2] - 2026-01-26
-
-### Changed
-- Removed macOS support entirely
-- Simplified workflows to Windows and Linux only
-- Optimized CI/CD pipelines
-
-## [0.1.1] - 2026-01-26
-
-### Fixed
-- Reduced topics to 5 (pub.dev limit)
-- Improved Native Assets documentation
-
-### Changed
-- Removed macOS support (now Windows and Linux only)
-- Simplified release workflow to 2 platforms
-
-### Added
-- Automatic native binary download from GitHub Releases
-- Local cache for downloaded binaries (~/.cache/odbc_fast/)
-- Multi-platform binary support (Windows x64, Linux x64)
-
-## [0.1.0] - 2026-01-26
-
-### Added
-- Initial release
-- Core ODBC functionality with Rust engine via FFI
-- Clean Architecture API with Domain, Application, and Infrastructure layers
-- Connection management (connect, disconnect)
-- Query execution (executeQuery, executeQueryParams, executeQueryMulti)
-- Transaction support (begin, commit, rollback) with isolation levels
-- Prepared statements (prepare, executePrepared, closeStatement)
-- Connection pooling (poolCreate, poolGetConnection, poolReleaseConnection, poolHealthCheck, poolGetState, poolClose)
-- Streaming query results for efficient large result set processing
-- Bulk insert operations with BulkInsertBuilder
-- Database catalog queries (tables, columns, typeInfo)
-- Comprehensive error handling with OdbcError hierarchy
-- Performance metrics (OdbcMetrics)
-- Service locator for dependency injection
-- Centralized logging (AppLogger)
-
-### Technical Details
-- Native Rust engine for high-performance ODBC operations
-- Binary protocol for efficient data transfer
-- Type-safe parameter values (ParamValue hierarchy)
-- Result-based error handling using result_dart package
-- Support for Windows and Linux platforms
-- **Native Assets**: Automatic binary distribution (no manual compilation required)
-- Multi-platform binary builds via GitHub Actions
-- Automatic library loading with intelligent fallback strategy
+- No breaking API changes for **sync** users. For **async** users:
+  1. Use `AsyncNativeOdbcConnection()` with no argument
+  2. Call `await service.initialize()` before first use (unchanged)
+  3. Call `ServiceLocator().shutdown()` on app exit when using async
+  4. See [doc/MIGRATION_ASYNC.md](doc/MIGRATION_ASYNC.md) for details

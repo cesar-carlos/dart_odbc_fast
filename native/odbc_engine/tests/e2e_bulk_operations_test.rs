@@ -6,9 +6,7 @@ use odbc_engine::{
     engine::core::{ArrayBinding, ParallelBulkInsert},
     execute_query_with_connection,
     pool::ConnectionPool,
-    protocol::{
-        BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload,
-    },
+    protocol::{BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload},
     BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
 };
 use std::sync::Arc;
@@ -872,15 +870,15 @@ fn test_e2e_bulk_insert_generic() {
 
     let ab = ArrayBinding::new(200);
     let start = Instant::now();
-    let inserted = ab.bulk_insert_generic(odbc_conn, &payload).expect("bulk_insert_generic");
+    let inserted = ab
+        .bulk_insert_generic(odbc_conn, &payload)
+        .expect("bulk_insert_generic");
     let elapsed = start.elapsed();
 
     assert_eq!(inserted, N, "Expected {} rows inserted", N);
-    let buf = execute_query_with_connection(
-        odbc_conn,
-        "SELECT COUNT(*) AS c FROM odbc_bi_gen_test",
-    )
-    .expect("SELECT COUNT");
+    let buf =
+        execute_query_with_connection(odbc_conn, "SELECT COUNT(*) AS c FROM odbc_bi_gen_test")
+            .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(dec.rows[0][0].as_ref().unwrap());
     assert_eq!(count as usize, N);

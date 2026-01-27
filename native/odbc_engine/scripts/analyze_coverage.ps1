@@ -1,9 +1,13 @@
-# Script para analise de cobertura de codigo Rust
-# Analisa a estrutura de arquivos e testes para estimar cobertura
+# Estimativa heuristica de cobertura (NAO e cobertura real).
+# Conta arquivos .rs e #[test], aplica formulas (ex.: testes / (arquivos * 3)).
+# Nao roda testes, nao usa instrumentacao. Rapido, mas impreciso.
+#
+# Para cobertura real (HTML + LCOV), use: .\scripts\run_coverage.ps1
+# (requer cargo install cargo-tarpaulin)
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=== Analise de Cobertura de Codigo Rust ===" -ForegroundColor Cyan
+Write-Host "=== Estimativa de Cobertura (heuristica, nao executa testes) ===" -ForegroundColor Cyan
 Write-Host ""
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -138,6 +142,6 @@ Write-Host "Cobertura Estimada Geral: " -NoNewline -ForegroundColor Yellow
 Write-Host "$estimatedCoverage%" -ForegroundColor $coverageColor
 Write-Host ""
 
-Write-Host "Nota: Esta e uma estimativa baseada na estrutura de arquivos e testes." -ForegroundColor Gray
-Write-Host "   Para cobertura precisa, use: cargo tarpaulin" -ForegroundColor Gray
+Write-Host "Nota: Esta e uma ESTIMATIVA (estrutura + contagem de #[test])." -ForegroundColor Gray
+Write-Host "   Cobertura REAL: .\scripts\run_coverage.ps1 (cargo tarpaulin)" -ForegroundColor Gray
 Write-Host ""

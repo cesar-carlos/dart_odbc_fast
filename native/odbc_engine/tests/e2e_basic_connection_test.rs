@@ -4,7 +4,7 @@ use odbc_engine::engine::{execute_query_with_connection, OdbcConnection, OdbcEnv
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
@@ -12,6 +12,9 @@ fn test_basic_connection() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -42,6 +45,9 @@ fn test_basic_select_one() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -99,6 +105,9 @@ fn test_multiple_queries_same_connection() {
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
     }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
 
     println!("Testing multiple queries on same connection...");
@@ -151,6 +160,9 @@ fn test_reconnect() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -229,6 +241,9 @@ fn test_database_info() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");

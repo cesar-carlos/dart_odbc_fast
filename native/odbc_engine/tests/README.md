@@ -110,6 +110,23 @@ The test suite supports running E2E tests against multiple database systems (SQL
 - **SQL compatibility** prioritizing ANSI SQL standards
 - **Simple configuration** via `.env` file in project root
 
+**Database type validation (helpers in `helpers::e2e`):**
+
+| Helper | Uso |
+|--------|-----|
+| `detect_database_type(conn_str)` | Infere `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) pela string de conexão. |
+| `is_database_type(expected: DatabaseType)` | Retorna `true` só se o banco conectado (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) for o esperado. Caso contrário imprime "⚠️ Skipping test: requires X, but connected to Y" e retorna `false`. Use no início de testes específicos de um banco (ex.: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
+| `get_connection_and_db_type()` | Retorna `Option<(String, DatabaseType)>` (connection string + tipo detectado). Útil para adaptar DDL/SQL por banco (ex.: `e2e_bulk_operations_test`). |
+
+Exemplo em teste específico de SQL Server:
+
+```rust
+use helpers::{is_database_type, should_run_e2e_tests, DatabaseType};
+// ...
+if !should_run_e2e_tests() { return; }
+if !is_database_type(DatabaseType::SqlServer) { return; }
+```
+
 **Quick Start:**
 1. Configure your database connection in `.env`:
    ```ini
@@ -180,6 +197,22 @@ use odbc_engine::*;
 fn test_my_scenario() {
     // ...
 }
+```
+
+## Code Coverage
+
+To generate coverage (HTML + LCOV) with [cargo-tarpaulin](https://github.com/xd009642/tarpaulin):
+
+```powershell
+.\scripts\run_coverage.ps1
+```
+
+Requires `cargo install cargo-tarpaulin`. Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.
+
+The heuristic/estimator (no DB, fast) is available as:
+
+```powershell
+.\scripts\analyze_coverage.ps1
 ```
 
 ## Debugging

@@ -1,7 +1,10 @@
 mod helpers;
 use helpers::e2e::should_run_e2e_tests;
 use helpers::get_sqlserver_test_dsn;
-use odbc_engine::engine::{execute_query_with_connection, get_type_info, list_columns, list_tables, OdbcConnection, OdbcEnvironment};
+use odbc_engine::engine::{
+    execute_query_with_connection, get_type_info, list_columns, list_tables, OdbcConnection,
+    OdbcEnvironment,
+};
 use odbc_engine::BinaryProtocolDecoder;
 
 #[test]
@@ -20,7 +23,9 @@ fn test_catalog_list_tables() {
 
     let h = conn.get_handles();
     let guard = h.lock().unwrap();
-    let odbc = guard.get_connection(conn.get_connection_id()).expect("odbc");
+    let odbc = guard
+        .get_connection(conn.get_connection_id())
+        .expect("odbc");
 
     let buf = list_tables(odbc, None, None).expect("list_tables");
     drop(guard);
@@ -47,7 +52,9 @@ fn test_catalog_list_tables_schema_filter() {
 
     let h = conn.get_handles();
     let guard = h.lock().unwrap();
-    let odbc = guard.get_connection(conn.get_connection_id()).expect("odbc");
+    let odbc = guard
+        .get_connection(conn.get_connection_id())
+        .expect("odbc");
 
     let buf = list_tables(odbc, None, Some("INFORMATION_SCHEMA")).expect("list_tables");
     drop(guard);
@@ -73,7 +80,9 @@ fn test_catalog_list_columns() {
 
     let h = conn.get_handles();
     let guard = h.lock().unwrap();
-    let odbc = guard.get_connection(conn.get_connection_id()).expect("odbc");
+    let odbc = guard
+        .get_connection(conn.get_connection_id())
+        .expect("odbc");
 
     // Create a test table to list columns from
     execute_query_with_connection(
@@ -116,7 +125,9 @@ fn test_catalog_list_columns_table_only() {
 
     let h = conn.get_handles();
     let guard = h.lock().unwrap();
-    let odbc = guard.get_connection(conn.get_connection_id()).expect("odbc");
+    let odbc = guard
+        .get_connection(conn.get_connection_id())
+        .expect("odbc");
 
     let buf = list_columns(odbc, "TABLES").expect("list_columns");
     drop(guard);
@@ -142,7 +153,9 @@ fn test_catalog_get_type_info() {
 
     let h = conn.get_handles();
     let guard = h.lock().unwrap();
-    let odbc = guard.get_connection(conn.get_connection_id()).expect("odbc");
+    let odbc = guard
+        .get_connection(conn.get_connection_id())
+        .expect("odbc");
 
     let buf = get_type_info(odbc).expect("get_type_info");
     drop(guard);

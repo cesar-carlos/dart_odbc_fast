@@ -265,8 +265,7 @@ fn test_with_transaction_commit_on_success() {
     let buf = {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT COUNT(*) AS cnt FROM txn_cov_commit_test")
-            .unwrap()
+        execute_query_with_connection(c, "SELECT COUNT(*) AS cnt FROM txn_cov_commit_test").unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -347,10 +346,11 @@ fn test_begin_transaction_all_isolation_levels() {
         let env = OdbcEnvironment::new();
         env.init().expect("Init failed");
         let handles = env.get_handles();
-        let conn =
-            OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
+        let conn = OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
 
-        let txn = conn.begin_transaction(level).expect("begin_transaction failed");
+        let txn = conn
+            .begin_transaction(level)
+            .expect("begin_transaction failed");
         txn.commit().expect("commit failed");
         conn.disconnect().expect("Disconnect failed");
     }

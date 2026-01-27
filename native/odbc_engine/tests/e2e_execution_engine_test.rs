@@ -790,19 +790,13 @@ fn test_exec_query_with_params_mixed_types() {
     assert_eq!(decoded.column_count, 3, "Should have 3 columns");
     assert_eq!(decoded.row_count, 1, "Should have 1 row");
 
-    let a_data = decoded.rows[0][0]
-        .as_ref()
-        .expect("a should not be NULL");
+    let a_data = decoded.rows[0][0].as_ref().expect("a should not be NULL");
     assert_eq!(decode_integer(a_data), 1);
 
-    let b_data = decoded.rows[0][1]
-        .as_ref()
-        .expect("b should not be NULL");
+    let b_data = decoded.rows[0][1].as_ref().expect("b should not be NULL");
     assert_eq!(decode_string(b_data), "hello");
 
-    let c_data = decoded.rows[0][2]
-        .as_ref()
-        .expect("c should not be NULL");
+    let c_data = decoded.rows[0][2].as_ref().expect("c should not be NULL");
     let c_str = decode_string(c_data);
     assert!(
         c_str.starts_with("3.14"),

@@ -1933,6 +1933,9 @@ mod tests {
     };
     use std::ffi::CString;
 
+    /// Invalid ID used in tests to avoid collision with real connection/pool IDs.
+    const TEST_INVALID_ID: u32 = 0xDEAD_BEEF;
+
     /// Helper to get error message after FFI call fails
     fn get_last_error() -> String {
         let mut buffer = vec![0u8; 1024];
@@ -1982,13 +1985,14 @@ mod tests {
     fn test_ffi_disconnect_invalid_id() {
         odbc_init();
 
-        let result = odbc_disconnect(9999);
+        let result = odbc_disconnect(TEST_INVALID_ID);
         assert_ne!(result, 0, "Disconnect with invalid ID should fail");
 
         let error = get_last_error();
+        let err_lower = error.to_lowercase();
         assert!(
-            error.contains("Invalid connection ID"),
-            "Error should mention invalid ID: {}",
+            err_lower.contains("invalid") && error.contains(&TEST_INVALID_ID.to_string()),
+            "Error should mention invalid and the ID: {}",
             error
         );
     }
@@ -1998,7 +2002,7 @@ mod tests {
         odbc_init();
 
         // Trigger an error
-        let _ = odbc_disconnect(9999);
+        let _ = odbc_disconnect(TEST_INVALID_ID);
 
         // Test with sufficient buffer
         let mut buffer = vec![0u8; 1024];
@@ -2051,7 +2055,7 @@ mod tests {
         let mut written: c_uint = 0;
 
         let result = odbc_exec_query(
-            9999,
+            TEST_INVALID_ID,
             sql.as_ptr(),
             buffer.as_mut_ptr(),
             buffer.len() as c_uint,
@@ -2064,7 +2068,7 @@ mod tests {
         assert!(
             error.contains("Invalid connection ID")
                 || error.contains("Invalid pool ID")
-                || error.contains("9999"),
+                || error.contains(&TEST_INVALID_ID.to_string()),
             "Error should mention invalid ID: {}",
             error
         );
@@ -2096,7 +2100,7 @@ mod tests {
         odbc_init();
 
         let sql = CString::new("SELECT 1").unwrap();
-        let stream_id = odbc_stream_start(9999, sql.as_ptr(), 100);
+        let stream_id = odbc_stream_start(TEST_INVALID_ID, sql.as_ptr(), 100);
 
         assert_eq!(stream_id, 0, "Invalid connection should return 0");
     }
@@ -2110,7 +2114,7 @@ mod tests {
         let mut has_more: u8 = 0;
 
         let result = odbc_stream_fetch(
-            9999,
+            TEST_INVALID_ID,
             buffer.as_mut_ptr(),
             buffer.len() as c_uint,
             &mut written,
@@ -2141,7 +2145,7 @@ mod tests {
     fn test_ffi_stream_close_invalid_id() {
         odbc_init();
 
-        let result = odbc_stream_close(9999);
+        let result = odbc_stream_close(TEST_INVALID_ID);
         assert_ne!(result, 0, "Invalid stream ID should fail");
     }
 
@@ -2159,7 +2163,7 @@ mod tests {
         odbc_init();
 
         let sql = CString::new("SELECT 1").unwrap();
-        let stream_id = odbc_stream_start_batched(9999, sql.as_ptr(), 100, 1024);
+        let stream_id = odbc_stream_start_batched(TEST_INVALID_ID, sql.as_ptr(), 100, 1024);
 
         assert_eq!(stream_id, 0, "Invalid connection should return 0");
     }
@@ -2171,7 +2175,7 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let mut written: c_uint = 0;
         let r = odbc_catalog_tables(
-            9999,
+            TEST_INVALID_ID,
             std::ptr::null(),
             std::ptr::null(),
             buf.as_mut_ptr(),
@@ -2221,7 +2225,7 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let mut written: c_uint = 0;
         let r = odbc_catalog_columns(
-            9999,
+            TEST_INVALID_ID,
             tbl.as_ptr(),
             buf.as_mut_ptr(),
             buf.len() as c_uint,
@@ -2236,7 +2240,7 @@ mod tests {
 
         let mut buf = vec![0u8; 4096];
         let mut written: c_uint = 0;
-        let r = odbc_catalog_type_info(9999, buf.as_mut_ptr(), buf.len() as c_uint, &mut written);
+        let r = odbc_catalog_type_info(TEST_INVALID_ID, buf.as_mut_ptr(), buf.len() as c_uint, &mut written);
         assert_eq!(r, -1, "Invalid conn_id should return -1");
     }
 
@@ -2245,7 +2249,7 @@ mod tests {
         odbc_init();
 
         // Trigger an error
-        let _ = odbc_disconnect(9999);
+        let _ = odbc_disconnect(TEST_INVALID_ID);
 
         let mut buffer = vec![0u8; 1024];
         let mut written: c_uint = 0;
@@ -2297,7 +2301,7 @@ mod tests {
         let mut written: c_uint = 0;
 
         let result = odbc_exec_query(
-            9999, // Invalid conn, will fail before checking buffer size
+            TEST_INVALID_ID, // Invalid conn, will fail before checking buffer size
             sql.as_ptr(),
             buffer.as_mut_ptr(),
             buffer.len() as c_uint,
@@ -2321,7 +2325,7 @@ mod tests {
         let mut written: c_uint = 0;
 
         let result = odbc_exec_query(
-            99999, // Use a very high ID that's unlikely to exist
+            TEST_INVALID_ID, // Sentinel ID that won't collide with real connection IDs
             sql.as_ptr(),
             buffer.as_mut_ptr(),
             buffer.len() as c_uint,
@@ -2337,7 +2341,7 @@ mod tests {
         odbc_init();
 
         // Trigger an error
-        let _ = odbc_disconnect(9999);
+        let _ = odbc_disconnect(TEST_INVALID_ID);
 
         // Test with very small buffer (should truncate)
         let mut buffer = vec![0u8; 5];
@@ -2355,7 +2359,7 @@ mod tests {
         odbc_init();
 
         // Trigger an error
-        let _ = odbc_disconnect(9999);
+        let _ = odbc_disconnect(TEST_INVALID_ID);
 
         // Test with buffer too small for error data
         let mut buffer = vec![0u8; 5];
@@ -2405,7 +2409,7 @@ mod tests {
     fn test_ffi_transaction_begin_invalid_conn() {
         odbc_init();
 
-        let txn_id = odbc_transaction_begin(9999, 1);
+        let txn_id = odbc_transaction_begin(TEST_INVALID_ID, 1);
         assert_eq!(txn_id, 0, "Invalid connection ID should return 0");
 
         let error = get_last_error();
@@ -2420,7 +2424,7 @@ mod tests {
     fn test_ffi_transaction_begin_invalid_isolation() {
         odbc_init();
 
-        let txn_id = odbc_transaction_begin(9999, 99);
+        let txn_id = odbc_transaction_begin(TEST_INVALID_ID, 99);
         assert_eq!(txn_id, 0, "Invalid isolation level should return 0");
     }
 
@@ -2428,7 +2432,7 @@ mod tests {
     fn test_ffi_transaction_commit_invalid_txn_id() {
         odbc_init();
 
-        let result = odbc_transaction_commit(9999);
+        let result = odbc_transaction_commit(TEST_INVALID_ID);
         assert_ne!(result, 0, "Invalid transaction ID should fail");
 
         let error = get_last_error();
@@ -2443,7 +2447,7 @@ mod tests {
     fn test_ffi_transaction_rollback_invalid_txn_id() {
         odbc_init();
 
-        let result = odbc_transaction_rollback(9999);
+        let result = odbc_transaction_rollback(TEST_INVALID_ID);
         assert_ne!(result, 0, "Invalid transaction ID should fail");
 
         let error = get_last_error();
@@ -2481,7 +2485,7 @@ mod tests {
     fn test_ffi_pool_get_connection_invalid_pool_id() {
         odbc_init();
 
-        let conn_id = odbc_pool_get_connection(9999);
+        let conn_id = odbc_pool_get_connection(TEST_INVALID_ID);
         assert_eq!(conn_id, 0, "Invalid pool ID should return 0");
 
         // Note: Error message may be from previous test due to global state
@@ -2493,7 +2497,7 @@ mod tests {
     fn test_ffi_pool_release_connection_invalid_id() {
         odbc_init();
 
-        let result = odbc_pool_release_connection(9999);
+        let result = odbc_pool_release_connection(TEST_INVALID_ID);
         assert_ne!(result, 0, "Invalid pooled connection ID should fail");
 
         // Note: Error message may be from previous test due to global state
@@ -2504,7 +2508,7 @@ mod tests {
     fn test_ffi_pool_health_check_invalid_pool_id() {
         odbc_init();
 
-        let result = odbc_pool_health_check(9999);
+        let result = odbc_pool_health_check(TEST_INVALID_ID);
         assert_eq!(result, 0, "Invalid pool ID should return 0 (unhealthy)");
     }
 
@@ -2531,7 +2535,7 @@ mod tests {
         let mut size: c_uint = 0;
         let mut idle: c_uint = 0;
 
-        let result = odbc_pool_get_state(9999, &mut size, &mut idle);
+        let result = odbc_pool_get_state(TEST_INVALID_ID, &mut size, &mut idle);
         assert_eq!(result, -1, "Invalid pool ID should return -1");
     }
 
@@ -2539,7 +2543,7 @@ mod tests {
     fn test_ffi_pool_close_invalid_pool_id() {
         odbc_init();
 
-        let result = odbc_pool_close(9999);
+        let result = odbc_pool_close(TEST_INVALID_ID);
         assert_ne!(result, 0, "Invalid pool ID should fail");
 
         // Note: Error message may be from previous test due to global state
@@ -2943,11 +2947,11 @@ mod tests {
     fn test_ffi_prepare_invalid_conn() {
         odbc_init();
         let sql = CString::new("SELECT 1").unwrap();
-        let stmt_id = odbc_prepare(9999, sql.as_ptr(), 0);
+        let stmt_id = odbc_prepare(TEST_INVALID_ID, sql.as_ptr(), 0);
         assert_eq!(stmt_id, 0, "Prepare with invalid conn_id should return 0");
         let err = get_last_error();
         assert!(
-            err.contains("Invalid connection") || err.contains("9999"),
+            err.contains("Invalid connection") || err.contains(&TEST_INVALID_ID.to_string()),
             "Error should mention invalid connection: {}",
             err
         );
@@ -2956,11 +2960,11 @@ mod tests {
     #[test]
     fn test_ffi_close_statement_invalid() {
         odbc_init();
-        let r = odbc_close_statement(9999);
+        let r = odbc_close_statement(TEST_INVALID_ID);
         assert_ne!(r, 0, "Close invalid statement should fail");
         let err = get_last_error();
         assert!(
-            err.contains("Invalid statement") || err.contains("9999"),
+            err.contains("Invalid statement") || err.contains(&TEST_INVALID_ID.to_string()),
             "Error should mention invalid statement: {}",
             err
         );
@@ -2969,11 +2973,11 @@ mod tests {
     #[test]
     fn test_ffi_cancel_invalid_stmt() {
         odbc_init();
-        let r = odbc_cancel(9999);
+        let r = odbc_cancel(TEST_INVALID_ID);
         assert_ne!(r, 0, "Cancel invalid statement should fail");
         let err = get_last_error();
         assert!(
-            err.contains("Invalid statement") || err.contains("9999"),
+            err.contains("Invalid statement") || err.contains(&TEST_INVALID_ID.to_string()),
             "Error should mention invalid statement: {}",
             err
         );
@@ -3062,7 +3066,7 @@ mod tests {
         let enc = serialize_bulk_insert_payload(&payload).unwrap();
         let mut rows: c_uint = 0;
         let r = odbc_bulk_insert_array(
-            9999,
+            TEST_INVALID_ID,
             std::ptr::null(),
             std::ptr::null(),
             0,
@@ -3076,7 +3080,7 @@ mod tests {
         assert!(
             err.contains("Invalid connection")
                 || err.contains("Invalid pool ID")
-                || err.contains("9999")
+                || err.contains(&TEST_INVALID_ID.to_string())
                 || err.contains("payload truncated")
                 || err.contains("data_buffer")
                 || err.contains("non-null")

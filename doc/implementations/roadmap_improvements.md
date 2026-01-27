@@ -27,11 +27,20 @@ Este documento detalha todas as melhorias identificadas através de análise com
 
 ### 1. Async Dart API
 
-#### Status Atual
-- **Problema**: Chamadas FFI são síncronas e bloqueiam a thread do Dart
-- **Impacto**: UI trava em Flutter durante queries longas; má experiência do usuário
+#### Status: IMPLEMENTADO (v0.2.0)
+
+- **Worker isolate** de longa vida (não Isolate.run)
+- **Protocolo de mensagens** SendPort/ReceivePort
+- **Lifecycle** spawn, initialize, shutdown
+- **Error handling** e WorkerCrashRecovery
+- **Testes** unit, integration, stress; README, CHANGELOG, MIGRATION_ASYNC, example
+
+#### Status Atual (pré-implementação)
+- **Problema (resolvido)**: Chamadas FFI eram síncronas; agora executam em worker isolate
 - **Localização**:
-  - `lib/infrastructure/native/native_odbc_connection.dart`
+  - `lib/infrastructure/native/async_native_odbc_connection.dart`
+  - `lib/infrastructure/native/isolate/worker_isolate.dart`
+  - `lib/infrastructure/native/isolate/message_protocol.dart`
   - `lib/infrastructure/repositories/odbc_repository_impl.dart`
 
 #### Solução Proposta
@@ -890,10 +899,1227 @@ final pool = ConnectionPool.builder()
 
 ---
 
+## 🧪 Testes e Validação
+
+### Estratégia Geral de Testes
+
+O projeto já possui uma estrutura de testes robusta com **3 camadas**:
+1. **Unit Tests** (Dart + Rust): Testam lógica isolada, rápido, sem dependências externas
+2. **Integration Tests**: Validam comunicação Dart/Rust via FFI
+3. **E2E Tests**: Testam cenários reais com banco de dados (auto-skip se DB não configurado)
+
+**Meta de Cobertura:**
+- Unit Tests: > 80% coverage
+- Integration Tests: 100% das APIs públicas
+- E2E Tests: Todos os cenários de uso principais
+
+---
+
+### Definition of Done (Critérios de Aceite)
+
+Uma melhoria SÓ é considerada **"completa"** quando:
+
+✅ **Código implementado** segue padrões arquiteturais (Clean Architecture, Result Pattern)
+✅ **Testes unitários** cobrem lógica core com > 80% coverage
+✅ **Testes integração** validam comunicação Dart ↔ Rust
+✅ **Testes E2E** validam cenário real com banco de dados
+✅ **Documentação atualizada** (README, API docs, exemplos)
+✅ **CHANGELOG.md** atualizado com novas features/breaking changes
+✅ **Exemplo prático** em `example/` demonstrando uso
+✅ **CI/CD passando** (quando implementado)
+
+---
+
+## 🔴 FASE 1: Testes de Resiliência
+
+### 1. Async Dart API
+
+#### Testes Necessários
+
+**Unit Tests** (`test/infrastructure/native/async_native_odbc_connection_test.dart`):
+```dart
+group('AsyncNativeOdbcConnection', () {
+  test('should execute operation in isolate', () async {
+    // Verify: Isolate.run() is called
+    // Expect: Operation completes in background thread
+  });
+
+  test('should handle isolate spawn failure', () async {
+    // Simulate: Isolate.spawn throws
+    // Expect: Error propagated as OdbcError
+  });
+
+  test('should not block main thread', () async {
+    final stopwatch = Stopwatch()..start();
+    await asyncConnection.connect(slowConnectionString);
+    stopwatch.stop();
+
+    // Main thread should respond within 50ms even if connect takes 5s
+    expect(stopwatch.elapsedMilliseconds, lessThan(50));
+  });
+});
+```
+
+**Integration Tests** (`test/integration/async_api_integration_test.dart`):
+```dart
+test('should query without blocking UI', () async {
+  final uiResponder = Completer<void>();
+
+  // Simulate UI thread
+  Timer(Duration(milliseconds: 100), () {
+    uiResponder.complete(); // Should fire even if query is slow
+  });
+
+  // Run slow query (5+ seconds)
+  await service.executeQuery(connId, 'WAITFOR DELAY "00:00:05"');
+
+  // UI should have responded
+  expect(uiResponder.future, completes);
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_async_api_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_async_query_completes() {
+    // Verify: Async query returns same result as sync
+    // Compare: Binary protocol output identical
+}
+```
+
+**Performance Tests:**
+- Isolate overhead: < 5ms por chamada
+- Memory overhead: < 1MB por isolate ativo
+
+#### Documentação Necessária
+- [ ] Atualizar `README.md` com seção "Async API"
+- [ ] Adicionar exemplo `example/async_demo.dart` com UI Flutter responsiva
+- [ ] Migration guide: "Migrando de Síncrono para Assíncrono"
+- [ ] Documentar `AsyncNativeOdbcConnection` na API reference
+
+#### Exemplo Prático
+```dart
+// example/async_demo.dart
+import 'package:odbc_fast/odbc_fast.dart';
+
+Future<void> main() async {
+  final service = OdbcService();
+  await service.initialize();
+
+  // Non-blocking query - UI remains responsive
+  final result = await service.executeQueryAsync(connId, '''
+    SELECT * FROM large_table -- 1 million rows
+  ''');
+
+  result.fold(
+    (data) => print('Got ${data.rows.length} rows'),
+    (error) => print('Error: ${error.message}'),
+  );
+}
+```
+
+---
+
+### 2. Connection Timeouts
+
+#### Testes Necessários
+
+**Unit Tests** (`test/domain/entities/connection_options_test.dart`):
+```dart
+group('ConnectionOptions', () {
+  test('should validate timeout values', () {
+    expect(() => ConnectionOptions(loginTimeout: Duration(seconds: -1)),
+        throwsA(isA<ValidationError>()));
+  });
+
+  test('should use default timeouts', () {
+    final opts = ConnectionOptions.defaultOptions;
+    expect(opts.loginTimeout, equals(Duration(seconds: 30)));
+    expect(opts.queryTimeout, equals(Duration.zero));
+  });
+
+  test('should serialize to FFI struct', () {
+    final opts = ConnectionOptions(
+      loginTimeout: Duration(seconds: 45),
+      queryTimeout: Duration(seconds: 300),
+    );
+    final ffi = opts.toFfiStruct();
+    expect(ffi.login_timeout_secs, equals(45));
+  });
+});
+```
+
+**Integration Tests** (`test/integration/timeout_integration_test.dart`):
+```dart
+test('should timeout on invalid host', () async {
+  final result = await service.connect(
+    'Driver={SQL Server};Server=invalid.host,9999;',
+    options: ConnectionOptions(
+      loginTimeout: Duration(seconds: 2),
+    ),
+  );
+
+  expect(result.isSuccess(), isFalse);
+  result.fold(
+    (_) => fail('Should timeout'),
+    (error) {
+      expect(error, isA<ConnectionError>());
+      expect(error.category, equals(ErrorCategory.transient));
+    },
+  );
+});
+
+test('should query timeout respects setting', () async {
+  await service.connect(connStr);
+
+  final result = await service.executeQuery(
+    connId,
+    'WAITFOR DELAY "00:01:00"', // 1 minute
+    options: ConnectionOptions(
+      queryTimeout: Duration(seconds: 2), // Timeout after 2s
+    ),
+  );
+
+  expect(result.isSuccess(), isFalse);
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_timeout_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_login_timeout_works() {
+    let opts = ConnectionOptions {
+        login_timeout_secs: 2,
+        ..Default::default()
+    };
+
+    // Try to connect to non-routable IP (should timeout)
+    let result = OdbcConnection::connect_with_timeout(
+        handles,
+        "Driver={SQL Server};Server=10.255.255.1;",
+        &opts
+    );
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), OdbcError::Timeout { .. }));
+}
+
+#[test]
+#[ignore]
+fn test_query_timeout_works() {
+    let conn = connect_with_default_opts();
+
+    let opts = ConnectionOptions {
+        query_timeout_secs: 2,
+        ..Default::default()
+    };
+
+    // Execute query that takes 1 minute (should timeout in 2s)
+    let result = conn.execute_with_timeout(
+        "WAITFOR DELAY '00:01:00'",
+        &opts
+    );
+
+    assert!(result.is_err());
+}
+```
+
+**Edge Cases:**
+- Timeout durante query em progresso (cancelamento)
+- Timeout zero = infinito (nunca expira)
+- Timeout negativo = ValidationError
+
+#### Documentação Necessária
+- [ ] Documentar `ConnectionOptions` na API reference
+- [ ] Adicionar seção "Configurando Timeouts" no README
+- [ ] Exemplo: Timeouts para diferentes cenários (LAN, WAN, cloud)
+- [ ] Troubleshooting: "Timeouts comuns e como resolver"
+
+#### Exemplo Prático
+```dart
+// example/timeouts_demo.dart
+// Local network - fast timeouts
+final localOpts = ConnectionOptions(
+  loginTimeout: Duration(seconds: 5),
+  queryTimeout: Duration(seconds: 30),
+);
+
+// Cloud/remote - generous timeouts
+final cloudOpts = ConnectionOptions(
+  loginTimeout: Duration(seconds: 30),
+  queryTimeout: Duration(minutes: 5),
+);
+
+// Batch jobs - no timeout
+final batchOpts = ConnectionOptions(
+  loginTimeout: Duration(seconds: 30),
+  queryTimeout: Duration.zero, // infinite
+);
+```
+
+---
+
+### 3. Automatic Retry com Exponential Backoff
+
+#### Testes Necessários
+
+**Unit Tests** (`test/infrastructure/retries/retry_helper_test.dart`):
+```dart
+group('RetryHelper', () {
+  test('should retry on transient error', () async {
+    int attempts = 0;
+    final result = await RetryHelper.executeWithRetry(
+      () async {
+        attempts++;
+        if (attempts < 3) {
+          throw OdbcError.transient('Network blip');
+        }
+        return 'success';
+      },
+      options: RetryOptions(maxAttempts: 3),
+    );
+
+    expect(result, equals('success'));
+    expect(attempts, equals(3));
+  });
+
+  test('should use exponential backoff', () async {
+    final delays = <Duration>[];
+    final result = await RetryHelper.executeWithRetry(
+      () async {
+        if (delays.isEmpty) throw OdbcError.transient('Error');
+        return 'success';
+      },
+      options: RetryOptions(
+        maxAttempts: 3,
+        initialDelay: Duration(milliseconds: 100),
+        backoffMultiplier: 2.0,
+        onRetry: (delay) => delays.add(delay),
+      ),
+    );
+
+    expect(delays, equals([
+      Duration(milliseconds: 100),
+      Duration(milliseconds: 200),
+    ]));
+  });
+
+  test('should not retry non-transient errors', () async {
+    int attempts = 0;
+    final result = await RetryHelper.executeWithRetry(
+      () async {
+        attempts++;
+        throw OdbcError.validation('Invalid SQL');
+      },
+      options: RetryOptions(maxAttempts: 3),
+    ).catchError((_) => 'failed');
+
+    expect(attempts, equals(1)); // Only 1 attempt (no retry)
+  });
+
+  test('should respect maxAttempts', () async {
+    int attempts = 0;
+    await expectLater(
+      () => RetryHelper.executeWithRetry(
+        () async {
+          attempts++;
+          throw OdbcError.transient('Always fails');
+        },
+        options: RetryOptions(maxAttempts: 3),
+      ),
+      throwsA(isA<TransientError>()),
+    );
+
+    expect(attempts, equals(3)); // Stopped after 3 attempts
+  });
+});
+```
+
+**Integration Tests** (`test/integration/retry_integration_test.dart`):
+```dart
+test('should retry real transient failures', () async {
+  // Simulate network blip by killing connection during query
+  await service.connect(connId);
+
+  int attempts = 0;
+  final result = await service.executeQuery(
+    connId,
+    'SELECT * FROM table',
+    retryOptions: RetryOptions(
+      maxAttempts: 3,
+      onRetry: (delay) {
+        attempts++;
+        // Simulate connection recovery
+        if (attempts == 1) {
+          reconnectToDatabase();
+        }
+      },
+    ),
+  );
+
+  expect(result.isSuccess(), isTrue);
+  expect(attempts, greaterThan(0));
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_retry_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_retry_with_backoff() {
+    // Simulate transient failures by using a special test DB
+    // that fails the first 2 attempts, succeeds on 3rd
+
+    let attempts = Arc::new(Mutex::new(0));
+    let opts = RetryOptions {
+        max_attempts: 3,
+        initial_delay: Duration::from_millis(100),
+        backoff_multiplier: 2.0,
+        ..Default::default()
+    };
+
+    let result = retry_with_opts(
+        || {
+            let mut a = attempts.lock().unwrap();
+            *a += 1;
+            if *a < 3 {
+                Err(OdbcError::transient("Simulated failure"))
+            } else {
+                Ok("Success")
+            }
+        },
+        &opts
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(*attempts.lock().unwrap(), 3);
+}
+```
+
+**Edge Cases:**
+- Non-transient errors não devem retry
+- Max attempts = 1 = sem retry
+- Delay negativo = ValidationError
+
+#### Documentação Necessária
+- [ ] Documentar `RetryOptions` e `RetryStrategy` na API reference
+- [ ] Guia: "Quais Errors São Retryables?"
+- [ ] Exemplo: Custom retry policy para diferentes cenários
+- [ ] Métricas: Como monitorar retry attempts
+
+#### Exemplo Prático
+```dart
+// example/retry_demo.dart
+// Padrão (3 tentativas, exponential backoff)
+final result = await service.executeQuery(
+  connId,
+  sql,
+);
+
+// Agressivo (10 tentativas para redes instáveis)
+final result = await service.executeQuery(
+  connId,
+  sql,
+  retryOptions: RetryOptions(
+    maxAttempts: 10,
+    initialDelay: Duration(milliseconds: 50),
+    backoffMultiplier: 1.5,
+  ),
+);
+
+// Customizado (com callback)
+final result = await service.executeQuery(
+  connId,
+  sql,
+  retryOptions: RetryOptions(
+    maxAttempts: 5,
+    onRetry: (delay, attempt) {
+      logger.warn('Attempt $attempt failed, retrying in ${delay.inMs}ms');
+    },
+  ),
+);
+```
+
+---
+
+## 🟡 FASE 2: Testes de Funcionalidade
+
+### 4. Savepoints (Nested Transactions)
+
+#### Testes Necessários
+
+**Unit Tests** (`test/domain/entities/savepoint_test.dart`):
+```dart
+test('should create savepoint with unique name', () {
+  final sp = Savepoint(
+    id: 'sp_1',
+    name: 'after_users_insert',
+    connectionId: 'conn_1',
+  );
+
+  expect(sp.name, equals('after_users_insert'));
+});
+
+test('should validate savepoint state', () {
+  final sp = Savepoint.active('conn_1', 'sp1');
+
+  sp.release();
+  expect(sp.isReleased, isTrue);
+
+  expect(() => sp.rollback(), throwsA(isA<StateError>()));
+});
+```
+
+**Integration Tests** (`test/integration/savepoint_integration_test.dart`):
+```dart
+test('should rollback to savepoint', () async {
+  await service.beginTransaction(connId, IsolationLevel.readCommitted);
+
+  // Insert users
+  await service.executeQuery(connId, 'INSERT INTO users ...');
+
+  // Create savepoint
+  final spId = await service.createSavepoint(connId, 'after_users');
+
+  // Insert orders (will be rolled back)
+  await service.executeQuery(connId, 'INSERT INTO orders ...');
+
+  // Rollback to savepoint
+  await service.rollbackToSavepoint(connId, spId);
+
+  // Users exist, orders don't
+  final users = await service.executeQuery(connId, 'SELECT * FROM users');
+  final orders = await service.executeQuery(connId, 'SELECT * FROM orders');
+
+  expect(users.rows.length, greaterThan(0));
+  expect(orders.rows.length, equals(0));
+
+  await service.commitTransaction(connId);
+});
+
+test('should release savepoint', () async {
+  await service.beginTransaction(connId);
+
+  await service.executeQuery(connId, 'INSERT INTO users ...');
+  final spId = await service.createSavepoint(connId, 'sp1');
+
+  await service.executeQuery(connId, 'INSERT INTO orders ...');
+  await service.releaseSavepoint(connId, spId);
+
+  // Both users and orders committed
+  await service.commitTransaction(connId);
+
+  final users = await service.executeQuery(connId, 'SELECT * FROM users');
+  final orders = await service.executeQuery(connId, 'SELECT * FROM orders');
+
+  expect(users.rows.length, greaterThan(0));
+  expect(orders.rows.length, greaterThan(0));
+});
+
+test('should handle nested savepoints', () async {
+  await service.beginTransaction(connId);
+
+  await service.executeQuery(connId, 'INSERT INTO table1 ...');
+  final sp1 = await service.createSavepoint(connId, 'sp1');
+
+  await service.executeQuery(connId, 'INSERT INTO table2 ...');
+  final sp2 = await service.createSavepoint(connId, 'sp2');
+
+  await service.executeQuery(connId, 'INSERT INTO table3 ...');
+
+  // Rollback to sp2 (table3 removed, table2 kept)
+  await service.rollbackToSavepoint(connId, sp2);
+
+  // Rollback to sp1 (table2 also removed)
+  await service.rollbackToSavepoint(connId, sp1);
+
+  await service.commitTransaction(connId);
+
+  // Only table1 exists
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_savepoint_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_savepoint_rollback() {
+    let conn = connect();
+    conn.begin_transaction().unwrap();
+
+    conn.exec("INSERT INTO users VALUES (1, 'Alice')").unwrap();
+    conn.savepoint("after_users").unwrap();
+
+    conn.exec("INSERT INTO orders VALUES (1, 100)").unwrap();
+
+    conn.rollback_to_savepoint("after_users").unwrap();
+    conn.commit().unwrap();
+
+    // Users exist, orders don't
+    let user_count: i64 = conn.query_one("SELECT COUNT(*) FROM users").unwrap();
+    let order_count: i64 = conn.query_one("SELECT COUNT(*) FROM orders").unwrap();
+
+    assert_eq!(user_count, 1);
+    assert_eq!(order_count, 0);
+}
+```
+
+#### Documentação Necessária
+- [ ] Documentar `Savepoint` API na referência
+- [ ] Guia: "Quando Usar Savepoints vs Transações Separadas"
+- [ ] Exemplo: Transação complexa com múltiplos savepoints
+- [ ] Limitações: Suporte por database (SQL Server ✅, PostgreSQL ✅, MySQL ✅)
+
+#### Exemplo Prático
+```dart
+// example/savepoints_demo.dart
+await service.beginTransaction(connId);
+
+// Step 1: Insert user
+await service.executeQuery(connId, '''
+  INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')
+''');
+
+// Create savepoint
+final sp = await service.createSavepoint(connId, 'after_user');
+
+// Step 2: Insert orders (may fail if inventory insufficient)
+try {
+  await service.executeQuery(connId, '''
+    INSERT INTO orders (user_id, total) VALUES (1, 100)
+  ''');
+
+  await service.commitTransaction(connId);
+} catch (e) {
+  // Rollback just the orders, keep the user
+  await service.rollbackToSavepoint(connId, sp);
+
+  // User remains in database for retry later
+  await service.commitTransaction(connId);
+}
+```
+
+---
+
+### 5. Schema Reflection Expandido
+
+#### Testes Necessários
+
+**Unit Tests** (`test/domain/entities/schema_info_test.dart`):
+```dart
+test('should parse primary key info', () {
+  final pk = PrimaryKeyInfo(
+    tableName: 'users',
+    columnName: 'id',
+    position: 1,
+    constraintName: 'PK_users',
+  );
+
+  expect(pk.tableName, equals('users'));
+  expect(pk.isPrimary, isTrue);
+});
+
+test('should parse foreign key info', () {
+  final fk = ForeignKeyInfo(
+    constraintName: 'FK_orders_users',
+    fromTable: 'orders',
+    fromColumn: 'user_id',
+    toTable: 'users',
+    toColumn: 'id',
+    onUpdate: 'CASCADE',
+    onDelete: 'RESTRICT',
+  );
+
+  expect(fk.fromTable, equals('orders'));
+  expect(fk.toTable, equals('users'));
+  expect(fk.cascadeDelete, isFalse);
+});
+```
+
+**Integration Tests** (`test/integration/schema_reflection_integration_test.dart`):
+```dart
+test('should get primary keys', () async {
+  final pks = await service.getPrimaryKeys(connId, 'users');
+
+  expect(pks.length, greaterThan(0));
+  expect(pks.first.columnName, equals('id'));
+  expect(pks.first.tableName, equals('users'));
+});
+
+test('should get foreign keys', () async {
+  final fks = await service.getForeignKeys(connId, 'orders');
+
+  final userFk = fks.firstWhere(
+    (fk) => fk.toTable == 'users',
+  );
+
+  expect(userFk.fromColumn, equals('user_id'));
+  expect(userFk.onDelete, equals('RESTRICT'));
+});
+
+test('should get indexes', () async {
+  final indexes = await service.getIndexes(connId, 'users');
+
+  final pkIndex = indexes.firstWhere(
+    (idx) => idx.isPrimaryKey,
+  );
+
+  expect(pkIndex.isUnique, isTrue);
+  expect(pkIndex.columnName, equals('id'));
+});
+
+test('should handle multi-column indexes', () async {
+  final indexes = await service.getIndexes(connId, 'orders');
+
+  final compositeIndex = indexes.where(
+    (idx) => idx.indexName == 'idx_orders_date_status',
+  );
+
+  expect(compositeIndex.length, greaterThan(1));
+  expect(compositeIndex.first.ordinalPosition, equals(1));
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_schema_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_get_primary_keys() {
+    let conn = connect();
+
+    // Create test table
+    conn.exec(r#"
+        CREATE TABLE test_pk (
+            id INT PRIMARY KEY,
+            name VARCHAR(50)
+        )
+    "#).unwrap();
+
+    let pks = conn.get_primary_keys("test_pk").unwrap();
+
+    assert_eq!(pks.len(), 1);
+    assert_eq!(pks[0].column_name, "id");
+    assert_eq!(pks[0].position, 1);
+}
+
+#[test]
+#[ignore]
+fn test_get_foreign_keys() {
+    let conn = connect();
+
+    // Create tables with FK
+    conn.exec(r#"
+        CREATE TABLE users (id INT PRIMARY KEY)
+        CREATE TABLE orders (
+            id INT PRIMARY KEY,
+            user_id INT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    "#).unwrap();
+
+    let fks = conn.get_foreign_keys("orders").unwrap();
+
+    assert_eq!(fks.len(), 1);
+    assert_eq!(fks[0].from_column, "user_id");
+    assert_eq!(fks[0].to_table, "users");
+    assert_eq!(fks[0].to_column, "id");
+}
+```
+
+#### Documentação Necessária
+- [ ] Documentar `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`
+- [ ] Guia: "Construindo ORMs com Schema Reflection"
+- [ ] Matriz de compatibilidade: Quais databases suportam o quê
+- [ ] Performance tips: Caching de schema metadata
+
+#### Exemplo Prático
+```dart
+// example/schema_demo.dart
+// Gerar código de ORM automaticamente
+final pks = await service.getPrimaryKeys(connId, 'users');
+final fks = await service.getForeignKeys(connId, 'orders');
+final indexes = await service.getIndexes(connId, 'products');
+
+// Gerar classe Dart com base no schema
+final code = generateOrmClass(
+  table: 'users',
+  primaryKey: pks.first,
+  foreignKeys: fks,
+  indexes: indexes,
+);
+
+print(code);
+// class User {
+//   @PrimaryKey()
+//   final int id;
+//
+//   @ForeignKey(references: 'profiles')
+//   final String email;
+// ...
+// }
+```
+
+---
+
+### 6. Connection String Builder (Fluent API)
+
+#### Testes Necessários
+
+**Unit Tests** (`test/infrastructure/native/connection_string_builder_test.dart`):
+```dart
+test('should build SQL Server connection string', () {
+  final connStr = ConnectionString
+      .sqlServer()
+      .server('localhost')
+      .port(1433)
+      .database('mydb')
+      .username('sa')
+      .password('pass')
+      .build();
+
+  expect(
+    connStr,
+    equals(
+      'Driver={ODBC Driver 17 for SQL Server};'
+      'Server=localhost,1433;'
+      'Database=mydb;'
+      'UID=sa;'
+      'PWD=pass;',
+    ),
+  );
+});
+
+test('should build PostgreSQL connection string', () {
+  final connStr = ConnectionString
+      .postgres()
+      .server('db.example.com')
+      .database('production')
+      .username('app_user')
+      .build();
+
+  expect(
+    connStr,
+    contains('Driver={PostgreSQL Unicode}'),
+  );
+  expect(connStr, contains('Server=db.example.com'));
+});
+
+test('should handle custom options', () {
+  final connStr = ConnectionString
+      .sqlServer()
+      .server('localhost')
+      .option('TrustServerCertificate', 'yes')
+      .option('Encrypt', 'false')
+      .build();
+
+  expect(connStr, contains('TrustServerCertificate=yes'));
+  expect(connStr, contains('Encrypt=false'));
+});
+
+test('should validate required fields', () {
+  expect(
+    () => ConnectionString.sqlServer().build(),
+    throwsA(isA<ValidationError>()),
+  );
+});
+
+test('should escape special characters', () {
+  final connStr = ConnectionString
+      .sqlServer()
+      .server('localhost')
+      .password('p@ss;w"rd')
+      .build();
+
+  expect(connStr, contains('PWD=p@ss;w"rd'));
+});
+```
+
+**Integration Tests** (testar com driver real):
+```dart
+test('should connect using built connection string', () async {
+  final connStr = ConnectionString
+      .sqlServer()
+      .server('localhost')
+      .port(1433)
+      .database('testdb')
+      .username('sa')
+      .password('TestPass123!')
+      .option('TrustServerCertificate', 'yes')
+      .build();
+
+  final result = await service.connect(connStr);
+
+  expect(result.isSuccess(), isTrue);
+});
+```
+
+#### Documentação Necessária
+- [ ] Documentar `ConnectionStringBuilder` na API reference
+- [ ] Referência de options por database (SQL Server, PostgreSQL, MySQL)
+- [ ] Guia: "Connection Strings Best Practices"
+- [ ] Exemplos para todos os drivers suportados
+
+#### Exemplo Prático
+```dart
+// example/connection_string_demo.dart
+// SQL Server
+final sqlServer = ConnectionString
+    .sqlServer()
+    .server('localhost')
+    .port(1433)
+    .database('production')
+    .username('app_user')
+    .password('SecurePass123!')
+    .option('TrustServerCertificate', 'yes')
+    .option('Encrypt', 'false')
+    .build();
+
+// PostgreSQL
+final postgres = ConnectionString
+    .postgres()
+    .server('db.example.com')
+    .port(5432)
+    .database('myapp')
+    .username('dbuser')
+    .password('dbpass')
+    .option('sslmode', 'require')
+    .build();
+
+// MySQL
+final mysql = ConnectionString
+    .mysql()
+    .server('localhost')
+    .database('wordpress')
+    .username('wp_user')
+    .password('wp_pass')
+    .option('charset', 'utf8mb4')
+    .build();
+```
+
+---
+
+### 7. Backpressure em Streaming
+
+#### Testes Necessários
+
+**Unit Tests** (`test/infrastructure/streaming/backpressure_stream_test.dart`):
+```dart
+test('should pause when buffer full', () async {
+  final stream = BackpressureStream(maxBufferSize: 100);
+
+  // Producer adds 200 rows rapidly
+  final producer = Future(() async {
+    for (var i = 0; i < 200; i++) {
+      await stream.add(createRowBuffer(rows: 1));
+    }
+  });
+
+  // Consumer processes slowly
+  final consumer = Future(() async {
+    await for (final chunk in stream.stream) {
+      await Future.delayed(Duration(milliseconds: 10));
+      stream.clearBuffer(chunk.rowCount);
+    }
+  });
+
+  await producer;
+  await consumer;
+
+  // Buffer should never exceed 100 rows
+  expect(stream.maxBufferSize, equals(100));
+});
+
+test('should respect pause/resume', () async {
+  final stream = BackpressureStream(maxBufferSize: 1000);
+
+  stream.pause();
+
+  var addedRows = 0;
+  // Add while paused
+  final producer = Future(() async {
+    for (var i = 0; i < 100; i++) {
+      await stream.add(createRowBuffer(rows: 10));
+      addedRows += 10;
+    }
+  });
+
+  // Wait a bit
+  await Future.delayed(Duration(milliseconds: 100));
+
+  // Should still be paused
+  expect(stream.isPaused, isTrue);
+
+  // Resume
+  stream.resume();
+
+  await producer;
+  expect(addedRows, equals(1000));
+});
+
+test('should prevent OOM', () async {
+  final stream = BackpressureStream(maxBufferSize: 1000);
+
+  // Simulate query returning 1M rows
+  final producer = Future(() async {
+    for (var i = 0; i < 1000000; i++) {
+      await stream.add(createRowBuffer(rows: 1));
+    }
+  });
+
+  // Consumer processes slowly
+  final consumer = Future(() async {
+    var processed = 0;
+    await for (final chunk in stream.stream) {
+      processed += chunk.rowCount;
+      await Future.delayed(Duration(milliseconds: 1));
+      stream.clearBuffer(chunk.rowCount);
+
+      if (processed >= 100) break; // Only process 100 rows
+    }
+  });
+
+  await producer.timeout(Duration(seconds: 5));
+  await consumer;
+
+  // Memory should stay bounded
+  expect(stream.bufferSize, lessThan(1000));
+});
+```
+
+**Integration Tests** (`test/integration/backpressure_integration_test.dart`):
+```dart
+test('should handle slow consumer', () async {
+  final stream = await service.streamQuery(
+    connId,
+    'SELECT * FROM large_table', -- 1M rows
+    maxBufferSize: 1000,
+  );
+
+  var processed = 0;
+  final stopwatch = Stopwatch()..start();
+
+  await for (final chunk in stream) {
+    // Simulate slow processing
+    await Future.delayed(Duration(milliseconds: 100));
+
+    processed += chunk.rowCount;
+
+    if (processed >= 100) break; // Stop after 100 rows
+  }
+
+  stopwatch.stop();
+
+  // Should process without OOM
+  expect(processed, equals(100));
+  expect(stopwatch.elapsedMilliseconds, lessThan(20000)); // < 20s
+});
+```
+
+**E2E Tests** (`native/odbc_engine/tests/e2e_backpressure_test.rs`):
+```rust
+#[test]
+#[ignore]
+fn test_backpressure_limits_memory() {
+    let conn = connect();
+
+    // Create table with 1M rows
+    conn.exec("CREATE TABLE large_table (id INT, data VARCHAR(100))").unwrap();
+    for i in 0..1_000_000 {
+        conn.exec(&format!("INSERT INTO large_table VALUES ({}, 'data{}')", i, i)).unwrap();
+    }
+
+    // Stream with backpressure (max 10K rows in buffer)
+    let stream = conn.stream_query_with_backpressure(
+        "SELECT * FROM large_table",
+        10_000
+    );
+
+    let mut processed = 0;
+    let mut max_buffer_size = 0;
+
+    for chunk in stream {
+        let buffer_size = chunk.buffer_size();
+        if buffer_size > max_buffer_size {
+            max_buffer_size = buffer_size;
+        }
+
+        // Slow processing
+        std::thread::sleep(Duration::from_millis(10));
+        processed += chunk.row_count();
+
+        if processed >= 100 {
+            break;
+        }
+    }
+
+    // Buffer should never exceed 10K rows
+    assert!(max_buffer_size <= 10_000);
+    assert_eq!(processed, 100);
+}
+```
+
+**Performance Tests:**
+- Memory usage: Deve permanecer constante mesmo com queries grandes
+- Buffer size: Nunca exceder `maxBufferSize`
+- Latency: < 10ms overhead por chunk
+
+#### Documentação Necessária
+- [ ] Documentar `BackpressureStream` e `maxBufferSize`
+- [ ] Guia: "Prevenindo OOM em Queries Grandes"
+- [ ] Exemplo: Processamento de 1M rows sem OOM
+- [ ] Métricas: Como monitorar buffer usage
+
+#### Exemplo Prático
+```dart
+// example/backpressure_demo.dart
+final stream = await service.streamQuery(
+  connId,
+  'SELECT * FROM huge_table', -- 10M rows
+  maxBufferSize: 10000, // Máximo 10K rows em memória
+);
+
+await for (final chunk in stream) {
+  // Processar chunk
+  for (final row in chunk.rows) {
+    // Processamento demorado
+    await heavyComputation(row);
+  }
+
+  // Notificar stream que processou rows (libera buffer)
+  stream.clearBuffer(chunk.rowCount);
+
+  // Se não chamar clearBuffer, stream pause quando buffer encher
+}
+```
+
+---
+
+## 🟢 FASE 3: Testes Avançados (Futuro)
+
+**Nota:** Fase 3 requer arquitetura significativamente mais complexa. Testes a serem definidos quando do início da implementação.
+
+### 8. Query Builder DSL
+- [ ] Type-safe SQL generation tests
+- [ ] AST validation tests
+- [ ] SQL injection prevention tests
+- [ ] Cross-database SQL compatibility tests
+
+### 9. Reactive Streams
+- [ ] Push-based result propagation tests
+- [ ] Stream subscription lifecycle tests
+- [ ] Backpressure reactive tests
+- [ ] Cancellation propagation tests
+
+### 10. Multi-Host Failover
+- [ ] Failover logic tests
+- [ ] Health check tests
+- [ ] Round-robin distribution tests
+- [ ] Split-brain prevention tests
+
+---
+
+## 📦 Checklist de Documentação (Para Cada Melhoria)
+
+### Obrigatório
+- [ ] **API Documentation**: Comentários DartDoc em todas as APIs públicas
+- [ ] **README Section**: Seção nova ou atualizada no README principal
+- [ ] **CHANGELOG.md**: Entrada descrevendo a nova funcionalidade
+- [ ] **Example Code**: Exemplo prático em `example/`
+
+### Recomendado
+- [ ] **Migration Guide**: Se há breaking changes, guia de migração
+- [ ] **Troubleshooting**: Seção de problemas comuns e soluções
+- [ ] **Performance Guide**: Dicas de performance da nova feature
+- [ ] **Architecture Decision Record (ADR)**: Se é mudança arquitetural significativa
+
+---
+
+## 🚀 CI/CD Pipeline (Proposta Futura)
+
+### GitHub Actions Workflow: `.github/workflows/test.yml`
+
+```yaml
+name: Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test-dart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+      - run: dart test --coverage=coverage
+      - uses: codecov/codecov-action@v3
+        with:
+          files: coverage/lcov.info
+
+  test-rust-unit:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib --all-features
+        working-directory: native/odbc_engine
+
+  test-rust-e2e:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        db: [sqlserver, postgresql]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Start Database
+        run: docker-compose up -d ${{ matrix.db }}
+      - run: cargo test --test e2e_* -- --ignored
+        working-directory: native/odbc_engine
+        env:
+          ODBC_TEST_DSN: ${{ secrets.ODBC_TEST_DSN }}
+```
+
+---
+
+## 📈 Matriz de Rastreabilidade
+
+| Melhoria | Unit Tests | Integration Tests | E2E Tests | Performance Tests | Doc | Example | CHANGELOG | Status |
+|----------|-----------|------------------|-----------|-------------------|-----|---------|-----------|--------|
+| Async API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟢 Completo (v0.2.0) |
+| Connection Timeouts | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 Não iniciado |
+| Automatic Retry | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 Não iniciado |
+| Savepoints | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
+| Schema Reflection | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
+| Connection String Builder | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
+| Backpressure | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 Não iniciado |
+| Query Builder DSL | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |
+| Reactive Streams | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |
+| Multi-Host Failover | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟢 Futuro |
+
+**Legenda:**
+- ✅ Completo
+- ⬜ Não iniciado
+- 🔴 Alta prioridade
+- 🟡 Média prioridade
+- 🟢 Baixa prioridade/futuro
+
+---
+
 ## 📊 Cronograma de Implementação
 
 ### Fase 1: Resiliência (Semanas 1-2)
-- [ ] Async API com Isolate.run()
+- [x] Async API (worker isolate, v0.2.0)
 - [ ] Connection Timeouts
 - [ ] Automatic Retry com Exponential Backoff
 

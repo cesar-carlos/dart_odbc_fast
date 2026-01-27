@@ -151,6 +151,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   Uint8List? executePrepared(int stmtId, [List<ParamValue>? params]) =>
       _native.executeTyped(stmtId, params);
 
+  /// Executes a prepared statement with params already serialized (bytes).
+  ///
+  /// Used by the worker isolate. [serializedParams] is the output of
+  /// [serializeParams] or null/empty for no params.
+  Uint8List? executePreparedRaw(int stmtId, Uint8List? serializedParams) =>
+      _native.execute(stmtId, serializedParams);
+
   @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
 
@@ -169,6 +176,17 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     List<ParamValue> params,
   ) =>
       _native.execQueryParamsTyped(connectionId, sql, params);
+
+  /// Executes a parameterized query with params already serialized (bytes).
+  ///
+  /// Used by the worker isolate where [ParamValue] cannot be deserialized.
+  /// [serializedParams] is the output of [serializeParams].
+  Uint8List? executeQueryParamsRaw(
+    int connectionId,
+    String sql,
+    Uint8List? serializedParams,
+  ) =>
+      _native.execQueryParams(connectionId, sql, serializedParams);
 
   /// Executes a SQL query that returns multiple result sets.
   ///

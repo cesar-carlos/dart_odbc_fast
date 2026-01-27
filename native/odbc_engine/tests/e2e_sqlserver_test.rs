@@ -41,19 +41,19 @@ fn decode_decimal(data: &[u8]) -> f64 {
     if let Ok(val) = text.parse::<f64>() {
         return val;
     }
-    
+
     // Fallback: try as LE bytes (8 bytes for f64)
     if data.len() == 8 {
         return f64::from_le_bytes([
             data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
     }
-    
+
     // Fallback: try as f32 LE bytes
     if data.len() == 4 {
         return f32::from_le_bytes([data[0], data[1], data[2], data[3]]) as f64;
     }
-    
+
     panic!("Could not decode decimal from: {:?}", data)
 }
 

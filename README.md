@@ -211,6 +211,85 @@ It reads `ODBC_TEST_DSN` (or `ODBC_DSN`) from:
 - project root `.env` (see `.env.example`)
 - or environment variables
 
+## Async API (Non-Blocking Operations)
+
+ODBC Fast provides **true non-blocking database operations** using Dart isolates. All blocking FFI calls execute in a dedicated worker isolate, ensuring your UI stays responsive.
+
+### Architecture
+
+- **Main Thread**: Your app/UI code runs here
+- **Worker Isolate**: Background isolate handles all FFI/ODBC calls
+- **Message Protocol**: SendPort/ReceivePort for request/response communication
+- **Binary Protocol**: Efficient Uint8List transfer between isolates
+
+### Performance
+
+- **Worker spawn (one-time)**: ~50–100ms
+- **Per-operation overhead**: ~1–3ms
+- **Parallel queries**: Multiple requests are queued and processed by the worker
+- **UI responsiveness**: Event loop never blocks, even during long-running queries
+
+### Example: True Non-Blocking
+
+```dart
+import 'package:odbc_fast/odbc_fast.dart';
+
+Future<void> asyncDemo(String dsn) async {
+  final async = AsyncNativeOdbcConnection();
+
+  await async.initialize();
+  final connId = await async.connect(dsn);
+
+  // Long query - UI stays responsive
+  final queryFuture = async.executeQueryParams(
+    connId,
+    'SELECT * FROM huge_table WHERE processing_takes_5_seconds',
+    [],
+  );
+
+  // While query runs in worker isolate, UI can render, handle input, etc.
+  final result = await queryFuture;
+
+  await async.disconnect(connId);
+}
+```
+
+Using ServiceLocator (recommended for Flutter):
+
+```dart
+final locator = ServiceLocator();
+locator.initialize(useAsync: true);
+
+final service = locator.asyncService;
+await service.initialize();
+
+final connResult = await service.connect(dsn);
+await connResult.fold((connection) async {
+  await service.executeQuery(connection.id, 'SELECT * FROM users');
+  await service.disconnect(connection.id);
+}, (error) async {});
+
+locator.shutdown(); // Call on app exit when using async
+```
+
+### When to Use Async
+
+**Use async for:**
+- Flutter applications (required for responsive UI)
+- Any UI application
+- Long-running queries
+- Parallel operations
+
+**Use sync for:**
+- CLI tools without UI
+- Scripts where blocking is acceptable
+
+### See Also
+
+- Run `dart run example/async_demo.dart` for a complete async demonstration
+- [Async API Integration Tests](test/integration/async_api_integration_test.dart)
+- [Migration guide](doc/MIGRATION_ASYNC.md) for moving from sync to async
+
 ### High-level API (Clean Architecture)
 
 Most features are exposed via `OdbcService` (which wraps `IOdbcRepository` and

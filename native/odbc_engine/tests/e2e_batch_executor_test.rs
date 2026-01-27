@@ -521,6 +521,9 @@ fn test_execute_batch_query_fails_midway() {
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 
-    assert!(result.is_err(), "Batch with invalid query in middle should return Err");
+    assert!(
+        result.is_err(),
+        "Batch with invalid query in middle should return Err"
+    );
     println!("✅ Execute batch query fails midway test PASSED");
 }

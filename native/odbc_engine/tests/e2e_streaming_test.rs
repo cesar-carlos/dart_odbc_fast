@@ -674,7 +674,10 @@ fn test_streaming_batched_empty_result() {
         })
         .expect("execute_streaming_batched should succeed for empty result");
 
-    assert!(batch_count >= 1, "Empty result still produces one encoded batch");
+    assert!(
+        batch_count >= 1,
+        "Empty result still produces one encoded batch"
+    );
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
     println!("✓ Streaming batched empty result test passed");

@@ -8,6 +8,8 @@ export 'domain/entities/pool_state.dart';
 export 'domain/entities/query_result.dart';
 export 'domain/errors/odbc_error.dart';
 export 'domain/repositories/odbc_repository.dart';
+export 'infrastructure/native/async_native_odbc_connection.dart';
+export 'infrastructure/native/errors/async_error.dart';
 export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
@@ -17,3 +19,5 @@ export 'infrastructure/native/wrappers/connection_pool.dart';
 export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
 export 'infrastructure/repositories/odbc_repository_impl.dart';
+
+// Async support - async_native_odbc_connection and async_error exported above
