@@ -95,14 +95,12 @@ final connStr = SqlServerBuilder()
 ```
 
 ### Backpressure Control
-Streaming queries with configurable buffer size:
+For large result sets, prefer `streamQueryBatched` and tune batching:
 
-```dart
-final stream = StreamingQuery(maxBufferSize: 1000);
-```
+- `fetchSize`: rows per batch (cursor-based)
+- `chunkSize`: buffer size in bytes
 
-**Migration Guide**: See [doc/MIGRATION_ASYNC.md](doc/MIGRATION_ASYNC.md)  
-**Examples**: Run `dart run example/savepoint_demo.dart`, `dart run example/retry_demo.dart`, `dart run example/connection_builder_demo.dart`
+**Examples**: see [example/README.md](example/README.md)
 
 ## Requirements
 
@@ -115,7 +113,7 @@ final stream = StreamingQuery(maxBufferSize: 1000);
 
 ```yaml
 dependencies:
-  odbc_fast: ^0.1.1
+  odbc_fast: ^0.2.4
 ```
 
 ### 2. Install ODBC drivers
@@ -229,9 +227,9 @@ dart_odbc_fast/
 ## Documentation
 
 - **Build**: [doc/BUILD.md](doc/BUILD.md)
-- **Native Assets**: [doc/NATIVE_ASSETS.md](doc/NATIVE_ASSETS.md)
-- **Milestones**: [doc/m1_milestone.md](doc/m1_milestone.md), [doc/m2_milestone.md](doc/m2_milestone.md), [doc/m3_milestone.md](doc/m3_milestone.md)
-- **API governance**: [doc/api_governance.md](doc/api_governance.md)
+- **Troubleshooting**: [doc/TROUBLESHOOTING.md](doc/TROUBLESHOOTING.md)
+- **Release automation**: [doc/RELEASE_AUTOMATION.md](doc/RELEASE_AUTOMATION.md)
+- **Future implementations**: [doc/FUTURE_IMPLEMENTATIONS.md](doc/FUTURE_IMPLEMENTATIONS.md)
 - **Index**: [doc/README.md](doc/README.md)
 
 ## Testing
@@ -371,6 +369,9 @@ Future<void> demo(OdbcService service, String dsn) async {
       [1, 'hello'],
     );
 
+    // Multiple result sets (returns the first result set)
+    await service.executeQueryMulti(connection.id, 'SELECT 1 AS a; SELECT 2 AS b;');
+
     // Prepared statement + execute
     final stmtIdResult = await service.prepare(
       connection.id,
@@ -461,13 +462,27 @@ Future<void> streamingDemo(String dsn) async {
 }
 ```
 
+#### Typed parameters (low-level)
+
+For explicit typing on the native API, use `ParamValue*` (and `serializeParams`
+when you need raw bytes).
+
+#### Convenience wrappers (low-level)
+
+The low-level API also exposes wrappers to make imperative flows easier:
+
+- `PreparedStatement` (via `NativeOdbcConnection.prepareStatement(...)`)
+- `TransactionHandle` (via `NativeOdbcConnection.beginTransactionHandle(...)`)
+- `ConnectionPool` (via `NativeOdbcConnection.createConnectionPool(...)`)
+- `CatalogQuery` (via `NativeOdbcConnection.catalogQuery(...)`)
+
 ## CI/CD
 
 Multi-platform validation runs on:
 - Ubuntu (x86_64)
 - Windows (x86_64)
 
-See `.github/workflows/m1_validation.yml` for details.
+See `.github/workflows/ci.yml` and `.github/workflows/release.yml` for details.
 
 ## License
 
