@@ -89,7 +89,13 @@ Future<Uri?> _getLibraryPath(
 
   // 4. Baixar da GitHub Release (apenas em produção/build)
   // Não baixa durante desenvolvimento se não encontrar em dev paths
-  final downloaded = await _downloadFromGitHub(os, arch, libName, packageName);
+  final downloaded = await _downloadFromGitHub(
+    os,
+    arch,
+    libName,
+    packageName,
+    packageRoot,
+  );
   if (downloaded != null) {
     return downloaded;
   }
@@ -135,13 +141,13 @@ Future<Uri?> _downloadFromGitHub(
   Architecture arch,
   String libName,
   String packageName,
+  Uri packageRoot,
 ) async {
   try {
     // Ler versão do pubspec.yaml
+    // IMPORTANT: use the package root, not Directory.current (consumer app)
     final pubspec = File.fromUri(
-      Uri.file(
-        '${Directory.current.path}${Platform.pathSeparator}pubspec.yaml',
-      ),
+      packageRoot.resolve('pubspec.yaml'),
     );
     if (!pubspec.existsSync()) {
       return null;

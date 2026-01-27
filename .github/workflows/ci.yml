@@ -1,6 +1,6 @@
 name: CI
 
-on:
+'on':
   push:
     branches: [main, master]
   pull_request:
@@ -17,10 +17,41 @@ jobs:
         with:
           sdk: stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: ${{ format('{0}-cargo-{1}', runner.os, hashFiles('native/**/Cargo.toml', 'native/**/Cargo.lock')) }}
+
+      - name: Install ODBC (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+
+      - name: Build Rust library
+        run: |
+          cd native
+          cargo build --release --verbose
+
       - name: Install dependencies
         run: dart pub get
 
-      - name: Run tests
-        run: dart test
+      - name: Run unit tests
+        run: >
+          dart test
+          test/domain
+          test/infrastructure
+          test/validation
+          test/stress
+          test/native_assets_test.dart
+
+      - name: Run integration tests
+        run: dart test test/integration
         env:
-          ODBC_TEST_DSN: ${{ secrets.ODBC_TEST_DSN }}
+          ODBC_TEST_DSN: ${{ secrets.ODBC_TEST_DSN }} 

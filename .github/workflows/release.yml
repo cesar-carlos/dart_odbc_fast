@@ -1,6 +1,6 @@
 name: Release
 
-on:
+'on':
   push:
     tags:
       - 'v*'
@@ -38,8 +38,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            native/odbc_engine/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            native/target
+          key: ${{ format('{0}-cargo-{1}', runner.os, hashFiles('native/**/Cargo.toml', 'native/**/Cargo.lock')) }}
 
       - name: Install ODBC (Linux)
         if: matrix.os == 'ubuntu-latest'

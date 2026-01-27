@@ -21,5 +21,9 @@ String? getTestEnv(String key) {
   if (v != null && v.isNotEmpty) {
     return v;
   }
-  return Platform.environment[key];
+  final platformValue = Platform.environment[key];
+  if (platformValue != null && platformValue.isNotEmpty) {
+    return platformValue;
+  }
+  return null;
 }
