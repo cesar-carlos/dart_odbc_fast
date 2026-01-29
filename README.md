@@ -53,6 +53,7 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 ## Highlights
 
 ### Savepoints (Nested Transactions)
+
 Create rollback points within transactions:
 
 ```dart
@@ -63,6 +64,7 @@ await service.rollbackToSavepoint(connId, txnId, 'sp1'); // or releaseSavepoint
 ```
 
 ### Automatic Retry with Exponential Backoff
+
 Automatic retry for transient errors (connection lost, timeouts):
 
 ```dart
@@ -73,6 +75,7 @@ final result = await service.withRetry(
 ```
 
 ### Connection Timeouts
+
 Configure login/connection timeouts:
 
 ```dart
@@ -83,6 +86,7 @@ await service.connect(
 ```
 
 ### Connection String Builder
+
 Fluent API for building connection strings:
 
 ```dart
@@ -95,6 +99,7 @@ final connStr = SqlServerBuilder()
 ```
 
 ### Backpressure Control
+
 For large result sets, prefer `streamQueryBatched` and tune batching:
 
 - `fetchSize`: rows per batch (cursor-based)
@@ -113,7 +118,7 @@ For large result sets, prefer `streamQueryBatched` and tune batching:
 
 ```yaml
 dependencies:
-  odbc_fast: ^0.2.4
+  odbc_fast: ^0.2.6
 ```
 
 ### 2. Install ODBC drivers
@@ -155,11 +160,13 @@ Rust library:
 If you want to build from source:
 
 **Windows:**
+
 ```powershell
 .\scripts\build.ps1
 ```
 
 **Linux:**
+
 ```bash
 chmod +x scripts/build.sh
 ./scripts/build.sh
@@ -184,7 +191,7 @@ dart test
 ✅ **PROJETO COMPLETO & COMPILÁVEL** - Todas as 16 fases implementadas  
 ✅ **Rust Engine**: 0 erros, build OK, 3 tests passando  
 ✅ **Dart API**: 0 erros, análise limpa  
-✅ **FFI Artifacts**: DLL (1.06 MB), Header, Bindings OK  
+✅ **FFI Artifacts**: DLL (1.06 MB), Header, Bindings OK
 
 ### Milestones
 
@@ -331,12 +338,14 @@ locator.shutdown(); // Call on app exit when using async
 ### When to Use Async
 
 **Use async for:**
+
 - Flutter applications (required for responsive UI)
 - Any UI application
 - Long-running queries
 - Parallel operations
 
 **Use sync for:**
+
 - CLI tools without UI
 - Scripts where blocking is acceptable
 
@@ -479,10 +488,17 @@ The low-level API also exposes wrappers to make imperative flows easier:
 ## CI/CD
 
 Multi-platform validation runs on:
+
 - Ubuntu (x86_64)
 - Windows (x86_64)
 
 See `.github/workflows/ci.yml` and `.github/workflows/release.yml` for details.
+
+## Support the project
+
+If this project helps you, consider buying the developer a coffee via Pix:
+
+- **Pix**: `cesar_carlos@msn.com`
 
 ## License
 
