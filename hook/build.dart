@@ -67,9 +67,12 @@ Future<Uri?> _getLibraryPath(
   String packageName,
 ) async {
   final libName = _getLibraryName(os);
+  final version = await _extractVersion(
+    File.fromUri(packageRoot.resolve('pubspec.yaml')),
+  );
 
-  // 1. Verificar cache local primeiro
-  final cachedLib = _getCachedLibrary(os, arch, libName);
+  // 1. Verificar cache local primeiro (por versão)
+  final cachedLib = _getCachedLibrary(os, arch, libName, version);
   if (cachedLib != null) {
     return cachedLib;
   }
@@ -95,6 +98,7 @@ Future<Uri?> _getLibraryPath(
     libName,
     packageName,
     packageRoot,
+    version,
   );
   if (downloaded != null) {
     return downloaded;
@@ -106,9 +110,15 @@ Future<Uri?> _getLibraryPath(
 }
 
 /// Retorna o caminho da biblioteca no cache local, se existir.
-Uri? _getCachedLibrary(OS os, Architecture arch, String libName) {
+/// [version] inclui a versão no path para evitar reutilizar DLL de outra versão.
+Uri? _getCachedLibrary(
+  OS os,
+  Architecture arch,
+  String libName,
+  String? version,
+) {
   try {
-    final cacheDir = _getCacheDirectory();
+    final cacheDir = _getCacheDirectory(version);
     final platformDir = '${_osToString(os)}_${_archToString(arch)}';
     final cached = File.fromUri(
       cacheDir.resolve('$platformDir/$libName'),
@@ -124,13 +134,18 @@ Uri? _getCachedLibrary(OS os, Architecture arch, String libName) {
 }
 
 /// Retorna o diretório de cache para bibliotecas nativas.
-Uri _getCacheDirectory() {
+/// [version] quando não null, usa subpasta por versão para evitar DLL incompatível.
+Uri _getCacheDirectory([String? version]) {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
   if (home == null) {
     throw StateError('Cannot determine user home directory');
   }
-  return Uri.directory(home).resolve('.cache/odbc_fast/');
+  final base = Uri.directory(home).resolve('.cache/odbc_fast/');
+  if (version != null && version.isNotEmpty) {
+    return base.resolve('$version/');
+  }
+  return base;
 }
 
 /// Baixa a biblioteca nativa da GitHub Release.
@@ -142,19 +157,10 @@ Future<Uri?> _downloadFromGitHub(
   String libName,
   String packageName,
   Uri packageRoot,
+  String? version,
 ) async {
   try {
-    // Ler versão do pubspec.yaml
-    // IMPORTANT: use the package root, not Directory.current (consumer app)
-    final pubspec = File.fromUri(
-      packageRoot.resolve('pubspec.yaml'),
-    );
-    if (!pubspec.existsSync()) {
-      return null;
-    }
-
-    final version = await _extractVersion(pubspec);
-    if (version == null) {
+    if (version == null || version.isEmpty) {
       return null;
     }
 
@@ -163,8 +169,8 @@ Future<Uri?> _downloadFromGitHub(
 
     print('[odbc_fast] Downloading native library from $url');
 
-    // Criar diretório de cache
-    final cacheDirPath = _getCacheDirectory().toFilePath();
+    // Criar diretório de cache (por versão)
+    final cacheDirPath = _getCacheDirectory(version).toFilePath();
     final platformDir = '${_osToString(os)}_${_archToString(arch)}';
     final targetDir = Directory(
       '$cacheDirPath${Platform.pathSeparator}$platformDir',
