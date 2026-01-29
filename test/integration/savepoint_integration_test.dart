@@ -105,40 +105,47 @@ void main() {
       }
     });
 
-    test('savepoint release', () async {
-      final dsn = getConnectionString();
-      if (dsn == null) return;
+    test(
+      'savepoint release',
+      () async {
+        final dsn = getConnectionString();
+        if (dsn == null) return;
 
-      final connResult = await service.connect(dsn);
-      if (connResult.fold((_) => false, (_) => true)) return;
+        final connResult = await service.connect(dsn);
+        if (connResult.fold((_) => false, (_) => true)) return;
 
-      final connection =
-          connResult.getOrElse((_) => throw Exception('Failed to connect'));
+        final connection =
+            connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-      final beginResult = await service.beginTransaction(
-        connection.id,
-        IsolationLevel.readCommitted,
-      );
-      if (beginResult.fold((_) => false, (_) => true)) {
-        await service.disconnect(connection.id);
-        return;
-      }
+        final beginResult = await service.beginTransaction(
+          connection.id,
+          IsolationLevel.readCommitted,
+        );
+        if (beginResult.fold((_) => false, (_) => true)) {
+          await service.disconnect(connection.id);
+          return;
+        }
 
-      final txnId = beginResult.getOrElse((_) => throw Exception('no txn'));
+        final txnId = beginResult.getOrElse((_) => throw Exception('no txn'));
 
-      try {
-        final createSp =
-            await service.createSavepoint(connection.id, txnId, 'sp_r');
-        expect(createSp.isSuccess(), isTrue);
+        try {
+          final createSp =
+              await service.createSavepoint(connection.id, txnId, 'sp_r');
+          expect(createSp.isSuccess(), isTrue);
 
-        final releaseSp =
-            await service.releaseSavepoint(connection.id, txnId, 'sp_r');
-        expect(releaseSp.isSuccess(), isTrue);
+          final releaseSp =
+              await service.releaseSavepoint(connection.id, txnId, 'sp_r');
+          expect(releaseSp.isSuccess(), isTrue);
 
-        await service.commitTransaction(connection.id, txnId);
-      } finally {
-        await service.disconnect(connection.id);
-      }
-    });
+          await service.commitTransaction(connection.id, txnId);
+        } finally {
+          await service.disconnect(connection.id);
+        }
+      },
+      skip: skipIfDatabase(
+        [DatabaseType.sqlServer],
+        reason: 'SQL Server does not support RELEASE SAVEPOINT syntax',
+      ),
+    );
   });
 }

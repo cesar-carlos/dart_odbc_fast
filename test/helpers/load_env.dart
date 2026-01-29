@@ -72,3 +72,79 @@ bool? _parseEnvBool(String? raw) {
 
   return null;
 }
+
+/// Database types supported by the ODBC driver
+enum DatabaseType {
+  sqlServer,
+  postgresql,
+  mysql,
+  oracle,
+  sqlite,
+  unknown,
+}
+
+/// Detects the database type from a connection string (DSN)
+DatabaseType detectDatabaseType(String? connectionString) {
+  if (connectionString == null || connectionString.isEmpty) {
+    return DatabaseType.unknown;
+  }
+
+  final lower = connectionString.toLowerCase();
+
+  // Check driver name patterns
+  if (lower.contains('sql server') || lower.contains('sqlserver')) {
+    return DatabaseType.sqlServer;
+  }
+  if (lower.contains('postgresql') || lower.contains('postgres')) {
+    return DatabaseType.postgresql;
+  }
+  if (lower.contains('mysql')) {
+    return DatabaseType.mysql;
+  }
+  if (lower.contains('oracle')) {
+    return DatabaseType.oracle;
+  }
+  if (lower.contains('sqlite')) {
+    return DatabaseType.sqlite;
+  }
+
+  return DatabaseType.unknown;
+}
+
+/// Gets the database type from the test environment DSN
+DatabaseType getTestDatabaseType() {
+  final dsn = getTestEnv('ODBC_TEST_DSN');
+  return detectDatabaseType(dsn);
+}
+
+/// Returns true if the current test database is one of the specified types
+bool isDatabaseType(List<DatabaseType> types) {
+  final dbType = getTestDatabaseType();
+  return types.contains(dbType);
+}
+
+/// Returns a skip reason if the test should be skipped for the current database
+String? skipIfDatabase(
+  List<DatabaseType> skipFor, {
+  String? reason,
+}) {
+  final dbType = getTestDatabaseType();
+  if (skipFor.contains(dbType)) {
+    final dbName = dbType.toString().split('.').last;
+    return reason ?? 'Not supported on $dbName';
+  }
+  return null;
+}
+
+/// Returns a skip reason if the test should ONLY run on specific databases
+String? skipUnlessDatabase(
+  List<DatabaseType> onlyFor, {
+  String? reason,
+}) {
+  final dbType = getTestDatabaseType();
+  if (!onlyFor.contains(dbType)) {
+    final dbNames = onlyFor.map((t) => t.toString().split('.').last).join(', ');
+    return reason ?? 'Only supported on: $dbNames';
+  }
+  return null;
+}
