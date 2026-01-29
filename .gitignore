@@ -52,6 +52,9 @@ native/target/tarpaulin/
 # Rust documentation (generated)
 native/target/doc/
 
+# Dart documentation (generated)
+doc/api/
+
 # Temporary files
 *.tmp
 *.temp
