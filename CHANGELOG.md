@@ -8,9 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.6] - 2026-01-29
 
 ### Added
+
 - README: "Support the project" section with Pix (buy developer a coffee)
 
 ### Changed
+
 - Exclude `test/my_test/` from pub package via `.pubignore` (domain-specific tests)
 - README: installation example updated to `^0.2.6`
 
