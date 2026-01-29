@@ -373,6 +373,30 @@ git push origin :refs/tags/v0.1.6
 - **Binário Windows**: ~1.4 MB
 - **Pacote pub.dev**: ~559 KB (com binário incluso)
 
+## Resumo do processo de geração de versão (checklist)
+
+Ordem recomendada para gerar uma nova versão (ex.: 0.3.0):
+
+| # | Passo | Comando / Ação |
+|---|--------|-----------------|
+| 1 | **Testes** | `dart test --concurrency=1` (todos devem passar) |
+| 2 | **Bump versão** | Editar `pubspec.yaml`: `version: 0.3.0` |
+| 3 | **CHANGELOG** | Trocar `[Unreleased]` por `[0.3.0] - YYYY-MM-DD`; mover itens de Unreleased para a nova seção |
+| 4 | **README** | Atualizar exemplo de dependência se necessário (ex.: `^0.3.0`) |
+| 5 | **Dry-run** | `dart pub publish --dry-run` (validar pacote) |
+| 6 | **Commit** | `git add ...` e `git commit -m "chore: release 0.3.0"` (ou mensagem descritiva) |
+| 7 | **Tag** | `git tag v0.3.0` (ou `git tag -a v0.3.0 -m "Release v0.3.0"`) |
+| 8 | **Push** | `git push origin main` e `git push origin v0.3.0` |
+| 9 | **GitHub Release** | Automático: workflow `.github/workflows/release.yml` roda no push da tag; compila Windows + Linux e cria a release com os binários |
+| 10 | **Publicar pub.dev** | `dart pub publish --force` (confirmar quando solicitado) |
+| 11 | **Verificar** | GitHub Releases: binários anexados; pub.dev: versão disponível (~10 min) |
+
+**Observações:**
+
+- O **GitHub Release** é criado pelo workflow ao dar push na tag; não é necessário criar manualmente em `/releases` (a menos que o workflow falhe).
+- **Hook / Native Assets**: o pacote publicado inclui `hook/build.dart`; em `dart pub get` o consumidor baixa o binário de `https://github.com/.../releases/download/vX.Y.Z/...`.
+- Para **release de teste** (sem publicar no pub.dev): use uma tag como `v0.3.0-rc1` e não rode `dart pub publish`.
+
 ## Recursos
 
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
