@@ -42,6 +42,29 @@ void main(List<String> args) async {
   });
 }
 
+/// Verifica se deve pular download externo (CI/pub.dev environments).
+bool _shouldSkipDownload() {
+  // Pular download se PUB_ENVIRONMENT estiver definido (indicando pub.dev)
+  final pubEnv = Platform.environment['PUB_ENVIRONMENT'];
+  if (pubEnv != null && pubEnv.contains('pub.dev')) {
+    return true;
+  }
+
+  // Pular download se CI estiver definido
+  final ci = Platform.environment['CI'];
+  if (ci == 'true') {
+    return true;
+  }
+
+  // Permitir desabilitar explicitamente via variável de ambiente
+  final skipDownload = Platform.environment['ODBC_FAST_SKIP_DOWNLOAD'];
+  if (skipDownload == 'true') {
+    return true;
+  }
+
+  return false;
+}
+
 String _getLibraryName(OS os) {
   switch (os) {
     case OS.windows:
@@ -58,7 +81,7 @@ String _getLibraryName(OS os) {
 /// Estratégia de busca em ordem de prioridade:
 /// 1. Cache local (~/.cache/odbc_fast/)
 /// 2. Desenvolvimento (native/target/release/)
-/// 3. Download automático da GitHub Release
+/// 3. Download automático da GitHub Release (pulado em CI/pub.dev)
 /// 4. null (permite testes sem biblioteca)
 Future<Uri?> _getLibraryPath(
   OS os,
@@ -90,8 +113,7 @@ Future<Uri?> _getLibraryPath(
     return devPathLocal;
   }
 
-  // 4. Baixar da GitHub Release (apenas em produção/build)
-  // Não baixa durante desenvolvimento se não encontrar em dev paths
+  // 4. Baixar da GitHub Release (apenas em produção/build, pulado em CI/pub.dev)
   final downloaded = await _downloadFromGitHub(
     os,
     arch,
@@ -134,7 +156,9 @@ Uri? _getCachedLibrary(
 }
 
 /// Retorna o diretório de cache para bibliotecas nativas.
-/// [version] quando não null, usa subpasta por versão para evitar DLL incompatí
+///
+/// [version] quando não null, usa subpasta por versão para evitar DLL
+/// incompatível entre versões diferentes do pacote.
 Uri _getCacheDirectory([String? version]) {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -151,6 +175,7 @@ Uri _getCacheDirectory([String? version]) {
 /// Baixa a biblioteca nativa da GitHub Release.
 ///
 /// Retorna o caminho do arquivo baixado, ou null se falhar.
+/// Pula download em ambientes de CI/pub.dev para evitar timeouts.
 Future<Uri?> _downloadFromGitHub(
   OS os,
   Architecture arch,
@@ -159,6 +184,12 @@ Future<Uri?> _downloadFromGitHub(
   Uri packageRoot,
   String? version,
 ) async {
+  // Não tentar download em ambientes de CI/pub.dev
+  if (_shouldSkipDownload()) {
+    print('[odbc_fast] Skipping external download in CI/pub.dev environment');
+    return null;
+  }
+
   try {
     if (version == null || version.isEmpty) {
       return null;

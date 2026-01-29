@@ -1,3 +1,53 @@
+/// Enterprise-grade ODBC data platform for Dart with a Rust native engine.
+///
+/// This library provides a high-performance ODBC interface with:
+/// - Clean Architecture design
+/// - Native Rust engine for performance
+/// - Connection pooling
+/// - Streaming queries
+/// - Async API for non-blocking operations
+/// - Automatic retry with exponential backoff
+/// - Savepoints (nested transactions)
+///
+/// ## Quick Start
+///
+/// ```dart
+/// import 'package:odbc_fast/odbc_fast.dart';
+///
+/// void main() async {
+///   final service = OdbcService();
+///   await service.initialize();
+///
+///   final connResult = await service.connect('MyDSN');
+///   await connResult.fold((connection) async {
+///     await service.executeQuery(connection.id, 'SELECT * FROM users');
+///     await service.disconnect(connection.id);
+///   }, (error) {
+///     print('Error: $error');
+///   });
+/// }
+/// ```
+///
+/// ## Async API (Recommended for Flutter)
+///
+/// For non-blocking operations, use the async API:
+///
+/// ```dart
+/// final locator = ServiceLocator();
+/// locator.initialize(useAsync: true);
+///
+/// final asyncService = locator.asyncService;
+/// await asyncService.initialize();
+///
+/// final connResult = await asyncService.connect('MyDSN');
+/// // ... use asyncService for all operations
+///
+/// locator.shutdown(); // Call on app exit
+/// ```
+///
+/// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
+library;
+
 export 'application/services/odbc_service.dart';
 export 'core/di/service_locator.dart';
 export 'core/utils/logger.dart';

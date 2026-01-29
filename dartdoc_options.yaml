@@ -1,0 +1,6 @@
+dartdoc:
+  # Ignore warnings for asset-only packages with native code
+  ignore:
+    - ambiguous-reexport
+    - ambiguous-import
+    - unresolved-doc-reference
