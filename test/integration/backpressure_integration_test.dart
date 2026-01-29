@@ -58,6 +58,7 @@ void main() {
         query.clearBuffer();
         cleared.complete();
       });
+
       await cleared.future;
       await addFuture;
       query.close();

@@ -211,14 +211,7 @@ impl ArrayBinding {
                 .zip(payload.column_data.iter())
                 .enumerate()
             {
-                fill_column(
-                    &mut inserter,
-                    buf_idx,
-                    spec,
-                    data,
-                    chunk_start,
-                    chunk_len,
-                )?;
+                fill_column(&mut inserter, buf_idx, spec, data, chunk_start, chunk_len)?;
             }
 
             inserter.execute().map_err(OdbcError::from)?;
@@ -255,14 +248,25 @@ where
     S: AsStatementRef,
 {
     match (data, &spec.col_type) {
-        (BulkColumnData::I32 { values, null_bitmap }, BulkColumnType::I32) => {
+        (
+            BulkColumnData::I32 {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::I32,
+        ) => {
             if let Some(bm) = null_bitmap {
                 let mut writer = inserter
                     .column_mut(buf_idx)
                     .as_nullable_slice::<i32>()
-                    .ok_or_else(|| OdbcError::InternalError("I32 nullable column expected".to_string()))?;
+                    .ok_or_else(|| {
+                        OdbcError::InternalError("I32 nullable column expected".to_string())
+                    })?;
                 let (vals, inds) = writer.raw_values();
-                for (i, &v) in values[chunk_start..chunk_start + chunk_len].iter().enumerate() {
+                for (i, &v) in values[chunk_start..chunk_start + chunk_len]
+                    .iter()
+                    .enumerate()
+                {
                     vals[i] = v;
                     inds[i] = if is_null(bm, chunk_start + i) {
                         NULL_DATA
@@ -278,14 +282,25 @@ where
                 col[..chunk_len].copy_from_slice(&values[chunk_start..chunk_start + chunk_len]);
             }
         }
-        (BulkColumnData::I64 { values, null_bitmap }, BulkColumnType::I64) => {
+        (
+            BulkColumnData::I64 {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::I64,
+        ) => {
             if let Some(bm) = null_bitmap {
                 let mut writer = inserter
                     .column_mut(buf_idx)
                     .as_nullable_slice::<i64>()
-                    .ok_or_else(|| OdbcError::InternalError("I64 nullable column expected".to_string()))?;
+                    .ok_or_else(|| {
+                        OdbcError::InternalError("I64 nullable column expected".to_string())
+                    })?;
                 let (vals, inds) = writer.raw_values();
-                for (i, &v) in values[chunk_start..chunk_start + chunk_len].iter().enumerate() {
+                for (i, &v) in values[chunk_start..chunk_start + chunk_len]
+                    .iter()
+                    .enumerate()
+                {
                     vals[i] = v;
                     inds[i] = if is_null(bm, chunk_start + i) {
                         NULL_DATA
@@ -301,8 +316,18 @@ where
                 col[..chunk_len].copy_from_slice(&values[chunk_start..chunk_start + chunk_len]);
             }
         }
-        (BulkColumnData::Text { rows, null_bitmap, .. }, BulkColumnType::Text)
-        | (BulkColumnData::Text { rows, null_bitmap, .. }, BulkColumnType::Decimal) => {
+        (
+            BulkColumnData::Text {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Text,
+        )
+        | (
+            BulkColumnData::Text {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Decimal,
+        ) => {
             let mut view = inserter
                 .column_mut(buf_idx)
                 .as_text_view()
@@ -321,7 +346,12 @@ where
                 view.set_cell(i, cell);
             }
         }
-        (BulkColumnData::Binary { rows, null_bitmap, .. }, BulkColumnType::Binary) => {
+        (
+            BulkColumnData::Binary {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Binary,
+        ) => {
             let mut view = inserter
                 .column_mut(buf_idx)
                 .as_bin_view()
@@ -340,7 +370,13 @@ where
                 view.set_cell(i, cell);
             }
         }
-        (BulkColumnData::Timestamp { values, null_bitmap }, BulkColumnType::Timestamp) => {
+        (
+            BulkColumnData::Timestamp {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::Timestamp,
+        ) => {
             let ts = |t: &BulkTimestamp| odbc_api::sys::Timestamp {
                 year: t.year,
                 month: t.month,
@@ -360,17 +396,15 @@ where
                 let (vals, inds) = writer.raw_values();
                 for (i, r) in (chunk_start..chunk_start + chunk_len).enumerate() {
                     vals[i] = ts(&values[r]);
-                    inds[i] = if is_null(bm, r) {
-                        NULL_DATA
-                    } else {
-                        0
-                    };
+                    inds[i] = if is_null(bm, r) { NULL_DATA } else { 0 };
                 }
             } else {
                 let col = inserter
                     .column_mut(buf_idx)
                     .as_slice::<odbc_api::sys::Timestamp>()
-                    .ok_or_else(|| OdbcError::InternalError("Timestamp column expected".to_string()))?;
+                    .ok_or_else(|| {
+                        OdbcError::InternalError("Timestamp column expected".to_string())
+                    })?;
                 for (i, r) in (chunk_start..chunk_start + chunk_len).enumerate() {
                     col[i] = ts(&values[r]);
                 }

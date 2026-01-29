@@ -128,9 +128,7 @@ impl OdbcError {
     pub fn is_connection_error(&self) -> bool {
         match self {
             OdbcError::EmptyConnectionString | OdbcError::EnvironmentNotInitialized => true,
-            OdbcError::Structured { sqlstate, .. } => {
-                sqlstate[0] == b'0' && sqlstate[1] == b'8'
-            }
+            OdbcError::Structured { sqlstate, .. } => sqlstate[0] == b'0' && sqlstate[1] == b'8',
             _ => false,
         }
     }
@@ -351,7 +349,10 @@ mod tests {
             native_code: 0,
             message: "Connection timeout".to_string(),
         };
-        assert!(conn_error.is_retryable(), "Connection errors should be retryable");
+        assert!(
+            conn_error.is_retryable(),
+            "Connection errors should be retryable"
+        );
 
         // Pool errors should be retryable
         let pool_error = OdbcError::PoolError("Pool exhausted".to_string());
@@ -359,32 +360,50 @@ mod tests {
 
         // Internal errors with timeout should be retryable
         let timeout_error = OdbcError::InternalError("Query timeout".to_string());
-        assert!(timeout_error.is_retryable(), "Timeout errors should be retryable");
+        assert!(
+            timeout_error.is_retryable(),
+            "Timeout errors should be retryable"
+        );
 
         let timeout_error2 = OdbcError::InternalError("Operation Timeout".to_string());
-        assert!(timeout_error2.is_retryable(), "Timeout errors should be retryable");
+        assert!(
+            timeout_error2.is_retryable(),
+            "Timeout errors should be retryable"
+        );
 
         // Non-retryable errors
         let validation_error = OdbcError::ValidationError("Invalid input".to_string());
-        assert!(!validation_error.is_retryable(), "Validation errors should not be retryable");
+        assert!(
+            !validation_error.is_retryable(),
+            "Validation errors should not be retryable"
+        );
 
         let fatal_error = OdbcError::Structured {
             sqlstate: [b'2', b'3', b'0', b'0', b'0'],
             native_code: 0,
             message: "Constraint violation".to_string(),
         };
-        assert!(!fatal_error.is_retryable(), "Constraint violations should not be retryable");
+        assert!(
+            !fatal_error.is_retryable(),
+            "Constraint violations should not be retryable"
+        );
     }
 
     #[test]
     fn test_is_connection_error() {
         // EmptyConnectionString should be connection error
         let empty_conn = OdbcError::EmptyConnectionString;
-        assert!(empty_conn.is_connection_error(), "EmptyConnectionString should be connection error");
+        assert!(
+            empty_conn.is_connection_error(),
+            "EmptyConnectionString should be connection error"
+        );
 
         // EnvironmentNotInitialized should be connection error
         let env_not_init = OdbcError::EnvironmentNotInitialized;
-        assert!(env_not_init.is_connection_error(), "EnvironmentNotInitialized should be connection error");
+        assert!(
+            env_not_init.is_connection_error(),
+            "EnvironmentNotInitialized should be connection error"
+        );
 
         // SQLSTATE '08xxx' should be connection error
         let conn_sqlstate = OdbcError::Structured {
@@ -392,18 +411,27 @@ mod tests {
             native_code: 0,
             message: "Connection failed".to_string(),
         };
-        assert!(conn_sqlstate.is_connection_error(), "SQLSTATE '08xxx' should be connection error");
+        assert!(
+            conn_sqlstate.is_connection_error(),
+            "SQLSTATE '08xxx' should be connection error"
+        );
 
         // Non-connection errors
         let validation_error = OdbcError::ValidationError("Invalid input".to_string());
-        assert!(!validation_error.is_connection_error(), "Validation errors should not be connection errors");
+        assert!(
+            !validation_error.is_connection_error(),
+            "Validation errors should not be connection errors"
+        );
 
         let query_error = OdbcError::Structured {
             sqlstate: [b'4', b'2', b'S', b'0', b'2'],
             native_code: 0,
             message: "Table not found".to_string(),
         };
-        assert!(!query_error.is_connection_error(), "Query errors should not be connection errors");
+        assert!(
+            !query_error.is_connection_error(),
+            "Query errors should not be connection errors"
+        );
     }
 
     #[test]

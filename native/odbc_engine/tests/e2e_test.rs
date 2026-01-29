@@ -2,16 +2,17 @@ use odbc_engine::{
     execute_query_with_connection, BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
 };
 
-/// Helper to get ODBC_TEST_DSN from environment
-fn get_test_dsn() -> Option<String> {
-    std::env::var("ODBC_TEST_DSN")
-        .ok()
-        .filter(|s| !s.is_empty())
-}
+mod helpers;
+use helpers::{get_test_dsn, should_run_e2e_tests};
 
 #[test]
 #[ignore]
 fn test_e2e_select_5() {
+    if !should_run_e2e_tests() {
+        eprintln!("Skipping test: ENABLE_E2E_TESTS not enabled");
+        return;
+    }
+
     // Get connection string from environment
     let conn_str: String = match get_test_dsn() {
         Some(dsn) => dsn,
@@ -106,6 +107,11 @@ fn test_e2e_select_5() {
 #[test]
 #[ignore]
 fn test_e2e_select_5_multiple_columns() {
+    if !should_run_e2e_tests() {
+        eprintln!("Skipping test: ENABLE_E2E_TESTS not enabled");
+        return;
+    }
+
     // Get connection string from environment
     let conn_str: String = match get_test_dsn() {
         Some(dsn) => dsn,

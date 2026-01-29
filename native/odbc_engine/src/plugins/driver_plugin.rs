@@ -95,7 +95,10 @@ mod tests {
             replacement: "y".to_string(),
         };
         let _r5 = OptimizationRule::EnableStreaming;
-        assert!(matches!(OptimizationRule::UsePreparedStatements, OptimizationRule::UsePreparedStatements));
+        assert!(matches!(
+            OptimizationRule::UsePreparedStatements,
+            OptimizationRule::UsePreparedStatements
+        ));
         assert!(matches!(
             OptimizationRule::UseArrayFetch { size: 500 },
             OptimizationRule::UseArrayFetch { size: 500 }

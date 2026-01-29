@@ -13,9 +13,10 @@ void main() {
     locator.initialize();
     final service = locator.service;
 
+    final shouldRunE2e = isE2eEnabled();
     final connectionString = getTestEnv('ODBC_TEST_DSN');
-    if (connectionString == null) {
-      print('Skipping test: ODBC_TEST_DSN not set');
+    if (!shouldRunE2e || connectionString == null) {
+      print('Skipping test: e2e disabled or ODBC_TEST_DSN not set');
       return;
     }
 

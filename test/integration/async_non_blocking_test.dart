@@ -18,8 +18,9 @@ void main() {
         final service = locator.asyncService;
         await service.initialize();
 
+        final shouldRunE2e = isE2eEnabled();
         final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) return;
+        if (!shouldRunE2e || dsn == null) return;
 
         final connResult = await service.connect(dsn);
         await connResult.fold(

@@ -40,7 +40,11 @@ impl HandleManager {
         self.create_connection_with_options(conn_str, ConnectionOptions::default())
     }
 
-    pub fn create_connection_with_timeout(&mut self, conn_str: &str, timeout_secs: u32) -> Result<u32> {
+    pub fn create_connection_with_timeout(
+        &mut self,
+        conn_str: &str,
+        timeout_secs: u32,
+    ) -> Result<u32> {
         let opts = ConnectionOptions {
             login_timeout_sec: Some(timeout_secs),
             ..ConnectionOptions::default()
@@ -48,7 +52,11 @@ impl HandleManager {
         self.create_connection_with_options(conn_str, opts)
     }
 
-    fn create_connection_with_options(&mut self, conn_str: &str, opts: ConnectionOptions) -> Result<u32> {
+    fn create_connection_with_options(
+        &mut self,
+        conn_str: &str,
+        opts: ConnectionOptions,
+    ) -> Result<u32> {
         let env = self.env.ok_or(OdbcError::EnvironmentNotInitialized)?;
 
         let connection = env.connect_with_connection_string(conn_str, opts)?;

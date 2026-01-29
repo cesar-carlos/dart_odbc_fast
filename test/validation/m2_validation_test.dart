@@ -16,7 +16,7 @@ void main() {
       // ignore: cascade_invocations
       locator.initialize();
       await locator.service.initialize();
-      connectionString = getTestEnv('ODBC_TEST_DSN');
+      connectionString = isE2eEnabled() ? getTestEnv('ODBC_TEST_DSN') : null;
     });
 
     test('binary protocol should work', () {

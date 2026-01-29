@@ -252,10 +252,12 @@ impl BatchedStreamingState {
             }
         }
 
-        let b = self.current_batch.as_ref()
-            .ok_or_else(|| OdbcError::InternalError(
-                "Streaming state corrupted: no batch available after receiver processing".to_string()
-            ))?;
+        let b = self.current_batch.as_ref().ok_or_else(|| {
+            OdbcError::InternalError(
+                "Streaming state corrupted: no batch available after receiver processing"
+                    .to_string(),
+            )
+        })?;
         let end = (self.offset + self.chunk_size).min(b.len());
         let chunk = b[self.offset..end].to_vec();
         self.offset = end;
@@ -272,10 +274,7 @@ impl BatchedStreamingState {
     }
 
     #[cfg(test)]
-    fn from_receiver(
-        receiver: mpsc::Receiver<BatchedMessage>,
-        chunk_size: usize,
-    ) -> Self {
+    fn from_receiver(receiver: mpsc::Receiver<BatchedMessage>, chunk_size: usize) -> Self {
         Self {
             receiver,
             current_batch: None,

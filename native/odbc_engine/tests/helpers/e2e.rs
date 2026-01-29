@@ -195,22 +195,33 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
 }
 
 /// Verifica se testes E2E devem ser executados
-/// Considera variável de ambiente ENABLE_E2E_TESTS e disponibilidade de conexão
+/// Só executa quando ENABLE_E2E_TESTS estiver explicitamente habilitado
 pub fn should_run_e2e_tests() -> bool {
     // Carregar variáveis do .env
     load_dotenv();
 
-    // Se ENABLE_E2E_TESTS está definido como "0" ou "false", não executar
-    if let Ok(value) = std::env::var("ENABLE_E2E_TESTS") {
-        if value == "0" || value.eq_ignore_ascii_case("false") {
-            return false;
+    fn parse_env_bool(raw: &str) -> Option<bool> {
+        let normalized = raw.trim().to_lowercase();
+        if normalized.is_empty() {
+            return None;
         }
-        // Se está definido como "1" ou "true", verificar conexão
-        if value == "1" || value.eq_ignore_ascii_case("true") {
-            return can_connect_to_sqlserver();
+
+        match normalized.as_str() {
+            "1" | "true" | "yes" | "y" => Some(true),
+            "0" | "false" | "no" | "n" => Some(false),
+            _ => None,
         }
     }
 
-    // Por padrão, verificar se conexão está disponível
+    let enabled = std::env::var("ENABLE_E2E_TESTS")
+        .ok()
+        .as_deref()
+        .and_then(parse_env_bool)
+        == Some(true);
+
+    if !enabled {
+        return false;
+    }
+
     can_connect_to_sqlserver()
 }

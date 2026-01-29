@@ -5,7 +5,7 @@ use crate::observability::{Metrics, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::{
     encode_multi, param_values_to_strings, row_buffer_to_columnar, ColumnarEncoder,
-    MultiResultItem, ParamValue, OdbcType, RowBuffer, RowBufferEncoder,
+    MultiResultItem, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
@@ -200,21 +200,26 @@ impl ExecutionEngine {
         let strings = param_values_to_strings(params)?;
 
         let cursor = match strings.len() {
-            0 => conn.execute(sql, (), timeout_sec).map_err(OdbcError::from)?,
+            0 => conn
+                .execute(sql, (), timeout_sec)
+                .map_err(OdbcError::from)?,
             1 => {
                 let p0 = strings[0].as_str().into_parameter();
-                conn.execute(sql, (&p0,), timeout_sec).map_err(OdbcError::from)?
+                conn.execute(sql, (&p0,), timeout_sec)
+                    .map_err(OdbcError::from)?
             }
             2 => {
                 let p0 = strings[0].as_str().into_parameter();
                 let p1 = strings[1].as_str().into_parameter();
-                conn.execute(sql, (&p0, &p1), timeout_sec).map_err(OdbcError::from)?
+                conn.execute(sql, (&p0, &p1), timeout_sec)
+                    .map_err(OdbcError::from)?
             }
             3 => {
                 let p0 = strings[0].as_str().into_parameter();
                 let p1 = strings[1].as_str().into_parameter();
                 let p2 = strings[2].as_str().into_parameter();
-                conn.execute(sql, (&p0, &p1, &p2), timeout_sec).map_err(OdbcError::from)?
+                conn.execute(sql, (&p0, &p1, &p2), timeout_sec)
+                    .map_err(OdbcError::from)?
             }
             4 => {
                 let p0 = strings[0].as_str().into_parameter();
@@ -311,11 +316,7 @@ impl ExecutionEngine {
         result
     }
 
-    pub fn execute_multi_result(
-        &self,
-        conn: &Connection<'static>,
-        sql: &str,
-    ) -> Result<Vec<u8>> {
+    pub fn execute_multi_result(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         use std::time::Instant;
 
         let start_time = Instant::now();
@@ -356,11 +357,9 @@ impl ExecutionEngine {
             while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
                 let mut row_data = Vec::new();
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1)
-                        .try_into()
-                        .map_err(|_| {
-                            OdbcError::InternalError("Invalid column number".to_string())
-                        })?;
+                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                        OdbcError::InternalError("Invalid column number".to_string())
+                    })?;
                     let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
                     row_data.push(cell_data);
                 }

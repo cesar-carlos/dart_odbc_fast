@@ -11,13 +11,13 @@ pub mod security;
 mod versioning;
 
 pub use engine::{
-    execute_multi_result, execute_query_with_connection, execute_query_with_params,
-    OdbcConnection, OdbcEnvironment,
+    execute_multi_result, execute_query_with_connection, execute_query_with_params, OdbcConnection,
+    OdbcEnvironment,
 };
 pub use error::{OdbcError, Result};
 pub use protocol::{
-    BinaryProtocolDecoder, ColumnInfo, DecodedResult, MultiResultItem, ParamValue,
-    decode_multi, deserialize_params, encode_multi, serialize_params,
+    decode_multi, deserialize_params, encode_multi, serialize_params, BinaryProtocolDecoder,
+    ColumnInfo, DecodedResult, MultiResultItem, ParamValue,
 };
 
 #[cfg(test)]

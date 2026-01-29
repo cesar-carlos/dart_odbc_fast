@@ -19,13 +19,13 @@ void main() {
 
     test('should initialize environment', () {
       final result = native.init();
-      // May fail if ODBC not configured, but should not throw
+
       expect(result, isA<bool>());
     });
 
     test('should handle invalid connection string', () {
       final connId = native.connect('');
-      expect(connId, equals(0)); // Should fail
+      expect(connId, equals(0));
     });
 
     test('should get error message', () {

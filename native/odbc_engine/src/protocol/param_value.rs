@@ -88,7 +88,9 @@ impl ParamValue {
                         "ParamValue::Integer expected 4 bytes".to_string(),
                     ));
                 }
-                ParamValue::Integer(i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+                ParamValue::Integer(i32::from_le_bytes([
+                    payload[0], payload[1], payload[2], payload[3],
+                ]))
             }
             TAG_BIGINT => {
                 if len != 8 {

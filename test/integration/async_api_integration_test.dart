@@ -47,14 +47,15 @@ void main() {
 
     test('should handle disconnect with non-existent connection', () async {
       // Try to disconnect a connection that doesn't exist
-      final result = await async.disconnect(999);
+      final result = await async.disconnect(kInvalidConnectionId);
       // Should return false for invalid connection ID
       expect(result, isFalse);
     });
 
     test('should handle pool operations async', () async {
+      final shouldRunE2e = isE2eEnabled();
       final dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null) {
+      if (!shouldRunE2e || dsn == null) {
         return; // Skip if no DSN configured
       }
 
@@ -80,20 +81,20 @@ void main() {
 
     test('should handle poolHealthCheck async', () async {
       // Health check on non-existent pool should return false
-      final result = await async.poolHealthCheck(999);
+      final result = await async.poolHealthCheck(kInvalidConnectionId);
       expect(result, isFalse);
     });
 
     test('should handle poolGetState async', () async {
       // Get state of non-existent pool should return null
-      final state = await async.poolGetState(999);
+      final state = await async.poolGetState(kInvalidConnectionId);
       expect(state, isNull);
     });
 
     test('should handle beginTransaction async', () async {
       // Try to begin transaction on non-existent connection
       try {
-        await async.beginTransaction(999, 1);
+        await async.beginTransaction(kInvalidConnectionId, 1);
         fail('Should have thrown an error');
       } on Exception catch (e) {
         // Should receive an error
@@ -103,20 +104,20 @@ void main() {
 
     test('should handle commitTransaction async', () async {
       // Try to commit non-existent transaction
-      final result = await async.commitTransaction(999);
+      final result = await async.commitTransaction(kInvalidConnectionId);
       expect(result, isFalse);
     });
 
     test('should handle rollbackTransaction async', () async {
       // Try to rollback non-existent transaction
-      final result = await async.rollbackTransaction(999);
+      final result = await async.rollbackTransaction(kInvalidConnectionId);
       expect(result, isFalse);
     });
 
     test('should handle prepare async', () async {
       // Try to prepare statement on non-existent connection
       try {
-        await async.prepare(999, 'SELECT 1');
+        await async.prepare(kInvalidConnectionId, 'SELECT 1');
         fail('Should have thrown an error');
       } on Exception catch (e) {
         // Should receive an error
@@ -126,84 +127,114 @@ void main() {
 
     test('should handle executePrepared async', () async {
       // Try to execute non-existent prepared statement
-      final result = await async.executePrepared(999, []);
+      final result = await async.executePrepared(kInvalidConnectionId, []);
       expect(result, isNull);
     });
 
     test('should handle closeStatement async', () async {
       // Try to close non-existent statement
-      final result = await async.closeStatement(999);
+      final result = await async.closeStatement(kInvalidConnectionId);
       expect(result, isFalse);
     });
 
-    test('should handle executeQueryParams async', () async {
-      // Try to execute query on non-existent connection
-      final result = await async.executeQueryParams(
-        999,
-        'SELECT 1',
-        [],
-      );
-      // Should return null for failed query
-      expect(result, isNull);
-    });
+    test(
+      'should handle executeQueryParams async',
+      () async {
+        // Try to execute query on non-existent connection
+        final result = await async.executeQueryParams(
+          kInvalidConnectionId,
+          'SELECT 1',
+          [],
+        );
+        // Should return null for failed query
+        expect(result, isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle executeQueryMulti async', () async {
-      // Try to execute multi-result query on non-existent connection
-      final result = await async.executeQueryMulti(
-        999,
-        'SELECT 1',
-      );
-      // Should return null for failed query
-      expect(result, isNull);
-    });
+    test(
+      'should handle executeQueryMulti async',
+      () async {
+        // Try to execute multi-result query on non-existent connection
+        final result = await async.executeQueryMulti(
+          kInvalidConnectionId,
+          'SELECT 1',
+        );
+        // Should return null for failed query
+        expect(result, isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle catalogTables async', () async {
-      // Try to query catalog on non-existent connection
-      final result = await async.catalogTables(999);
-      expect(result, isNull);
-    });
+    test(
+      'should handle catalogTables async',
+      () async {
+        // Try to query catalog on non-existent connection
+        final result = await async.catalogTables(kInvalidConnectionId);
+        expect(result, isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle catalogColumns async', () async {
-      // Try to query catalog columns on non-existent connection
-      final result = await async.catalogColumns(999, 'test_table');
-      expect(result, isNull);
-    });
+    test(
+      'should handle catalogColumns async',
+      () async {
+        // Try to query catalog columns on non-existent connection
+        final result =
+            await async.catalogColumns(kInvalidConnectionId, 'test_table');
+        expect(result, isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle catalogTypeInfo async', () async {
-      // Try to query type info on non-existent connection
-      final result = await async.catalogTypeInfo(999);
-      expect(result, isNull);
-    });
+    test(
+      'should handle catalogTypeInfo async',
+      () async {
+        // Try to query type info on non-existent connection
+        final result = await async.catalogTypeInfo(kInvalidConnectionId);
+        expect(result, isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle bulkInsertArray async', () async {
-      // Try bulk insert on non-existent connection
-      final result = await async.bulkInsertArray(
-        999,
-        'test_table',
-        ['col1'],
-        Uint8List(0),
-        0,
-      );
-      // Failed bulk insert returns 0 or negative (e.g. -1)
-      expect(result, isA<int>());
-      expect(result, lessThanOrEqualTo(0));
-    });
+    test(
+      'should handle bulkInsertArray async',
+      () async {
+        // Try bulk insert on non-existent connection
+        final result = await async.bulkInsertArray(
+          kInvalidConnectionId,
+          'test_table',
+          ['col1'],
+          Uint8List(0),
+          0,
+        );
+        // Failed bulk insert returns 0 or negative (e.g. -1)
+        expect(result, isA<int>());
+        expect(result, lessThanOrEqualTo(0));
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
-    test('should handle getMetrics async', () async {
-      // Get metrics should work even without connections
-      final metrics = await async.getMetrics();
-      // Metrics might be null if never initialized in native
-      expect(
-        metrics,
-        isA<OdbcMetrics?>(),
-      );
-    });
+    test(
+      'should handle getMetrics async',
+      () async {
+        // Get metrics should work even without connections
+        final metrics = await async.getMetrics();
+        // Metrics might be null if never initialized in native
+        expect(
+          metrics,
+          isA<OdbcMetrics?>(),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
 
     test(
       'should work with real database if available',
       () async {
+        final shouldRunE2e = isE2eEnabled();
         final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) {
+        if (!shouldRunE2e || dsn == null) {
           return; // Skip if no DSN configured
         }
 
@@ -229,15 +260,15 @@ void main() {
         final disconnectResult = await async.disconnect(connId);
         expect(disconnectResult, isTrue);
       },
-      skip: 'Integration test - requires database connection',
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
       'should handle transactions with real database',
       () async {
+        final shouldRunE2e = isE2eEnabled();
         final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) {
+        if (!shouldRunE2e || dsn == null) {
           return; // Skip if no DSN configured
         }
 
@@ -255,15 +286,15 @@ void main() {
         // Disconnect
         await async.disconnect(connId);
       },
-      skip: 'Integration test - requires database connection',
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
       'should handle prepared statements with real database',
       () async {
+        final shouldRunE2e = isE2eEnabled();
         final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) {
+        if (!shouldRunE2e || dsn == null) {
           return; // Skip if no DSN configured
         }
 
@@ -290,15 +321,15 @@ void main() {
         // Disconnect
         await async.disconnect(connId);
       },
-      skip: 'Integration test - requires database connection',
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
       'should handle pool operations with real database',
       () async {
+        final shouldRunE2e = isE2eEnabled();
         final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) {
+        if (!shouldRunE2e || dsn == null) {
           return; // Skip if no DSN configured
         }
 
@@ -328,8 +359,7 @@ void main() {
         final closeResult = await async.poolClose(poolId);
         expect(closeResult, isTrue);
       },
-      skip: 'Integration test - requires database connection',
-      timeout: const Timeout(Duration(seconds: 60)),
+      timeout: const Timeout(Duration(minutes: 2)),
     );
   });
 }

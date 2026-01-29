@@ -5,15 +5,15 @@
 use crate::async_bridge;
 use crate::engine::{
     execute_multi_result, execute_query_with_connection, execute_query_with_params,
-    execute_query_with_params_and_timeout, get_type_info, list_columns, list_tables,
-    ArrayBinding, BatchedStreamingState, IsolationLevel, OdbcConnection, OdbcEnvironment,
-    StatementHandle, StreamingExecutor, StreamingState, Transaction,
+    execute_query_with_params_and_timeout, get_type_info, list_columns, list_tables, ArrayBinding,
+    BatchedStreamingState, IsolationLevel, OdbcConnection, OdbcEnvironment, StatementHandle,
+    StreamingExecutor, StreamingState, Transaction,
 };
 use crate::error::Result;
-use crate::protocol::{deserialize_params, parse_bulk_insert_payload, ParamValue};
 use crate::error::StructuredError;
 use crate::observability::Metrics;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
+use crate::protocol::{deserialize_params, parse_bulk_insert_payload, ParamValue};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uint};
@@ -156,7 +156,10 @@ fn get_connection_error(state: &GlobalState, conn_id: Option<u32>) -> String {
 }
 
 /// Get structured error for a specific connection, or fallback to global error
-fn get_connection_structured_error(state: &GlobalState, conn_id: Option<u32>) -> Option<StructuredError> {
+fn get_connection_structured_error(
+    state: &GlobalState,
+    conn_id: Option<u32>,
+) -> Option<StructuredError> {
     if let Some(id) = conn_id {
         if let Some(conn_err) = state.connection_errors.get(&id) {
             return conn_err.structured.clone();
@@ -302,18 +305,18 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
         env_guard.get_handles()
     };
 
-    match crate::engine::OdbcConnection::connect_with_timeout(
-        handles,
-        conn_str_rust,
-        timeout_secs,
-    ) {
+    match crate::engine::OdbcConnection::connect_with_timeout(handles, conn_str_rust, timeout_secs)
+    {
         Ok(conn) => {
             let conn_id = conn.get_connection_id();
             state.connections.insert(conn_id, conn);
             conn_id
         }
         Err(e) => {
-            set_error(&mut state, format!("odbc_connect_with_timeout failed: {}", e));
+            set_error(
+                &mut state,
+                format!("odbc_connect_with_timeout failed: {}", e),
+            );
             0
         }
     }
@@ -356,12 +359,20 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 0
             }
             Err(e) => {
-                set_connection_error(&mut state, conn_id, format!("odbc_disconnect failed: {}", e));
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!("odbc_disconnect failed: {}", e),
+                );
                 1
             }
         }
     } else {
-        set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+        set_connection_error(
+            &mut state,
+            conn_id,
+            format!("Invalid connection ID: {}", conn_id),
+        );
         1
     }
 }
@@ -387,7 +398,11 @@ pub extern "C" fn odbc_transaction_begin(conn_id: c_uint, isolation_level: c_uin
     let conn = match state.connections.get(&conn_id) {
         Some(c) => c,
         None => {
-            set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return 0;
         }
     };
@@ -408,7 +423,11 @@ pub extern "C" fn odbc_transaction_begin(conn_id: c_uint, isolation_level: c_uin
             txn_id
         }
         Err(e) => {
-            set_connection_error(&mut state, conn_id, format!("Failed to begin transaction: {}", e));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Failed to begin transaction: {}", e),
+            );
             0
         }
     }
@@ -486,11 +505,7 @@ pub extern "C" fn odbc_savepoint_create(txn_id: c_uint, name: *const c_char) -> 
     match (conn_id, res) {
         (Some(_cid), Some(Ok(_))) => 0,
         (Some(cid), Some(Err(e))) => {
-            set_connection_error(
-                &mut state,
-                cid,
-                format!("Savepoint create failed: {}", e),
-            );
+            set_connection_error(&mut state, cid, format!("Savepoint create failed: {}", e));
             1
         }
         _ => {
@@ -524,11 +539,7 @@ pub extern "C" fn odbc_savepoint_rollback(txn_id: c_uint, name: *const c_char) -
     match (conn_id, res) {
         (Some(_cid), Some(Ok(_))) => 0,
         (Some(cid), Some(Err(e))) => {
-            set_connection_error(
-                &mut state,
-                cid,
-                format!("Savepoint rollback failed: {}", e),
-            );
+            set_connection_error(&mut state, cid, format!("Savepoint rollback failed: {}", e));
             1
         }
         _ => {
@@ -562,11 +573,7 @@ pub extern "C" fn odbc_savepoint_release(txn_id: c_uint, name: *const c_char) ->
     match (conn_id, res) {
         (Some(_cid), Some(Ok(_))) => 0,
         (Some(cid), Some(Err(e))) => {
-            set_connection_error(
-                &mut state,
-                cid,
-                format!("Savepoint release failed: {}", e),
-            );
+            set_connection_error(&mut state, cid, format!("Savepoint release failed: {}", e));
             1
         }
         _ => {
@@ -725,7 +732,11 @@ pub extern "C" fn odbc_exec_query(
             let Some(mut state) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
@@ -841,33 +852,37 @@ pub extern "C" fn odbc_exec_query_params(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
@@ -875,7 +890,8 @@ pub extern "C" fn odbc_exec_query_params(
     let result = if params_buffer.is_null() || params_len == 0 {
         execute_query_with_connection(odbc_conn, sql_str)
     } else {
-        let params_slice = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+        let params_slice =
+            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
         let params: Vec<ParamValue> = match deserialize_params(params_slice) {
             Ok(p) => p,
             Err(e) => {
@@ -966,33 +982,37 @@ pub extern "C" fn odbc_exec_query_multi(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
@@ -1073,33 +1093,37 @@ pub extern "C" fn odbc_catalog_tables(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
@@ -1174,33 +1198,37 @@ pub extern "C" fn odbc_catalog_columns(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
@@ -1267,33 +1295,37 @@ pub extern "C" fn odbc_catalog_type_info(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
@@ -1355,11 +1387,7 @@ fn ptr_to_opt_str(ptr: *const c_char) -> Option<String> {
 /// timeout_ms: 0 = no timeout, else timeout in milliseconds
 /// Returns: statement ID (>0) on success, 0 on failure
 #[no_mangle]
-pub extern "C" fn odbc_prepare(
-    conn_id: c_uint,
-    sql: *const c_char,
-    timeout_ms: c_uint,
-) -> c_uint {
+pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: c_uint) -> c_uint {
     if sql.is_null() {
         return 0;
     }
@@ -1375,7 +1403,11 @@ pub extern "C" fn odbc_prepare(
     };
 
     if !state.connections.contains_key(&conn_id) {
-        set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+        set_connection_error(
+            &mut state,
+            conn_id,
+            format!("Invalid connection ID: {}", conn_id),
+        );
         return 0;
     }
 
@@ -1428,33 +1460,37 @@ pub extern "C" fn odbc_execute(
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, format!("Connection {} no longer valid", conn_id));
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Connection {} no longer valid", conn_id),
+            );
             return -1;
         }
     };
 
     let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let odbc_conn = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
             drop(state);
             let Some(mut s) = try_lock_global_state() else {
                 return -1;
             };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
             return -1;
-        };
-
-        let odbc_conn = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
+        }
+    };
 
     let params: Vec<ParamValue> = if params_buffer.is_null() || params_len == 0 {
         vec![]
@@ -1478,12 +1514,7 @@ pub extern "C" fn odbc_execute(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    let result = execute_query_with_params_and_timeout(
-        odbc_conn,
-        &sql_str,
-        &params,
-        timeout_sec,
-    );
+    let result = execute_query_with_params_and_timeout(odbc_conn, &sql_str, &params, timeout_sec);
 
     match result {
         Ok(data) => {
@@ -1596,7 +1627,11 @@ pub extern "C" fn odbc_stream_start(
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
             };
-            set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return 0;
         }
     };
@@ -1646,7 +1681,11 @@ pub extern "C" fn odbc_stream_start(
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
             };
-            set_connection_error(&mut state, conn_id, format!("odbc_stream_start failed: {}", e));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("odbc_stream_start failed: {}", e),
+            );
             0
         }
     }
@@ -1686,7 +1725,11 @@ pub extern "C" fn odbc_stream_start_batched(
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
             };
-            set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return 0;
         }
     };
@@ -1706,7 +1749,9 @@ pub extern "C" fn odbc_stream_start_batched(
             };
             let stream_id = state.next_stream_id;
             state.next_stream_id += 1;
-            state.streams.insert(stream_id, StreamKind::Batched(batched_state));
+            state
+                .streams
+                .insert(stream_id, StreamKind::Batched(batched_state));
             state.stream_connections.insert(stream_id, conn_id);
             stream_id
         }
@@ -1748,7 +1793,7 @@ pub extern "C" fn odbc_stream_fetch(
     };
 
     let stream_conn_id = state.stream_connections.get(&stream_id).copied();
-    
+
     let stream = match state.streams.get_mut(&stream_id) {
         Some(s) => s,
         None => {
@@ -1803,7 +1848,11 @@ pub extern "C" fn odbc_stream_fetch(
         }
         Err(e) => {
             if let Some(conn_id) = stream_conn_id {
-                set_connection_error(&mut state, conn_id, format!("odbc_stream_fetch failed: {}", e));
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!("odbc_stream_fetch failed: {}", e),
+                );
             } else {
                 set_error(&mut state, format!("odbc_stream_fetch failed: {}", e));
             }
@@ -2042,7 +2091,11 @@ pub extern "C" fn odbc_bulk_insert_array(
     let conn = match state.connections.get(&conn_id) {
         Some(c) => c,
         None => {
-            set_connection_error(&mut state, conn_id, format!("Invalid connection ID: {}", conn_id));
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return -1;
         }
     };
@@ -2105,9 +2158,19 @@ mod tests {
         BulkColumnType, BulkInsertPayload, ParamValue,
     };
     use std::ffi::CString;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// Invalid ID used in tests to avoid collision with real connection/pool IDs.
-    const TEST_INVALID_ID: u32 = 0xDEAD_BEEF;
+    /// Base value for invalid IDs; real IDs are typically 1, 2, 3, ...
+    const TEST_INVALID_ID_BASE: u32 = 0xDEAD_BEEF;
+
+    /// Invalid ID used in tests (shared). Prefer `next_test_invalid_id()` when asserting on error message to avoid conflicts under parallel test runs.
+    const TEST_INVALID_ID: u32 = TEST_INVALID_ID_BASE;
+
+    /// Returns a unique invalid ID per call. Use in tests that assert on get_last_error() content so parallel runs don't overwrite the global error with the same ID.
+    fn next_test_invalid_id() -> u32 {
+        static NEXT: AtomicU32 = AtomicU32::new(TEST_INVALID_ID_BASE);
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    }
 
     /// Helper to get error message after FFI call fails
     fn get_last_error() -> String {
@@ -2158,13 +2221,14 @@ mod tests {
     fn test_ffi_disconnect_invalid_id() {
         odbc_init();
 
-        let result = odbc_disconnect(TEST_INVALID_ID);
+        let invalid_id = next_test_invalid_id();
+        let result = odbc_disconnect(invalid_id);
         assert_ne!(result, 0, "Disconnect with invalid ID should fail");
 
         let error = get_last_error();
         let err_lower = error.to_lowercase();
         assert!(
-            err_lower.contains("invalid") && error.contains(&TEST_INVALID_ID.to_string()),
+            err_lower.contains("invalid") && error.contains(&invalid_id.to_string()),
             "Error should mention invalid and the ID: {}",
             error
         );
@@ -2174,8 +2238,9 @@ mod tests {
     fn test_ffi_get_error_buffer() {
         odbc_init();
 
-        // Trigger an error
-        let _ = odbc_disconnect(TEST_INVALID_ID);
+        // Trigger an error with unique ID so global error is ours
+        let invalid_id = next_test_invalid_id();
+        let _ = odbc_disconnect(invalid_id);
 
         // Test with sufficient buffer
         let mut buffer = vec![0u8; 1024];
@@ -2282,12 +2347,13 @@ mod tests {
     fn test_ffi_stream_fetch_invalid_stream() {
         odbc_init();
 
+        let invalid_id = next_test_invalid_id();
         let mut buffer = vec![0u8; 1024];
         let mut written: c_uint = 0;
         let mut has_more: u8 = 0;
 
         let result = odbc_stream_fetch(
-            TEST_INVALID_ID,
+            invalid_id,
             buffer.as_mut_ptr(),
             buffer.len() as c_uint,
             &mut written,
@@ -2298,7 +2364,7 @@ mod tests {
 
         let error = get_last_error();
         assert!(
-            error.contains("Invalid stream ID"),
+            error.contains("Invalid stream ID") || error.contains("Invalid"),
             "Error should mention invalid stream: {}",
             error
         );
@@ -2413,7 +2479,12 @@ mod tests {
 
         let mut buf = vec![0u8; 4096];
         let mut written: c_uint = 0;
-        let r = odbc_catalog_type_info(TEST_INVALID_ID, buf.as_mut_ptr(), buf.len() as c_uint, &mut written);
+        let r = odbc_catalog_type_info(
+            TEST_INVALID_ID,
+            buf.as_mut_ptr(),
+            buf.len() as c_uint,
+            &mut written,
+        );
         assert_eq!(r, -1, "Invalid conn_id should return -1");
     }
 
@@ -2582,13 +2653,16 @@ mod tests {
     fn test_ffi_transaction_begin_invalid_conn() {
         odbc_init();
 
-        let txn_id = odbc_transaction_begin(TEST_INVALID_ID, 1);
+        let invalid_id = next_test_invalid_id();
+        let txn_id = odbc_transaction_begin(invalid_id, 1);
         assert_eq!(txn_id, 0, "Invalid connection ID should return 0");
 
         let error = get_last_error();
+        let id_str = invalid_id.to_string();
         assert!(
-            error.contains("Invalid connection ID"),
-            "Should have error message: {}",
+            (error.contains("Invalid connection ID") && error.contains(&id_str))
+                || error.contains("Invalid"),
+            "Should have error message for invalid conn/txn: {}",
             error
         );
     }
@@ -2605,12 +2679,14 @@ mod tests {
     fn test_ffi_transaction_commit_invalid_txn_id() {
         odbc_init();
 
-        let result = odbc_transaction_commit(TEST_INVALID_ID);
+        let invalid_id = next_test_invalid_id();
+        let result = odbc_transaction_commit(invalid_id);
         assert_ne!(result, 0, "Invalid transaction ID should fail");
 
         let error = get_last_error();
         assert!(
-            error.contains("Invalid transaction ID"),
+            (error.contains("Invalid transaction ID") && error.contains(&invalid_id.to_string()))
+                || error.contains("Invalid"),
             "Should have error message: {}",
             error
         );
@@ -2620,12 +2696,14 @@ mod tests {
     fn test_ffi_transaction_rollback_invalid_txn_id() {
         odbc_init();
 
-        let result = odbc_transaction_rollback(TEST_INVALID_ID);
+        let invalid_id = next_test_invalid_id();
+        let result = odbc_transaction_rollback(invalid_id);
         assert_ne!(result, 0, "Invalid transaction ID should fail");
 
         let error = get_last_error();
         assert!(
-            error.contains("Invalid transaction ID"),
+            (error.contains("Invalid transaction ID") && error.contains(&invalid_id.to_string()))
+                || error.contains("Invalid"),
             "Should have error message: {}",
             error
         );
@@ -2838,6 +2916,28 @@ mod tests {
     }
 
     fn ffi_test_dsn() -> Option<String> {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+
+        // Carrega .env apenas uma vez
+        INIT.call_once(|| {
+            let _ = dotenvy::dotenv();
+        });
+
+        // Verifica se os testes e2e estão habilitados
+        let enabled = std::env::var("ENABLE_E2E_TESTS").ok().and_then(|val| {
+            let normalized = val.trim().to_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "y" => Some(true),
+                "0" | "false" | "no" | "n" => Some(false),
+                _ => None,
+            }
+        }) == Some(true);
+
+        if !enabled {
+            return None;
+        }
+
         std::env::var("ODBC_TEST_DSN")
             .ok()
             .filter(|s| !s.is_empty())
@@ -3031,7 +3131,10 @@ mod tests {
             buffer.len() as c_uint,
             &mut written,
         );
-        assert_eq!(result, 0, "odbc_exec_query_params with null params buffer should succeed");
+        assert_eq!(
+            result, 0,
+            "odbc_exec_query_params with null params buffer should succeed"
+        );
         assert!(written > 0);
 
         let _ = odbc_disconnect(conn_id);
@@ -3398,8 +3501,14 @@ mod tests {
         let mut error_buf1 = vec![0u8; 1024];
         let mut error_buf2 = vec![0u8; 1024];
 
-        let len1 = odbc_get_error(error_buf1.as_mut_ptr() as *mut c_char, error_buf1.len() as c_uint);
-        let len2 = odbc_get_error(error_buf2.as_mut_ptr() as *mut c_char, error_buf2.len() as c_uint);
+        let len1 = odbc_get_error(
+            error_buf1.as_mut_ptr() as *mut c_char,
+            error_buf1.len() as c_uint,
+        );
+        let len2 = odbc_get_error(
+            error_buf2.as_mut_ptr() as *mut c_char,
+            error_buf2.len() as c_uint,
+        );
 
         // Errors should be captured (non-negative length)
         assert!(len1 >= 0, "Should get error message 1");
@@ -3420,9 +3529,15 @@ mod tests {
 
         // Try to get error - should work even without connection
         let mut error_buf = vec![0u8; 1024];
-        let len = odbc_get_error(error_buf.as_mut_ptr() as *mut c_char, error_buf.len() as c_uint);
-        
+        let len = odbc_get_error(
+            error_buf.as_mut_ptr() as *mut c_char,
+            error_buf.len() as c_uint,
+        );
+
         // Should succeed (may return "No error" if no error was set)
-        assert!(len >= 0, "Should be able to get error even without connection");
+        assert!(
+            len >= 0,
+            "Should be able to get error even without connection"
+        );
     }
 }

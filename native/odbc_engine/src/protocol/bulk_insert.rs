@@ -105,7 +105,12 @@ fn read_u32_le(data: &[u8], offset: &mut usize) -> Result<u32> {
             "Bulk insert payload truncated (u32)".to_string(),
         ));
     }
-    let v = u32::from_le_bytes([data[*offset], data[*offset + 1], data[*offset + 2], data[*offset + 3]]);
+    let v = u32::from_le_bytes([
+        data[*offset],
+        data[*offset + 1],
+        data[*offset + 2],
+        data[*offset + 3],
+    ]);
     *offset += 4;
     Ok(v)
 }
@@ -246,8 +251,14 @@ fn parse_column_data(
                     ));
                 }
                 let v = i64::from_le_bytes([
-                    data[o], data[o + 1], data[o + 2], data[o + 3],
-                    data[o + 4], data[o + 5], data[o + 6], data[o + 7],
+                    data[o],
+                    data[o + 1],
+                    data[o + 2],
+                    data[o + 3],
+                    data[o + 4],
+                    data[o + 5],
+                    data[o + 6],
+                    data[o + 7],
                 ]);
                 o += 8;
                 values.push(v);
@@ -333,9 +344,8 @@ fn parse_column_data(
                 let hour = u16::from_le_bytes([data[o + 6], data[o + 7]]);
                 let minute = u16::from_le_bytes([data[o + 8], data[o + 9]]);
                 let second = u16::from_le_bytes([data[o + 10], data[o + 11]]);
-                let fraction = u32::from_le_bytes([
-                    data[o + 12], data[o + 13], data[o + 14], data[o + 15],
-                ]);
+                let fraction =
+                    u32::from_le_bytes([data[o + 12], data[o + 13], data[o + 14], data[o + 15]]);
                 o += 16;
                 values.push(BulkTimestamp {
                     year,
@@ -390,7 +400,13 @@ fn serialize_column_data(
     _row_count: usize,
 ) -> Result<()> {
     match (data, &spec.col_type) {
-        (BulkColumnData::I32 { values, null_bitmap }, BulkColumnType::I32) => {
+        (
+            BulkColumnData::I32 {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::I32,
+        ) => {
             if let Some(bm) = null_bitmap {
                 out.extend_from_slice(bm);
             }
@@ -398,7 +414,13 @@ fn serialize_column_data(
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        (BulkColumnData::I64 { values, null_bitmap }, BulkColumnType::I64) => {
+        (
+            BulkColumnData::I64 {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::I64,
+        ) => {
             if let Some(bm) = null_bitmap {
                 out.extend_from_slice(bm);
             }
@@ -406,8 +428,22 @@ fn serialize_column_data(
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
-        (BulkColumnData::Text { rows, max_len, null_bitmap }, BulkColumnType::Text)
-        | (BulkColumnData::Text { rows, max_len, null_bitmap }, BulkColumnType::Decimal) => {
+        (
+            BulkColumnData::Text {
+                rows,
+                max_len,
+                null_bitmap,
+            },
+            BulkColumnType::Text,
+        )
+        | (
+            BulkColumnData::Text {
+                rows,
+                max_len,
+                null_bitmap,
+            },
+            BulkColumnType::Decimal,
+        ) => {
             if let Some(bm) = null_bitmap {
                 out.extend_from_slice(bm);
             }
@@ -419,7 +455,14 @@ fn serialize_column_data(
                 }
             }
         }
-        (BulkColumnData::Binary { rows, max_len, null_bitmap }, BulkColumnType::Binary) => {
+        (
+            BulkColumnData::Binary {
+                rows,
+                max_len,
+                null_bitmap,
+            },
+            BulkColumnType::Binary,
+        ) => {
             if let Some(bm) = null_bitmap {
                 out.extend_from_slice(bm);
             }
@@ -431,7 +474,13 @@ fn serialize_column_data(
                 }
             }
         }
-        (BulkColumnData::Timestamp { values, null_bitmap }, BulkColumnType::Timestamp) => {
+        (
+            BulkColumnData::Timestamp {
+                values,
+                null_bitmap,
+            },
+            BulkColumnType::Timestamp,
+        ) => {
             if let Some(bm) = null_bitmap {
                 out.extend_from_slice(bm);
             }
@@ -482,7 +531,10 @@ mod tests {
         assert!(!dec.columns[0].nullable);
         assert_eq!(dec.row_count, 2);
         match &dec.column_data[0] {
-            BulkColumnData::I32 { values, null_bitmap } => {
+            BulkColumnData::I32 {
+                values,
+                null_bitmap,
+            } => {
                 assert_eq!(values.as_slice(), &[1, 2]);
                 assert!(null_bitmap.is_none());
             }
@@ -503,14 +555,17 @@ mod tests {
             row_count: 3,
             column_data: vec![BulkColumnData::I32 {
                 values: vec![1, 0, 3],
-                null_bitmap: Some(vec![0b010]), 
+                null_bitmap: Some(vec![0b010]),
             }],
         };
         let enc = serialize_bulk_insert_payload(&payload).unwrap();
         let dec = parse_bulk_insert_payload(&enc).unwrap();
         assert_eq!(dec.row_count, 3);
         match &dec.column_data[0] {
-            BulkColumnData::I32 { values, null_bitmap } => {
+            BulkColumnData::I32 {
+                values,
+                null_bitmap,
+            } => {
                 assert_eq!(values.as_slice(), &[1, 0, 3]);
                 assert_eq!(null_bitmap.as_deref(), Some(&[0b010][..]));
             }

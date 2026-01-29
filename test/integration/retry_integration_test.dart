@@ -11,7 +11,8 @@ void main() {
     late ServiceLocator locator;
     late OdbcService service;
 
-    String? getConnectionString() => getTestEnv('ODBC_TEST_DSN');
+    String? getConnectionString() =>
+        isE2eEnabled() ? getTestEnv('ODBC_TEST_DSN') : null;
 
     setUpAll(() async {
       locator = ServiceLocator()..initialize();

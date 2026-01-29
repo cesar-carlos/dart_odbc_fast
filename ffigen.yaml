@@ -1,31 +1,31 @@
-output: 'lib/infrastructure/native/bindings/odbc_bindings.dart'
+output: "lib/infrastructure/native/bindings/odbc_bindings.dart"
 headers:
   entry-points:
-    - 'native/odbc_engine/include/odbc_engine.h'
+    - "native/odbc_engine/include/odbc_engine.h"
   include-directives:
-    - 'native/odbc_engine/include/**'
+    - "native/odbc_engine/include/**"
 
-name: 'OdbcBindings'
-description: 'ODBC Engine Native Bindings'
+name: "OdbcBindings"
+description: "ODBC Engine Native Bindings"
 
 compiler-opts:
-  - '-I'
-  - 'native/odbc_engine/include'
+  - "-I"
+  - "native/odbc_engine/include"
 
 functions:
   include:
-    - 'odbc_init'
-    - 'odbc_connect'
-    - 'odbc_disconnect'
-    - 'odbc_get_error'
-    - 'odbc_get_structured_error'
-    - 'odbc_exec_query'
-    - 'odbc_stream_start'
-    - 'odbc_stream_fetch'
-    - 'odbc_stream_close'
-    - 'odbc_pool_create'
-    - 'odbc_pool_get_connection'
-    - 'odbc_pool_release_connection'
-    - 'odbc_pool_health_check'
-    - 'odbc_pool_get_state'
-    - 'odbc_pool_close'
+    - "odbc_init"
+    - "odbc_connect"
+    - "odbc_disconnect"
+    - "odbc_get_error"
+    - "odbc_get_structured_error"
+    - "odbc_exec_query"
+    - "odbc_stream_start"
+    - "odbc_stream_fetch"
+    - "odbc_stream_close"
+    - "odbc_pool_create"
+    - "odbc_pool_get_connection"
+    - "odbc_pool_release_connection"
+    - "odbc_pool_health_check"
+    - "odbc_pool_get_state"
+    - "odbc_pool_close"

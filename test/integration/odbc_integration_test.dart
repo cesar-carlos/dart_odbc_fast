@@ -34,8 +34,12 @@ void main() {
     });
 
     test('should connect to database', () async {
+      final shouldRunE2e = isE2eEnabled();
       final connectionString = getTestEnv('ODBC_TEST_DSN');
       if (connectionString == null) {
+        return;
+      }
+      if (!shouldRunE2e) {
         return;
       }
 
@@ -76,8 +80,10 @@ void main() {
     });
 
     test('should disconnect successfully', () async {
+      final shouldRunE2e = isE2eEnabled();
       final connectionString = getTestEnv('ODBC_TEST_DSN');
       if (connectionString == null) return;
+      if (!shouldRunE2e) return;
 
       await service.initialize();
       final connResult = await service.connect(connectionString);

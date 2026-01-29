@@ -8,7 +8,8 @@ param(
 $ErrorActionPreference = "Stop"
 $root = if ($PSScriptRoot) {
     Split-Path -Parent $PSScriptRoot
-} else {
+}
+else {
     (Get-Location).Path
 }
 
@@ -36,26 +37,31 @@ try {
                 exit 1
             }
             Write-Host "  OK Rust built" -ForegroundColor Green
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         Write-Host ""
-    } else {
+    }
+    else {
         Write-Host "[1/2] Skipping Rust build (-SkipRust)" -ForegroundColor Gray
         Write-Host ""
     }
 
     Write-Host "[2/2] Running dart test..." -ForegroundColor Yellow
-    dart test
+    # Run tests sequentially to avoid resource contention (ServiceLocator singleton, worker isolates)
+    dart test --concurrency=1
     $exitCode = $LASTEXITCODE
-} finally {
+}
+finally {
     Pop-Location
 }
 
 if ($exitCode -eq 0) {
     Write-Host ""
     Write-Host "All tests passed." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host ""
     Write-Host "Some tests failed. Unit-only: .\scripts\test_unit.ps1" -ForegroundColor Yellow
 }
