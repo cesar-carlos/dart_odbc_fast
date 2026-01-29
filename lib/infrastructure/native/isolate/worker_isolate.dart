@@ -87,12 +87,10 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: err.isNotEmpty ? err : 'Query failed',
-            ),
-          );
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Query failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case ExecuteQueryMultiRequest():
@@ -101,12 +99,10 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: err.isNotEmpty ? err : 'Query failed',
-            ),
-          );
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Multi-result query failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case BeginTransactionRequest():
@@ -152,12 +148,10 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: err.isNotEmpty ? err : 'Execute prepared failed',
-            ),
-          );
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Execute prepared failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case CloseStatementRequest():
@@ -247,12 +241,11 @@ void _handleRequest(
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: conn.getError(),
-            ),
-          );
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog tables failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case CatalogColumnsRequest():
@@ -263,12 +256,11 @@ void _handleRequest(
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: conn.getError(),
-            ),
-          );
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog columns failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case CatalogTypeInfoRequest():
@@ -276,12 +268,11 @@ void _handleRequest(
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
-          sendPort.send(
-            QueryResponse(
-              request.requestId,
-              error: conn.getError(),
-            ),
-          );
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog type info failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
       case GetErrorRequest():

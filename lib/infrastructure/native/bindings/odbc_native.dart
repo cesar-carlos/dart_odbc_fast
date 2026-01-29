@@ -244,30 +244,19 @@ class OdbcNative {
     String sql,
     Uint8List? params,
   ) {
+    final paramsOrEmpty =
+        (params == null || params.isEmpty) ? Uint8List(0) : params;
     return _withSql(
       sql,
       (ffi.Pointer<bindings.Utf8> sqlPtr) {
-        if (params == null || params.isEmpty) {
-          return callWithBuffer(
-            (buf, bufLen, outWritten) => _bindings.odbc_exec_query_params(
-              connectionId,
-              sqlPtr,
-              null,
-              0,
-              buf,
-              bufLen,
-              outWritten,
-            ),
-          );
-        }
         return _withParamsBuffer(
-          params,
+          paramsOrEmpty,
           (ffi.Pointer<ffi.Uint8> paramsPtr) => callWithBuffer(
             (buf, bufLen, outWritten) => _bindings.odbc_exec_query_params(
               connectionId,
               sqlPtr,
               paramsPtr,
-              params.length,
+              paramsOrEmpty.length,
               buf,
               bufLen,
               outWritten,

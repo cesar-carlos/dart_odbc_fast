@@ -110,7 +110,7 @@ Future<Uri?> _getLibraryPath(
 }
 
 /// Retorna o caminho da biblioteca no cache local, se existir.
-/// [version] inclui a versão no path para evitar reutilizar DLL de outra versão.
+/// [version] inclui a versão no path para evitar reutilizar DLL de outra versão
 Uri? _getCachedLibrary(
   OS os,
   Architecture arch,
@@ -134,7 +134,7 @@ Uri? _getCachedLibrary(
 }
 
 /// Retorna o diretório de cache para bibliotecas nativas.
-/// [version] quando não null, usa subpasta por versão para evitar DLL incompatível.
+/// [version] quando não null, usa subpasta por versão para evitar DLL incompatí
 Uri _getCacheDirectory([String? version]) {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];

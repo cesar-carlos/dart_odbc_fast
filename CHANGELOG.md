@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-01-29
+
+### Fixed
+
+- **Async API "QueryError: No error"**: when executing queries with no parameters, the Dart FFI was passing `null` for the params buffer to `odbc_exec_query_params`, which caused invalid argument and led to failures reported as "No error". The native bindings now always pass a valid buffer (e.g. `Uint8List(0)`) instead of `null`, so both sync and async (worker) paths work correctly for parameterless queries.
+
 ## [0.2.8] - 2026-01-29
 
 ### Added
