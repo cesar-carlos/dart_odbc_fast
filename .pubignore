@@ -4,7 +4,6 @@ analysis_report.txt
 analysis_report_final.txt
 benchmarks/
 tool/
-scripts/
 .github/
 /native/
 doc/m*.md
@@ -14,5 +13,4 @@ doc/BUILD.md
 build/
 coverage/
 test/my_test/
-hook
 lib/src/blobs/

@@ -118,7 +118,7 @@ For large result sets, prefer `streamQueryBatched` and tune batching:
 
 ```yaml
 dependencies:
-  odbc_fast: ^0.2.7
+  odbc_fast: ^0.2.8
 ```
 
 ### 2. Install ODBC drivers

@@ -83,7 +83,7 @@ void _handleRequest(
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
         );
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
@@ -97,7 +97,7 @@ void _handleRequest(
 
       case ExecuteQueryMultiRequest():
         final data = conn.executeQueryMulti(request.connectionId, request.sql);
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
@@ -148,7 +148,7 @@ void _handleRequest(
         final bytes =
             request.serializedParams.isEmpty ? null : request.serializedParams;
         final data = conn.executePreparedRaw(request.stmtId, bytes);
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           final err = conn.getError();
@@ -244,7 +244,7 @@ void _handleRequest(
           catalog: request.catalog,
           schema: request.schema,
         );
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           sendPort.send(
@@ -260,7 +260,7 @@ void _handleRequest(
           request.connectionId,
           request.table,
         );
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           sendPort.send(
@@ -273,7 +273,7 @@ void _handleRequest(
 
       case CatalogTypeInfoRequest():
         final data = conn.catalogTypeInfo(request.connectionId);
-        if (data != null && data.isNotEmpty) {
+        if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
           sendPort.send(
