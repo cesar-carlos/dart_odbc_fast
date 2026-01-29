@@ -5,45 +5,45 @@ import 'load_env.dart';
 void main() {
   group('Database Detection', () {
     test('detectDatabaseType identifies SQL Server', () {
-      final dsn1 = 'Driver={SQL Server Native Client 11.0};Server=localhost';
+      const dsn1 = 'Driver={SQL Server Native Client 11.0};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.sqlServer);
 
-      final dsn2 = 'Driver={ODBC Driver 17 for SQL Server};Server=localhost';
+      const dsn2 = 'Driver={ODBC Driver 17 for SQL Server};Server=localhost';
       expect(detectDatabaseType(dsn2), DatabaseType.sqlServer);
 
-      final dsn3 = 'DRIVER=SQLSERVER;SERVER=localhost';
+      const dsn3 = 'DRIVER=SQLSERVER;SERVER=localhost';
       expect(detectDatabaseType(dsn3), DatabaseType.sqlServer);
     });
 
     test('detectDatabaseType identifies PostgreSQL', () {
-      final dsn1 = 'Driver={PostgreSQL Unicode};Server=localhost';
+      const dsn1 = 'Driver={PostgreSQL Unicode};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.postgresql);
 
-      final dsn2 = 'Driver={PostgreSQL ANSI};Server=localhost';
+      const dsn2 = 'Driver={PostgreSQL ANSI};Server=localhost';
       expect(detectDatabaseType(dsn2), DatabaseType.postgresql);
 
-      final dsn3 = 'DRIVER=PostgreSQL;SERVER=localhost';
+      const dsn3 = 'DRIVER=PostgreSQL;SERVER=localhost';
       expect(detectDatabaseType(dsn3), DatabaseType.postgresql);
     });
 
     test('detectDatabaseType identifies MySQL', () {
-      final dsn1 = 'Driver={MySQL ODBC 8.0 Driver};Server=localhost';
+      const dsn1 = 'Driver={MySQL ODBC 8.0 Driver};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.mysql);
 
-      final dsn2 = 'DRIVER=MySQL;SERVER=localhost';
+      const dsn2 = 'DRIVER=MySQL;SERVER=localhost';
       expect(detectDatabaseType(dsn2), DatabaseType.mysql);
     });
 
     test('detectDatabaseType identifies Oracle', () {
-      final dsn1 = 'Driver={Oracle ODBC Driver};Server=localhost';
+      const dsn1 = 'Driver={Oracle ODBC Driver};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.oracle);
     });
 
     test('detectDatabaseType returns unknown for unrecognized drivers', () {
-      final dsn1 = 'Driver={Unknown Driver};Server=localhost';
+      const dsn1 = 'Driver={Unknown Driver};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.unknown);
 
-      final dsn2 = '';
+      const dsn2 = '';
       expect(detectDatabaseType(dsn2), DatabaseType.unknown);
 
       expect(detectDatabaseType(null), DatabaseType.unknown);
