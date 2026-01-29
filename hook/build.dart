@@ -197,14 +197,16 @@ Future<Uri?> _downloadFromGitHub(
 
     final url = 'https://github.com/cesar-carlos/dart_odbc_fast'
         '/releases/download/v$version/$libName';
+    final platform = '${_osToString(os)}_${_archToString(arch)}';
 
-    print('[odbc_fast] Downloading native library from $url');
+    print('[odbc_fast] Downloading native library for $platform');
+    print('[odbc_fast] Version: $version');
+    print('[odbc_fast] URL: $url');
 
     // Criar diretório de cache (por versão)
     final cacheDirPath = _getCacheDirectory(version).toFilePath();
-    final platformDir = '${_osToString(os)}_${_archToString(arch)}';
     final targetDir = Directory(
-      '$cacheDirPath${Platform.pathSeparator}$platformDir',
+      '$cacheDirPath${Platform.pathSeparator}$platform',
     );
     if (!targetDir.existsSync()) {
       targetDir.createSync(recursive: true);
@@ -214,31 +216,99 @@ Future<Uri?> _downloadFromGitHub(
       '${targetDir.path}${Platform.pathSeparator}$libName',
     );
 
-    // Download
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      final response = await request.close();
+    // Download com retry e timeout
+    const maxRetries = 3;
+    var attempt = 0;
 
-      if (response.statusCode != 200) {
-        print('[odbc_fast] Failed to download: HTTP ${response.statusCode}');
-        return null;
+    while (attempt < maxRetries) {
+      HttpClient? client;
+      try {
+        client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 30);
+
+        final request = await client.getUrl(Uri.parse(url));
+        final response = await request.close();
+
+        if (response.statusCode == 200) {
+          final sink = targetFile.openWrite();
+          await response.pipe(sink);
+          await sink.flush();
+          await sink.close();
+
+          final fileSize = await targetFile.length();
+          print('[odbc_fast] ✓ Downloaded successfully');
+          print('[odbc_fast]   Path: ${targetFile.path}');
+          print('[odbc_fast]   Size: ${_formatBytes(fileSize)}');
+          return targetFile.uri;
+        }
+
+        if (response.statusCode == 404) {
+          print('[odbc_fast] ✗ Release not found (HTTP 404)');
+          print('[odbc_fast]');
+          print('[odbc_fast] This can happen if:');
+          print('[odbc_fast]   1. The GitHub release for v$version has not '
+              'been created yet');
+          print('[odbc_fast]   2. You are developing a new version that is '
+              'not released');
+          print('[odbc_fast]');
+          print('[odbc_fast] To fix this:');
+          print('[odbc_fast]   - For production: Create the release at:');
+          const releaseUrl =
+              'https://github.com/cesar-carlos/dart_odbc_fast/releases';
+          print('[odbc_fast]     $releaseUrl');
+          print('[odbc_fast]   - For development: Build the library locally:');
+          print('[odbc_fast]     cd native/odbc_engine && cargo build --release');
+          return null;
+        }
+
+        // Other status codes
+        attempt++;
+        if (attempt < maxRetries) {
+          final delay = Duration(milliseconds: 100 * (1 << attempt));
+          print('[odbc_fast] HTTP ${response.statusCode} - '
+              'Retrying $attempt/$maxRetries in ${delay.inSeconds}s...');
+          await Future<void>.delayed(delay);
+        }
+      } on IOException catch (e) {
+        attempt++;
+        if (attempt < maxRetries) {
+          final delay = Duration(milliseconds: 100 * (1 << attempt));
+          print('[odbc_fast] Network error: $e');
+          print('[odbc_fast] Retrying $attempt/$maxRetries in '
+              '${delay.inSeconds}s...');
+          await Future<void>.delayed(delay);
+        } else {
+          // Final retry failed
+          rethrow;
+        }
+      } finally {
+        client?.close();
       }
-
-      final sink = targetFile.openWrite();
-      await response.pipe(sink);
-      await sink.flush();
-      await sink.close();
-
-      print('[odbc_fast] Downloaded to ${targetFile.path}');
-      return targetFile.uri;
-    } finally {
-      client.close();
     }
+
+    // All retries failed
+    print('[odbc_fast] ✗ Failed to download after $maxRetries attempts');
+    return null;
   } on IOException catch (e) {
-    print('[odbc_fast] Download failed: $e');
+    print('[odbc_fast] ✗ Download failed');
+    print('[odbc_fast]');
+    print('[odbc_fast] Error details: $e');
+    print('[odbc_fast]');
+    print('[odbc_fast] Troubleshooting:');
+    print('[odbc_fast]   1. Check your internet connection');
+    print('[odbc_fast]   2. Verify the release exists:');
+    print('[odbc_fast]      https://github.com/cesar-carlos/dart_odbc_fast/releases');
+    print('[odbc_fast]   3. For development, build locally:');
+    print('[odbc_fast]      cd native/odbc_engine && cargo build --release');
     return null;
   }
+}
+
+/// Formata bytes para representação humana.
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 /// Extrai a versão do pubspec.yaml.

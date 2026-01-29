@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Improved download experience**: Native library download now includes retry
+  logic with exponential backoff (up to 3 attempts)
+- **Better error messages**: Download failures now show detailed troubleshooting
+  steps and clearly explain what went wrong
+- **HTTP 404 handling**: When GitHub release doesn't exist, provides clear
+  instructions for production vs development scenarios
+- **Connection timeout**: Added 30-second timeout to HTTP client to prevent
+  hanging on slow connections
+- **Download feedback**: Shows file size after successful download
+- **CI/pub.dev detection**: Skip download in CI environments to avoid analysis
+  timeout, with clear logging
+
+### Fixed
+
+- **pub.dev analysis timeout**: Hook now detects CI/pub.dev environment and
+  skips external download, allowing pub.dev to analyze the package correctly
+
 ## [0.3.0] - 2026-01-29
 
 ### Added
