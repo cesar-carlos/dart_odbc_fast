@@ -6,6 +6,7 @@ homepage: https://github.com/cesar-carlos/dart_odbc_fast
 repository: https://github.com/cesar-carlos/dart_odbc_fast
 issue_tracker: https://github.com/cesar-carlos/dart_odbc_fast/issues
 documentation: https://github.com/cesar-carlos/dart_odbc_fast/blob/main/README.md
+license: MIT
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
