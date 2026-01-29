@@ -92,18 +92,21 @@ cargo --version
 ### Build do Rust Engine (Desenvolvimento)
 
 **Windows:**
+
 ```powershell
 cd native
 cargo build --release
 ```
 
 **Linux:**
+
 ```bash
 cd native
 cargo build --release
 ```
 
 O binário será criado em:
+
 - Windows: `native/target/release/odbc_engine.dll`
 - Linux: `native/target/release/libodbc_engine.so`
 
@@ -132,13 +135,13 @@ O arquivo gerado será: `lib/infrastructure/native/bindings/odbc_bindings.dart`
 
 ```yaml
 # ffigen.yaml
-output: 'lib/infrastructure/native/bindings/odbc_bindings.dart'
+output: "lib/infrastructure/native/bindings/odbc_bindings.dart"
 headers:
-  - 'native/odbc_engine/include/odbc_engine.h'
+  - "native/odbc_engine/include/odbc_engine.h"
 header-comments: false
 functions:
   include:
-    - 'Odbc.*'
+    - "Odbc.*"
 ```
 
 ## Desenvolvimento
@@ -146,6 +149,7 @@ functions:
 ### Fluxo de Desenvolvimento Típico
 
 1. **Fazer mudanças no Rust**
+
    ```bash
    cd native/odbc_engine
    # Editar src/*.rs
@@ -153,6 +157,7 @@ functions:
    ```
 
 2. **Regenerar bindings (se mudou a FFI surface)**
+
    ```bash
    cd ../..
    dart run ffigen -v info
@@ -166,11 +171,13 @@ functions:
 ### Testes
 
 **Todos os testes:**
+
 ```bash
 dart test
 ```
 
 **Testes específicos:**
+
 ```bash
 # Testes de validação
 dart test test/validation/
@@ -220,6 +227,7 @@ cargo bench
 ### Erro: "odbc_engine.dll not found"
 
 **Solução 1**: Build do Rust engine
+
 ```bash
 cd native
 cargo build --release
@@ -232,6 +240,7 @@ cargo build --release
 A DLL antiga está em uso (IDE, processo Dart, antivírus). Para gerar a nova DLL sem sobrescrever:
 
 **PowerShell (workspace = `native/`):**
+
 ```powershell
 cd native
 $env:CARGO_TARGET_DIR = "target_release_new"
@@ -239,9 +248,11 @@ cargo build -p odbc_engine --release
 ```
 
 A nova DLL fica em `native/target_release_new/release/odbc_engine.dll`. Depois:
+
 1. Feche Cursor/IDE e qualquer processo que use a DLL.
 2. Copie `target_release_new\release\odbc_engine.dll` para `target\release\odbc_engine.dll`, ou
 3. Rode de novo `cargo build -p odbc_engine --release` (sem CARGO_TARGET_DIR) para gravar em `target/release/`.
+
 ```dart
 // lib/infrastructure/native/bindings/library_loader.dart
 // Confira que os caminhos estão corretos para seu sistema
@@ -250,6 +261,7 @@ A nova DLL fica em `native/target_release_new/release/odbc_engine.dll`. Depois:
 ### Erro: "ffigen failed to generate bindings"
 
 **Verificar:**
+
 1. Header file existe: `native/odbc_engine/include/odbc_engine.h`
 2. cbindgen está instalado: `cargo install cbindgen`
 3. Clang/LLVM está instalado (Linux): `sudo apt-get install libclang-dev llvm`
@@ -257,17 +269,20 @@ A nova DLL fica em `native/target_release_new/release/odbc_engine.dll`. Depois:
 ### Erro: "cargo build fails with linking errors"
 
 **Linux:**
+
 ```bash
 sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 ```
 
 **Windows:**
+
 - Verifique que o MSVC Toolchain está instalado
 - `rustup default stable-msvc`
 
 ### Build muito lento
 
 **Verificar:**
+
 1. Sanitizers não estão ativos (veja `native/odbc_engine/.cargo/config.toml`)
 2. LTO está configurado como "thin" (não "fat")
 3. Cache do Cargo está funcionando
@@ -286,6 +301,7 @@ Veja [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) para detalhes do pipeline au
 ## Suporte
 
 Para problemas específicos:
+
 1. Verifique [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 2. Abra uma issue no [GitHub](https://github.com/cesar-carlos/dart_odbc_fast/issues)
 3. Consulte [api_governance.md](api_governance.md) para políticas de versionamento

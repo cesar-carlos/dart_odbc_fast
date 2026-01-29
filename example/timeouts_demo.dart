@@ -1,3 +1,9 @@
+/// ConnectionOptions demo: timeouts and result buffer size.
+///
+/// Run: dart run example/timeouts_demo.dart
+/// Set ODBC_TEST_DSN (or ODBC_DSN) in .env or environment.
+library;
+
 import 'dart:io';
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -22,6 +28,7 @@ Future<void> main() async {
       loginTimeout: Duration(seconds: 5),
       connectionTimeout: Duration(seconds: 5),
       queryTimeout: Duration(seconds: 2),
+      maxResultBufferBytes: 32 * 1024 * 1024, // 32 MB (optional; default 16 MB)
     ),
   );
 

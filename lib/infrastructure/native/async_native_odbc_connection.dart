@@ -257,12 +257,14 @@ class AsyncNativeOdbcConnection {
 
   /// Executes [sql] on [connectionId] with [params] in the worker.
   ///
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   /// Returns the binary result (same format as sync API), or `null` on error.
   Future<Uint8List?> executeQueryParams(
     int connectionId,
     String sql,
-    List<ParamValue> params,
-  ) async {
+    List<ParamValue> params, {
+    int? maxBufferBytes,
+  }) async {
     final bytes = params.isEmpty ? Uint8List(0) : serializeParams(params);
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryParamsRequest(
@@ -270,6 +272,7 @@ class AsyncNativeOdbcConnection {
         connectionId,
         sql,
         bytes,
+        maxResultBufferBytes: maxBufferBytes,
       ),
     );
     if (r.error != null) return null;
@@ -277,10 +280,17 @@ class AsyncNativeOdbcConnection {
   }
 
   /// Executes [sql] on [connectionId] for multi-result sets in the worker.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   /// Returns the binary result, or `null` on error.
-  Future<Uint8List?> executeQueryMulti(int connectionId, String sql) async {
+  Future<Uint8List?> executeQueryMulti(int connectionId, String sql,
+      {int? maxBufferBytes,}) async {
     final r = await _sendRequest<QueryResponse>(
-      ExecuteQueryMultiRequest(_nextRequestId(), connectionId, sql),
+      ExecuteQueryMultiRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        maxResultBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;
@@ -424,13 +434,20 @@ class AsyncNativeOdbcConnection {
   /// Fetches the full result in one shot, then parses it. For very large
   /// result sets, consider sync mode or a dedicated streaming API.
   /// [fetchSize] and [chunkSize] are hints; behavior may match sync batching.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   Stream<ParsedRowBuffer> streamQueryBatched(
     int connectionId,
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int? maxBufferBytes,
   }) async* {
-    final data = await executeQueryParams(connectionId, sql, []);
+    final data = await executeQueryParams(
+      connectionId,
+      sql,
+      [],
+      maxBufferBytes: maxBufferBytes,
+    );
     if (data == null || data.isEmpty) return;
     yield BinaryProtocolParser.parse(data);
   }
@@ -439,12 +456,19 @@ class AsyncNativeOdbcConnection {
   ///
   /// Same as [streamQueryBatched] with default chunking; full result is
   /// fetched then parsed. [chunkSize] is a hint.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   Stream<ParsedRowBuffer> streamQuery(
     int connectionId,
     String sql, {
     int chunkSize = 1000,
+    int? maxBufferBytes,
   }) async* {
-    final data = await executeQueryParams(connectionId, sql, []);
+    final data = await executeQueryParams(
+      connectionId,
+      sql,
+      [],
+      maxBufferBytes: maxBufferBytes,
+    );
     if (data == null || data.isEmpty) return;
     yield BinaryProtocolParser.parse(data);
   }

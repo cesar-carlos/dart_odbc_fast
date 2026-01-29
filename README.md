@@ -74,16 +74,22 @@ final result = await service.withRetry(
 );
 ```
 
-### Connection Timeouts
+### Connection options
 
-Configure login/connection timeouts:
+Configure login/connection timeouts and result buffer size:
 
 ```dart
 await service.connect(
   dsn,
-  options: ConnectionOptions(loginTimeout: Duration(seconds: 30)),
+  options: ConnectionOptions(
+    loginTimeout: Duration(seconds: 30),
+    maxResultBufferBytes: 32 * 1024 * 1024, // 32 MB (default: 16 MB)
+  ),
 );
 ```
+
+- **loginTimeout** / **connectionTimeout**: ODBC login timeout.
+- **maxResultBufferBytes**: maximum size in bytes for query result buffers on this connection. When null, `defaultMaxResultBufferBytes` (16 MB) is used. Increase for very large result sets to avoid "Buffer too small" errors; consider pagination (TOP/OFFSET-FETCH) for huge tables.
 
 ### Connection String Builder
 

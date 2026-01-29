@@ -215,9 +215,11 @@ class OdbcNative {
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [sql] should be a valid SQL SELECT statement.
+  /// When [maxBufferBytes] is set, caps the result buffer size; otherwise
+  /// uses the package default.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? execQuery(int connectionId, String sql) {
+  Uint8List? execQuery(int connectionId, String sql, {int? maxBufferBytes}) {
     return _withSql(
       sql,
       (ffi.Pointer<bindings.Utf8> sqlPtr) => callWithBuffer(
@@ -228,6 +230,7 @@ class OdbcNative {
           bufLen,
           outWritten,
         ),
+        maxSize: maxBufferBytes,
       ),
     );
   }
@@ -237,13 +240,16 @@ class OdbcNative {
   /// The [connectionId] must be a valid active connection.
   /// The [sql] should be a parameterized SQL statement.
   /// The [params] should be a binary buffer containing serialized parameters.
+  /// When [maxBufferBytes] is set, caps the result buffer size; otherwise
+  /// uses the package default.
   ///
   /// Returns binary result data on success, null on failure.
   Uint8List? execQueryParams(
     int connectionId,
     String sql,
-    Uint8List? params,
-  ) {
+    Uint8List? params, {
+    int? maxBufferBytes,
+  }) {
     final paramsOrEmpty =
         (params == null || params.isEmpty) ? Uint8List(0) : params;
     return _withSql(
@@ -261,6 +267,7 @@ class OdbcNative {
               bufLen,
               outWritten,
             ),
+            maxSize: maxBufferBytes,
           ),
         );
       },
@@ -273,18 +280,22 @@ class OdbcNative {
   /// The [sql] should be a parameterized SQL statement.
   /// The [params] list should contain [ParamValue] instances for each
   /// parameter placeholder in [sql], in order.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
   Uint8List? execQueryParamsTyped(
     int connectionId,
     String sql,
-    List<ParamValue> params,
-  ) {
+    List<ParamValue> params, {
+    int? maxBufferBytes,
+  }) {
     if (params.isEmpty) {
-      return execQueryParams(connectionId, sql, null);
+      return execQueryParams(connectionId, sql, null,
+          maxBufferBytes: maxBufferBytes,);
     }
     final buf = serializeParams(params);
-    return execQueryParams(connectionId, sql, buf);
+    return execQueryParams(connectionId, sql, buf,
+        maxBufferBytes: maxBufferBytes,);
   }
 
   /// Executes a SQL query that returns multiple result sets.
@@ -292,9 +303,11 @@ class OdbcNative {
   /// Some databases support queries that return multiple result sets.
   /// This method handles such queries and returns the first result set.
   /// The [connectionId] must be a valid active connection.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? execQueryMulti(int connectionId, String sql) {
+  Uint8List? execQueryMulti(int connectionId, String sql,
+      {int? maxBufferBytes,}) {
     return _withSql(
       sql,
       (ffi.Pointer<bindings.Utf8> sqlPtr) => callWithBuffer(
@@ -305,6 +318,7 @@ class OdbcNative {
           bufLen,
           outWritten,
         ),
+        maxSize: maxBufferBytes,
       ),
     );
   }

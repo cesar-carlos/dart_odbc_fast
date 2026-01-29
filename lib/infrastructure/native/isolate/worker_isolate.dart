@@ -82,6 +82,7 @@ void _handleRequest(
           request.connectionId,
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
+          maxBufferBytes: request.maxResultBufferBytes,
         );
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
@@ -94,7 +95,11 @@ void _handleRequest(
         }
 
       case ExecuteQueryMultiRequest():
-        final data = conn.executeQueryMulti(request.connectionId, request.sql);
+        final data = conn.executeQueryMulti(
+          request.connectionId,
+          request.sql,
+          maxBufferBytes: request.maxResultBufferBytes,
+        );
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {

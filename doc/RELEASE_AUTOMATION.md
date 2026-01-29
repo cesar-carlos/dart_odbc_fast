@@ -78,6 +78,7 @@ strategy:
 ```
 
 **Etapas**:
+
 1. Checkout do código
 2. Setup Rust toolchain
 3. Cache de dependências Cargo
@@ -88,6 +89,7 @@ strategy:
 #### 2. Create Release
 
 **Etapas**:
+
 1. Download dos artefatos
 2. Criar release no GitHub
 3. Upload dos binários (sem subdiretórios)
@@ -97,12 +99,14 @@ strategy:
 O pipeline inclui várias otimizações:
 
 **Cargo Config** (`.cargo/config.toml`):
+
 - ❌ Sanitizers removidos (build 70% mais rápido)
 - ✅ Thin LTO (2-3x mais rápido que fat LTO)
 - ✅ 16 codegen units (mais paralelismo)
 - ✅ Strip=true (binário menor)
 
 **Cache**:
+
 ```yaml
 - name: Cache Rust dependencies
   uses: actions/cache@v4
@@ -122,19 +126,23 @@ O pipeline inclui várias otimizações:
 #### 1. Atualizar Versão
 
 **Editar `pubspec.yaml`**:
+
 ```yaml
 name: odbc_fast
-version: 0.1.6  # ← Bump version
+version: 0.1.6 # ← Bump version
 ```
 
 **Editar `CHANGELOG.md`**:
+
 ```markdown
 ## [0.1.6] - 2026-01-27
 
 ### Added
+
 - Nova funcionalidade X
 
 ### Fixed
+
 - Bug Y corrigido
 ```
 
@@ -155,6 +163,7 @@ git push origin v0.1.6
 **Monitorar**: https://github.com/cesar-carlos/dart_odbc_fast/actions
 
 O workflow irá:
+
 - Build Windows (3-5 min)
 - Build Linux (3-5 min)
 - Criar release no GitHub
@@ -170,6 +179,7 @@ echo y | dart pub publish
 **GitHub**: https://github.com/cesar-carlos/dart_odbc/releases/tag/v0.1.6
 
 Deve conter:
+
 - ✅ `odbc_engine.dll` (Windows)
 - ✅ `libodbc_engine.so` (Linux)
 - ✅ Release notes
@@ -198,6 +208,7 @@ git push origin v0.1.6-test
 **Função**: Baixa automaticamente os binários do GitHub durante `dart pub get`
 
 **Fluxo**:
+
 ```dart
 1. Ler versão do pubspec.yaml
 2. Determinar OS e Architecture
@@ -208,6 +219,7 @@ git push origin v0.1.6-test
 ```
 
 **Cache Local**:
+
 ```
 ~/.cache/odbc_fast/
 ├── windows_x86_64/
@@ -223,6 +235,7 @@ git push origin v0.1.6-test
 **Função**: Carrega a biblioteca nativa com fallback estratégico
 
 **Prioridades**:
+
 1. Native Assets (produção)
 2. Caminhos de desenvolvimento local
 3. System PATH
@@ -233,23 +246,24 @@ git push origin v0.1.6-test
 
 ```yaml
 permissions:
-  contents: write  # ← Necessário para criar releases
+  contents: write # ← Necessário para criar releases
 ```
 
 ## Troubleshooting
 
-### Erro: "Pattern 'uploads/*' does not match any files"
+### Erro: "Pattern 'uploads/\*' does not match any files"
 
 **Causa**: Download de artifacts com estrutura incorreta
 
 **Solução**: Verifique que o workflow usa:
+
 ```yaml
 - name: Download all artifacts
   uses: actions/download-artifact@v4
   with:
     path: uploads/
-    pattern: '*'
-    merge-multiple: true  # ← Importante!
+    pattern: "*"
+    merge-multiple: true # ← Importante!
 ```
 
 ### Erro: "GitHub release failed with status: 403"
@@ -257,6 +271,7 @@ permissions:
 **Causa**: Workflow sem permissão para criar releases
 
 **Solução**: Adicione ao workflow:
+
 ```yaml
 permissions:
   contents: write
@@ -267,6 +282,7 @@ permissions:
 **Causa**: Path do binário incorreto (workspace vs member)
 
 **Solução**: Use o path do workspace:
+
 ```yaml
 # Errado (member target)
 cp native/odbc_engine/target/${{ matrix.target }}/release/${{ matrix.artifact }}
@@ -278,6 +294,7 @@ cp native/target/${{ matrix.target }}/release/${{ matrix.artifact }}
 ### Download automático não funciona
 
 **Verificar**:
+
 1. URL de download no hook está correta
 2. Arquivos estão na raiz da release (sem subdiretórios)
 3. Tag/versão correspondem
@@ -288,6 +305,7 @@ cp native/target/${{ matrix.target }}/release/${{ matrix.artifact }}
 ### SemVer
 
 Siga Semantic Versioning:
+
 - **MAJOR**: Mudanças incompatíveis na API
 - **MINOR**: Novas funcionalidades compatíveis
 - **PATCH**: Correções de bugs
@@ -295,19 +313,24 @@ Siga Semantic Versioning:
 ### CHANGELOG
 
 Mantenha o CHANGELOG.md atualizado:
+
 ```markdown
 ## [0.1.6] - 2026-01-27
 
 ### Added
+
 - Novas features
 
 ### Changed
+
 - Mudanças compatíveis
 
 ### Fixed
+
 - Bugs corrigidos
 
 ### Performance
+
 - Otimizações
 ```
 

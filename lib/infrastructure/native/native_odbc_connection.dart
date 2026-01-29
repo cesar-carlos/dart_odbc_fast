@@ -191,35 +191,43 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [sql] should be a parameterized SQL statement.
   /// The [params] list should contain [ParamValue] instances for each '?'
   /// placeholder in [sql], in order.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
   Uint8List? executeQueryParams(
     int connectionId,
     String sql,
-    List<ParamValue> params,
-  ) =>
-      _native.execQueryParamsTyped(connectionId, sql, params);
+    List<ParamValue> params, {
+    int? maxBufferBytes,
+  }) =>
+      _native.execQueryParamsTyped(connectionId, sql, params,
+          maxBufferBytes: maxBufferBytes,);
 
   /// Executes a parameterized query with params already serialized (bytes).
   ///
   /// Used by the worker isolate where [ParamValue] cannot be deserialized.
   /// [serializedParams] is the output of [serializeParams].
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   Uint8List? executeQueryParamsRaw(
     int connectionId,
     String sql,
-    Uint8List? serializedParams,
-  ) =>
-      _native.execQueryParams(connectionId, sql, serializedParams);
+    Uint8List? serializedParams, {
+    int? maxBufferBytes,
+  }) =>
+      _native.execQueryParams(connectionId, sql, serializedParams,
+          maxBufferBytes: maxBufferBytes,);
 
   /// Executes a SQL query that returns multiple result sets.
   ///
   /// Some databases support queries that return multiple result sets.
   /// This method handles such queries and returns the first result set.
   /// The [connectionId] must be a valid active connection.
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? executeQueryMulti(int connectionId, String sql) =>
-      _native.execQueryMulti(connectionId, sql);
+  Uint8List? executeQueryMulti(int connectionId, String sql,
+          {int? maxBufferBytes,}) =>
+      _native.execQueryMulti(connectionId, sql, maxBufferBytes: maxBufferBytes);
 
   @override
   Uint8List? catalogTables(

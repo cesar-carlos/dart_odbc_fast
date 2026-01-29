@@ -70,19 +70,26 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     int requestId,
     this.connectionId,
     this.sql,
-    this.serializedParams,
-  ) : super(requestId, RequestType.executeQueryParams);
+    this.serializedParams, {
+    this.maxResultBufferBytes,
+  }) : super(requestId, RequestType.executeQueryParams);
   final int connectionId;
   final String sql;
   final Uint8List serializedParams;
+  final int? maxResultBufferBytes;
 }
 
 /// Execute query returning multiple result sets.
 class ExecuteQueryMultiRequest extends WorkerRequest {
-  const ExecuteQueryMultiRequest(int requestId, this.connectionId, this.sql)
-      : super(requestId, RequestType.executeQueryMulti);
+  const ExecuteQueryMultiRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.maxResultBufferBytes,
+  }) : super(requestId, RequestType.executeQueryMulti);
   final int connectionId;
   final String sql;
+  final int? maxResultBufferBytes;
 }
 
 /// Begin transaction.

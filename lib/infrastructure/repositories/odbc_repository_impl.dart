@@ -58,6 +58,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   /// apps).
   final dynamic _native;
   final Map<String, int> _connectionIds = {};
+  final Map<String, ConnectionOptions?> _connectionOptions = {};
 
   /// Whether this repository uses async backend (non-blocking operations).
   bool get _isAsync => _native is AsyncNativeOdbcConnection;
@@ -166,6 +167,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
 
       _connectionIds[connection.id] = connId;
+      _connectionOptions[connection.id] = options;
 
       return Success(connection);
     } on Exception catch (e) {
@@ -191,6 +193,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
       if (success) {
         _connectionIds.remove(connectionId);
+        _connectionOptions.remove(connectionId);
         return const Success(unit);
       } else {
         return await _convertNativeErrorToFailure<Unit>(
@@ -229,17 +232,19 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     try {
       final allRows = <List<dynamic>>[];
       final columns = <String>[];
+      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
 
       Stream<ParsedRowBuffer> stream;
       try {
         stream = _isAsync
             ? (_native as AsyncNativeOdbcConnection)
-                .streamQueryBatched(nativeId, sql)
+                .streamQueryBatched(nativeId, sql, maxBufferBytes: maxBytes)
             : (_native as NativeOdbcConnection)
                 .streamQueryBatched(nativeId, sql);
       } on Exception {
         stream = _isAsync
-            ? (_native as AsyncNativeOdbcConnection).streamQuery(nativeId, sql)
+            ? (_native as AsyncNativeOdbcConnection)
+                .streamQuery(nativeId, sql, maxBufferBytes: maxBytes)
             : (_native as NativeOdbcConnection).streamQuery(nativeId, sql);
       }
 
@@ -638,11 +643,12 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
     try {
       final pv = _toParamValues(params);
+      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
       final buf = _isAsync
           ? await (_native as AsyncNativeOdbcConnection)
-              .executeQueryParams(nativeId, sql, pv)
+              .executeQueryParams(nativeId, sql, pv, maxBufferBytes: maxBytes)
           : (_native as NativeOdbcConnection)
-              .executeQueryParams(nativeId, sql, pv);
+              .executeQueryParams(nativeId, sql, pv, maxBufferBytes: maxBytes);
 
       final qr = _parseBufferToQueryResult(buf);
       if (qr == null) {
@@ -690,10 +696,12 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
     try {
+      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
       final buf = _isAsync
           ? await (_native as AsyncNativeOdbcConnection)
-              .executeQueryMulti(nativeId, sql)
-          : (_native as NativeOdbcConnection).executeQueryMulti(nativeId, sql);
+              .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes)
+          : (_native as NativeOdbcConnection)
+              .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes);
 
       final qr = _parseBufferToQueryResult(buf);
       if (qr == null) {

@@ -16,11 +16,13 @@ Este documento cobre problemas comuns e suas soluções para desenvolvimento, bu
 ### Dart pub get falha
 
 **Sintoma**:
+
 ```
 Error: Could not resolve all dependencies.
 ```
 
 **Solução**:
+
 ```bash
 # Limpar cache
 dart pub cache repair
@@ -32,6 +34,7 @@ dart pub get
 ### Testes falham com "odbc_engine.dll not found"
 
 **Sintoma**:
+
 ```
 StateError: ODBC engine library not found
 ```
@@ -39,6 +42,7 @@ StateError: ODBC engine library not found
 **Causa**: Binário Rust não foi compilado
 
 **Solução**:
+
 ```bash
 cd native
 cargo build --release
@@ -51,6 +55,7 @@ ls target/release/libodbc_engine.so  # Linux
 ### Ffigen não gera bindings
 
 **Sintoma**:
+
 ```
 ffigen failed to generate bindings
 ```
@@ -58,6 +63,7 @@ ffigen failed to generate bindings
 **Causas possíveis**:
 
 1. **Header file não existe**:
+
 ```bash
 # Verificar
 ls native/odbc_engine/include/odbc_engine.h
@@ -68,15 +74,17 @@ cargo build
 ```
 
 2. **Clang/LLVM não instalado (Linux)**:
+
 ```bash
 sudo apt-get install -y libclang-dev llvm
 ```
 
 3. **Configuração incorreta do ffigen.yaml**:
+
 ```yaml
-output: 'lib/infrastructure/native/bindings/odbc_bindings.dart'
+output: "lib/infrastructure/native/bindings/odbc_bindings.dart"
 headers:
-  - 'native/odbc_engine/include/odbc_engine.h'
+  - "native/odbc_engine/include/odbc_engine.h"
 ```
 
 ## Build e Compilação
@@ -88,6 +96,7 @@ headers:
 **Causa**: Sanitizers ativos
 
 **Verificar**:
+
 ```bash
 # native/odbc_engine/.cargo/config.toml
 # Remover se existir:
@@ -103,11 +112,13 @@ rustflags = [
 ### Cross-compilation falha
 
 **Sintoma**:
+
 ```
 error: linker `x86_64-w64-mingw32-gcc` not found
 ```
 
 **Solução (Linux → Windows)**:
+
 ```bash
 sudo apt-get install -y mingw-w64
 rustup target add x86_64-pc-windows-msvc
@@ -116,11 +127,13 @@ rustup target add x86_64-pc-windows-msvc
 ### ODBC headers não encontrados
 
 **Sintoma** (Linux):
+
 ```
 fatal error: sql.h: No such file or directory
 ```
 
 **Solução**:
+
 ```bash
 sudo apt-get install -y unixodbc unixodbc-dev
 ```
@@ -128,6 +141,7 @@ sudo apt-get install -y unixodbc unixodbc-dev
 ### cbindgen falha
 
 **Sintoma**:
+
 ```
 error: failed to run custom build command for `odbc_engine`
 ```
@@ -135,6 +149,7 @@ error: failed to run custom build command for `odbc_engine`
 **Causa**: build.rs executando cbindgen falhou
 
 **Solução**:
+
 ```bash
 # Instalar cbindgen
 cargo install cbindgen
@@ -148,6 +163,7 @@ cat native/odbc_engine/cbindgen.toml
 ### "Invalid function pointer" ao chamar funções nativas
 
 **Sintoma**:
+
 ```
 Invalid argument(s): Invalid function pointer
 ```
@@ -155,6 +171,7 @@ Invalid argument(s): Invalid function pointer
 **Causa**: Bindings desincronizados com o header
 
 **Solução**:
+
 ```bash
 # Regenerar bindings
 dart run ffigen -v info
@@ -170,6 +187,7 @@ cd native && cargo build --release
 **Causas possíveis**:
 
 1. **Mismatch entre Dart e Rust ABI**:
+
 ```bash
 # Verificar que está usando a versão correta do binário
 rm ~/.cache/odbc_fast/* -rf
@@ -177,6 +195,7 @@ dart pub get
 ```
 
 2. **Memory corruption no Rust**:
+
 ```bash
 # Rodar com sanitizers (development)
 cd native/odbc_engine
@@ -184,6 +203,7 @@ RUSTFLAGS="-Z sanitizer=address" cargo test
 ```
 
 3. **Types incorretos nos bindings**:
+
 ```dart
 // Verificar que o tipo no binding corresponde ao Rust
 // Ex: IntPtr vs int vs Pointer<Void>
@@ -194,6 +214,7 @@ RUSTFLAGS="-Z sanitizer=address" cargo test
 ### "ODBC connection failed"
 
 **Sintoma**:
+
 ```
 OdbcError.connectionFailed: IM002 [Data source name not found]
 ```
@@ -201,6 +222,7 @@ OdbcError.connectionFailed: IM002 [Data source name not found]
 **Solução**:
 
 1. **Verificar DSN**:
+
 ```bash
 # Windows
 odbcconf.exe
@@ -212,6 +234,7 @@ cat /etc/odbc.ini
 ```
 
 2. **Configurar DSN corretamente**:
+
 ```dart
 final service = OdbcService();
 final result = await service.connect(
@@ -230,6 +253,7 @@ final result = await service.connect(
 **Causa**: Result sets não sendo liberados
 
 **Solução**:
+
 ```dart
 // Usar streaming para grandes resultados
 final result = await service.executeQueryStream(
@@ -243,14 +267,49 @@ await for (final batch in result) {
 }
 ```
 
+### "Buffer too small" (result set > 16 MB)
+
+**Sintoma**:
+
+```
+OdbcError: Buffer too small: need XXXXX bytes, got 16777216
+```
+
+**Causa**: O resultado da query serializado excede o limite padrão do buffer (16 MB).
+
+**Soluções**:
+
+1. **Aumentar o buffer na conexão** (para result sets grandes conhecidos):
+
+```dart
+await service.connect(
+  connectionString,
+  options: ConnectionOptions(
+    maxResultBufferBytes: 32 * 1024 * 1024, // 32 MB
+  ),
+);
+```
+
+2. **Paginar a query no SQL** (recomendado para tabelas muito grandes):
+
+```sql
+-- SQL Server: OFFSET/FETCH
+SELECT * FROM Produto ORDER BY Id OFFSET 0 ROWS FETCH NEXT 1000 ROWS ONLY;
+
+-- Ou TOP + chave
+SELECT TOP 1000 * FROM Produto ORDER BY Id;
+```
+
 ### Pool de conexões esgotado
 
 **Sintoma**:
+
 ```
 OdbcError.poolExhausted: Maximum pool size reached
 ```
 
 **Solução**:
+
 ```dart
 // Aumentar tamanho do pool
 await service.poolCreate(
@@ -272,6 +331,7 @@ try {
 ### GitHub Actions workflow falha com "cp: cannot stat"
 
 **Sintoma** (workflow):
+
 ```
 cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
 ```
@@ -279,6 +339,7 @@ cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
 **Causa**: Workspace Cargo cria binário em `native/target/`, não `native/odbc_engine/target/`
 
 **Solução**:
+
 ```yaml
 # .github/workflows/release.yml
 - name: Rename artifact
@@ -291,6 +352,7 @@ cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
 ### Release workflow retorna 403 Forbidden
 
 **Sintoma**:
+
 ```
 GitHub release failed with status: 403
 ```
@@ -298,15 +360,17 @@ GitHub release failed with status: 403
 **Causa**: Workflow sem permissão para criar releases
 
 **Solução**:
+
 ```yaml
 # .github/workflows/release.yml
 permissions:
-  contents: write  # ← Adicionar
+  contents: write # ← Adicionar
 ```
 
-### "Pattern 'uploads/*' does not match any files"
+### "Pattern 'uploads/\*' does not match any files"
 
 **Sintoma** (release workflow):
+
 ```
 Pattern 'uploads/*' does not match any files
 ```
@@ -314,13 +378,14 @@ Pattern 'uploads/*' does not match any files
 **Causa**: Artifacts são baixados com subdiretório
 
 **Solução**:
+
 ```yaml
 - name: Download all artifacts
   uses: actions/download-artifact@v4
   with:
     path: uploads/
-    pattern: '*'
-    merge-multiple: true  # ← Importante
+    pattern: "*"
+    merge-multiple: true # ← Importante
 ```
 
 ### Download automático não funciona
@@ -330,12 +395,14 @@ Pattern 'uploads/*' does not match any files
 **Verificar**:
 
 1. **URL está correta** (hook/build.dart):
+
 ```dart
 final url = 'https://github.com/cesar-carlos/dart_odbc_fast'
     '/releases/download/v$version/$libName';
 ```
 
 2. **Arquivos existem na release**:
+
 ```bash
 # Verificar no GitHub que os arquivos estão na RAIZ
 # Não em: uploads/odbc_engine.dll
@@ -343,6 +410,7 @@ final url = 'https://github.com/cesar-carlos/dart_odbc_fast'
 ```
 
 3. **Versão corresponde**:
+
 ```bash
 # pubspec.yaml version deve corresponder à tag no GitHub
 version: 0.1.5  # → v0.1.5
@@ -351,6 +419,7 @@ version: 0.1.5  # → v0.1.5
 ### ffigen no CI falha com "--verbose"
 
 **Sintoma**:
+
 ```
 FormatException: Missing argument for "--verbose"
 ```
@@ -358,6 +427,7 @@ FormatException: Missing argument for "--verbose"
 **Sausa**: Sintaxe incorreta do ffigen
 
 **Solução**:
+
 ```yaml
 # Errado
 dart run ffigen --verbose
@@ -371,6 +441,7 @@ dart run ffigen -v info
 ### "Driver not found" no Windows
 
 **Sintoma**:
+
 ```
 IM002 [Microsoft][ODBC Driver Manager] Data source name not found
 ```
@@ -382,11 +453,13 @@ IM002 [Microsoft][ODBC Driver Manager] Data source name not found
    - PostgreSQL: [psqlODBC](https://odbc.postgresql.org/)
 
 2. **Verificar drivers instalados**:
+
 ```powershell
 Get-OdbcDriver -Name "ODBC Driver*"
 ```
 
 3. **Usar nome correto do driver**:
+
 ```dart
 // Errado
 'Driver={SQL Server};...'
@@ -398,11 +471,13 @@ Get-OdbcDriver -Name "ODBC Driver*"
 ### "unixODBC Driver Manager not found" no Linux
 
 **Sintoma**:
+
 ```
 error while loading shared libraries: libodbc.so.2
 ```
 
 **Solução**:
+
 ```bash
 sudo apt-get install -y unixodbc unixodbc-dev
 
@@ -417,6 +492,7 @@ odbcinst -j
 **Causa**: Timeout de conexão ou firewall
 
 **Solução**:
+
 ```dart
 // Usar pooling com health check
 await service.poolCreate(
@@ -434,6 +510,7 @@ final conn = await service.poolGetConnection();
 ### Habilitar logs detalhados
 
 **Dart**:
+
 ```dart
 import 'package:logging/logging.dart';
 
@@ -448,6 +525,7 @@ void main() {
 ```
 
 **Rust**:
+
 ```bash
 RUST_LOG=debug cargo run
 ```
