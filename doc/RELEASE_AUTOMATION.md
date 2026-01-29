@@ -377,19 +377,19 @@ git push origin :refs/tags/v0.1.6
 
 Ordem recomendada para gerar uma nova versão (ex.: 0.3.0):
 
-| # | Passo | Comando / Ação |
-|---|--------|-----------------|
-| 1 | **Testes** | `dart test --concurrency=1` (todos devem passar) |
-| 2 | **Bump versão** | Editar `pubspec.yaml`: `version: 0.3.0` |
-| 3 | **CHANGELOG** | Trocar `[Unreleased]` por `[0.3.0] - YYYY-MM-DD`; mover itens de Unreleased para a nova seção |
-| 4 | **README** | Atualizar exemplo de dependência se necessário (ex.: `^0.3.0`) |
-| 5 | **Dry-run** | `dart pub publish --dry-run` (validar pacote) |
-| 6 | **Commit** | `git add ...` e `git commit -m "chore: release 0.3.0"` (ou mensagem descritiva) |
-| 7 | **Tag** | `git tag v0.3.0` (ou `git tag -a v0.3.0 -m "Release v0.3.0"`) |
-| 8 | **Push** | `git push origin main` e `git push origin v0.3.0` |
-| 9 | **GitHub Release** | Automático: workflow `.github/workflows/release.yml` roda no push da tag; compila Windows + Linux e cria a release com os binários |
-| 10 | **Publicar pub.dev** | `dart pub publish --force` (confirmar quando solicitado) |
-| 11 | **Verificar** | GitHub Releases: binários anexados; pub.dev: versão disponível (~10 min) |
+| #   | Passo                | Comando / Ação                                                                                                                     |
+| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Testes**           | `dart test --concurrency=1` (todos devem passar)                                                                                   |
+| 2   | **Bump versão**      | Editar `pubspec.yaml`: `version: 0.3.0`                                                                                            |
+| 3   | **CHANGELOG**        | Trocar `[Unreleased]` por `[0.3.0] - YYYY-MM-DD`; mover itens de Unreleased para a nova seção                                      |
+| 4   | **README**           | Atualizar exemplo de dependência se necessário (ex.: `^0.3.0`)                                                                     |
+| 5   | **Dry-run**          | `dart pub publish --dry-run` (validar pacote)                                                                                      |
+| 6   | **Commit**           | `git add ...` e `git commit -m "chore: release 0.3.0"` (ou mensagem descritiva)                                                    |
+| 7   | **Tag**              | `git tag v0.3.0` (ou `git tag -a v0.3.0 -m "Release v0.3.0"`)                                                                      |
+| 8   | **Push**             | `git push origin main` e `git push origin v0.3.0`                                                                                  |
+| 9   | **GitHub Release**   | Automático: workflow `.github/workflows/release.yml` roda no push da tag; compila Windows + Linux e cria a release com os binários |
+| 10  | **Publicar pub.dev** | `dart pub publish --force` (confirmar quando solicitado)                                                                           |
+| 11  | **Verificar**        | GitHub Releases: binários anexados; pub.dev: versão disponível (~10 min)                                                           |
 
 **Observações:**
 
