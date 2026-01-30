@@ -223,8 +223,7 @@ Future<Uri?> _downloadFromGitHub(
     while (attempt < maxRetries) {
       HttpClient? client;
       try {
-        client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 30);
+        client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
 
         final request = await client.getUrl(Uri.parse(url));
         final response = await request.close();
@@ -257,7 +256,9 @@ Future<Uri?> _downloadFromGitHub(
               'https://github.com/cesar-carlos/dart_odbc_fast/releases';
           print('[odbc_fast]     $releaseUrl');
           print('[odbc_fast]   - For development: Build the library locally:');
-          print('[odbc_fast]     cd native/odbc_engine && cargo build --release');
+          print(
+            '[odbc_fast]     cd native/odbc_engine && cargo build --release',
+          );
           return null;
         }
 
@@ -297,7 +298,9 @@ Future<Uri?> _downloadFromGitHub(
     print('[odbc_fast] Troubleshooting:');
     print('[odbc_fast]   1. Check your internet connection');
     print('[odbc_fast]   2. Verify the release exists:');
-    print('[odbc_fast]      https://github.com/cesar-carlos/dart_odbc_fast/releases');
+    print(
+      '[odbc_fast]      https://github.com/cesar-carlos/dart_odbc_fast/releases',
+    );
     print('[odbc_fast]   3. For development, build locally:');
     print('[odbc_fast]      cd native/odbc_engine && cargo build --release');
     return null;
