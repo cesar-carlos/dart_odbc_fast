@@ -61,6 +61,8 @@ export 'domain/entities/prepared_statement_metrics.dart';
 export 'domain/entities/query_result.dart';
 export 'domain/entities/retry_options.dart';
 export 'domain/entities/schema_info.dart';
+export 'domain/entities/prepared_statement_config.dart';
+export 'domain/entities/prepared_statement_metrics.dart';
 export 'domain/entities/statement_options.dart';
 export 'domain/errors/odbc_error.dart';
 export 'domain/helpers/retry_helper.dart';
