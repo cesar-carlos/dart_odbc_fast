@@ -4,8 +4,8 @@ use crate::error::{OdbcError, Result};
 use crate::observability::{Metrics, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::{
-    encode_multi, param_values_to_strings, row_buffer_to_columnar, ColumnarEncoder,
-    MultiResultItem, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+    encode_multi, row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue,
+    RowBuffer, RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
@@ -197,7 +197,7 @@ impl ExecutionEngine {
         metadata.insert("span_id".to_string(), span_id.to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
-        let strings = param_values_to_strings(params)?;
+        let strings = crate::protocol::param_values_to_strings(params)?;
 
         let cursor = match strings.len() {
             0 => conn
@@ -240,9 +240,11 @@ impl ExecutionEngine {
             }
             n => {
                 return Err(OdbcError::ValidationError(format!(
-                    "At most 5 parameters supported, got {}",
+                    "At most 5 parameters supported, got {}. \
+                    For more parameters or proper NULL handling, \
+                    use bulk insert operations or direct prepared statements.",
                     n
-                )));
+                )))
             }
         };
 

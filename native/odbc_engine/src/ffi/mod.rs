@@ -1558,7 +1558,15 @@ pub extern "C" fn odbc_execute(
 /// Cancel a statement in execution.
 /// stmt_id: from odbc_prepare
 /// Returns: 0 on success, non-zero on failure
-/// Note: Full cancel (SQLCancel) requires background execution; currently returns error.
+///
+/// # Unsupported Feature
+///
+/// Statement cancellation is not currently supported. This feature requires:
+/// - Background execution thread with active statement handle tracking
+/// - SQLCancel() or SQLCancelHandle() call on the executing statement
+/// - Proper synchronization between execution and cancellation threads
+///
+/// Workaround: Use query timeout at connection or statement level instead.
 #[no_mangle]
 pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
     let Some(mut state) = try_lock_global_state() else {
@@ -1568,7 +1576,10 @@ pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
     if state.statements.contains_key(&stmt_id) {
         set_error(
             &mut state,
-            "Cancel not implemented: no active execution context".to_string(),
+            "Unsupported feature: Statement cancellation requires background execution. \
+            Use query timeout (login_timeout or statement timeout) instead. \
+            See: https://github.com/odbc-fast/dart_odbc_fast/issues/X for tracking."
+                .to_string(),
         );
         1
     } else {

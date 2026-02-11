@@ -23,6 +23,9 @@ pub use converter::row_buffer_to_columnar;
 pub use decoder::{BinaryProtocolDecoder, ColumnInfo, DecodedResult};
 pub use encoder::RowBufferEncoder;
 pub use multi_result::{decode_multi, encode_multi, MultiResultItem};
-pub use param_value::{deserialize_params, param_values_to_strings, serialize_params, ParamValue};
+pub use param_value::{
+    deserialize_params, has_null_param, max_param_string_len, param_count_exceeds_limit,
+    param_values_to_strings, serialize_params, ParamValue,
+};
 pub use row_buffer::RowBuffer;
 pub use types::OdbcType;

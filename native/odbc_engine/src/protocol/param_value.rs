@@ -146,9 +146,7 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<String>> {
     for p in params {
         match p {
             ParamValue::Null => {
-                return Err(crate::error::OdbcError::ValidationError(
-                    "NULL parameters not supported yet".to_string(),
-                ));
+                out.push(String::new());
             }
             ParamValue::String(s) => out.push(s.clone()),
             ParamValue::Integer(n) => out.push(n.to_string()),
@@ -160,6 +158,28 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<String>> {
         }
     }
     Ok(out)
+}
+
+pub fn has_null_param(params: &[ParamValue]) -> bool {
+    params.iter().any(|p| matches!(p, ParamValue::Null))
+}
+
+pub fn max_param_string_len(params: &[ParamValue]) -> usize {
+    let mut max_len = 1;
+    for p in params {
+        let len = match p {
+            ParamValue::String(s) => s.len(),
+            ParamValue::Decimal(s) => s.len(),
+            ParamValue::Binary(b) => b.len() * 2,
+            _ => 0,
+        };
+        max_len = max_len.max(len);
+    }
+    max_len
+}
+
+pub fn param_count_exceeds_limit(params: &[ParamValue], limit: usize) -> bool {
+    params.len() > limit
 }
 
 #[cfg(test)]
@@ -242,5 +262,95 @@ mod tests {
     fn test_deserialize_too_short() {
         let r = ParamValue::deserialize(&[0u8, 0, 0]);
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_has_null_param_no_null() {
+        let params = vec![
+            ParamValue::Integer(1),
+            ParamValue::String("test".to_string()),
+            ParamValue::BigInt(100),
+        ];
+        assert!(!has_null_param(&params));
+    }
+
+    #[test]
+    fn test_has_null_param_with_null() {
+        let params = vec![
+            ParamValue::Integer(1),
+            ParamValue::Null,
+            ParamValue::String("test".to_string()),
+        ];
+        assert!(has_null_param(&params));
+    }
+
+    #[test]
+    fn test_has_null_param_all_null() {
+        let params = vec![ParamValue::Null, ParamValue::Null];
+        assert!(has_null_param(&params));
+    }
+
+    #[test]
+    fn test_has_null_param_empty() {
+        let params = vec![];
+        assert!(!has_null_param(&params));
+    }
+
+    #[test]
+    fn test_max_param_string_len_empty() {
+        let params = vec![];
+        assert_eq!(max_param_string_len(&params), 1);
+    }
+
+    #[test]
+    fn test_max_param_string_len_strings() {
+        let params = vec![
+            ParamValue::String("a".to_string()),
+            ParamValue::String("abc".to_string()),
+            ParamValue::String("ab".to_string()),
+        ];
+        assert_eq!(max_param_string_len(&params), 3);
+    }
+
+    #[test]
+    fn test_max_param_string_len_decimal() {
+        let params = vec![
+            ParamValue::Decimal("1.5".to_string()),
+            ParamValue::Decimal("12.345".to_string()),
+        ];
+        assert_eq!(max_param_string_len(&params), 6);
+    }
+
+    #[test]
+    fn test_max_param_string_len_binary() {
+        let params = vec![
+            ParamValue::Binary(vec![1, 2]),
+            ParamValue::Binary(vec![1, 2, 3, 4]),
+        ];
+        assert_eq!(max_param_string_len(&params), 8);
+    }
+
+    #[test]
+    fn test_max_param_string_len_mixed() {
+        let params = vec![
+            ParamValue::Integer(42),
+            ParamValue::String("hello world".to_string()),
+            ParamValue::Binary(vec![1, 2, 3]),
+        ];
+        assert_eq!(max_param_string_len(&params), 11);
+    }
+
+    #[test]
+    fn test_param_values_to_strings_with_null() {
+        let params = vec![
+            ParamValue::String("test".to_string()),
+            ParamValue::Null,
+            ParamValue::Integer(42),
+        ];
+        let result = param_values_to_strings(&params).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "test");
+        assert_eq!(result[1], "");
+        assert_eq!(result[2], "42");
     }
 }

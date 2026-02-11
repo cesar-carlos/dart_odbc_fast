@@ -43,6 +43,9 @@ pub enum OdbcError {
 
     #[error("Validation error: {0}")]
     ValidationError(String),
+
+    #[error("Unsupported feature: {0}")]
+    UnsupportedFeature(String),
 }
 
 impl From<odbc_api::Error> for OdbcError {
@@ -137,6 +140,9 @@ impl OdbcError {
     pub fn error_category(&self) -> ErrorCategory {
         if matches!(self, OdbcError::ValidationError(_)) {
             return ErrorCategory::Validation;
+        }
+        if matches!(self, OdbcError::UnsupportedFeature(_)) {
+            return ErrorCategory::Fatal;
         }
         if self.is_connection_error() {
             return ErrorCategory::ConnectionLost;
