@@ -71,6 +71,8 @@ Itens:
 - STMT-003 ✅ (clearStatementCache e getPreparedStatementsMetrics implementados)
 - INFRA-001 ✅ (tipos corrigidos em odbc_native.dart - stubs para `clearAllStatements` e `getStatementsMetrics` adicionados)
 - PREP-004 ❌ (Plugin Output Parameters - Fora de Escopo, não implementado)
+- **OdbcService atualizado**: métodos prepareStatement, unprepareStatement, getPreparedStatementsMetrics expostos
+- Testes a criar: prepared_statement_lifecycle_test.dart (PREP-001), statement_options_test.dart (PREP-002)
 
 Criterio de saida:
 
