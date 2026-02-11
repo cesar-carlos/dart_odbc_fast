@@ -206,11 +206,19 @@ class OdbcService {
   /// The [options] can override timeout and fetch size for this execution.
   Future<Result<QueryResult>> executePrepared(
     String connectionId,
-    int stmtId, [
+    int stmtId,
     List<dynamic>? params,
     StatementOptions? options,
-  ]) async =>
-      _repository.executePrepared(connectionId, stmtId, params, options);
+  ]) async {
+    final result = await _repository.executePrepared(
+      connectionId,
+      stmtId,
+      params,
+      options,
+    );
+
+    return result;
+  }
 
   /// Closes and releases a prepared statement.
   ///

@@ -1,4 +1,3 @@
-// ignore: directives_ordering
 import 'package:test/test.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
@@ -28,7 +27,10 @@ void main() {
       await service.initialize();
 
       // Prepare statement
-      final stmtResult = await service.prepareStatement(connectionString, 'SELECT * FROM users WHERE department = ?');
+      final stmtResult = await service.prepareStatement(
+        connectionString,
+        'SELECT * FROM users WHERE department = ?',
+      );
       expect(stmtResult.isSuccess(), isTrue);
       final stmt = stmtResult.getOrElse((_) => throw Exception());
 
@@ -36,12 +38,16 @@ void main() {
       final result1 = await service.executePrepared(stmt.id, ['Sales']);
       expect(result1.isSuccess(), isTrue);
 
-      final result2 = await service.executePrepared(stmt.id, ['Engineering', 'Active']);
+      final result2 =
+          await service.executePrepared(stmt.id, ['Engineering', 'Active']);
       expect(result2.isSuccess(), isTrue);
 
       // Unprepare to release resources
       await service.unprepareStatement(stmt.id);
-      expect(await service.unprepareStatement(stmt.id).isSuccess(), isFalse); // Already closed
+      expect(
+        await service.unprepareStatement(stmt.id).isSuccess(),
+        isFalse,
+      ); // Already closed
     });
 
     test('should execute with StatementOptions', () async {
@@ -57,7 +63,7 @@ void main() {
       final stmtResult = await service.prepareStatement(
         connectionString,
         'SELECT * FROM products WHERE id = ?',
-        timeout: Duration(seconds: 10),
+        timeout: const Duration(seconds: 10),
       );
       expect(stmtResult.isSuccess(), isTrue);
       final stmt = stmtResult.getOrElse((_) => throw Exception());
@@ -84,9 +90,15 @@ void main() {
 
       // Execute some statements to generate metrics
       for (var i = 0; i < 3; i++) {
-        final stmtResult = await service.prepareStatement(connectionString, 'SELECT * FROM users');
+        final stmtResult = await service.prepareStatement(
+          connectionString,
+          'SELECT * FROM users',
+        );
         expect(stmtResult.isSuccess(), isTrue);
-        await service.executePrepared(stmtResult.getOrElse((_) => throw Exception()).id, []);
+        await service.executePrepared(
+          stmtResult.getOrElse((_) => throw Exception()).id,
+          [],
+        );
       }
 
       // Get metrics - should have 3 statements prepared
