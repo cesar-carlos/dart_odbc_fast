@@ -4,32 +4,32 @@ Index of all project documentation.
 
 ## Build & Development
 
-| Document | Description |
-|----------|-------------|
+| Document             | Description                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------- |
 | [BUILD.md](BUILD.md) | Complete guide for building and developing (Rust + Dart, prerequisites, FFI, troubleshooting) |
 
 ## Release & Deployment
 
-| Document | Description |
-|----------|-------------|
+| Document                                       | Description                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
 | [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | Automated release pipeline, GitHub Actions workflow, publishing to pub.dev |
 
 ## Troubleshooting
 
-| Document | Description |
-|----------|-------------|
+| Document                                 | Description                                                            |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions for development, build, runtime, and CI/CD |
 
 ## Governance
 
-| Document | Description |
-|----------|-------------|
+| Document                               | Description                                                         |
+| -------------------------------------- | ------------------------------------------------------------------- |
 | [api_governance.md](api_governance.md) | Versioning (API, Protocol, ABI), compatibility policy, LTS strategy |
 
 ## Future Implementations
 
-| Document | Description |
-|----------|-------------|
+| Document                                               | Description                                                                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Itens documentados e deixados para implementação futura: bulk insert paralelo, Schema PK/FK/Indexes, queryTimeout global |
 
 ## Additional Resources
