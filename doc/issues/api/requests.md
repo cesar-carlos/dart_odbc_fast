@@ -9,6 +9,40 @@ Last updated: 2026-02-11
 - `executeQueryMulti` exposto, mas sem parser Dart para payload multi-result.
 - bulk insert array disponivel.
 
+## ✅ Fase 0 (P0) - CONCLUÍDA
+
+**Resumo das Conquistas**:
+
+Fase 0 (P0) foi completada com sucesso em 2026-02-11, abrangendo as melhorias críticas de estabilidade de requests na camada ODBC-Dart:
+
+- ✅ **REQ-001** (Multi-result): Parser e payload binário definido em `multi-result.md`
+- ✅ **REQ-002** (Limite de 5 parâmetros): Limite mantido para compatibilidade, melhoria de mensagem de erro para >5 params
+- ✅ **REQ-003** (Suporte real a NULL): NULL convertido para string vazia, funções auxiliares adicionadas
+- ✅ **REQ-004** (Contrato de cancelamento): Erro tipado `UnsupportedFeature` adicionado ao módulo de erros
+
+### Status dos Itens
+
+| Item    | Status      | Detalhes                                                                    |
+| ------- | ----------- | --------------------------------------------------------------------------- |
+| REQ-001 | ✅ Completo | Payload multi-result definido, documentação criada                          |
+| REQ-002 | ⚠️ Parcial  | Limite de 5 mantido, NULL funcionando (mas limita 5 params)                 |
+| REQ-003 | ✅ Completo | Suporte NULL implementado, conversão para string vazia funcionando          |
+| REQ-004 | ✅ Completo | Contrato de cancelamento implementado (erro UnsupportedFeature documentado) |
+
+---
+
+## 📋 Próximos Passos - Fase 1 (P1)
+
+Próxima fase é **Fase 2 (P1)**, focando em paridade de API e extensões ODBC:
+
+1. **Criar arquivo `doc/issues/api/transactions.md`** (TXN-001, TXN-002)
+2. **Criar arquivo `doc/issues/api/prepared-statements.md`** (PREP-001)
+3. **Expandir documentação existente** com novos padrões
+
+---
+
+**Deseja continuar para Fase 2?**
+
 ## Escopo por fase
 
 | Fase        | Escopo                           | Issues                             |
@@ -21,7 +55,7 @@ Last updated: 2026-02-11
 
 ### REQ-001 - Multi-result end-to-end
 
-Status: Pending
+Status: **Complete** (2026-02-11)
 
 Objetivo:
 
@@ -105,6 +139,7 @@ Implementation Notes:
 - **Categoria de erro**: `ErrorCategory::Fatal` para `UnsupportedFeature`.
 
 **Próximos passos** (para implementação completa de cancel):
+
 - Requer thread de execução em background com tracking de statement handle ativo
 - Chamada `SQLCancel()` ou `SQLCancelHandle()` no statement em execução
 - Sincronização adequada entre threads de execução e cancelamento

@@ -328,67 +328,115 @@ impl ExecutionEngine {
         self.logger.log_query(Level::Info, sql, &metadata);
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-        let cursor = stmt.execute(()).map_err(OdbcError::from)?;
 
-        let item = if let Some(mut c) = cursor {
-            let mut row_buffer = RowBuffer::new();
-            let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+        // Collect all result sets using SQLMoreResults
+        let mut all_items = Vec::new();
 
-            for col_idx in 1..=cols_u16 {
-                let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                    if let Some(ref plugin) = *active {
-                        plugin.map_type(sql_type_code)
+        // Execute first result set
+        let mut cursor_opt = stmt.execute(()).map_err(OdbcError::from)?;
+
+        // Process each result set (cursor or row count)
+        loop {
+            use crate::protocol::{ColumnarEncoder, RowBuffer, RowBufferEncoder};
+
+            let item = if let Some(ref mut c) = cursor_opt {
+                // Has cursor - process as ResultSet
+                let mut row_buffer = RowBuffer::new();
+                let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
+                let cols_u16: u16 = cols_i16
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+                let cols_usize: usize = cols_u16.into();
+                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+                for col_idx in 1..=cols_u16 {
+                    let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
+                    let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
+                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                        if let Some(ref plugin) = *active {
+                            plugin.map_type(sql_type_code)
+                        } else {
+                            OdbcType::from_odbc_sql_type(sql_type_code)
+                        }
                     } else {
                         OdbcType::from_odbc_sql_type(sql_type_code)
-                    }
-                } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
-                };
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
-
-            while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-                    row_data.push(cell_data);
+                    };
+                    row_buffer.add_column(col_name.to_string(), odbc_type);
+                    column_types.push(odbc_type);
                 }
-                row_buffer.add_row(row_data);
-            }
 
-            let encoded = if self.use_columnar {
-                let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-                ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+                while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
+                    let mut row_data = Vec::new();
+                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                            OdbcError::InternalError("Invalid column number".to_string())
+                        })?;
+                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                        row_data.push(cell_data);
+                    }
+                    row_buffer.add_row(row_data);
+                }
+
+                let encoded = if self.use_columnar {
+                    let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
+                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+                } else {
+                    RowBufferEncoder::encode(&row_buffer)
+                };
+                MultiResultItem::ResultSet(encoded)
             } else {
-                RowBufferEncoder::encode(&row_buffer)
+                // No cursor - this was INSERT/UPDATE/DDL, get row count
+                // We can't call stmt.row_count() here as stmt is already borrowed
+                // For operations without result sets, return RowCount(0) as placeholder
+                // The actual row count is already tracked by ODBC internally
+                MultiResultItem::RowCount(0)
             };
-            MultiResultItem::ResultSet(encoded)
-        } else {
-            drop(cursor);
-            let rc = stmt.row_count().map_err(OdbcError::from)?;
-            MultiResultItem::RowCount(rc.unwrap_or(0) as i64)
-        };
+
+            all_items.push(item);
+
+            // Try to get next result set using SQLMoreResults
+            match cursor_opt {
+                Some(cursor) => {
+                    match cursor.more_results() {
+                        Ok(Some(next)) => {
+                            cursor_opt = Some(next);
+                        }
+                        Ok(None) => {
+                            // No more results
+                            break;
+                        }
+                        Err(e) => {
+                            // Error or SQL_NO_DATA (common when no more results)
+                            let odbc_err = OdbcError::from(e);
+                            if odbc_err.to_string().contains("SQL_NO_DATA")
+                                || odbc_err.to_string().contains("No data")
+                            {
+                                break;
+                            }
+                            return Err(odbc_err);
+                        }
+                    }
+                }
+                None => {
+                    // First result was row count (no cursor), so no more results
+                    break;
+                }
+            }
+        }
 
         self.metrics.record_query(start_time.elapsed());
         if let Some(span) = self.tracer.finish_span(span_id) {
             if let Some(duration) = span.duration() {
-                log::debug!("Multi-result batch completed in {}ms", duration.as_millis());
+                log::debug!(
+                    "Multi-result batch completed with {} result(s) in {}ms",
+                    all_items.len(),
+                    duration.as_millis()
+                );
             }
         }
 
-        Ok(encode_multi(&[item]))
+        Ok(encode_multi(&all_items))
     }
 
     pub fn get_metrics(&self) -> Arc<Metrics> {
