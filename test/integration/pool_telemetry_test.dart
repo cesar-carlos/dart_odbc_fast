@@ -1,3 +1,4 @@
+// ignore: directives_ordering - Sort directive sections alphabetically.
 import 'package:test/test.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
