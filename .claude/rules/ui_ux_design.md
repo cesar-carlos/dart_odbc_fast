@@ -1,8 +1,10 @@
+﻿---
+paths:
+  - "lib/**/*.dart"
+  - "lib/page/**/*.dart"
+  - "lib/presentation/**/*.dart"
 ---
-description: UI/UX Design Principles for Windows Desktop Apps
-globs: ["lib/**/*.dart", "lib/page/**/*.dart", "lib/presentation/**/*.dart"]
-alwaysApply: true
----
+
 
 # UI/UX Design Principles for Desktop Apps
 
@@ -10,7 +12,7 @@ Guidelines for creating intuitive, accessible, and visually appealing Windows de
 
 ## Design System: Fluent UI vs Material 3
 
-- ✅ **Escolha uma “linguagem visual” principal por superfície/tela** (Fluent UI _ou_ Material) e mantenha consistência
+- ✅ **Escolha uma “linguagem visual” principal por superfície/tela** (Fluent UI *ou* Material) e mantenha consistência
 - ✅ **Centralize tokens** (cores, tipografia, spacing, radius, elevação) e consuma via theme (não hardcode)
 - ✅ **Suporte real a Light/Dark** e densidade apropriada para desktop (janelas redimensionáveis)
 - ✅ **Evite “mix” de componentes** (ex.: `NavigationRail` com `FluentNavigationView` na mesma tela)
@@ -21,14 +23,12 @@ Guidelines for creating intuitive, accessible, and visually appealing Windows de
 ## Visual Design
 
 ### Visual Hierarchy
-
 - ✅ Establish clear visual hierarchy to guide user attention
 - ✅ Use size, color, and spacing to create hierarchy
 - ✅ Most important elements should be most prominent
 - ✅ Use whitespace effectively to separate content
 
 **✅ Good visual hierarchy:**
-
 ```dart
 Column(
   crossAxisAlignment: CrossAxisAlignment.start,
@@ -49,7 +49,6 @@ Column(
 ```
 
 ### Color Palette
-
 - ✅ Use uma paleta coerente baseada em tokens do app
 - ✅ Se estiver usando Material: `ColorScheme.fromSeed()` + `ThemeData`
 - ✅ Se estiver usando Fluent UI: theme/tokens do Fluent (equivalentes) com o mesmo “brand accent”
@@ -58,14 +57,12 @@ Column(
 - ✅ Use consistent colors across the application
 
 ### Typography
-
 - ✅ Use tipografia via theme (Material `TextTheme` ou equivalente no Fluent UI)
 - ✅ Limit to 1-2 font families (system fonts preferred)
 - ✅ Use relative text sizes that scale with system settings
 - ✅ Line height: 1.4x to 1.6x of font size
 
 ### Consistency
-
 - ✅ Develop and adhere to a design system
 - ✅ Use consistent terminology throughout interface
 - ✅ Maintain consistent positioning of recurring elements
@@ -74,7 +71,6 @@ Column(
 ## Interaction Design
 
 ### Desktop Navigation Patterns
-
 - ✅ Use familiar desktop UI components (MenuBar, ToolBar, NavigationRail)
 - ✅ Em Fluent UI, prefira padrões equivalentes (ex.: NavigationView/CommandBar) para “feel” nativo
 - ✅ Provide clear calls-to-action
@@ -82,7 +78,6 @@ Column(
 - ✅ Support both mouse and keyboard navigation
 
 **✅ Good desktop navigation:**
-
 ```dart
 Row(
   children: [
@@ -104,7 +99,6 @@ Row(
 ```
 
 ### Feedback Mechanisms
-
 - ✅ Provide clear feedback for user actions
 - ✅ Use loading indicators (CircularProgressIndicator, LinearProgressIndicator)
 - ✅ Provide clear error messages and recovery options
@@ -118,7 +112,6 @@ Row(
 - ✅ Use transient notifications (SnackBar/InfoBar) for “FYI” messages, not for critical diagnostics
 
 **✅ Good feedback pattern:**
-
 ```dart
 ElevatedButton(
   onPressed: () async {
@@ -169,14 +162,12 @@ SelectableText.rich(
 ```
 
 ### Mouse Interactions
-
 - ✅ Implement hover states for interactive elements
 - ✅ Use `MouseRegion` for cursor changes
 - ✅ Support right-click context menus when appropriate
 - ✅ Provide visual feedback on hover
 
 **✅ Good hover pattern:**
-
 ```dart
 InkWell(
   onHover: (isHovered) {
@@ -192,7 +183,6 @@ InkWell(
 ```
 
 ### Animations
-
 - ✅ Use animations judiciously to enhance UX
 - ✅ Keep animations under 300ms for responsive feel
 - ✅ Use `AnimatedBuilder` for complex animations
@@ -201,18 +191,15 @@ InkWell(
 ## Accessibility (A11Y)
 
 ### WCAG Guidelines
-
 - ✅ Ensure text contrast ratio of at least 4.5:1
 - ✅ Large text (18pt+): minimum 3:1 contrast ratio
 - ✅ Test UI remains usable when users increase system font size
 
 ### Semantic Labels
-
 - ✅ Use `Semantics` widget for clear, descriptive labels
 - ✅ Provide semantic labels for icon-only buttons
 
 **✅ Good accessibility:**
-
 ```dart
 Semantics(
   button: true,
@@ -226,7 +213,6 @@ Semantics(
 ```
 
 ### Keyboard Navigability
-
 - ✅ Ensure all interactive elements are keyboard accessible
 - ✅ Use `FocusNode` and `FocusScope` for keyboard navigation
 - ✅ Provide visible focus indicators
@@ -234,7 +220,6 @@ Semantics(
 - ✅ Implement keyboard shortcuts (Ctrl+S, Ctrl+C, etc.)
 
 **✅ Good keyboard navigation:**
-
 ```dart
 class MyWidget extends StatefulWidget {
   @override
@@ -270,7 +255,6 @@ class _MyWidgetState extends State<MyWidget> {
 ```
 
 ### Screen Reader Testing
-
 - ✅ Regularly test with Narrator (Windows) or NVDA
 - ✅ Use `excludeSemantics` to hide decorative elements
 - ✅ Announce dynamic content changes
@@ -278,13 +262,11 @@ class _MyWidgetState extends State<MyWidget> {
 ## Performance Optimization
 
 ### Asset Optimization
-
 - ✅ Implement `loadingBuilder` and `errorBuilder` for images
 - ✅ Optimize images and assets to minimize load times
 - ✅ Use appropriate image formats
 
 **✅ Good image handling:**
-
 ```dart
 Image.file(
   file,
@@ -296,13 +278,11 @@ Image.file(
 ```
 
 ### Lazy Loading
-
 - ✅ Use `ListView.builder` for long lists
 - ✅ Implement pagination for large datasets
 - ✅ Load non-critical resources on demand
 
 ### Code Optimization
-
 - ✅ Use `const` widgets to reduce rebuilds
 - ✅ Extract widgets that change frequently
 - ✅ Use `RepaintBoundary` for complex widgets
@@ -311,14 +291,12 @@ Image.file(
 ## Responsive Design
 
 ### Window Size Adaptation
-
 - ✅ Use `LayoutBuilder` for responsive layouts
 - ✅ Use `Expanded` and `Flexible` for flexible layouts
 - ✅ Use `MediaQuery` to get window dimensions
 - ✅ Support window resizing gracefully
 
 **✅ Good responsive layout:**
-
 ```dart
 LayoutBuilder(
   builder: (context, constraints) {
@@ -333,14 +311,12 @@ LayoutBuilder(
 ```
 
 ### Window Management
-
 - ✅ Set minimum window size to prevent UI breaking
 - ✅ Handle window resize events
 - ✅ Use `window_manager` for window control
 - ✅ Support multi-window if appropriate
 
 **✅ Good window management:**
-
 ```dart
 // In main.dart or window config
 await windowManager.ensureInitialized();
@@ -360,21 +336,18 @@ await windowManager.waitUntilReadyToShow(windowOptions, () async {
 ## Information Architecture
 
 ### Content Organization
-
 - ✅ Organize content logically for easy access
 - ✅ Use clear labeling and categorization
 - ✅ Implement search functionality for complex apps
 - ✅ Create clear user flows
 
 ### Menu Structure
-
 - ✅ Use standard menu bar patterns (File, Edit, View, Help)
 - ✅ Group related commands logically
 - ✅ Use keyboard shortcuts consistently
 - ✅ Follow Windows UI guidelines
 
 **✅ Good menu bar pattern:**
-
 ```dart
 MenuBar(
   children: [
@@ -400,7 +373,6 @@ MenuBar(
 ## Forms
 
 ### Form Design
-
 - ✅ Design form layouts that work on desktop
 - ✅ Use appropriate input types (TextField, dropdowns, checkboxes)
 - ✅ Implement inline validation
@@ -408,7 +380,6 @@ MenuBar(
 - ✅ Support Enter key for form submission
 
 **✅ Good form pattern:**
-
 ```dart
 TextFormField(
   decoration: const InputDecoration(
@@ -434,7 +405,6 @@ TextFormField(
 ## Testing and Iteration
 
 ### Testing
-
 - ✅ Test on different screen resolutions
 - ✅ Test window resizing behavior
 - ✅ Test keyboard navigation
@@ -442,7 +412,6 @@ TextFormField(
 - ✅ Use Flutter DevTools for performance profiling
 
 ### User Feedback
-
 - ✅ Implement analytics to track user behavior
 - ✅ Regularly gather and incorporate user feedback
 - ✅ Conduct A/B testing for critical design decisions
@@ -451,27 +420,23 @@ TextFormField(
 ## Desktop-Specific Considerations
 
 ### File Operations
-
 - ✅ Use standard Windows file dialogs (`file_selector`)
 - ✅ Support drag and drop when appropriate
 - ✅ Handle file permissions correctly
 - ✅ Provide feedback for long file operations
 
 ### System Integration
-
 - ✅ Follow Windows 11 design guidelines (Fluent Design)
 - ✅ Use native Windows controls when possible
 - ✅ Support system dark/light mode
 - ✅ Respect system font settings
 
 ### Auto-Close Behavior
-
 - ✅ Consider auto-close for simple utility apps
 - ✅ Warn user before closing with unsaved changes
 - ✅ Use `exit(0)` for clean app termination
 
 **✅ Good auto-close pattern:**
-
 ```dart
 // Auto-close after 30 seconds of inactivity (for simple utility apps)
 Timer? _inactivityTimer;
@@ -501,7 +466,6 @@ Widget build(BuildContext context) {
 ## Documentation
 
 ### Design System
-
 - ✅ Maintain a comprehensive style guide
 - ✅ Document design patterns and component usage
 - ✅ Create user flow diagrams for complex interactions
@@ -533,3 +497,5 @@ When designing UI/UX for desktop apps:
 - [ ] Minimum window size is set
 - [ ] File operations use standard dialogs
 - [ ] Auto-close is considered for simple apps
+
+

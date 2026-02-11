@@ -1,15 +1,14 @@
+﻿---
+paths:
+  - "lib/**/*.dart"
 ---
-description: Null Safety - Boas práticas para null safety no Dart
-globs: ["lib/**/*.dart"]
-alwaysApply: true
----
+
 
 # Null Safety - Boas Práticas
 
 ## Princípios Fundamentais
 
 ### Null Safety no Dart
-
 - ✅ Dart 2.12+ tem null safety habilitado por padrão
 - ✅ Variáveis não são nullable por padrão
 - ✅ Use `?` apenas quando necessário
@@ -18,7 +17,6 @@ alwaysApply: true
 ## Declaração de Tipos
 
 ### Non-nullable por Padrão
-
 - ✅ Variáveis são non-nullable por padrão
 - ✅ Use tipos explícitos para clareza
 
@@ -33,7 +31,6 @@ String userName = null; // Error: A value of type 'Null' can't be assigned
 ```
 
 ### Nullable Types
-
 - ✅ Use `?` apenas quando realmente necessário
 - ✅ Documente por que uma variável pode ser null
 
@@ -53,7 +50,6 @@ String? userName = 'John'; // Não precisa ser nullable se sempre terá valor
 ## Inicialização
 
 ### Variáveis Locais
-
 - ✅ Inicialize variáveis imediatamente ou use `late`
 - ✅ Use `final` quando o valor não muda
 
@@ -72,7 +68,6 @@ String userName; // Error: 'userName' must be initialized
 ```
 
 ### Campos de Classe
-
 - ✅ Inicialize campos no construtor ou use `late`
 - ✅ Use `late` para inicialização tardia
 
@@ -81,14 +76,14 @@ String userName; // Error: 'userName' must be initialized
 class User {
   final String name;
   final String? email;
-
+  
   User({required this.name, this.email});
 }
 
 // ✅ Bom: late para inicialização tardia
 class User {
   late String name;
-
+  
   void initialize(String userName) {
     name = userName;
   }
@@ -104,7 +99,6 @@ class User {
 ## Null Checks
 
 ### Null-aware Operators
-
 - ✅ Use `?.` para chamadas seguras
 - ✅ Use `??` para valores padrão
 - ✅ Use `??=` para atribuição condicional
@@ -123,7 +117,6 @@ userName ??= 'Default'; // Atribui apenas se for null
 ```
 
 ### Null Assertion
-
 - ✅ Use `!` apenas quando absolutamente seguro
 - ✅ Evite `!` quando possível (use null checks)
 - ✅ Documente por que é seguro usar `!`
@@ -152,7 +145,6 @@ String getUserName() {
 ## Collections Nullable
 
 ### List
-
 - ✅ Use `List<T?>` para listas que podem conter null
 - ✅ Prefira `List<T>` quando possível
 
@@ -168,7 +160,6 @@ List<String>? names; // Lista pode ser null, mas elementos não são null
 ```
 
 ### Map
-
 - ✅ Use `Map<K, V?>` quando valores podem ser null
 - ✅ Trate nulls ao acessar mapas
 
@@ -187,7 +178,6 @@ int safeScore = scores['John'] ?? 0; // Valor padrão
 ## Funções e Métodos
 
 ### Parâmetros Nullable
-
 - ✅ Use `required` para parâmetros obrigatórios
 - ✅ Use `?` para parâmetros opcionais que podem ser null
 - ✅ Use valores padrão quando possível
@@ -210,7 +200,6 @@ void createUser({
 ```
 
 ### Retorno Nullable
-
 - ✅ Retorne `T?` quando o resultado pode ser null
 - ✅ Documente quando null pode ser retornado
 
@@ -236,7 +225,6 @@ User? findUser(String id) {
 ## Null Safety com Generics
 
 ### Generic Types
-
 - ✅ Use `T?` para tipos genéricos nullable
 - ✅ Use `T` para tipos genéricos non-nullable
 
@@ -259,7 +247,6 @@ final user = await userRepo.findById('123'); // User?
 ## Null Safety em APIs
 
 ### APIs Externas
-
 - ✅ Trate nulls de APIs externas
 - ✅ Valide dados antes de usar
 - ✅ Use mappers para converter nulls
@@ -269,9 +256,9 @@ final user = await userRepo.findById('123'); // User?
 class UserModel {
   final String? name;
   final String? email;
-
+  
   UserModel({this.name, this.email});
-
+  
   User toEntity() {
     return User(
       name: name ?? 'Unknown',
@@ -282,7 +269,6 @@ class UserModel {
 ```
 
 ### JSON Parsing
-
 - ✅ Trate nulls ao fazer parse de JSON
 - ✅ Use valores padrão quando necessário
 
@@ -301,7 +287,6 @@ UserModel.fromJson(Map<String, dynamic> json)
 ## Boas Práticas
 
 ### Evitar Null
-
 - ✅ Prefira valores padrão sobre null
 - ✅ Use enums para estados ao invés de null
 - ✅ Use Optional types quando apropriado
@@ -323,7 +308,6 @@ class Optional<T> {
 ```
 
 ### Validação
-
 - ✅ Valide nulls antes de usar
 - ✅ Use asserts em desenvolvimento
 - ✅ Trate nulls graciosamente
@@ -348,7 +332,6 @@ String getUserName() => _userName ?? 'Anonymous';
 ```
 
 ### Documentação
-
 - ✅ Documente quando nulls são esperados
 - ✅ Explique por que uma variável é nullable
 - ✅ Documente quando null pode ser retornado
@@ -358,7 +341,7 @@ String getUserName() => _userName ?? 'Anonymous';
 class UserService {
   /// Current user. Can be null if no user is logged in.
   User? _currentUser;
-
+  
   /// Gets the current user. Returns null if no user is logged in.
   User? getCurrentUser() {
     return _currentUser;
@@ -377,3 +360,5 @@ class UserService {
 - [ ] Funções retornam `T?` quando null é possível
 - [ ] Parâmetros nullable são documentados
 - [ ] APIs externas tratam nulls adequadamente
+
+

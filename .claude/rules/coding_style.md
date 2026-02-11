@@ -1,8 +1,9 @@
+﻿---
+paths:
+  - "lib/**/*.dart"
+  - "test/**/*.dart"
 ---
-description: Dart Style Guide - Effective Dart (2026) with modern best practices
-globs: ["lib/**/*.dart", "test/**/*.dart"]
-alwaysApply: true
----
+
 
 # Dart Style Guide - Effective Dart (2026)
 
@@ -11,7 +12,6 @@ alwaysApply: true
 ## Language & Syntax
 
 ### Type Declarations
-
 - ✅ **Always declare types** for variables, parameters, and return values
 - ✅ Use explicit types for public APIs
 - ✅ Avoid `var` when type is clear and improves readability
@@ -34,7 +34,6 @@ var age = calculateAge(birthDate);
 - ✅ Prefer early returns to reduce nesting
 
 ### Const Constructors
-
 - ✅ **Use const constructors** for immutable widgets to optimize rebuilds
 - ✅ Use `const` for values known at compile time
 - ✅ Reduces unnecessary rebuilds and improves performance
@@ -71,7 +70,6 @@ class MyWidget extends StatelessWidget {
 ```
 
 ### Arrow Syntax
-
 - ✅ **Leverage arrow syntax** for simple functions and methods
 - ✅ Use arrow syntax for one-line functions
 - ✅ Improves readability for simple operations
@@ -90,7 +88,6 @@ String getFormattedUserName() {
 ```
 
 ### Expression Bodies
-
 - ✅ **Prefer expression bodies** for one-line getters and setters
 - ✅ Use `=>` for single-expression getters
 - ✅ Improves code conciseness
@@ -108,7 +105,6 @@ bool get isValid {
 ```
 
 ### Trailing Commas
-
 - ✅ **Use trailing commas** for better formatting and diffs
 - ✅ Add trailing comma to multi-line function calls, lists, and parameters
 - ✅ Helps with git diffs and code formatting
@@ -142,7 +138,6 @@ Column(
 ```
 
 ### Line Length
-
 - ✅ **Keep lines under 80 characters** where possible
 - ✅ Break long lines for better readability
 - ✅ Use line breaks logically
@@ -456,7 +451,6 @@ Set<String> uniqueNames = {'John', 'Jane', 'John'}; // {'John', 'Jane'}
 ## Functions and Methods
 
 ### Function Length
-
 - ✅ Functions should be **short and with single purpose** (strive for **< 20 lines**)
 - ✅ Extract complex logic into separate, well-named functions
 - ✅ Each function should do one thing well
@@ -512,7 +506,7 @@ String getUserName() {
 }
 ```
 
-### Tear-off for Widgets
+### Tear-offs and Callback Signatures
 
 - ✅ Prefer tear-offs when callback signatures match exactly
 - ✅ Enable lints `unnecessary_lambdas` and `implicit_call_tearoffs`
@@ -757,7 +751,7 @@ switch (value) {
 - ✅ **Avoid trailing comments** - place comments above the code instead
 - ✅ Keep comments updated with code
 - ✅ Prefer clear code over comments
-- ❌ Never add `// ignore` or `// ignore_for_file` unless it matches the allowlist in `error_handling.mdc`
+- ❌ Never add `// ignore` or `// ignore_for_file` unless it matches the allowlist in `error_handling.md`
 
 ```dart
 // ✅ Good: comment above code
@@ -932,3 +926,5 @@ Don't use leading underscores for non-private identifiers (locals, parameters, l
 ## References
 
 For more details, see the official [Effective Dart: Style Guide](https://dart.dev/effective-dart/style).
+
+

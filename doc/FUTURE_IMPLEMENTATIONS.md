@@ -8,12 +8,12 @@ Itens documentados e deixados para implementação futura. Não bloqueiam o uso 
 
 ### Estado atual
 
-| Camada | Situação |
-|--------|----------|
-| **Rust FFI** | `odbc_bulk_insert_parallel` existe como **stub**: sempre retorna -1 e grava erro "use engine ParallelBulkInsert API". Em `native/odbc_engine/src/ffi/mod.rs`. |
-| **Rust engine** | `ParallelBulkInsert` em `native/odbc_engine/src/engine/core/parallel_insert.rs`: usa pool + rayon, divide dados em chunks e insere em paralelo. Hoje expõe `insert_i32_parallel(table, columns, data)` (tipado para i32). Não consome o payload binário do FFI. |
-| **Dart bindings** | `odbc_bulk_insert_parallel` é feito lookup em `lib/infrastructure/native/bindings/odbc_bindings.dart`. |
-| **Dart API** | Nenhum método em OdbcNative, repositório ou service chama essa função. Só existe `bulkInsertArray` → `odbc_bulk_insert_array`. |
+| Camada            | Situação                                                                                                                                                                                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rust FFI**      | `odbc_bulk_insert_parallel` existe como **stub**: sempre retorna -1 e grava erro "use engine ParallelBulkInsert API". Em `native/odbc_engine/src/ffi/mod.rs`.                                                                                                   |
+| **Rust engine**   | `ParallelBulkInsert` em `native/odbc_engine/src/engine/core/parallel_insert.rs`: usa pool + rayon, divide dados em chunks e insere em paralelo. Hoje expõe `insert_i32_parallel(table, columns, data)` (tipado para i32). Não consome o payload binário do FFI. |
+| **Dart bindings** | `odbc_bulk_insert_parallel` é feito lookup em `lib/infrastructure/native/bindings/odbc_bindings.dart`.                                                                                                                                                          |
+| **Dart API**      | Nenhum método em OdbcNative, repositório ou service chama essa função. Só existe `bulkInsertArray` → `odbc_bulk_insert_array`.                                                                                                                                  |
 
 ### Uso atual de bulk insert
 

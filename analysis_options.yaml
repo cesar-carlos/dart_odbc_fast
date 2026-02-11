@@ -7,10 +7,19 @@ analyzer:
     - "build/**"
     - "benchmarks/**"
     - "tool/**"
+  errors:
+    unnecessary_ignore: error
 
 linter:
   rules:
+    avoid_catches_without_on_clauses: true
+    avoid_catching_errors: true
     avoid_print: false
     avoid_returning_this: false
     discarded_futures: false
+    empty_catches: true
+    implicit_call_tearoffs: true
+    only_throw_errors: true
     public_member_api_docs: false
+    unnecessary_lambdas: true
+    use_rethrow_when_possible: true

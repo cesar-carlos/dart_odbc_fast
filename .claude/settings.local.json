@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(dart:*)",
+      "Bash(grep:*)",
+      "Bash(cargo test:*)",
+      "Bash(cat:*)",
+      "Bash(test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "Bash(curl:*)",
+      "Bash(git remote get-url:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(cargo build:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(gh run list:*)",
+      "Bash(cargo tree:*)",
+      "Bash(gh run:*)",
+      "Bash(dir:*)",
+      "Bash(gh release view:*)",
+      "Bash(tee:*)",
+      "Bash(echo:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(if not exist \"doc\\\\issues\" then mkdir \"doc\\\\issues\":*)",
+      "Bash(powershell:*)"
+    ]
+  }
+}

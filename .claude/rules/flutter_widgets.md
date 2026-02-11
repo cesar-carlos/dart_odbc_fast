@@ -1,9 +1,10 @@
+﻿---
+paths:
+  - "lib/presentation/**/*.dart"
+  - "lib/shared/**/*.dart"
+  - "lib/page/**/*.dart"
 ---
-description: Flutter Widgets - Modern best practices (2026) with Material 3
-globs:
-  ["lib/presentation/**/*.dart", "lib/shared/**/*.dart", "lib/page/**/*.dart"]
-alwaysApply: true
----
+
 
 # Flutter Widgets - Modern Best Practices
 
@@ -12,7 +13,6 @@ alwaysApply: true
 ## Stateless vs Stateful
 
 ### StatelessWidget
-
 - ✅ Use `StatelessWidget` when widget doesn't need to manage state
 - ✅ Use `const` constructor whenever possible for better performance
 - ✅ Prefer composition over inheritance
@@ -40,7 +40,6 @@ class UserCard extends StatelessWidget {
 ```
 
 ### StatefulWidget
-
 - ✅ Use `StatefulWidget` only when necessary to manage state
 - ✅ Keep state minimal (only what's needed)
 - ✅ Separate business logic from UI state
@@ -302,7 +301,6 @@ class UserInfoCard extends StatelessWidget {
 ## Performance
 
 ### Const Widgets
-
 - ✅ Use `const` constructor for immutable widgets
 - ✅ Use `const` for child widgets when possible
 - ✅ Reduces unnecessary rebuilds
@@ -340,7 +338,6 @@ class MyWidget extends StatelessWidget {
 ```
 
 ### ListView Performance
-
 - ✅ Use `ListView.builder` or `SliverList` for long lists
 - ✅ Creates lazy-loaded lists for performance
 - ❌ Avoid using `ListView()` with children for long lists
@@ -375,7 +372,6 @@ ListView(
 ```
 
 ### Expensive Operations
-
 - ✅ Use `compute()` to run expensive calculations in a separate isolate
 - ✅ Avoid performing expensive operations in `build()` methods
 - ✅ Use `FutureBuilder` for async operations
@@ -428,7 +424,6 @@ Widget build(BuildContext context) {
 ```
 
 ### RepaintBoundary
-
 - ✅ Use `RepaintBoundary` for complex widgets that repaint frequently
 - ✅ Isolates repaints to specific widget subtrees
 
@@ -449,7 +444,6 @@ RepaintBoundary(
 ## Widget Composition
 
 ### Private Widget Classes
-
 - ✅ Use small, private `Widget` classes instead of private helper methods
 - ✅ Break down large `build()` methods into smaller, reusable private Widget classes
 - ✅ Improves readability and performance
@@ -524,7 +518,6 @@ Widget _buildUserCard(User user) {
 ```
 
 ### Tear-offs for Widgets
-
 - ✅ Prefer extracting reusable widgets into private/public widget classes
 - ✅ Use tear-offs only when callback signatures match exactly
 - ✅ Keep lambdas when you need to adapt `context`, `index`, or named params
@@ -547,7 +540,6 @@ onPressed: _refresh;
 ## Layout Best Practices
 
 ### Rows and Columns
-
 - ✅ Use `Expanded` to make a child fill remaining space along main axis
 - ✅ Use `Flexible` when you want a widget to shrink to fit, but not necessarily grow
 - ❌ Don't combine `Flexible` and `Expanded` in the same `Row` or `Column`
@@ -578,7 +570,6 @@ Wrap(
 ```
 
 ### SingleChildScrollView
-
 - ✅ Use when content is intrinsically larger than viewport, but is a fixed size
 
 ```dart
@@ -595,7 +586,6 @@ SingleChildScrollView(
 ```
 
 ### LayoutBuilder
-
 - ✅ Use for complex, responsive layouts
 - ✅ Make decisions based on available space
 
@@ -612,7 +602,6 @@ LayoutBuilder(
 ```
 
 ### FittedBox
-
 - ✅ Use to scale or fit a single child widget within its parent
 
 ```dart
@@ -624,7 +613,6 @@ FittedBox(
 ```
 
 ### Stack and Positioning
-
 - ✅ Use `Positioned` to precisely place a child within a `Stack`
 - ✅ Use `Align` to position a child using alignments like `Alignment.center`
 
@@ -647,7 +635,6 @@ Stack(
 ```
 
 ### OverlayPortal
-
 - ✅ Use to show UI elements (like custom dropdowns or tooltips) "on top" of everything
 - ✅ Manages the `OverlayEntry` for you
 
@@ -690,7 +677,6 @@ class _MyDropdownState extends State<MyDropdown> {
 ## Theming - Material 3
 
 ### ColorScheme.fromSeed
-
 - ✅ Use `ColorScheme.fromSeed()` to generate complete color palette
 - ✅ Define both light and dark themes
 - ✅ Centralize component styles within `ThemeData`
@@ -722,7 +708,6 @@ MaterialApp(
 ```
 
 ### ThemeExtension for Custom Tokens
-
 - ✅ Use `ThemeExtension` for custom styles not in standard `ThemeData`
 - ✅ Implement `copyWith` and `lerp` methods
 - ✅ Register in `ThemeData.extensions`
@@ -778,7 +763,6 @@ Container(
 ```
 
 ### WidgetStateProperty
-
 - ✅ Use `WidgetStateProperty.resolveWith` for state-dependent styling
 - ✅ Use `WidgetStateProperty.all` for same value across all states
 
@@ -806,7 +790,6 @@ ElevatedButton(
 ```
 
 ### Text Styles
-
 - ✅ Use `Theme.of(context).textTheme` for text styles
 - ✅ Define text styles in theme
 - ✅ Avoid hardcoded text styles
@@ -830,7 +813,7 @@ ThemeData(
 
 ## Typography & Accessibility
 
-- ✅ For design-level guidance (palette, typography scale, contrast), follow `ui_ux_design.mdc`
+- ✅ For design-level guidance (palette, typography scale, contrast), follow `ui_ux_design.md`
 - ✅ In widgets, ensure:
   - semantic labels for icon-only actions
   - scalable text (avoid hardcoded sizes when possible)
@@ -839,7 +822,6 @@ ThemeData(
 ## Spacing
 
 ### Spacing Constants
-
 - ✅ Use `SizedBox` for explicit spacing
 - ✅ Avoid magic numbers (create constants)
 
@@ -864,19 +846,16 @@ Column(
 ## General Best Practices
 
 ### Keep Widgets Small
-
 - ✅ Keep widgets under 150 lines
 - ✅ Extract widgets when `build()` gets large
 - ✅ Single responsibility per widget
 
 ### Avoid Rebuilds
-
 - ✅ Use `const` widgets when possible
 - ✅ Extract widgets that change frequently
 - ✅ Use `RepaintBoundary` for complex widgets
 
 ### Dispose Resources
-
 - ✅ Always dispose FocusNode, TextEditingController, StreamController, etc.
 
 ```dart
@@ -890,7 +869,6 @@ void dispose() {
 ```
 
 ### Keys
-
 - ✅ Use `Key` only when necessary (lists, animations)
 - ✅ Use `ValueKey` for unique values
 - ✅ Use `ObjectKey` for complex objects
@@ -909,7 +887,6 @@ ListView.builder(
 ```
 
 ## Network Images
-
 - ✅ Always include `loadingBuilder` and `errorBuilder`
 
 ```dart
@@ -942,7 +919,8 @@ TextField(
 ```
 
 ## References
-
 - [Flutter AI Rules](https://docs.flutter.dev/ai/ai-rules)
 - [Effective Dart: Style Guide](https://dart.dev/effective-dart/style)
 - [Material 3 Guidelines](https://m3.material.io/)
+
+

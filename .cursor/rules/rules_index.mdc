@@ -23,11 +23,13 @@ alwaysApply: true
 - **`flutter_widgets.mdc`**: widget construction/performance patterns (composition, const, lists, layout, theming tokens)
 - **`ui_ux_design.mdc`**: desktop UI/UX principles (Fluent vs Material policy, navigation, a11y, responsive desktop)
 - **`testing.mdc`**: unit/widget testing conventions (AAA, naming, isolation, mocking)
+- **`rust_style.mdc`**: Rust native code rules (rustfmt, clippy, API design, FFI safety)
+- **`error_handling.mdc`**: unified error handling policy and suppression allowlist (Dart + Rust)
 
-### Project-specific (`backup_database`)
+### Project-specific
 
-- **`project_specifics.mdc`**: decisions specific to this repo (Clean Architecture + DDD, dependencies, desktop specifics)
+- There is no `project_specifics.mdc` currently.
 
 ## Copying to other projects
 
-See `README.md` in this folder. Keep generic rules, and replace `project_specifics.mdc`.
+See `README.md` in this folder. Keep generic rules and create project-specific rules only when needed.

@@ -1,0 +1,52 @@
+---
+paths:
+  - "native/**/*.rs"
+  - "native/**/Cargo.toml"
+---
+
+# Rust Style and Quality (Native)
+
+**Based on**: Rust Style Guide, rustfmt, Clippy, and Rust API Guidelines.
+
+## Formatting and Linting
+
+- ✅ Always format with `cargo fmt` (rustfmt is the source of truth for formatting)
+- ✅ Run `cargo clippy --all-targets --all-features` before merging touched Rust code
+- ✅ Prefer fixing Clippy warnings instead of silencing them
+- ❌ Avoid broad `#[allow(...)]` at module/crate level without a clear reason
+- ❌ Never suppress Rust diagnostics unless explicitly allowlisted in `error_handling.md`
+
+## API and Naming
+
+- ✅ Follow idiomatic Rust naming (`snake_case`, `UpperCamelCase`, `SCREAMING_SNAKE_CASE`)
+- ✅ Keep visibility minimal (`pub(crate)`/private by default, `pub` only when required)
+- ✅ Keep public APIs small and explicit
+- ✅ Prefer strong types over loose `String`/`Vec<u8>` in domain contracts
+
+## Error Handling
+
+- ✅ Return `Result<T, E>` for fallible paths
+- ✅ Use domain-specific errors (`thiserror`) for library boundaries
+- ✅ Add actionable context when propagating errors
+- ❌ Avoid `unwrap()`/`expect()` in library/runtime code (acceptable in tests and controlled bootstrap code)
+
+## Comments and Docs
+
+- ✅ Use comments for intent, invariants, and safety rationale
+- ✅ Prefer self-explanatory code over comment-heavy code
+- ❌ Do not add comments that only restate the line below
+- ✅ Document public APIs when behavior/contracts are not obvious
+
+## FFI Safety (relevant to this repo)
+
+- ✅ Use `#[repr(C)]` for FFI-facing structs/enums exposed to C
+- ✅ Validate pointers and lengths at FFI boundaries
+- ✅ Ensure panics do not cross FFI boundaries
+- ✅ Clearly document ownership/lifetime rules for pointers crossing FFI
+
+## References
+
+- https://doc.rust-lang.org/style-guide/
+- https://rust-lang.github.io/rustfmt/
+- https://doc.rust-lang.org/clippy/
+- https://rust-lang.github.io/api-guidelines/

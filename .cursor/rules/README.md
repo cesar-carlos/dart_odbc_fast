@@ -17,7 +17,9 @@ Este diretório contém as regras do Cursor para manter a consistência e qualid
 │   ├── null_safety.mdc          # Boas práticas de null safety
 │   ├── testing.mdc              # Padrões de testes
 │   ├── flutter_widgets.mdc      # Widgets Flutter (estrutura/performance/layout/tokens)
-│   └── ui_ux_design.mdc         # Princípios de UI/UX para desktop
+│   ├── ui_ux_design.mdc         # Princípios de UI/UX para desktop
+│   └── rust_style.mdc           # Padrões de Rust nativo (fmt/clippy/FFI)
+│   └── error_handling.mdc       # Tratamento de erro e política de supressão
 │
 └── 🎯 REGRAS ESPECÍFICAS
     └── project_specifics.mdc    # Regras específicas deste projeto
@@ -30,6 +32,7 @@ Este diretório contém as regras do Cursor para manter a consistência e qualid
 Essas regras são **100% reutilizáveis** em qualquer projeto Flutter/Dart:
 
 ✅ **Copie estes arquivos sem modificações:**
+
 - `rules_index.mdc`
 - `general_rules.mdc`
 - `clean_architecture.mdc`
@@ -39,12 +42,15 @@ Essas regras são **100% reutilizáveis** em qualquer projeto Flutter/Dart:
 - `testing.mdc`
 - `flutter_widgets.mdc`
 - `ui_ux_design.mdc` (se for app desktop)
+- `rust_style.mdc` (se houver código Rust no projeto)
+- `error_handling.mdc`
 
 ### 2. Regras Específicas (Adapte)
 
 Este arquivo precisa ser **adaptado** para cada projeto:
 
 ⚠️ **Adapte este arquivo:**
+
 - `project_specifics.mdc` - Ajuste para seu projeto
 
 ### Como Adaptar `project_specifics.mdc`
@@ -85,6 +91,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 ## ✨ Conteúdo das Regras Genéricas
 
 ### `general_rules.mdc`
+
 - Princípios fundamentais (código conciso, composição, naming)
 - Regras de documentação (não criar docs automáticos)
 - Código autoexplicativo
@@ -92,6 +99,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Priorizar componentes reutilizáveis
 
 ### `solid_principles.mdc`
+
 - Single Responsibility Principle (SRP)
 - Open/Closed Principle (OCP)
 - Liskov Substitution Principle (LSP)
@@ -100,6 +108,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Exemplos e violações comuns
 
 ### `coding_style.mdc`
+
 - Convenções de nomenclatura (2026)
 - Declaração de tipos
 - Const constructors
@@ -110,6 +119,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Recursos modernos do Dart 3+ (Pattern matching, Records, Switch expressions)
 
 ### `null_safety.mdc`
+
 - Nullable vs non-nullable
 - Null-aware operators (`?.`, `??`, `??=`)
 - Inicialização de variáveis
@@ -117,6 +127,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - APIs externas
 
 ### `testing.mdc`
+
 - Estrutura de testes (Unit, Widget)
 - AAA pattern (Arrange, Act, Assert)
 - Nomenclatura de testes
@@ -124,6 +135,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - package:checks para assertions
 
 ### `flutter_widgets.mdc`
+
 - Stateless vs Stateful
 - Widget composition (private classes, not methods)
 - Performance (const, ListView.builder, RepaintBoundary)
@@ -132,6 +144,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Tear-offs para widgets
 
 ### `ui_ux_design.mdc`
+
 - Hierarquia visual
 - Color palette (60-30-10 rule)
 - Typography
@@ -141,6 +154,21 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Responsive design
 - Keyboard navigation
 
+### `rust_style.mdc`
+
+- Convenções oficiais de estilo Rust
+- `cargo fmt`/rustfmt e Clippy
+- API Guidelines para crates
+- Boas práticas de erro (`Result`, sem `unwrap` indevido)
+- Segurança de FFI (`#[repr(C)]`, panics não atravessam FFI)
+
+### `error_handling.mdc`
+
+- Regra transversal de tratamento de erro (Dart + Rust)
+- Proibição de suprimir diagnósticos fora da allowlist
+- Regras de propagação com contexto
+- Templates de supressão com motivo + issue + prazo de remoção
+
 ## 🎯 Ajustando Globs
 
 Se sua estrutura de pastas for diferente, ajuste os `globs` no frontmatter:
@@ -148,7 +176,7 @@ Se sua estrutura de pastas for diferente, ajuste os `globs` no frontmatter:
 ```yaml
 ---
 description: Descrição da regra
-globs: ["seu_path/**/*.dart"]  # Ajuste aqui
+globs: ["seu_path/**/*.dart"] # Ajuste aqui
 alwaysApply: true
 ---
 ```
@@ -173,6 +201,11 @@ globs: ["lib/modules/**/*.dart"]
 - [Effective Dart: Style Guide](https://dart.dev/effective-dart/style)
 - [SOLID Principles](https://en.wikipedia.org/wiki/SOLID)
 - [Material 3 Guidelines](https://m3.material.io/)
+- [Rust Style Guide](https://doc.rust-lang.org/style-guide/)
+- [rustfmt](https://rust-lang.github.io/rustfmt/)
+- [Rust Clippy](https://doc.rust-lang.org/clippy/)
+- [Dart Error Handling](https://dart.dev/language/error-handling)
+- [Rust std::error](https://doc.rust-lang.org/std/error/)
 
 ## 🔍 Verificação Rápida
 
@@ -201,7 +234,7 @@ mkdir -p /seu-projeto/.cursor/rules
 
 # 2. Copie os arquivos genéricos
 cp general_rules.mdc solid_principles.mdc coding_style.mdc \
-   null_safety.mdc testing.mdc flutter_widgets.mdc \
+   null_safety.mdc testing.mdc flutter_widgets.mdc rust_style.mdc error_handling.mdc \
    ui_ux_design.mdc rules_index.mdc \
    /seu-projeto/.cursor/rules/
 

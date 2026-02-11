@@ -68,5 +68,3 @@ test-results/
 # Local/personal tests (machine-specific, not for CI)
 test/my_test/
 
-# AI generated files
-.claude/

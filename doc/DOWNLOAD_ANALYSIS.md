@@ -56,10 +56,12 @@ O cache é organizado por versão para evitar conflitos:
 **Problema**: Se a GitHub Release para a versão atual não existir ainda (ex: durante desenvolvimento de nova versão), o hook retorna `null` e nenhum asset é registrado.
 
 **Impacto**:
+
 - Usuário recebe erro em tempo de execução: `"ODBC engine library not found"`
 - Mensagem de erro não explica que a release não existe
 
 **Solução sugerida**:
+
 ```dart
 Future<Uri?> _downloadFromGitHub(...) async {
   if (_shouldSkipDownload()) {
@@ -88,10 +90,12 @@ Future<Uri?> _downloadFromGitHub(...) async {
 **Problema**: O hook baixa a DLL sem verificar se o arquivo foi baixado corretamente ou se foi corrompido durante o download.
 
 **Riscos**:
+
 - Download corrompido causa crash em tempo de execução
 - Possibilidade de ataque MITM (embora baixa probabilidade com HTTPS)
 
 **Solução sugerida**: Adicionar verificação SHA-256
+
 ```dart
 // No pubspec.yaml ou arquivo separado:
 # native_assets_checksums:
@@ -126,6 +130,7 @@ Future<Uri?> _downloadFromGitHub(...) async {
 **Problema**: Se houver falha temporária de rede, o download falha imediatamente sem tentar novamente.
 
 **Solução sugerida**: Adicionar retry com exponential backoff
+
 ```dart
 Future<Uri?> _downloadFromGitHub(...) async {
   const maxRetries = 3;
@@ -155,6 +160,7 @@ Future<Uri?> _downloadFromGitHub(...) async {
 **Problema**: `HttpClient` não tem timeout, pode travar indefinidamente em conexões lentas.
 
 **Solução sugerida**:
+
 ```dart
 final client = HttpClient();
 client.connectionTimeout = Duration(seconds: 30);
@@ -168,6 +174,7 @@ final request = await client.getUrl(Uri.parse(url));
 **Problema**: Quando o download falha, a mensagem não explica claramente o que o usuário deve fazer.
 
 **Solução sugerida**: Melhorar mensagens de erro
+
 ```dart
 } catch (e) {
   print('[odbc_fast] Failed to download native library.');
@@ -266,11 +273,13 @@ $ PUB_ENVIRONMENT="pub.dev" dart pub get
 O fluxo atual funciona bem para a maioria dos cenários, mas tem algumas áreas que podem ser melhoradas:
 
 **Pontos Fortes**:
+
 - ✓ Cache por versão evita conflitos
 - ✓ Suporta build local para desenvolvimento
 - ✓ Detecta e pula download em CI/pub.dev
 
 **Pontos a Melhorar**:
+
 - ✗ Sem verificação de integridade
 - ✗ Sem retry em caso de falha de rede
 - ✗ Mensagens de erro podem ser mais claras

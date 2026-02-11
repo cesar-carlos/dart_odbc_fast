@@ -1,8 +1,9 @@
+﻿---
+paths:
+  - "lib/**/*.dart"
+  - "test/**/*.dart"
 ---
-description: Regras gerais do projeto - Core principles, documentação e código limpo
-globs: ["lib/**/*.dart", "test/**/*.dart"]
-alwaysApply: true
----
+
 
 # Regras Gerais do Projeto
 
@@ -65,7 +66,7 @@ enum _UserSortOption { name, email, date }
 
 - ❌ **NÃO gerar documentação automaticamente** sem necessidade real
 - ❌ **NÃO adicionar comentários** que só repetem o que o código já mostra
-- ❌ **NÃO suprimir erros/diagnósticos** (`// ignore`, `ignore_for_file`, `#[allow]`) fora da allowlist em `error_handling.mdc`
+- ❌ **NÃO suprimir erros/diagnósticos** (`// ignore`, `ignore_for_file`, `#[allow]`) fora da allowlist em `error_handling.md`
 - ✅ **Código deve ser autoexplicativo** com nomes claros e boa decomposição
 - ✅ Para APIs públicas exportadas de biblioteca, prefira `///` curtos quando o comportamento não for óbvio
 - ✅ Para código interno de feature, documente só quando houver decisão/limitação importante
@@ -169,7 +170,7 @@ _counter++;
 
 ### Tooling e Logging
 
-- ✅ Siga `coding_style.mdc` para rotina de **format/fix/analyze** e padrões de logging
+- ✅ Siga `coding_style.md` para rotina de **format/fix/analyze** e padrões de logging
 - ✅ Evite `print`; prefira logging estruturado (`dart:developer` `log`)
 
 ### Evitar Números Mágicos
@@ -365,7 +366,6 @@ const CardContainer(title: 'Title 2', content: 'Content 2')
 ### Quando Criar Componentes
 
 Crie um componente quando:
-
 - ✅ O mesmo padrão de UI aparece **2 ou mais vezes**
 - ✅ O componente tem **responsabilidade única e clara**
 - ✅ O componente pode ser **reutilizado em diferentes contextos**
@@ -408,7 +408,6 @@ class AppButton extends StatelessWidget {
 ## Checklist de Regras Gerais
 
 ### Princípios Fundamentais
-
 - [ ] Escrever código conciso e técnico
 - [ ] Usar padrões funcionais e declarativos quando apropriado
 - [ ] Preferir composição sobre herança
@@ -416,7 +415,6 @@ class AppButton extends StatelessWidget {
 - [ ] Estruturar arquivos logicamente: exported widget, subwidgets, helpers, static content, types
 
 ### Documentação e Comentários
-
 - [ ] NÃO gerar documentação automática sem necessidade
 - [ ] NÃO criar arquivos `.md` sem solicitação explícita
 - [ ] NÃO adicionar comentários redundantes
@@ -426,8 +424,9 @@ class AppButton extends StatelessWidget {
 - [ ] Usar nomenclatura clara ao invés de comentários
 
 ### Código Limpo
-
 - [ ] Evitar números mágicos - usar constantes nomeadas
 - [ ] Manter código limpo e manutenível
 - [ ] **PRIORIZAR criação de componentes** para padronização
 - [ ] **EVITAR duplicação de código** - extrair padrões em componentes
+
+

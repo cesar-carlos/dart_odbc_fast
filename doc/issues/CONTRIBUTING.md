@@ -1,4 +1,4 @@
-# Contributing Guidelines
+﻿# Contributing Guidelines
 
 This document describes how to properly contribute to `dart_odbc_fast` development.
 
@@ -79,7 +79,7 @@ doc/issues/api/X.md (Plan)
 
 ## Code Standards
 
-Follow project rules defined in `.cursor/rules/`:
+Follow project rules defined in `.cursor/rules/` and `.claude/rules/`:
 
 - **Clean Architecture**: Maintain layer separation
 - **General Rules**: Code conciseness, no magic numbers, self-documenting
@@ -106,3 +106,4 @@ When updating `doc/issues/` files:
 ---
 
 **Last updated**: 2026-02-11
+
