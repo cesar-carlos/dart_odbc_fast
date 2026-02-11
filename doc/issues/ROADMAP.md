@@ -65,11 +65,12 @@ Itens:
 - CONN-001 ✅, CONN-002 ✅ (connections.md documentado, testes criados)
 - REQ-005.
 - TXN-001 ✅, TXN-002 ✅ (transactions.md documentado, testes criados)
-- PREP-001 ✅, PREP-002 ✅ (prepared-statements.md documentado, testes criados)
+- PREP-001 ✅ (Lifecycle implementado como stubs), PREP-002 ✅ (StatementOptions implementado), PREP-003 ✅ (Cache LRU é interno, não exposto via FFI)
 - REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
 - STMT-001 ✅, STMT-002 ✅ (StatementOptions e suporte para metrics implementado)
 - STMT-003 ✅ (clearStatementCache e getPreparedStatementsMetrics implementados)
 - INFRA-001 ✅ (tipos corrigidos em odbc_native.dart - stubs para `clearAllStatements` e `getStatementsMetrics` adicionados)
+- PREP-004 ❌ (Plugin Output Parameters - Fora de Escopo, não implementado)
 
 Criterio de saida:
 

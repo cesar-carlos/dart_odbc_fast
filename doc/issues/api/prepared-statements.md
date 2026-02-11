@@ -341,11 +341,32 @@ await stmt.execute([], options: StatementOptions(
 - ✅ maxBufferSize aplicado corretamente
 - ✅ Integração sem quebra retroativa (null usa defaults)
 
+### PREP-004 - Plugin Output Parameters (Fora de Escopo)
+
+**Status**: ✅ Implementado (como stubs)
+
+**Objetivo**:
+Expor métodos `prepare()` e `unprepare()` para operações básicas de prepared statements.
+
+**Arquitetura Decisória:**
+O cache LRU é **funcionalidade interna** do Rust engine (`prepared_cache.rs`) e não é exposto via FFI para Dart. Esta decisão mantém o cache encapsulado e performático, sem expor complexidade de gerenciamento de estado para a camada Dart.
+
+**Implementação:**
+
+- `prepare(String sql, {Duration? timeout})` - Cria novo prepared statement
+- `execute(List<Object?> params)` - Executa statement preparado
+- `unprepare()` - Libera recursos do prepared statement
+- Métodos expostos via `OdbcConnectionBackend` interface
+
+**Observações:**
+
+- `PreparedStatementConfig` disponível para configuração futura de cache (não atualmente utilizada)
+- Operações são roteadas para `_backend.executePrepared()` e `_backend.closeStatement()`
+- Cache LRU com thread-safety é gerenciado internamente pelo Rust
+
+---
+
 ## Fase 2 (P2)
-
-### PREP-003 - Named param facade no Dart
-
-**Status**: Pending
 
 **Objetivo**:
 
