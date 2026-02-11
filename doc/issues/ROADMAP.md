@@ -62,10 +62,10 @@ Escopo:
 
 Itens:
 
-- CONN-001 ✅, CONN-002 ✅ (connections.md documentado)
+- CONN-001 ✅, CONN-002 ✅ (connections.md documentado, testes criados)
 - REQ-005.
-- TXN-001 ✅, TXN-002 ✅ (transactions.md documentado)
-- PREP-001 ✅, PREP-002 ✅ (prepared-statements.md documentado)
+- TXN-001 ✅, TXN-002 ✅ (transactions.md documentado, testes criados)
+- PREP-001 ✅, PREP-002 ✅ (prepared-statements.md documentado, testes criados)
 - REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
 
 Criterio de saida:
