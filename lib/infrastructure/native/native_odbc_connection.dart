@@ -188,8 +188,12 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   int clearAllStatements() => _native.clearAllStatements();
 
   @override
-  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
-      getStatementsMetrics() => _native.getStatementsMetrics();
+  ({
+    int totalStatements,
+    int totalExecutions,
+    int cacheHits,
+    int totalPrepares
+  })? getStatementsMetrics() => _native.getStatementsMetrics();
 
   /// Executes a SQL query with parameters.
   ///
@@ -207,8 +211,12 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     List<ParamValue> params, {
     int? maxBufferBytes,
   }) =>
-      _native.execQueryParamsTyped(connectionId, sql, params,
-          maxBufferBytes: maxBufferBytes,);
+      _native.execQueryParamsTyped(
+        connectionId,
+        sql,
+        params,
+        maxBufferBytes: maxBufferBytes,
+      );
 
   /// Executes a parameterized query with params already serialized (bytes).
   ///
@@ -221,8 +229,12 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     Uint8List? serializedParams, {
     int? maxBufferBytes,
   }) =>
-      _native.execQueryParams(connectionId, sql, serializedParams,
-          maxBufferBytes: maxBufferBytes,);
+      _native.execQueryParams(
+        connectionId,
+        sql,
+        serializedParams,
+        maxBufferBytes: maxBufferBytes,
+      );
 
   /// Executes a SQL query that returns multiple result sets.
   ///
@@ -232,8 +244,11 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? executeQueryMulti(int connectionId, String sql,
-          {int? maxBufferBytes,}) =>
+  Uint8List? executeQueryMulti(
+    int connectionId,
+    String sql, {
+    int? maxBufferBytes,
+  }) =>
       _native.execQueryMulti(connectionId, sql, maxBufferBytes: maxBufferBytes);
 
   @override
