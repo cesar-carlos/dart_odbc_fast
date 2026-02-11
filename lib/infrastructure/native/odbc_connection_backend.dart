@@ -60,7 +60,12 @@ abstract class OdbcConnectionBackend {
   ///
   /// Returns metrics including cache hits, executions, etc.
   /// Returns null if metrics cannot be retrieved.
-  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})? getStatementsMetrics();
+  ({
+    int totalStatements,
+    int totalExecutions,
+    int cacheHits,
+    int totalPrepares
+  })? getStatementsMetrics();
 
   /// Queries the database catalog for table information.
   ///

@@ -34,7 +34,7 @@ class PreparedStatementMetrics {
   ///
   /// Calculated as [cacheHits] / [totalPrepares] when [totalPrepares] > 0.
   double get hitRate {
-    if (totalPrepares == 0) return 0.0;
+    if (totalPrepares == 0) return 0;
     return cacheHits / totalPrepares;
   }
 
@@ -42,7 +42,7 @@ class PreparedStatementMetrics {
   ///
   /// Calculated as [totalExecutions] / [totalStatements] when [totalStatements] > 0.
   double get avgExecutionsPerStatement {
-    if (totalStatements == 0) return 0.0;
+    if (totalStatements == 0) return 0;
     return totalExecutions / totalStatements;
   }
 }

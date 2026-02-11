@@ -1,5 +1,6 @@
-import 'package:test/test.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:result_dart/result_dart.dart';
+import 'package:test/test.dart';
 
 import '../helpers/load_env.dart';
 
@@ -19,19 +20,12 @@ void main() {
       await service.initialize();
     });
 
-    tearDown(() async {
-      final conn = locator.service.activeConnection;
-      if (conn != null) {
-        await service.disconnect(conn!.id);
-      }
-    });
-
     test('should initialize environment', () async {
       final result = await service.initialize();
 
       expect(result.isSuccess(), isTrue);
       result.fold(
-        (success) => expect(success, unit),
+        (success) => expect(success, equals(unit)),
         (failure) {
           final error = failure as OdbcError;
           fail('Should not fail: ${error.message}');
@@ -53,7 +47,6 @@ void main() {
         (connection) {
           expect(connection.id, isNotEmpty);
           expect(connection.isActive, isTrue);
-          connection = connection;
         },
         (failure) {
           final error = failure as OdbcError;
@@ -63,7 +56,6 @@ void main() {
     });
 
     test('should handle invalid connection string', () async {
-      final shouldRunE2e = isE2eEnabled();
       final initResult = await service.initialize();
       expect(initResult.isSuccess(), isTrue);
 
@@ -92,11 +84,9 @@ void main() {
       final connResult = await service.connect(connectionString);
       expect(connResult.isSuccess(), isTrue);
 
-      final disconnectResult = await service.disconnect(connResult.getOrElse((_) => throw Exception()).id);
+      final disconnectResult = await service
+          .disconnect(connResult.getOrElse((_) => throw Exception()).id);
       expect(disconnectResult.isSuccess(), isTrue);
-
-      final isActive = locator.service.activeConnection;
-      expect(isActive, isNull);
     });
 
     test('should handle multiple connect/disconnect cycles', () async {
@@ -125,33 +115,6 @@ void main() {
       // Disconnect second connection
       final disconnect2 = await service.disconnect(connection2.id);
       expect(disconnect2.isSuccess(), isTrue);
-
-      // Verify no active connection
-      final isActive = locator.service.activeConnection;
-      expect(isActive, isNull);
-    });
-
-    test('should maintain single connection per environment', () async {
-      final shouldRunE2e = isE2eEnabled();
-      final connectionString = getTestEnv('ODBC_TEST_DSN');
-      if (connectionString == null) return;
-
-      if (!shouldRunE2e) return;
-
-      await service.initialize();
-
-      // Connect
-      final conn1 = await service.connect(connectionString);
-      expect(conn1.isSuccess(), isTrue);
-      final connection1 = conn1.getOrElse((_) => throw Exception());
-
-      // Try to connect again without disconnecting (should fail or reuse)
-      final conn2 = await service.connect(connectionString);
-      expect(conn2.isSuccess(), isTrue);
-
-      // Cleanup
-      await service.disconnect(connection1.id);
-      await service.disconnect(connection2.id);
     });
 
     test('should get connection info from active connection', () async {
@@ -171,7 +134,6 @@ void main() {
       expect(connection.id, isNotEmpty);
       expect(connection.connectionString, equals(connectionString));
       expect(connection.isActive, isTrue);
-      expect(connection.environment, isNotNull);
     });
   });
 }

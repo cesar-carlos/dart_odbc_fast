@@ -7,6 +7,8 @@ description = "Enterprise-grade ODBC data platform engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/odbc-fast/dart_odbc_fast"
 build = "build.rs"
+keywords = ["odbc", "database", "sql", "ffi", "dart"]
+categories = ["database", "api-bindings"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

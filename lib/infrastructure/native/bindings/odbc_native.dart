@@ -290,12 +290,20 @@ class OdbcNative {
     int? maxBufferBytes,
   }) {
     if (params.isEmpty) {
-      return execQueryParams(connectionId, sql, null,
-          maxBufferBytes: maxBufferBytes,);
+      return execQueryParams(
+        connectionId,
+        sql,
+        null,
+        maxBufferBytes: maxBufferBytes,
+      );
     }
     final buf = serializeParams(params);
-    return execQueryParams(connectionId, sql, buf,
-        maxBufferBytes: maxBufferBytes,);
+    return execQueryParams(
+      connectionId,
+      sql,
+      buf,
+      maxBufferBytes: maxBufferBytes,
+    );
   }
 
   /// Executes a SQL query that returns multiple result sets.
@@ -306,8 +314,11 @@ class OdbcNative {
   /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? execQueryMulti(int connectionId, String sql,
-      {int? maxBufferBytes,}) {
+  Uint8List? execQueryMulti(
+    int connectionId,
+    String sql, {
+    int? maxBufferBytes,
+  }) {
     return _withSql(
       sql,
       (ffi.Pointer<bindings.Utf8> sqlPtr) => callWithBuffer(
@@ -581,29 +592,6 @@ class OdbcNative {
     return _bindings.odbc_close_statement(stmtId) == 0;
   }
 
-  /// Clears all prepared statements.
-  ///
-  /// Returns 0 on success, non-zero on failure.
-  int clearAllStatements() {
-    return _bindings.odbc_clear_all_statement();
-  }
-
-  /// Gets prepared statement metrics.
-  ///
-  /// Returns metrics including cache hits, executions, etc.
-  /// Returns null if metrics cannot be retrieved.
-  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
-      getStatementsMetrics() {
-    final metrics = _bindings.odbc_get_statement_metrics();
-    if (metrics == null) return null;
-    return (
-      totalStatements: metrics.total_statements,
-      totalExecutions: metrics.total_executions,
-      cacheHits: metrics.cache_hits,
-      totalPrepares: metrics.total_prepares,
-    );
-  }
-
   /// Clears all prepared statements (stub implementation).
   ///
   /// Returns 0 on success. This is a stub that returns success
@@ -613,8 +601,12 @@ class OdbcNative {
   /// Gets prepared statement metrics (stub implementation).
   ///
   /// Returns default metrics until the native Rust function is implemented.
-  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
-      getStatementsMetrics() {
+  ({
+    int totalStatements,
+    int totalExecutions,
+    int cacheHits,
+    int totalPrepares
+  })? getStatementsMetrics() {
     return (
       totalStatements: 0,
       totalExecutions: 0,

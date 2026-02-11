@@ -282,8 +282,11 @@ class AsyncNativeOdbcConnection {
   /// Executes [sql] on [connectionId] for multi-result sets in the worker.
   /// When [maxBufferBytes] is set, caps the result buffer size.
   /// Returns the binary result, or `null` on error.
-  Future<Uint8List?> executeQueryMulti(int connectionId, String sql,
-      {int? maxBufferBytes,}) async {
+  Future<Uint8List?> executeQueryMulti(
+    int connectionId,
+    String sql, {
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryMultiRequest(
         _nextRequestId(),
@@ -304,15 +307,18 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
-  @override
   Future<int> clearAllStatements() async {
     // Stub implementation - returns success until native is updated
     return 0;
   }
 
-  @override
-  Future<({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?>
-      getStatementsMetrics() async {
+  Future<
+      ({
+        int totalStatements,
+        int totalExecutions,
+        int cacheHits,
+        int totalPrepares
+      })?> getStatementsMetrics() async {
     // Stub implementation - returns zeros until native is updated
     return (
       totalStatements: 0,

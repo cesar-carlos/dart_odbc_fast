@@ -5,8 +5,8 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
-import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/retry_options.dart';
+import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/retry_helper.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -428,6 +428,7 @@ class OdbcService {
   ///
   /// Returns [PreparedStatementMetrics] containing cache hit rate,
   /// total executions, and other statistics.
-  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() async =>
-      _repository.getPreparedStatementsMetrics();
+  Future<Result<PreparedStatementMetrics>>
+      getPreparedStatementsMetrics() async =>
+          _repository.getPreparedStatementsMetrics();
 }

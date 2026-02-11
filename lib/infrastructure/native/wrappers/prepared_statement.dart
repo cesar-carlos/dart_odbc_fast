@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
-import 'package:odbc_fast/domain/entities/prepared_statement_config.dart';
 
 /// Wrapper for prepared statement operations.
 ///
@@ -14,7 +13,8 @@ import 'package:odbc_fast/domain/entities/prepared_statement_config.dart';
 /// final stmt = PreparedStatement(backend, stmtId);
 /// final result = stmt.execute([ParamValueString('value')]);
 /// stmt.close();
-/// ```class PreparedStatement {
+/// ```
+class PreparedStatement {
   /// Creates a new [PreparedStatement] instance.
   ///
   /// The backend parameter must be a valid ODBC connection backend instance.

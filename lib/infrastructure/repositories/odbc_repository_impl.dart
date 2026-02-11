@@ -1217,7 +1217,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
-  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() async {
+  Future<Result<PreparedStatementMetrics>>
+      getPreparedStatementsMetrics() async {
     try {
       final metrics = _isAsync
           ? await (_native as AsyncNativeOdbcConnection).getStatementsMetrics()
@@ -1236,7 +1237,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       }
       return Success(
         PreparedStatementMetrics(
-          totalStatements: metrics!.totalStatements,
+          totalStatements: metrics.totalStatements,
           totalExecutions: metrics.totalExecutions,
           cacheHits: metrics.cacheHits,
           totalPrepares: metrics.totalPrepares,
