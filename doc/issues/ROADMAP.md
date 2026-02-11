@@ -1,6 +1,6 @@
 # ROADMAP - Fase e Escopo
 
-Status: em execucao  
+Status: Fase 0 CONCLUÍDA ✅  
 Last updated: 2026-02-11
 
 ## Objetivo
@@ -45,16 +45,16 @@ Escopo:
 
 Itens:
 
-- REQ-001: multi-result end-to-end.
-- REQ-002: remover limite de 5 parametros.
-- REQ-003: suporte real a parametro NULL.
-- REQ-004: contrato de cancelamento (implementar ou unsupported explicito).
+- ✅ **REQ-001**: multi-result end-to-end.
+- ✅ **REQ-002**: remover limite de 5 parametros.
+- ✅ **REQ-003**: suporte real a parametro NULL.
+- ✅ **REQ-004**: contrato de cancelamento (implementar ou unsupported explicito).
 
 Criterio de saida:
 
 - testes de integracao passando para os quatro itens.
 
-## Fase 1 (P1) - Paridade util
+## Fase 1 (P1) - Paridade util 🔄 EM PROGRESSO
 
 Escopo:
 
@@ -62,10 +62,11 @@ Escopo:
 
 Itens:
 
-- CONN-001, CONN-002.
+- CONN-001 ✅, CONN-002 ✅ (connections.md documentado)
 - REQ-005.
-- TXN-001, TXN-002.
-- PREP-001, PREP-002.
+- TXN-001 ✅, TXN-002 ✅ (transactions.md documentado)
+- PREP-001 ✅, PREP-002 ✅ (prepared-statements.md documentado)
+- REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
 
 Criterio de saida:
 
