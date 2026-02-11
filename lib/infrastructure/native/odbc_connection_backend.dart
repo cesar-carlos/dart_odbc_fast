@@ -51,6 +51,17 @@ abstract class OdbcConnectionBackend {
   /// Returns true on success, false on failure.
   bool closeStatement(int stmtId);
 
+  /// Clears all prepared statements.
+  ///
+  /// Returns 0 on success, non-zero on failure.
+  int clearAllStatements();
+
+  /// Gets prepared statement metrics.
+  ///
+  /// Returns metrics including cache hits, executions, etc.
+  /// Returns null if metrics cannot be retrieved.
+  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})? getStatementsMetrics();
+
   /// Queries the database catalog for table information.
   ///
   /// The [connectionId] must be a valid active connection.

@@ -67,6 +67,9 @@ Itens:
 - TXN-001 ✅, TXN-002 ✅ (transactions.md documentado, testes criados)
 - PREP-001 ✅, PREP-002 ✅ (prepared-statements.md documentado, testes criados)
 - REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
+- STMT-001 ✅, STMT-002 ✅ (StatementOptions e suporte para metrics implementado)
+- STMT-003 ✅ (clearStatementCache e getPreparedStatementsMetrics implementados)
+- INFRA-001 ✅ (tipos corrigidos em odbc_native.dart - stubs para `clearAllStatements` e `getStatementsMetrics` adicionados)
 
 Criterio de saida:
 

@@ -29,7 +29,12 @@
       "WebFetch(domain:www.npmjs.com)",
       "Bash(if not exist \"doc\\\\issues\" then mkdir \"doc\\\\issues\":*)",
       "Bash(powershell:*)",
-      "Bash(cargo doc:*)"
+      "Bash(cargo doc:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh:*)",
+      "Bash(start https://github.com/new)",
+      "Bash(cargo check:*)",
+      "Bash(git restore:*)"
     ]
   }
 }

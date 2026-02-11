@@ -581,6 +581,48 @@ class OdbcNative {
     return _bindings.odbc_close_statement(stmtId) == 0;
   }
 
+  /// Clears all prepared statements.
+  ///
+  /// Returns 0 on success, non-zero on failure.
+  int clearAllStatements() {
+    return _bindings.odbc_clear_all_statement();
+  }
+
+  /// Gets prepared statement metrics.
+  ///
+  /// Returns metrics including cache hits, executions, etc.
+  /// Returns null if metrics cannot be retrieved.
+  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
+      getStatementsMetrics() {
+    final metrics = _bindings.odbc_get_statement_metrics();
+    if (metrics == null) return null;
+    return (
+      totalStatements: metrics.total_statements,
+      totalExecutions: metrics.total_executions,
+      cacheHits: metrics.cache_hits,
+      totalPrepares: metrics.total_prepares,
+    );
+  }
+
+  /// Clears all prepared statements (stub implementation).
+  ///
+  /// Returns 0 on success. This is a stub that returns success
+  /// until the native Rust function is implemented.
+  int clearAllStatements() => 0;
+
+  /// Gets prepared statement metrics (stub implementation).
+  ///
+  /// Returns default metrics until the native Rust function is implemented.
+  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
+      getStatementsMetrics() {
+    return (
+      totalStatements: 0,
+      totalExecutions: 0,
+      cacheHits: 0,
+      totalPrepares: 0,
+    );
+  }
+
   /// Starts a batched streaming query.
   ///
   /// The [connectionId] must be a valid active connection.

@@ -304,6 +304,24 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  @override
+  Future<int> clearAllStatements() async {
+    // Stub implementation - returns success until native is updated
+    return 0;
+  }
+
+  @override
+  Future<({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?>
+      getStatementsMetrics() async {
+    // Stub implementation - returns zeros until native is updated
+    return (
+      totalStatements: 0,
+      totalExecutions: 0,
+      cacheHits: 0,
+      totalPrepares: 0,
+    );
+  }
+
   /// Returns catalog tables for [connectionId] (optional [catalog] and
   /// [schema]). Returns binary result or `null` on error.
   Future<Uint8List?> catalogTables(

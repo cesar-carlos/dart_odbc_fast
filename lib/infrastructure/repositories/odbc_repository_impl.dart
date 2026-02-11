@@ -6,7 +6,9 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
@@ -560,6 +562,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     int stmtId, [
     List<dynamic>? params,
+    StatementOptions? options,
   ]) async {
     try {
       final list = params ?? [];
@@ -1182,6 +1185,65 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       }
     } on Exception catch (e) {
       return Failure<OdbcMetrics, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> clearStatementCache() async {
+    try {
+      final cleared = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).clearAllStatements()
+          : (_native as NativeOdbcConnection).clearAllStatements();
+
+      if (cleared != 0) {
+        return await _convertNativeErrorToFailure<Unit>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to clear statement cache',
+        );
+      }
+      return const Success(unit);
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() async {
+    try {
+      final metrics = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getStatementsMetrics()
+          : (_native as NativeOdbcConnection).getStatementsMetrics();
+
+      if (metrics == null) {
+        return await _convertNativeErrorToFailure<PreparedStatementMetrics>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to get statement metrics',
+        );
+      }
+      return Success(
+        PreparedStatementMetrics(
+          totalStatements: metrics!.totalStatements,
+          totalExecutions: metrics.totalExecutions,
+          cacheHits: metrics.cacheHits,
+          totalPrepares: metrics.totalPrepares,
+        ),
+      );
+    } on Exception catch (e) {
+      return Failure<PreparedStatementMetrics, OdbcError>(
         QueryError(message: e.toString()),
       );
     }

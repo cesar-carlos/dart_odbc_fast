@@ -184,6 +184,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
 
+  @override
+  int clearAllStatements() => _native.clearAllStatements();
+
+  @override
+  ({int totalStatements, int totalExecutions, int cacheHits, int totalPrepares})?
+      getStatementsMetrics() => _native.getStatementsMetrics();
+
   /// Executes a SQL query with parameters.
   ///
   /// Convenience method that combines prepare and execute in a single call.

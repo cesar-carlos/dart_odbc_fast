@@ -3,7 +3,9 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/retry_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/retry_helper.dart';
@@ -200,12 +202,15 @@ class OdbcService {
   ///
   /// The [params] list should contain values for each parameter placeholder
   /// in the prepared SQL statement, in order. Can be null if no parameters.
+  ///
+  /// The [options] can override timeout and fetch size for this execution.
   Future<Result<QueryResult>> executePrepared(
     String connectionId,
     int stmtId, [
     List<dynamic>? params,
+    StatementOptions? options,
   ]) async =>
-      _repository.executePrepared(connectionId, stmtId, params);
+      _repository.executePrepared(connectionId, stmtId, params, options);
 
   /// Closes and releases a prepared statement.
   ///
@@ -410,4 +415,19 @@ class OdbcService {
   /// Returns [OdbcMetrics] containing query counts, error counts,
   /// uptime, and latency information.
   Future<Result<OdbcMetrics>> getMetrics() async => _repository.getMetrics();
+
+  /// Clears all cached prepared statements.
+  ///
+  /// Removes all prepared statements from the cache, releasing
+  /// native resources. This is useful for memory management
+  /// or when switching database contexts.
+  Future<Result<Unit>> clearStatementCache() async =>
+      _repository.clearStatementCache();
+
+  /// Gets metrics for prepared statement cache and execution.
+  ///
+  /// Returns [PreparedStatementMetrics] containing cache hit rate,
+  /// total executions, and other statistics.
+  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() async =>
+      _repository.getPreparedStatementsMetrics();
 }
