@@ -284,6 +284,10 @@ void _handleRequest(
         final msg = conn.getError();
         sendPort.send(GetErrorResponse(request.requestId, msg));
 
+      case DetectDriverRequest():
+        final driverName = conn.detectDriver(request.connectionString);
+        sendPort.send(DetectDriverResponse(request.requestId, driverName));
+
       case GetStructuredErrorRequest():
         final se = conn.getStructuredError();
         if (se != null) {
@@ -348,5 +352,7 @@ void _sendErrorResponse(
       sendPort.send(GetErrorResponse(id, error));
     case GetStructuredErrorRequest():
       sendPort.send(StructuredErrorResponse(id, message: error, error: error));
+    case DetectDriverRequest():
+      sendPort.send(DetectDriverResponse(id, null));
   }
 }

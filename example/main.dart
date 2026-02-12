@@ -291,6 +291,7 @@ Future<void> runExampleParamsAndPrepared(
         connection!.id,
         stmtId,
         [123, 'prepared-ok'],
+        null,
       );
       execPrepared.fold(
         (qr) => AppLogger.info(

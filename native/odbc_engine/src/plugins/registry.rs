@@ -46,6 +46,15 @@ impl PluginRegistry {
         if lower.contains("postgres") || lower.contains("postgresql") {
             return Some("postgres".to_string());
         }
+        if lower.contains("mysql") {
+            return Some("mysql".to_string());
+        }
+        if lower.contains("mongodb") {
+            return Some("mongodb".to_string());
+        }
+        if lower.contains("sqlite") {
+            return Some("sqlite".to_string());
+        }
         if lower.contains("sybase") || lower.contains("sql anywhere") {
             return Some("sybase".to_string());
         }
@@ -114,8 +123,39 @@ mod tests {
     #[test]
     fn test_get_for_connection_unknown_driver() {
         let registry = PluginRegistry::default();
-        let conn_str = "Driver={MySQL};Server=localhost;";
+        let conn_str = "Driver={UnknownDriver};Server=localhost;";
         assert!(registry.get_for_connection(conn_str).is_none());
+    }
+
+    #[test]
+    fn test_detect_driver_mysql() {
+        let registry = PluginRegistry::default();
+        assert_eq!(
+            registry.detect_driver("Driver={MySQL};Server=localhost;"),
+            Some("mysql".to_string())
+        );
+        assert_eq!(
+            registry.detect_driver("DRIVER={MySQL ODBC 8.0 Driver};"),
+            Some("mysql".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_driver_mongodb() {
+        let registry = PluginRegistry::default();
+        assert_eq!(
+            registry.detect_driver("Driver={MongoDB ODBC};Server=localhost;"),
+            Some("mongodb".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_driver_sqlite() {
+        let registry = PluginRegistry::default();
+        assert_eq!(
+            registry.detect_driver("Driver=SQLite3 ODBC Driver;Database=test.db;"),
+            Some("sqlite".to_string())
+        );
     }
 
     #[test]

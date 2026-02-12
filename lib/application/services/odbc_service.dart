@@ -10,6 +10,8 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/retry_helper.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/domain/services/telemetry_service.dart';
+import 'package:odbc_fast/domain/telemetry/entities.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// High-level service for ODBC database operations.
@@ -28,8 +30,14 @@ class OdbcService {
   /// Creates a new [OdbcService] instance.
   ///
   /// Requires a valid repository implementation to be provided.
-  OdbcService(this._repository);
+  /// Optionally accepts a [TelemetryService] for distributed tracing.
+  OdbcService(
+    this._repository,
+    this._telemetry,
+  );
+
   final IOdbcRepository _repository;
+  final ITelemetryService? _telemetry;
 
   /// Initializes the ODBC environment.
   ///
@@ -100,6 +108,8 @@ class OdbcService {
   /// Returns a [QueryResult] containing columns and rows on success,
   /// or a [ValidationError] if SQL is empty, or a [QueryError] if
   /// execution fails.
+  ///
+  /// Tracing: Creates a trace span for query execution with timing.
   Future<Result<QueryResult>> executeQuery(
     String connectionId,
     String sql,
@@ -109,7 +119,47 @@ class OdbcService {
         ValidationError(message: 'SQL query cannot be empty'),
       );
     }
-    return _repository.executeQuery(connectionId, sql);
+
+    // Start trace for query execution
+    final trace = await _telemetry?.startTrace('odbc.query');
+
+    Result<QueryResult> queryResult;
+    try {
+      queryResult = await _repository.executeQuery(connectionId, sql);
+
+      // End trace on success
+      if (trace != null) {
+        await _telemetry?.endTrace(
+          traceId: trace.traceId,
+          attributes: {
+            OdbcTelemetryAttributes.connectionId: connectionId,
+            OdbcTelemetryAttributes.sql: sql,
+            OdbcTelemetryAttributes.rowCount: queryResult.fold(
+              (qr) => qr.rowCount.toString(),
+              (_) => '0',
+            ),
+          },
+        );
+      }
+    } catch (error, stackTrace) {
+      // End trace on error
+      if (trace != null) {
+        await _telemetry?.endTrace(
+          traceId: trace.traceId,
+          attributes: {
+            OdbcTelemetryAttributes.connectionId: connectionId,
+            OdbcTelemetryAttributes.sql: sql,
+            OdbcTelemetryAttributes.errorType: error.runtimeType.toString(),
+            OdbcTelemetryAttributes.errorMessage: error.toString(),
+          },
+        );
+      }
+
+      // Re-throw to preserve error type
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    return queryResult;
   }
 
   /// Begins a new transaction with the specified isolation level.
@@ -209,7 +259,7 @@ class OdbcService {
     int stmtId,
     List<dynamic>? params,
     StatementOptions? options,
-  ]) async {
+  ) async {
     final result = await _repository.executePrepared(
       connectionId,
       stmtId,
@@ -439,4 +489,15 @@ class OdbcService {
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async =>
           _repository.getPreparedStatementsMetrics();
+
+  /// Detects the database driver from a connection string.
+  ///
+  /// Returns the driver name if detected (e.g. "sqlserver", "oracle",
+  /// "postgres", "mysql", "mongodb", "sqlite", "sybase"), or null if unknown.
+  Future<String?> detectDriver(String connectionString) async {
+    if (connectionString.trim().isEmpty) {
+      return null;
+    }
+    return _repository.detectDriver(connectionString);
+  }
 }

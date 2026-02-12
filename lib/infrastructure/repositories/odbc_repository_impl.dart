@@ -1249,4 +1249,15 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
   }
+
+  @override
+  Future<String?> detectDriver(String connectionString) async {
+    if (connectionString.trim().isEmpty) {
+      return null;
+    }
+    return _isAsync
+        ? await (_native as AsyncNativeOdbcConnection)
+            .detectDriver(connectionString)
+        : (_native as NativeOdbcConnection).detectDriver(connectionString);
+  }
 }

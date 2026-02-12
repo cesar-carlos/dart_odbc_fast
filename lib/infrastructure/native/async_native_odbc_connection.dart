@@ -158,6 +158,17 @@ class AsyncNativeOdbcConnection {
     return r.message;
   }
 
+  /// Detects the database driver from a connection string.
+  ///
+  /// Returns the driver name (e.g. "sqlserver", "oracle", "postgres") if
+  /// detected, or null if unknown.
+  Future<String?> detectDriver(String connectionString) async {
+    final r = await _sendRequest<DetectDriverResponse>(
+      DetectDriverRequest(_nextRequestId(), connectionString),
+    );
+    return r.driverName;
+  }
+
   /// Returns the last structured error (message, SQLSTATE, native code), or
   /// `null` if there is no error.
   Future<StructuredError?> getStructuredError() async {

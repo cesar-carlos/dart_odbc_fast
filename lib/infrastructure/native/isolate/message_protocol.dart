@@ -31,6 +31,7 @@ enum RequestType {
   catalogTypeInfo,
   getError,
   getStructuredError,
+  detectDriver,
 }
 
 /// Base class for worker requests. All subclasses must be sendable.
@@ -280,6 +281,13 @@ class GetStructuredErrorRequest extends WorkerRequest {
       : super(requestId, RequestType.getStructuredError);
 }
 
+/// Detect database driver from connection string.
+class DetectDriverRequest extends WorkerRequest {
+  const DetectDriverRequest(int requestId, this.connectionString)
+      : super(requestId, RequestType.detectDriver);
+  final String connectionString;
+}
+
 /// Base class for worker responses. All subclasses must be sendable.
 sealed class WorkerResponse {
   const WorkerResponse(this.requestId);
@@ -364,4 +372,10 @@ class StructuredErrorResponse extends WorkerResponse {
   final String? sqlStateString;
   final int? nativeCode;
   final String? error;
+}
+
+/// Response for detectDriver.
+class DetectDriverResponse extends WorkerResponse {
+  const DetectDriverResponse(super.requestId, this.driverName);
+  final String? driverName;
 }

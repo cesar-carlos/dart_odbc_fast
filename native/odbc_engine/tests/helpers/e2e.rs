@@ -78,6 +78,8 @@ pub enum DatabaseType {
     PostgreSQL,
     MySQL,
     Oracle,
+    MongoDB,
+    SQLite,
     Unknown,
 }
 
@@ -116,6 +118,16 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
     // Oracle
     if conn_lower.contains("oracle") {
         return DatabaseType::Oracle;
+    }
+
+    // MongoDB (ODBC connector)
+    if conn_lower.contains("mongodb") {
+        return DatabaseType::MongoDB;
+    }
+
+    // SQLite
+    if conn_lower.contains("sqlite") {
+        return DatabaseType::SQLite;
     }
 
     DatabaseType::Unknown

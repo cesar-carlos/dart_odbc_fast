@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn test_secure_buffer_empty() {
         let buffer = SecureBuffer::new(vec![]);
-        assert_eq!(buffer.as_slice(), &[]);
+        assert!(buffer.as_slice().is_empty());
     }
 
     #[test]

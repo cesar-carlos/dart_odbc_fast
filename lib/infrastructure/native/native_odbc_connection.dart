@@ -80,6 +80,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return _native.disconnect(connectionId);
   }
 
+  /// Detects the database driver from a connection string.
+  ///
+  /// Returns the driver name (e.g. "sqlserver", "oracle", "postgres") if
+  /// detected, or null if unknown.
+  String? detectDriver(String connectionString) =>
+      _native.detectDriver(connectionString);
+
   /// Gets the last error message from the native engine.
   ///
   /// Returns an empty string if no error occurred.

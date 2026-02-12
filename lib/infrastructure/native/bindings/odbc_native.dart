@@ -87,6 +87,38 @@ class OdbcNative {
     return result == 0;
   }
 
+  /// Detects the database driver from a connection string.
+  ///
+  /// Returns the driver name (e.g. "sqlserver", "oracle", "postgres", "mysql",
+  /// "mongodb", "sqlite", "sybase") if detected, or null if unknown.
+  String? detectDriver(String connectionString) {
+    final connStrPtr = connectionString.toNativeUtf8();
+    const bufferLen = 64;
+    final outBuf = malloc<ffi.Int8>(bufferLen);
+    try {
+      final result = _bindings.odbc_detect_driver(
+        connStrPtr.cast<bindings.Utf8>(),
+        outBuf,
+        bufferLen,
+      );
+      if (result != 1) {
+        return null;
+      }
+      final end = outBuf.asTypedList(bufferLen).indexOf(0);
+      final len = end < 0 ? bufferLen : end;
+      if (len == 0) {
+        return null;
+      }
+      final bytes =
+          outBuf.asTypedList(len).map((e) => e.toUnsigned(8)).toList();
+      return utf8.decode(bytes);
+    } finally {
+      malloc
+        ..free(connStrPtr)
+        ..free(outBuf);
+    }
+  }
+
   /// Gets the last error message from the native engine.
   ///
   /// Returns an empty string if no error occurred.

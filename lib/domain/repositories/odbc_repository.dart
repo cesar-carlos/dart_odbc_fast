@@ -137,10 +137,10 @@ abstract class IOdbcRepository {
   /// The [options] can override timeout and fetch size for this execution.
   Future<Result<QueryResult>> executePrepared(
     String connectionId,
-    int stmtId, [
+    int stmtId,
     List<dynamic>? params,
     StatementOptions? options,
-  ]);
+  );
 
   /// Closes and releases a prepared statement.
   ///
@@ -266,4 +266,10 @@ abstract class IOdbcRepository {
   /// Returns [PreparedStatementMetrics] containing cache hit rate,
   /// total executions, and other statistics.
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
+
+  /// Detects the database driver from a connection string.
+  ///
+  /// Returns the driver name if detected (e.g. "sqlserver", "oracle",
+  /// "postgres", "mysql", "mongodb", "sqlite", "sybase"), or null if unknown.
+  Future<String?> detectDriver(String connectionString);
 }

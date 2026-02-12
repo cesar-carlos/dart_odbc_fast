@@ -44,7 +44,12 @@ Future<void> main() async {
     await stmtIdResult.fold((stmtId) async {
       AppLogger.info('Prepared statement: stmtId=$stmtId');
 
-      final execResult = await service.executePrepared(conn.id, stmtId);
+      final execResult = await service.executePrepared(
+        conn.id,
+        stmtId,
+        null,
+        null,
+      );
       execResult.fold(
         (qr) => AppLogger.info(
           'executePrepared: columns=${qr.columns} rowCount=${qr.rowCount}',

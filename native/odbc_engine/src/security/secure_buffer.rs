@@ -87,7 +87,7 @@ mod tests {
         buffer.zeroize();
         // After zeroize, the vec is cleared (empty), not filled with zeros
         // The zeroize implementation clears the vec for security
-        assert_eq!(buffer.as_slice(), &[]);
+        assert!(buffer.as_slice().is_empty());
     }
 
     #[test]
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_empty_buffer() {
         let buffer = SecureBuffer::new(Vec::new());
-        assert_eq!(buffer.as_slice(), &[]);
+        assert!(buffer.as_slice().is_empty());
         assert_eq!(buffer.to_string_lossy(), "");
     }
 

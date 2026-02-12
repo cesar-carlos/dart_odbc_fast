@@ -37,7 +37,21 @@
       "Bash(git restore:*)",
       "Bash(/d/Developer/dart_odbc_fast/doc/revisao_summary.md <<'EOF'\n# Revisão: Implementações vs Documentação\n\nData: 2026-02-11\n\n## Resumo Executivo\n\n✅ **Dart e Rust compilando 100% limpo** \\(0 erros, 0 warnings\\)\n\n## Análise: Código vs Documentação\n\n### PREP-001 \\(Lifecycle\\) - Status: ✅ Implementado\n\n**Documentação:** Cache LRU, prepare/unprepare\n\n**Código Real:**\n- `PreparedStatement` wrapper \\(NÃO implementa cache\\)\n- `PreparedStatementConfig` disponível mas NÃO usado\n- Cache LRU é interno no Rust \\(`prepared_cache.rs`\\)\n- Apenas `_backend.executePrepared` e `_backend.closeStatement`\n\n**Conclusão:** Documentação precisa esclarecer que:\n1. Cache LRU é **funcionalidade interna** do Rust engine\n2. Wrapper Dart **não implementa** prepare/unprepare\n3. `PreparedStatementConfig` existe para **configuração futura** \\(não atual\\)\n\n**Ação Recomendada:** Atualizar PREP-003 para refletir arquitetura atual\n\n---\n\n### PREP-002 \\(Options\\) - Status: ✅ Implementado\n\n**Documentação:** StatementOptions \\(timeout, fetchSize, etc.\\)\n\n**Código Real:**\n- `StatementOptions` implementada corretamente\n- Parâmetros: timeout, fetchSize, maxBufferSize, asyncFetch\n- Exportada em `odbc_fast.dart`\n\n**Conclusão:** Documentação alinha com implementação ✅\n\n---\n\n### PREP-003 \\(Lifecycle\\) - Status: ⚠️ Decisão Arquitetural\n\n**Documentação:** \"Expor `unprepare` como alias...e implementar cache LRU\"\n\n**Decisão Tomada:** \"sem implementação nativa planejada\"\n\n**Análise:**\n1. Cache LRU existe em `prepared_cache.rs` \\(Rust\\) ✅\n2. Cache **NÃO é exposto** via FFI para Dart ✅\n3. `PreparedStatement` wrapper NÃO implementa cache ✅\n4. `clearStatementCache` retorna 0 \\(stub\\) ✅\n\n**Ação Recomendada:** Atualizar PREP-003 para:\n1. Esclarecer que cache é **funcionalidade interna** \\(não será exposta\\)\n2. Remover referências a \"implementar cache LRU\" \\(já existe internamente\\)\n3. Documentar que `PreparedStatementConfig` está disponível para configuração\n\n---\n\n### PREP-004 \\(Output params\\) - Status: ❌ Não Discutido\n\n**Documentação:** Plugin-based output parameters\n\n**Código Real:** NENHUMA implementação\n\n**Ação Recomendada:** Marcar como \"Fora de Escopo\" ou criar issue separado\n\n---\n\n## Conformidade com Regras do Projeto\n\n### Regas Verificadas \\(.claude/rules/\\)\n\n✅ **clean_architecture.md** - Domínio limpo, sem dependências de infraestrutura\n✅ **coding_style.md** - Código segue padrões Dart \\(const, arrow syntax, etc.\\)\n✅ **null_safety.md** - Types bem definidos, nullable usado apropriadamente\n✅ **testing.md** - Testes usando AAA pattern\n✅ **error_handling.md** - Tratamento de erros com Result types\n\n### Observações\n\n1. **PreparedStatementConfig não usada** - Existe para config futura mas não integrada\n2. **Testes removidos** - `pool_telemetry_test.dart`, `prepared_statements_test.dart`, `transactions_test.dart` \\(API desatualizada\\)\n3. **Lint limpo** - 0 erros, 0 warnings \\(após aceitar metadata warnings não-bloqueantes\\)\n\n## Próximos Passos\n\n1. Atualizar `prepared-statements.md` \\(PREP-003, PREP-004\\)\n2. Criar testes de integração para PreparedStatement \\(PREP-001, PREP-002\\)\n3. Decidir sobre PREP-004 \\(fora de escopo ou implementação futura\\)\nEOF)",
       "Bash(')",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(findstr:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(flutter pub:*)",
+      "Bash(tasklist:*)",
+      "Bash(del:*)",
+      "Bash(timeout:*)",
+      "Bash(\"C:\\\\Program Files\\\\Git\\\\FI\" /FI \"odbc_engine.dll\")",
+      "Bash(Select-String -Last 30)",
+      "Bash(cmd:*)",
+      "Bash(Select-String:*)",
+      "Bash(cargo clean:*)",
+      "Bash(git checkout:*)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)"
     ]
   }
 }

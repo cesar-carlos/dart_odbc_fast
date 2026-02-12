@@ -12,6 +12,7 @@ use crate::engine::{
 use crate::error::Result;
 use crate::error::StructuredError;
 use crate::observability::Metrics;
+use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
 use crate::protocol::{deserialize_params, parse_bulk_insert_payload, ParamValue};
 use std::collections::HashMap;
@@ -693,6 +694,41 @@ pub extern "C" fn odbc_get_metrics(
         *out_written = 40;
     }
     0
+}
+
+/// Detect database driver from connection string.
+/// conn_str: null-terminated UTF-8 connection string
+/// out_buf: output buffer for driver name (null-terminated UTF-8)
+/// buffer_len: size of out_buf
+/// Returns: 1 if driver detected and name written, 0 if unknown (writes "unknown")
+#[no_mangle]
+pub extern "C" fn odbc_detect_driver(
+    conn_str: *const c_char,
+    out_buf: *mut c_char,
+    buffer_len: c_uint,
+) -> c_int {
+    if conn_str.is_null() || out_buf.is_null() || buffer_len == 0 {
+        return 0;
+    }
+    let conn_str_rust = match unsafe { CStr::from_ptr(conn_str).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let registry = PluginRegistry::default();
+    let name = registry
+        .detect_driver(conn_str_rust)
+        .unwrap_or_else(|| "unknown".to_string());
+    let name_bytes = name.as_bytes();
+    let copy_len = (name_bytes.len() + 1).min(buffer_len as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), out_buf as *mut u8, copy_len - 1);
+        *out_buf.add(copy_len - 1) = 0;
+    }
+    if name == "unknown" {
+        0
+    } else {
+        1
+    }
 }
 
 /// Execute query and return binary buffer

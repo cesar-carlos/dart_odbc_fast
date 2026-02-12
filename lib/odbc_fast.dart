@@ -65,17 +65,23 @@ export 'domain/entities/schema_info.dart';
 export 'domain/entities/statement_options.dart';
 export 'domain/errors/odbc_error.dart';
 export 'domain/helpers/retry_helper.dart';
+export 'domain/repositories/itelemetry_repository.dart';
 export 'domain/repositories/odbc_repository.dart';
+export 'domain/services/telemetry_service.dart';
+export 'domain/telemetry/entities.dart';
 export 'infrastructure/native/async_native_odbc_connection.dart';
 export 'infrastructure/native/errors/async_error.dart';
 export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
 export 'infrastructure/native/protocol/param_value.dart';
+export 'infrastructure/native/telemetry/opentelemetry_ffi.dart';
+export 'infrastructure/native/telemetry/telemetry_buffer.dart';
 export 'infrastructure/native/wrappers/catalog_query.dart';
 export 'infrastructure/native/wrappers/connection_pool.dart';
 export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
 export 'infrastructure/repositories/odbc_repository_impl.dart';
+export 'infrastructure/repositories/telemetry_repository.dart';
 
 // Async support - async_native_odbc_connection and async_error exported above

@@ -46,7 +46,7 @@ Domain-style types (errors, protocol types) live in `error` and `protocol` and s
 ### Custom binary protocol
 
 - **Choice**: Custom binary encoding (magic, version, column/row layout) instead of raw ODBC result handling over FFI.
-- **Rationale**: 
+- **Rationale**:
   - Single, compact buffer per result set for FFI (no repeated callbacks).
   - Version field allows evolution without breaking clients.
   - Enables optional compression and format changes (e.g. columnar) behind version.
@@ -61,7 +61,7 @@ Domain-style types (errors, protocol types) live in `error` and `protocol` and s
 ### Environment singleton and `OnceLock` (pool)
 
 - **Choice**: A single ODBC `Environment` per process. Pool uses `OnceLock<Environment>` (no `Box::leak`).
-- **Rationale**: 
+- **Rationale**:
   - ODBC allows one `Environment` per process; connections are created from it.
   - `Connection<'static>` in `odbc_api` ties connection lifetime to an env that effectively lives for the process.
   - `OnceLock` gives one-time init, no leak, and clear ownership. Handles may still use `Box::leak` for the same env where required by `odbc_api` signatures; that trade-off is documented.
@@ -73,18 +73,18 @@ Domain-style types (errors, protocol types) live in `error` and `protocol` and s
 
 ## Module map
 
-| Module | Role |
-|--------|------|
-| `engine` | Connections, queries, streaming, execution pipeline |
-| `engine::core` | Pipeline, batch executor, prepared cache, metadata cache, driver capabilities |
-| `ffi` | C API, `GlobalState`, metrics integration |
-| `handles` | ODBC handle management (env, connections) |
-| `pool` | r2d2 pool, pool ID, health checks |
-| `protocol` | Encoder, decoder, compression, arena |
-| `error` | `OdbcError`, `StructuredError`, `Result`, `ErrorCategory` |
-| `security` | Secure buffers, zeroization |
-| `plugins` | Driver registry and adapters |
-| `observability` | Metrics, logging, tracing |
+| Module          | Role                                                                          |
+| --------------- | ----------------------------------------------------------------------------- |
+| `engine`        | Connections, queries, streaming, execution pipeline                           |
+| `engine::core`  | Pipeline, batch executor, prepared cache, metadata cache, driver capabilities |
+| `ffi`           | C API, `GlobalState`, metrics integration                                     |
+| `handles`       | ODBC handle management (env, connections)                                     |
+| `pool`          | r2d2 pool, pool ID, health checks                                             |
+| `protocol`      | Encoder, decoder, compression, arena                                          |
+| `error`         | `OdbcError`, `StructuredError`, `Result`, `ErrorCategory`                     |
+| `security`      | Secure buffers, zeroization                                                   |
+| `plugins`       | Driver registry and adapters                                                  |
+| `observability` | Metrics, logging, tracing                                                     |
 
 ## Dependencies
 
@@ -116,6 +116,7 @@ The `ErrorCategory` enum provides semantic error classification for intelligent 
 - **ConnectionLost**: Connection-related errors requiring reconnection
 
 Methods available on `OdbcError`:
+
 - `is_retryable()`: Returns true if error is transient and may be retried
 - `is_connection_error()`: Returns true if error is connection-related
 - `error_category()`: Returns the semantic category for decision-making
@@ -123,6 +124,7 @@ Methods available on `OdbcError`:
 ### Structured Errors
 
 Structured errors include SQLSTATE, native error code, and message:
+
 - Serialized format: `[sqlstate: 5 bytes][native_code: 4 bytes][msg_len: 4 bytes][message: N bytes]`
 - Exposed via `odbc_get_structured_error()` FFI function
 - Automatically extracted from ODBC diagnostics when available

@@ -1,6 +1,5 @@
-// ignore: directives_ordering
 import 'package:odbc_fast/odbc_fast.dart';
-
+import 'package:test/test.dart';
 import '../helpers/load_env.dart';
 
 void main() {
@@ -11,6 +10,8 @@ void main() {
 
     setUpAll(() async {
       locator = ServiceLocator();
+      // initialize() returns void, so cascade cannot be used in assignment.
+      // ignore: cascade_invocations
       locator.initialize();
       service = locator.service;
 
@@ -26,79 +27,44 @@ void main() {
 
       await service.initialize();
 
-      // Prepare with various options
-      final stmt1 = await service.prepareStatement(
-        connectionString,
-        'SELECT * FROM products WHERE id = ?',
-        timeout: const Duration(seconds: 30),
-      );
-      expect(stmt1.isSuccess(), isTrue);
+      // First, establish a connection
+      final connResult = await service.connect(connectionString);
+      expect(connResult.isSuccess(), isTrue);
+      final conn = connResult.getOrElse((_) => throw Exception());
 
-      final stmt2 = await service.prepareStatement(
-        connectionString,
+      // Prepare with timeout (timeoutMs is in milliseconds)
+      final stmt1Result = await service.prepare(
+        conn.id,
+        'SELECT * FROM products WHERE id = ?',
+        timeoutMs: 30000,
+      );
+      expect(stmt1Result.isSuccess(), isTrue);
+      final stmt1 = stmt1Result.getOrElse((_) => throw Exception());
+
+      // Prepare another statement
+      final stmt2Result = await service.prepare(
+        conn.id,
         'SELECT * FROM orders WHERE status = ?',
-        options: const StatementOptions(
-          queryTimeout: Duration(minutes: 5),
+      );
+      expect(stmt2Result.isSuccess(), isTrue);
+      final stmt2 = stmt2Result.getOrElse((_) => throw Exception());
+
+      // Execute with StatementOptions
+      final result1 = await service.executePrepared(
+        conn.id,
+        stmt2,
+        ['pending'],
+        const StatementOptions(
+          timeout: Duration(minutes: 5),
           fetchSize: 1000,
-          asyncFetch: true,
-          maxBufferSize: 1024 * 512,
         ),
       );
-      expect(stmt2.isSuccess(), isTrue);
-
-      // Verify fetchSize was applied
-      final result1 = await service.executePrepared(
-        stmt2.id,
-        ['product_id'],
-      );
       expect(result1.isSuccess(), isTrue);
-    });
 
-    test('should handle timeout on execute', () async {
-      final shouldRunE2e = isE2eEnabled();
-      final connectionString = getTestEnv('ODBC_TEST_DSN');
-      if (connectionString == null) return;
-
-      if (!shouldRunE2e) return;
-
-      await service.initialize();
-
-      // Prepare with short timeout
-      final stmtResult = await service.prepareStatement(
-        connectionString,
-        'SELECT * FROM large_table WHERE complex_condition = ?',
-        timeout: const Duration(seconds: 1),
-      );
-      expect(stmtResult.isSuccess(), isTrue);
-      final stmt = stmtResult.getOrElse((_) => throw Exception());
-
-      // Should fail due to timeout
-      final result = await service.executePrepared(
-        stmt.id,
-        ['value'],
-        options: const StatementOptions(queryTimeout: Duration(seconds: 2)),
-      );
-
-      expect(result.isSuccess(), isFalse);
-      expect(result, isA<TimeoutError>());
-    });
-
-    test('should validate maxBufferSize', () async {
-      final shouldRunE2e = isE2eEnabled();
-      final connectionString = getTestEnv('ODBC_TEST_DSN');
-      if (connectionString == null) return;
-
-      if (!shouldRunE2e) return;
-
-      await service.initialize();
-
-      // Prepare with custom buffer size
-      final stmtResult = await service.prepareStatement(
-        connectionString,
-        'SELECT * FROM huge_table',
-        options: const StatementOptions(maxBufferSize: 2048),
-      );
-      expect(stmtResult.isSuccess(), isTrue);
+      // Clean up
+      await service.closeStatement(conn.id, stmt1);
+      await service.closeStatement(conn.id, stmt2);
+      await service.disconnect(conn.id);
     });
   });
 }

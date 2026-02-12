@@ -1,6 +1,6 @@
 # ROADMAP - Fase e Escopo
 
-Status: Fase 0 CONCLUÍDA ✅  
+Status: Fase 1 (P1) CONCLUÍDA ✅
 Last updated: 2026-02-11
 
 ## Objetivo
@@ -62,17 +62,18 @@ Escopo:
 
 Itens:
 
-- CONN-001 ✅, CONN-002 ✅ (connections.md documentado, testes criados)
+- CONN-001 ✅, CONN-002 ✅, CONN-003 ✅ (connections.md documentado, testes criados)
 - REQ-005.
-- TXN-001 ✅, TXN-002 ✅ (transactions.md documentado, testes criados)
+- TXN-001 ✅, TXN-002 ✅, TXN-003 ✅ (transactions.md documentado, testes criados, retry guidance adicionado)
 - PREP-001 ✅ (Lifecycle implementado como stubs), PREP-002 ✅ (StatementOptions implementado), PREP-003 ✅ (Cache LRU é interno, não exposto via FFI)
 - REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
 - STMT-001 ✅, STMT-002 ✅ (StatementOptions e suporte para metrics implementado)
 - STMT-003 ✅ (clearStatementCache e getPreparedStatementsMetrics implementados)
+- STMT-004 ✅ (Bulk Operations - BulkInsertBuilder implementado com suporte completo a tipos: i32, i64, text, binary, timestamp, nullable columns)
 - INFRA-001 ✅ (tipos corrigidos em odbc_native.dart - stubs para `clearAllStatements` e `getStatementsMetrics` adicionados)
 - PREP-004 ❌ (Plugin Output Parameters - Fora de Escopo, não implementado)
-- **OdbcService atualizado**: métodos prepareStatement, unprepareStatement, getPreparedStatementsMetrics expostos
-- Testes a criar: prepared_statement_lifecycle_test.dart (PREP-001), statement_options_test.dart (PREP-002)
+- **OdbcService atualizado**: métodos prepare, closeStatement, getPreparedStatementsMetrics, bulkInsert expostos
+- **Testes criados**: prepared_statement_lifecycle_test.dart (PREP-001), statement_options_test.dart (PREP-002), bulk_operations_test.dart (STMT-004)
 
 Criterio de saida:
 
@@ -86,11 +87,18 @@ Escopo:
 
 Itens:
 
-- CONN-003.
-- TXN-003.
-- PREP-003.
-- PREP-004 (plugin candidate).
-- observabilidade (metrics/tracing) consolidada.
+- CONN-001 ✅, CONN-002 ✅, CONN-003 ✅ (Política de reutilização explícita FULLY documentada em connections.md com exemplos de código, trade-offs, boas práticas e anti-patterns)
+- TXN-001 ✅, TXN-002 ✅, TXN-003 ✅ (Retry guidance para deadlock/serialization documentado em transactions.md com exemplos de uso, detecção de SQLSTATEs e política de retry)
+- PREP-001 ✅, PREP-002 ✅, PREP-003 ✅ (Cache LRU é interno, getStatementsMetrics/clearStatementCache implementados)
+- REQ-001 ✅ (multi-result.md documentado, implementado no Rust FFI)
+- STMT-001 ✅, STMT-002 ✅ (StatementOptions e suporte para metrics implementado)
+- STMT-003 ✅ (clearStatementCache e getPreparedStatementsMetrics implementados)
+- STMT-004 ✅ (Bulk Operations - BulkInsertBuilder implementado com suporte completo a tipos)
+- INFRA-001 ✅ (tipos corrigidos em odbc_native.dart - stubs para clearAllStatements e getStatementsMetrics adicionados)
+- PREP-004 ❌ (Plugin Output Parameters - Fora de Escopo, não implementado)
+- **OdbcService atualizado**: métodos prepare, closeStatement, getPreparedStatementsMetrics, bulkInsert expostos
+- **Testes criados**: prepared_statement_lifecycle_test.dart (PREP-001), statement_options_test.dart (PREP-002), bulk_operations_test.dart (STMT-004)
+- **Exemplos atualizados**: timeouts_demo.dart e main.dart corrigidos para usar API de 4 parâmetros em executePrepared
 
 Criterio de saida:
 
