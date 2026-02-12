@@ -40,6 +40,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   /// [maxRetries] specifies the maximum number of retry attempts for exports.
   /// [retryBaseDelay] is the initial delay before first retry.
   /// [retryMaxDelay] is the maximum delay between retries.
+  /// [fallbackExporter] optional exporter to use when OTLP fails.
   TelemetryRepositoryImpl(
     this._ffi, {
     int batchSize = 100,
@@ -47,7 +48,8 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     int maxRetries = 3,
     Duration retryBaseDelay = const Duration(milliseconds: 100),
     Duration retryMaxDelay = const Duration(seconds: 10),
-  })  : _buffer = TelemetryBuffer(
+    TelemetryExporter? fallbackExporter,
+  }) : _buffer = TelemetryBuffer(
           batchSize: batchSize,
           flushInterval: flushInterval,
         ),
@@ -65,9 +67,73 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   bool _isInitialized = false;
   bool _isShuttingDown = false;
 
-  /// Exports a batch of telemetry data.
+  /// Configuration for automatic fallback behavior.
+  ///
+  /// Controls when to switch from OTLP to ConsoleExporter.
+  int consecutiveFailureThreshold = 3;
+  int failureCheckInterval = Duration(seconds: 30);
+  TelemetryExporter? fallbackExporter;
+
+  /// Updates the active exporter.
+  ///
+  /// Monitors failures and switches to fallback if needed.
+  void _updateExporterIfNeeded(TelemetryExporter? exporter) {
+    if (fallbackExporter != null && exporter != _currentExporter) {
+      _currentExporter = exporter;
+      _failureCount = 0;
+    }
+  }
+
+  /// Sets the fallback exporter to use.
+  ///
+  /// Call this to configure a ConsoleExporter to be used when OTLP fails.
+  /// The exporter will receive all failed telemetry data.
+  void setFallbackExporter(ConsoleExporter exporter) {
+    _updateExporterIfNeeded(exporter);
+    _failureCount = 0;
+  }
+
+  /// Checks if should trigger fallback.
+  ///
+  /// Returns true if failures exceed threshold in time window.
+  bool _shouldTriggerFallback() {
+    if (_currentExporter is ConsoleExporter) {
+      return false; // Already using fallback
+    }
+
+    final now = DateTime.now().toUtc();
+    final recentFailures = _recentFailures
+        .where((failure) =>
+            failure.timestamp.isAfter(now.subtract(failureCheckInterval)));
+
+    return recentFailures.length >= consecutiveFailureThreshold;
+  }
+
+  /// Tracks recent failures for fallback decision.
+  final List<TelemetryFailureRecord> _recentFailures = [];
+
+  /// Records a failure for tracking.
+  void _recordFailure(TelemetryException error) {
+    _recentFailures.add(TelemetryFailureRecord(
+      timestamp: DateTime.now().toUtc(),
+      error: error,
+      exporter: _currentExporter.runtimeType.toString(),
+    ));
+
+    // Keep only recent failures within time window
+    _recentFailures.removeWhere((failure) =>
+        failure.timestamp.isBefore(DateTime.now().toUtc().subtract(failureCheckInterval)));
+
+    // Auto-switch to fallback if threshold exceeded
+    if (_shouldTriggerFallback() && fallbackExporter != null) {
+      _updateExporterIfNeeded(fallbackExporter);
+    }
+  }
+
+  /// Exports a batch of telemetry data using the current exporter.
   ///
   /// Handles errors gracefully without throwing exceptions.
+  /// Records failures to track for automatic fallback decisions.
   void _exportBatch() {
     if (_isFlushing) {
       return;
@@ -77,41 +143,12 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     try {
       final batch = _buffer.flush();
 
-      for (final trace in batch.traces) {
-        try {
-          final traceJson = _serializeTrace(trace);
-          _ffi.exportTrace(traceJson);
-        } on Exception {
-          // Continue exporting other items
-        }
-      }
-
-      for (final span in batch.spans) {
-        try {
-          final spanJson = _serializeSpan(span);
-          _ffi.exportTrace(spanJson);
-        } on Exception {
-          // Continue exporting other items
-        }
-      }
-
-      for (final metric in batch.metrics) {
-        try {
-          final metricJson = _serializeMetric(metric);
-          _ffi.exportTrace(metricJson);
-        } on Exception {
-          // Continue exporting other items
-        }
-      }
-
-      for (final event in batch.events) {
-        try {
-          final eventJson = _serializeEvent(event);
-          _ffi.exportTrace(eventJson);
-        } on Exception {
-          // Continue exporting other items
-        }
-      }
+      // Export using current exporter
+      _currentExporter?.exportTraceBatch(batch);
+    } on Exception catch (e) {
+      // Record failure and attempt fallback
+      _recordFailure(e is err.TelemetryException ? Exception());
+      _updateExporterIfNeeded(fallbackExporter);
     } finally {
       _isFlushing = false;
     }
