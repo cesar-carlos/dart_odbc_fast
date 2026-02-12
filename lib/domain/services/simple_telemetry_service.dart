@@ -1,3 +1,5 @@
+import 'dart:math' show Random;
+
 import 'package:odbc_fast/domain/services/itelemetry_service.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
@@ -12,28 +14,41 @@ class SimpleTelemetryService implements ITelemetryService {
   final ITelemetryRepository _repository;
   final Map<String, Trace> _activeTraces = {};
   final Map<String, Span> _activeSpans = {};
+  final Random _random = Random.secure();
 
   @override
   String get serviceName => 'odbc_fast';
 
-  /// Generates a unique trace ID.
+  /// Generates a UUID v4 for unique trace IDs.
+  ///
+  /// Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
   String _generateTraceId() {
-    final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final random = (timestamp * 1000 + (timestamp % 1000)).toRadixString(16);
-    final unique = '$random-${_activeTraces.length}';
-    return 'trace-$unique';
+    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant
+
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-$hex';
   }
 
-  /// Generates a unique span ID.
+  /// Generates a UUID v4 for unique span IDs.
+  ///
+  /// Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
   String _generateSpanId() {
-    final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final random = (timestamp * 1000 + (timestamp % 1000)).toRadixString(16);
-    final unique = '$random-${_activeSpans.length}';
-    return 'span-$unique';
+    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant
+
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-$hex';
   }
 
   @override
   Trace startTrace(String operationName) {
+    if (operationName.isEmpty) {
+      throw ArgumentError('Operation name cannot be empty');
+    }
+
     final traceId = _generateTraceId();
     final now = DateTime.now().toUtc();
 
@@ -53,6 +68,10 @@ class SimpleTelemetryService implements ITelemetryService {
     required String traceId,
     Map<String, String> attributes = const {},
   }) async {
+    if (traceId.isEmpty) {
+      throw ArgumentError('Trace ID cannot be empty');
+    }
+
     final cached = _activeTraces[traceId];
     if (cached == null) {
       throw Exception('Trace $traceId not found');
@@ -76,6 +95,13 @@ class SimpleTelemetryService implements ITelemetryService {
     required String spanName,
     Map<String, String> initialAttributes = const {},
   }) {
+    if (spanName.isEmpty) {
+      throw ArgumentError('Span name cannot be empty');
+    }
+    if (parentId.isEmpty) {
+      throw ArgumentError('Parent ID cannot be empty');
+    }
+
     final spanId = _generateSpanId();
     final now = DateTime.now().toUtc();
 
@@ -97,6 +123,10 @@ class SimpleTelemetryService implements ITelemetryService {
     required String spanId,
     Map<String, String> attributes = const {},
   }) async {
+    if (spanId.isEmpty) {
+      throw ArgumentError('Span ID cannot be empty');
+    }
+
     final cached = _activeSpans[spanId];
     if (cached == null) {
       throw Exception('Span $spanId not found');
@@ -122,6 +152,16 @@ class SimpleTelemetryService implements ITelemetryService {
     String unit = 'count',
     Map<String, String> attributes = const {},
   }) async {
+    if (name.isEmpty) {
+      throw ArgumentError('Metric name cannot be empty');
+    }
+    if (value.isNaN || value.isInfinite) {
+      throw ArgumentError('Metric value must be a valid number');
+    }
+    if (unit.isEmpty) {
+      throw ArgumentError('Metric unit cannot be empty');
+    }
+
     await _repository.exportMetric(
       Metric(
         name: name,
@@ -139,6 +179,13 @@ class SimpleTelemetryService implements ITelemetryService {
     required double value,
     Map<String, String> attributes = const {},
   }) async {
+    if (name.isEmpty) {
+      throw ArgumentError('Gauge name cannot be empty');
+    }
+    if (value.isNaN || value.isInfinite) {
+      throw ArgumentError('Gauge value must be a valid number');
+    }
+
     await _repository.exportMetric(
       Metric(
         name: name,
@@ -156,6 +203,13 @@ class SimpleTelemetryService implements ITelemetryService {
     required Duration duration,
     Map<String, String> attributes = const {},
   }) async {
+    if (name.isEmpty) {
+      throw ArgumentError('Timing name cannot be empty');
+    }
+    if (duration.isNegative) {
+      throw ArgumentError('Duration cannot be negative');
+    }
+
     await _repository.exportMetric(
       Metric(
         name: name,
@@ -174,6 +228,13 @@ class SimpleTelemetryService implements ITelemetryService {
     required String message,
     Map<String, dynamic> context = const {},
   }) async {
+    if (name.isEmpty) {
+      throw ArgumentError('Event name cannot be empty');
+    }
+    if (message.isEmpty) {
+      throw ArgumentError('Event message cannot be empty');
+    }
+
     await _repository.exportEvent(
       TelemetryEvent(
         name: name,

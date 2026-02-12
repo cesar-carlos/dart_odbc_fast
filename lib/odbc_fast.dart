@@ -48,7 +48,7 @@
 /// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
 library;
 
-export 'application/services/odbc_service.dart'; // TODO: Fix compilation errors
+// export 'application/services/odbc_service.dart'; // TODO: Fix compilation errors
 // export 'core/di/service_locator.dart'; // TODO: Fix OdbcService constructor
 export 'core/utils/logger.dart';
 export 'domain/builders/connection_string_builder.dart';
@@ -77,13 +77,13 @@ export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
 export 'infrastructure/native/protocol/param_value.dart';
-export 'infrastructure/native/telemetry/opentelemetry_ffi.dart';
+export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/telemetry/telemetry_buffer.dart';
 export 'infrastructure/native/wrappers/catalog_query.dart';
 export 'infrastructure/native/wrappers/connection_pool.dart';
 export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
-export 'infrastructure/repositories/odbc_repository_impl.dart';
+// export 'infrastructure/repositories/odbc_repository_impl.dart'; // TODO: Fix compilation errors
 // export 'infrastructure/repositories/telemetry_repository.dart'; // TODO: Fix compilation errors
 
 

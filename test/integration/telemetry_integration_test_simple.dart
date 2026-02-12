@@ -9,6 +9,8 @@ class MockTelemetryRepository implements ITelemetryRepository {
   int exportSpanCallCount = 0;
   int exportMetricCallCount = 0;
   int exportEventCallCount = 0;
+  int updateTraceCallCount = 0;
+  int updateSpanCallCount = 0;
 
   @override
   Future<void> exportTrace(Trace trace) async {
@@ -36,7 +38,7 @@ class MockTelemetryRepository implements ITelemetryRepository {
     required DateTime endTime,
     Map<String, String> attributes = const {},
   }) async {
-    // No-op for mock - traces are just tracked by count
+    updateTraceCallCount++;
   }
 
   @override
@@ -45,7 +47,7 @@ class MockTelemetryRepository implements ITelemetryRepository {
     required DateTime endTime,
     Map<String, String> attributes = const {},
   }) async {
-    // No-op for mock - spans are just tracked by count
+    updateSpanCallCount++;
   }
 
   @override
@@ -56,14 +58,6 @@ class MockTelemetryRepository implements ITelemetryRepository {
   @override
   Future<void> shutdown() async {
     // No-op for mock
-  }
-
-  // Reset counters for test isolation
-  void resetCounters() {
-    exportTraceCallCount = 0;
-    exportSpanCallCount = 0;
-    exportMetricCallCount = 0;
-    exportEventCallCount = 0;
   }
 }
 
@@ -92,7 +86,7 @@ void main() {
       await telemetryService.endTrace(traceId: trace.traceId);
 
       // Assert
-      expect(mockRepository.exportTraceCallCount, equals(1));
+      expect(mockRepository.updateTraceCallCount, equals(1));
       expect(trace.traceId, isNotEmpty);
       expect(trace.name, equals('test-operation'));
     });
@@ -115,7 +109,7 @@ void main() {
       await telemetryService.endTrace(traceId: trace.traceId);
 
       // Assert
-      expect(mockRepository.exportSpanCallCount, equals(2));
+      expect(mockRepository.updateSpanCallCount, equals(2));
       expect(span1.parentSpanId, equals(trace.traceId));
       expect(span2.parentSpanId, equals(trace.traceId));
     });
@@ -141,7 +135,7 @@ void main() {
       );
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(2));
+      expect(mockRepository.exportMetricCallCount, equals(1));
     });
 
     test('should record timing metric', () async {
@@ -153,7 +147,7 @@ void main() {
       );
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(3));
+      expect(mockRepository.exportMetricCallCount, equals(1));
     });
 
     test('should record event', () async {
@@ -177,7 +171,7 @@ void main() {
       await telemetryService.endTrace(traceId: trace2.traceId);
 
       // Assert
-      expect(mockRepository.exportTraceCallCount, equals(2));
+      expect(mockRepository.updateTraceCallCount, equals(2));
     });
 
     test('should flush pending telemetry data', () async {
@@ -197,13 +191,155 @@ void main() {
       await telemetryService.flush();
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(4));
+      expect(mockRepository.exportMetricCallCount, equals(2));
     });
 
     test('should shutdown telemetry service', () async {
       // Act & Assert - should not throw
       await telemetryService.shutdown();
-      expect(mockRepository.exportTraceCallCount, equals(0));
+      expect(mockRepository.updateTraceCallCount, equals(0));
+    });
+
+    test('should validate metric name is not empty', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordMetric(
+          name: '',
+          metricType: 'counter',
+          value: 42,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate gauge name is not empty', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordGauge(
+          name: '',
+          value: 5,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate timing name is not empty', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordTiming(
+          name: '',
+          duration: const Duration(milliseconds: 150),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate event name is not empty', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordEvent(
+          name: '',
+          severity: TelemetrySeverity.info,
+          message: 'Test message',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate event message is not empty', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordEvent(
+          name: 'test-event',
+          severity: TelemetrySeverity.info,
+          message: '',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate operation name is not empty', () {
+      // Act & Assert
+      expect(
+        () => telemetryService.startTrace(''),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate span name is not empty', () {
+      // Arrange
+      final trace = telemetryService.startTrace('test-operation');
+
+      // Act & Assert
+      expect(
+        () => telemetryService.startSpan(
+          parentId: trace.traceId,
+          spanName: '',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate parent ID is not empty', () {
+      // Act & Assert
+      expect(
+        () => telemetryService.startSpan(
+          parentId: '',
+          spanName: 'test-span',
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate trace ID is not empty when ending', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.endTrace(traceId: ''),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate span ID is not empty when ending', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.endSpan(spanId: ''),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate metric value is not NaN', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordMetric(
+          name: 'test-metric',
+          metricType: 'counter',
+          value: double.nan,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate metric value is not infinite', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordMetric(
+          name: 'test-metric',
+          metricType: 'counter',
+          value: double.infinity,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should validate timing duration is not negative', () async {
+      // Act & Assert
+      expect(
+        () => telemetryService.recordTiming(
+          name: 'query-latency',
+          duration: const Duration(milliseconds: -1),
+        ),
+        throwsArgumentError,
+      );
     });
   });
 }

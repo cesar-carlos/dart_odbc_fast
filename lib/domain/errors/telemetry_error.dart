@@ -6,7 +6,7 @@
 library;
 
 /// Base exception for all telemetry errors.
-abstract class TelemetryException implements Exception {
+class TelemetryException implements Exception {
   const TelemetryException({
     required this.message,
     this.code = 'UNKNOWN',
