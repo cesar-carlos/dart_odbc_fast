@@ -64,6 +64,7 @@ export 'domain/entities/retry_options.dart';
 export 'domain/entities/schema_info.dart';
 export 'domain/entities/statement_options.dart';
 export 'domain/errors/odbc_error.dart';
+export 'domain/errors/telemetry_error.dart';
 export 'domain/helpers/retry_helper.dart';
 export 'domain/repositories/itelemetry_repository.dart';
 export 'domain/repositories/odbc_repository.dart';

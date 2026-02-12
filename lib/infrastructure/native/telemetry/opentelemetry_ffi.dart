@@ -6,7 +6,8 @@ import 'dart:typed_data';
 class TelemetryException implements Exception {
   const TelemetryException(this.message) : code = 0;
 
-  const TelemetryException.fromCode(this.code) : message = 'Native error code: $code';
+  const TelemetryException.fromCode(this.code)
+      : message = 'Native error code: $code';
 
   final String message;
   final int code;
@@ -23,14 +24,12 @@ class TelemetryException implements Exception {
 /// NOTE: Native telemetry functions require the DLL to be loaded.
 /// If the DLL is not available, operations will be no-ops.
 class OpenTelemetryFFI {
-
   factory OpenTelemetryFFI() {
     final dylib = _loadLibrary();
 
     // Try to lookup native functions - they may not be available if DLL isn't loaded
     ffi.Pointer<ffi.NativeFunction<otel_init_func>>? otelInitPtr;
-    ffi.Pointer<ffi.NativeFunction<otel_export_trace_func>>?
-        otelExportTracePtr;
+    ffi.Pointer<ffi.NativeFunction<otel_export_trace_func>>? otelExportTracePtr;
     ffi.Pointer<ffi.NativeFunction<otel_shutdown_func>>? otelShutdownPtr;
     ffi.Pointer<ffi.NativeFunction<otel_get_last_error_func>>?
         otelGetLastErrorPtr;
@@ -56,13 +55,21 @@ class OpenTelemetryFFI {
       otelCleanupStringsPtr,
     );
   }
-  OpenTelemetryFFI._(this._dylib, this._otelInit, this._otelExportTrace,
-      this._otelShutdown, this._otelGetLastError, this._otelCleanupStrings,);
+  OpenTelemetryFFI._(
+    this._dylib,
+    this._otelInit,
+    this._otelExportTrace,
+    this._otelShutdown,
+    this._otelGetLastError,
+    this._otelCleanupStrings,
+  );
 
   static ffi.DynamicLibrary _loadLibrary() {
     if (Platform.isWindows) {
       try {
-        return ffi.DynamicLibrary.open('native/odbc_engine/target/release/odbc_engine.dll');
+        return ffi.DynamicLibrary.open(
+          'native/odbc_engine/target/release/odbc_engine.dll',
+        );
       } catch (_) {
         try {
           return ffi.DynamicLibrary.open('odbc_engine.dll');

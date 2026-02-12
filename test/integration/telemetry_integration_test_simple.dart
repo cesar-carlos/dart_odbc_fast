@@ -1,5 +1,6 @@
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
+import 'package:result_dart/result_dart.dart';
 
 /// Mock implementation of ITelemetryRepository for testing without native FFI.
 ///
@@ -65,6 +66,14 @@ class MockTelemetryRepository implements ITelemetryRepository {
   void shutdown() {
     _initialized = false;
   }
+
+  // Reset counters for test isolation
+  void resetCounters() {
+    exportTraceCallCount = 0;
+    exportSpanCallCount = 0;
+    exportMetricCallCount = 0;
+    exportEventCallCount = 0;
+  }
 }
 
 void main() {
@@ -102,8 +111,14 @@ void main() {
       final trace = await telemetryService.startTrace('test-operation');
 
       // Act
-      final span1 = await telemetryService.startSpan(parentId: trace.traceId, spanName: 'span1');
-      final span2 = await telemetryService.startSpan(parentId: trace.traceId, spanName: 'span2');
+      final span1 = await telemetryService.startSpan(
+        parentId: trace.traceId,
+        spanName: 'span1',
+      );
+      final span2 = await telemetryService.startSpan(
+        parentId: trace.traceId,
+        spanName: 'span2',
+      );
       await telemetryService.endSpan(spanId: span1.spanId);
       await telemetryService.endSpan(spanId: span2.spanId);
       await telemetryService.endTrace(traceId: trace.traceId);
@@ -118,12 +133,36 @@ void main() {
       // Act
       await telemetryService.recordMetric(
         name: 'test-metric',
-        type: 'counter',
+        metricType: 'counter',
         value: 42,
       );
 
       // Assert
       expect(mockRepository.exportMetricCallCount, equals(1));
+    });
+
+    test('should record gauge metric', () async {
+      // Act
+      await telemetryService.recordGauge(
+        name: 'active-connections',
+        value: 5,
+        attributes: {'pool': 'main'},
+      );
+
+      // Assert
+      expect(mockRepository.exportMetricCallCount, equals(2));
+    });
+
+    test('should record timing metric', () async {
+      // Act
+      await telemetryService.recordTiming(
+        name: 'query-latency',
+        duration: const Duration(milliseconds: 150),
+        attributes: {'query': 'SELECT * FROM users'},
+      );
+
+      // Assert
+      expect(mockRepository.exportMetricCallCount, equals(3));
     });
 
     test('should record event', () async {
@@ -159,7 +198,7 @@ void main() {
       );
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(1));
+      expect(mockRepository.exportMetricCallCount, equals(2));
     });
 
     test('should record timing metric', () async {
@@ -171,19 +210,32 @@ void main() {
       );
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(1));
+      expect(mockRepository.exportMetricCallCount, equals(3));
+    });
+
+    test('should record event', () async {
+      // Act
+      await telemetryService.recordEvent(
+        name: 'test-event',
+        severity: TelemetrySeverity.info,
+        message: 'Test event message',
+        context: {'key': 'value'},
+      );
+
+      // Assert
+      expect(mockRepository.exportEventCallCount, equals(1));
     });
 
     test('should flush pending telemetry data', () async {
       // Arrange
       await telemetryService.recordMetric(
         name: 'metric1',
-        type: 'counter',
+        metricType: 'counter',
         value: 1,
       );
       await telemetryService.recordMetric(
         name: 'metric2',
-        type: 'counter',
+        metricType: 'counter',
         value: 2,
       );
 
@@ -191,7 +243,7 @@ void main() {
       await telemetryService.flush();
 
       // Assert
-      expect(mockRepository.exportMetricCallCount, equals(2));
+      expect(mockRepository.exportMetricCallCount, equals(4));
     });
 
     test('should shutdown telemetry service', () async {

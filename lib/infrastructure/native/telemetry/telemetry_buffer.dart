@@ -33,10 +33,10 @@ class TelemetryBuffer {
     _onFlush = callback;
   }
 
-  List<Trace> _traces = [];
-  List<Span> _spans = [];
-  List<Metric> _metrics = [];
-  List<TelemetryEvent> _events = [];
+  final List<Trace> _traces = [];
+  final List<Span> _spans = [];
+  final List<Metric> _metrics = [];
+  final List<TelemetryEvent> _events = [];
 
   Timer? _flushTimer;
   bool _isFlushing = false;
@@ -74,7 +74,8 @@ class TelemetryBuffer {
   }
 
   /// Gets the current buffer size.
-  int get size => _traces.length + _spans.length + _metrics.length + _events.length;
+  int get size =>
+      _traces.length + _spans.length + _metrics.length + _events.length;
 
   /// Gets the number of traces in the buffer.
   int get traceCount => _traces.length;
@@ -152,7 +153,6 @@ class TelemetryBuffer {
 
 /// Represents a batch of telemetry data to be exported.
 class TelemetryBatch {
-
   /// Creates a new telemetry batch.
   TelemetryBatch({
     required this.traces,
@@ -160,6 +160,7 @@ class TelemetryBatch {
     required this.metrics,
     required this.events,
   });
+
   /// Creates an empty telemetry batch.
   TelemetryBatch.empty()
       : traces = [],
