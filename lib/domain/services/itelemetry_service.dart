@@ -18,7 +18,7 @@ abstract class ITelemetryService {
   /// Finishes a trace by calculating duration.
   ///
   /// Call this when operation completes successfully.
-  void endTrace({
+  Future<void> endTrace({
     required String traceId,
     Map<String, String> attributes = const {},
   });
@@ -37,7 +37,7 @@ abstract class ITelemetryService {
   /// Finishes a span by calculating duration.
   ///
   /// Call this when a span completes successfully.
-  void endSpan({
+  Future<void> endSpan({
     required String spanId,
     Map<String, String> attributes = const {},
   });
@@ -45,7 +45,7 @@ abstract class ITelemetryService {
   /// Records a counter metric.
   ///
   /// Use for counting operations (e.g., query count, error count).
-  void recordMetric({
+  Future<void> recordMetric({
     required String name,
     required String metricType,
     required double value,
@@ -56,7 +56,7 @@ abstract class ITelemetryService {
   /// Records a gauge metric (current value).
   ///
   /// Use for measurements like pool size, active connections, etc.
-  void recordGauge({
+  Future<void> recordGauge({
     required String name,
     required double value,
     Map<String, String> attributes = const {},
@@ -65,7 +65,7 @@ abstract class ITelemetryService {
   /// Records a timing metric.
   ///
   /// Use for measuring operation duration (e.g., query latency).
-  void recordTiming({
+  Future<void> recordTiming({
     required String name,
     required Duration duration,
     Map<String, String> attributes = const {},
@@ -74,7 +74,7 @@ abstract class ITelemetryService {
   /// Records a telemetry event (log entry).
   ///
   /// Use for significant events (errors, warnings, debug info).
-  void recordEvent({
+  Future<void> recordEvent({
     required String name,
     required TelemetrySeverity severity,
     required String message,
@@ -84,10 +84,10 @@ abstract class ITelemetryService {
   /// Flushes all pending telemetry data.
   ///
   /// Should be called before shutting down application.
-  void flush();
+  Future<void> flush();
 
   /// Shutdown telemetry exporter and release resources.
   ///
   /// Should be called when application is shutting down.
-  void shutdown();
+  Future<void> shutdown();
 }

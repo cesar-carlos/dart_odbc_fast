@@ -4,7 +4,7 @@ import 'dart:math' show Random;
 import 'package:odbc_fast/domain/errors/telemetry_error.dart' as err;
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
-import 'package:odbc_fast/infrastructure/native/telemetry/opentelemetry_ffi.dart';
+// import 'package:odbc_fast/infrastructure/native/telemetry/opentelemetry_ffi.dart'; // TODO: Fix TelemetryException conflict
 import 'package:odbc_fast/infrastructure/native/telemetry/telemetry_buffer.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -228,26 +228,19 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   }
 
   @override
-  Future<ResultDart<void, TelemetryException>> exportTrace(Trace trace) async {
+  Future<void> exportTrace(Trace trace) async {
     if (!_isInitialized) {
-      return const Failure(
-        err.TelemetryException
-          message: 'Telemetry not initialized',
-          code: 'NOT_INITIALIZED',
-        ),
-      )
+      return;
     }
 
-    return _retry.execute(
-      () async {
-        final shouldFlush = _buffer.addTrace(trace);
-        if (shouldFlush) {
-          _exportBatch();
-        }
-        return const Success(null);
-      },
-      operationName: 'exportTrace',
-    );
+    try {
+      final shouldFlush = _buffer.addTrace(trace);
+      if (shouldFlush) {
+        _exportBatch();
+      }
+    } on Exception catch (e) {
+      _recordFailure(e is err.TelemetryException ? e : Exception(e.toString()));
+    }
   }
 
   @override

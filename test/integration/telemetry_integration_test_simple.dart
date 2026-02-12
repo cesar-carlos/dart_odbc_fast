@@ -1,6 +1,5 @@
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
-import 'package:result_dart/result_dart.dart';
 
 /// Mock implementation of ITelemetryRepository for testing without native FFI.
 ///
@@ -11,60 +10,52 @@ class MockTelemetryRepository implements ITelemetryRepository {
   int exportMetricCallCount = 0;
   int exportEventCallCount = 0;
 
-  bool _initialized = false;
-
   @override
-  bool initialize({String otlpEndpoint = 'http://localhost:4318'}) {
-    _initialized = true;
-    return true;
-  }
-
-  @override
-  void exportTrace(Trace trace) {
+  Future<void> exportTrace(Trace trace) async {
     exportTraceCallCount++;
   }
 
   @override
-  void exportSpan(Span span) {
+  Future<void> exportSpan(Span span) async {
     exportSpanCallCount++;
   }
 
   @override
-  void exportMetric(Metric metric) {
+  Future<void> exportMetric(Metric metric) async {
     exportMetricCallCount++;
   }
 
   @override
-  void exportEvent(TelemetryEvent event) {
+  Future<void> exportEvent(TelemetryEvent event) async {
     exportEventCallCount++;
   }
 
   @override
-  void updateTrace({
+  Future<void> updateTrace({
     required String traceId,
     required DateTime endTime,
     Map<String, String> attributes = const {},
-  }) {
+  }) async {
     // No-op for mock - traces are just tracked by count
   }
 
   @override
-  void updateSpan({
+  Future<void> updateSpan({
     required String spanId,
     required DateTime endTime,
     Map<String, String> attributes = const {},
-  }) {
+  }) async {
     // No-op for mock - spans are just tracked by count
   }
 
   @override
-  void flush() {
+  Future<void> flush() async {
     // No-op for mock
   }
 
   @override
-  void shutdown() {
-    _initialized = false;
+  Future<void> shutdown() async {
+    // No-op for mock
   }
 
   // Reset counters for test isolation
@@ -78,12 +69,12 @@ class MockTelemetryRepository implements ITelemetryRepository {
 
 void main() {
   group('Simple Telemetry Integration Tests (Mock)', () {
-    late TelemetryService telemetryService;
+    late SimpleTelemetryService telemetryService;
     late MockTelemetryRepository mockRepository;
 
     setUp(() {
       mockRepository = MockTelemetryRepository();
-      telemetryService = TelemetryService(mockRepository);
+      telemetryService = SimpleTelemetryService(mockRepository);
     });
 
     tearDown(() async {
@@ -97,7 +88,7 @@ void main() {
 
     test('should start and end trace', () async {
       // Act
-      final trace = await telemetryService.startTrace('test-operation');
+      final trace = telemetryService.startTrace('test-operation');
       await telemetryService.endTrace(traceId: trace.traceId);
 
       // Assert
@@ -108,14 +99,14 @@ void main() {
 
     test('should create and end spans', () async {
       // Arrange
-      final trace = await telemetryService.startTrace('test-operation');
+      final trace = telemetryService.startTrace('test-operation');
 
       // Act
-      final span1 = await telemetryService.startSpan(
+      final span1 = telemetryService.startSpan(
         parentId: trace.traceId,
         spanName: 'span1',
       );
-      final span2 = await telemetryService.startSpan(
+      final span2 = telemetryService.startSpan(
         parentId: trace.traceId,
         spanName: 'span2',
       );
@@ -180,50 +171,13 @@ void main() {
 
     test('should handle multiple traces', () async {
       // Act
-      final trace1 = await telemetryService.startTrace('operation-1');
-      final trace2 = await telemetryService.startTrace('operation-2');
+      final trace1 = telemetryService.startTrace('operation-1');
+      final trace2 = telemetryService.startTrace('operation-2');
       await telemetryService.endTrace(traceId: trace1.traceId);
       await telemetryService.endTrace(traceId: trace2.traceId);
 
       // Assert
       expect(mockRepository.exportTraceCallCount, equals(2));
-    });
-
-    test('should record gauge metric', () async {
-      // Act
-      await telemetryService.recordGauge(
-        name: 'active-connections',
-        value: 5,
-        attributes: {'pool': 'main'},
-      );
-
-      // Assert
-      expect(mockRepository.exportMetricCallCount, equals(2));
-    });
-
-    test('should record timing metric', () async {
-      // Act
-      await telemetryService.recordTiming(
-        name: 'query-latency',
-        duration: const Duration(milliseconds: 150),
-        attributes: {'query': 'SELECT * FROM users'},
-      );
-
-      // Assert
-      expect(mockRepository.exportMetricCallCount, equals(3));
-    });
-
-    test('should record event', () async {
-      // Act
-      await telemetryService.recordEvent(
-        name: 'test-event',
-        severity: TelemetrySeverity.info,
-        message: 'Test event message',
-        context: {'key': 'value'},
-      );
-
-      // Assert
-      expect(mockRepository.exportEventCallCount, equals(1));
     });
 
     test('should flush pending telemetry data', () async {

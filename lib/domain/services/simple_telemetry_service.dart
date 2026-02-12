@@ -1,6 +1,6 @@
+import 'package:odbc_fast/domain/services/itelemetry_service.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
-import 'package:result_dart/result_dart.dart';
 
 /// Simplified telemetry service for ODBC operations.
 ///
@@ -49,10 +49,10 @@ class SimpleTelemetryService implements ITelemetryService {
   }
 
   @override
-  void endTrace({
+  Future<void> endTrace({
     required String traceId,
     Map<String, String> attributes = const {},
-  }) {
+  }) async {
     final cached = _activeTraces[traceId];
     if (cached == null) {
       throw Exception('Trace $traceId not found');
@@ -61,7 +61,7 @@ class SimpleTelemetryService implements ITelemetryService {
     final now = DateTime.now().toUtc();
     final duration = now.difference(cached.startTime);
 
-    _repository.updateTrace(
+    await _repository.updateTrace(
       traceId: traceId,
       endTime: now,
       attributes: {...cached.attributes, ...attributes},
@@ -93,10 +93,10 @@ class SimpleTelemetryService implements ITelemetryService {
   }
 
   @override
-  void endSpan({
+  Future<void> endSpan({
     required String spanId,
     Map<String, String> attributes = const {},
-  }) {
+  }) async {
     final cached = _activeSpans[spanId];
     if (cached == null) {
       throw Exception('Span $spanId not found');
@@ -105,7 +105,7 @@ class SimpleTelemetryService implements ITelemetryService {
     final now = DateTime.now().toUtc();
     final duration = now.difference(cached.startTime);
 
-    _repository.updateSpan(
+    await _repository.updateSpan(
       spanId: spanId,
       endTime: now,
       attributes: {...cached.attributes, ...attributes},
@@ -115,78 +115,83 @@ class SimpleTelemetryService implements ITelemetryService {
   }
 
   @override
-  void recordMetric({
+  Future<void> recordMetric({
     required String name,
     required String metricType,
     required double value,
     String unit = 'count',
     Map<String, String> attributes = const {},
-  }) {
-    _repository.exportMetric(Metric(
-      name: name,
-      type: metricType,
-      value: value,
-      unit: unit,
-      timestamp: DateTime.now().toUtc(),
-      attributes: attributes,
+  }) async {
+    await _repository.exportMetric(
+      Metric(
+        name: name,
+        value: value,
+        unit: unit,
+        timestamp: DateTime.now().toUtc(),
+        attributes: attributes,
+      ),
     );
   }
 
   @override
-  void recordGauge({
+  Future<void> recordGauge({
     required String name,
     required double value,
     Map<String, String> attributes = const {},
-  }) {
-    _repository.exportMetric(Metric(
-      name: name,
-      type: 'gauge',
-      value: value,
-      unit: 'count',
-      timestamp: DateTime.now().toUtc(),
-      attributes: attributes,
+  }) async {
+    await _repository.exportMetric(
+      Metric(
+        name: name,
+        value: value,
+        unit: 'count',
+        timestamp: DateTime.now().toUtc(),
+        attributes: attributes,
+      ),
     );
   }
 
   @override
-  void recordTiming({
+  Future<void> recordTiming({
     required String name,
     required Duration duration,
     Map<String, String> attributes = const {},
-  }) {
-    _repository.exportMetric(Metric(
-      name: name,
-      type: 'histogram',
-      value: duration.inMilliseconds.toDouble(),
-      unit: 'ms',
-      timestamp: DateTime.now().toUtc(),
-      attributes: attributes,
+  }) async {
+    await _repository.exportMetric(
+      Metric(
+        name: name,
+        value: duration.inMilliseconds.toDouble(),
+        unit: 'ms',
+        timestamp: DateTime.now().toUtc(),
+        attributes: attributes,
+      ),
     );
   }
 
   @override
-  void recordEvent({
+  Future<void> recordEvent({
     required String name,
     required TelemetrySeverity severity,
     required String message,
     Map<String, dynamic> context = const {},
-  }) {
-    _repository.exportEvent(TelemetryEvent(
-      name: name,
-      severity: severity,
-      message: message,
-      timestamp: DateTime.now().toUtc(),
-      context: context,
+  }) async {
+    await _repository.exportEvent(
+      TelemetryEvent(
+        name: name,
+        severity: severity,
+        message: message,
+        timestamp: DateTime.now().toUtc(),
+        context: context,
+      ),
     );
   }
 
   @override
-  void flush() {
-    _repository.flush();
+  Future<void> flush() async {
+    await _repository.flush();
   }
 
   @override
-  void shutdown() {
-    _repository.shutdown();
+  Future<void> shutdown() async {
+    await _repository.shutdown();
   }
 }
