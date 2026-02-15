@@ -52,6 +52,14 @@ bool isE2eEnabled() {
   return parsed ?? false;
 }
 
+/// When true, normally-skipped tests (slow, stress, native-assets) run.
+/// Set RUN_SKIPPED_TESTS=1 (or true/yes) to enable; useful for CI or local validation.
+bool get runSkippedTests {
+  final raw = getTestEnv('RUN_SKIPPED_TESTS');
+  final parsed = _parseEnvBool(raw);
+  return parsed ?? false;
+}
+
 bool? _parseEnvBool(String? raw) {
   if (raw == null) return null;
   final normalized = raw.trim().toLowerCase();

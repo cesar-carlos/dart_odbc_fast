@@ -88,6 +88,14 @@ dart test test/integration/
 
 Observacao: parte dos testes de integracao depende de DSN real (`ODBC_TEST_DSN`).
 
+Para incluir os 10 testes normalmente ignorados (slow, stress, native-assets):
+
+```bash
+RUN_SKIPPED_TESTS=1 dart test
+```
+
+Ou no PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Aceita `1`, `true`, `yes`.
+
 ## Troubleshooting relacionado
 
 - Erros de biblioteca nao encontrada: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

@@ -42,7 +42,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: 'Stress test - runs too long',
+      skip: runSkippedTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -60,7 +60,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: 'Stress test - runs too long',
+      skip: runSkippedTests ? null : 'Stress test - runs too long',
     );
   });
 }

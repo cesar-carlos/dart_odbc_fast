@@ -42,7 +42,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: 'Stress test - runs too long',
+      skip: runSkippedTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -76,7 +76,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: 'Stress test - runs too long',
+      skip: runSkippedTests ? null : 'Stress test - runs too long',
     );
   });
 }

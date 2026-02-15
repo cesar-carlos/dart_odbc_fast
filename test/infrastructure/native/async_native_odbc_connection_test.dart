@@ -408,7 +408,8 @@ void main() {
         await queryFuture;
         await async.disconnect(connId);
       },
-      skip: 'Slow integration test - uses WAITFOR DELAY',
+      skip:
+          runSkippedTests ? null : 'Slow integration test - uses WAITFOR DELAY',
       timeout: const Timeout(Duration(seconds: 10)),
     );
 
@@ -440,7 +441,9 @@ void main() {
         await async.disconnect(connId2);
         await async.disconnect(connId3);
       },
-      skip: 'Slow integration test - multiple concurrent queries with delays',
+      skip: runSkippedTests
+          ? null
+          : 'Slow integration test - multiple concurrent queries with delays',
       timeout: const Timeout(Duration(seconds: 15)),
     );
 
@@ -584,8 +587,10 @@ void main() {
           expect(e.message, contains('Worker isolate'));
         }
       },
-      skip: 'Isolate.kill() onDone timing is platform-dependent; '
-          'dispose test covers _failAllPending path',
+      skip: runSkippedTests
+          ? null
+          : 'Isolate.kill() onDone timing is platform-dependent; '
+              'dispose test covers _failAllPending path',
     );
   });
 

@@ -28,7 +28,7 @@ void main() {
         await Future.wait(futures);
         async.dispose();
       },
-      skip: 'Stress test - runs too long',
+      skip: runSkippedTests ? null : 'Stress test - runs too long',
       timeout: const Timeout(Duration(minutes: 2)),
     );
   });

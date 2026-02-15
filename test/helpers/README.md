@@ -1,4 +1,4 @@
-﻿# Test Helpers
+# Test Helpers
 
 Utility functions for writing database-agnostic tests.
 
@@ -161,6 +161,10 @@ Gets a test environment variable value.
 ### `isE2eEnabled() -> bool`
 
 Returns true if end-to-end tests are enabled (`ENABLE_E2E_TESTS=1`).
+
+### `runSkippedTests -> bool`
+
+Returns true when `RUN_SKIPPED_TESTS=1` (or `true`/`yes`). When true, the 10 normally-skipped tests (slow integration, stress, native-assets) run. Use for CI or local validation: `RUN_SKIPPED_TESTS=1 dart test`.
 
 ### `kInvalidConnectionId`
 

@@ -24,6 +24,7 @@ Este diretorio contem apenas os documentos canonicos para uso diario de contribu
 
 - `doc/notes/` guarda notas de apoio e investigacoes pontuais.
 - Arquivos em `doc/notes/` nao substituem os documentos canonicos.
+- Plano atual de melhoria de desempenho/confiabilidade: [PERFORMANCE_RELIABILITY_IMPLEMENTATION_PLAN.md](notes/PERFORMANCE_RELIABILITY_IMPLEMENTATION_PLAN.md)
 
 ## Regras de manutencao
 
