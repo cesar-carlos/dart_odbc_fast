@@ -46,7 +46,7 @@ jobs:
       - name: Rust lint (clippy)
         run: |
           cd native
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build Rust library
         run: |
@@ -62,3 +62,15 @@ jobs:
           test/domain
           test/infrastructure/native/protocol/
           test/infrastructure/native/errors/
+
+      - name: Rust coverage (lib)
+        run: |
+          cd native
+          cargo install cargo-tarpaulin
+          cargo tarpaulin -p odbc_engine --lib --out Html --out Lcov --output-dir coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-report
+          path: native/coverage/

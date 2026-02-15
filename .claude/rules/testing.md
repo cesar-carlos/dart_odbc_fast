@@ -10,7 +10,7 @@ paths:
 
 ### Organização
 
-Os testes devem seguir a mesma estrutura de pastas do código:
+Tests must follow the same folder structure as the code:
 
 ```
 lib/
@@ -259,30 +259,30 @@ test('should do something', () {
 
 ### Nomenclatura de Testes
 
-- Descreva o comportamento esperado
+- Describe expected behavior
 - Use formato: `should [verbo] when [condição]`
-- Exemplos:
+- Examples:
   - `should return User when repository succeeds`
   - `should return Failure when id is empty`
   - `should throw exception when email is invalid`
 
 ### Isolamento
 
-- Cada teste deve ser independente
-- Use `setUp()` e `tearDown()` para preparação e limpeza
-- Não compartilhe estado entre testes
+- Cada teste must ser independente
+- Use `setUp()` and `tearDown()` for preparation and cleanup
+- not compartilhe estado entre testes
 
 ### Mocking
 
-- Use `mocktail` ou `mockito` para criar mocks
+- Use `mocktail` or `mockito` to create mocks
 - Mock apenas dependências externas
-- Não mock entidades ou value objects do domínio
+- not mock entidades ou value objects do domínio
 
 ### Assertions (package:checks)
 
-- ✅ **Use `package:checks`** para assertions mais expressivos e legíveis
-- ✅ `package:checks` fornece uma sintaxe mais fluida que os matchers padrão
-- ✅ Preferível ao uso de `expect` com matchers tradicionais
+- ✅ **Use `package:checks`** for more expressive and readable assertions
+- ✅ `package:checks` provides a more fluid syntax than the default matchers
+- ✅ Preferable to using `expect` with traditional matchers
 
 ```dart
 // ✅ Good: package:checks syntax (mais expressivo)
@@ -320,7 +320,8 @@ expect(user.email, contains('@'));
 ### Cobertura
 
 - Busque alta cobertura de código crítico (Domain Layer)
-- Teste casos de sucesso e falha
+- Teste casos de success e failure
 - Teste casos extremos (valores vazios, null, etc.)
+
 
 

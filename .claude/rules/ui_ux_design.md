@@ -12,12 +12,12 @@ Guidelines for creating intuitive, accessible, and visually appealing Windows de
 
 ## Design System: Fluent UI vs Material 3
 
-- ✅ **Escolha uma “linguagem visual” principal por superfície/tela** (Fluent UI *ou* Material) e mantenha consistência
-- ✅ **Centralize tokens** (cores, tipografia, spacing, radius, elevação) e consuma via theme (não hardcode)
-- ✅ **Suporte real a Light/Dark** e densidade apropriada para desktop (janelas redimensionáveis)
-- ✅ **Evite “mix” de componentes** (ex.: `NavigationRail` com `FluentNavigationView` na mesma tela)
+- ✅ **Choose one main “visual language” per surface/screen** (Fluent UI *or* Material) and maintain consistency
+- ✅ **Centralize tokens** (cores, tipografia, spacing, radius, elevação) e consuma via theme (not hardcode)
+- ✅ **Real Light/Dark support** and desktop-appropriate density (resizable windows)
+- ✅ **Avoid “mixing” of components** (e.g.: `NavigationRail` with `FluentNavigationView` on the same screen)
 - ✅ Se precisar misturar por transição:
-  - Use **isolamento por área** (ex.: uma página inteira) e **adapters** para tokens
+  - Use **area isolation** (e.g. an entire page) and **adapters** for tokens
   - Mantenha **estados** (hover/pressed/focus), spacing e tipografia coerentes
 
 ## Visual Design
@@ -49,9 +49,9 @@ Column(
 ```
 
 ### Color Palette
-- ✅ Use uma paleta coerente baseada em tokens do app
+- ✅ Use a coherent palette based on app tokens
 - ✅ Se estiver usando Material: `ColorScheme.fromSeed()` + `ThemeData`
-- ✅ Se estiver usando Fluent UI: theme/tokens do Fluent (equivalentes) com o mesmo “brand accent”
+- ✅ If you are using Fluent UI: Fluent theme/tokens (equivalents) with the same “brand accent”
 - ✅ Maintain 60-30-10 rule (60% primary, 30% secondary, 10% accent)
 - ✅ Ensure sufficient contrast (WCAG 2.1 AA: 4.5:1 for normal text)
 - ✅ Use consistent colors across the application
@@ -72,7 +72,7 @@ Column(
 
 ### Desktop Navigation Patterns
 - ✅ Use familiar desktop UI components (MenuBar, ToolBar, NavigationRail)
-- ✅ Em Fluent UI, prefira padrões equivalentes (ex.: NavigationView/CommandBar) para “feel” nativo
+- ✅ In Fluent UI, prefer equivalent patterns (e.g. NavigationView/CommandBar) for native “feel”
 - ✅ Provide clear calls-to-action
 - ✅ Implement keyboard shortcuts for common actions
 - ✅ Support both mouse and keyboard navigation
@@ -103,7 +103,7 @@ Row(
 - ✅ Use loading indicators (CircularProgressIndicator, LinearProgressIndicator)
 - ✅ Provide clear error messages and recovery options
 - ✅ Show success confirmations for important actions
-- ✅ Use notificações não intrusivas (Material `SnackBar` / Fluent `InfoBar` ou equivalente)
+- ✅ Use notificações not intrusivas (Material `SnackBar` / Fluent `InfoBar` ou equivalente)
 
 ### States (loading / empty / error)
 
@@ -497,5 +497,6 @@ When designing UI/UX for desktop apps:
 - [ ] Minimum window size is set
 - [ ] File operations use standard dialogs
 - [ ] Auto-close is considered for simple apps
+
 
 

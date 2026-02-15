@@ -9,49 +9,49 @@ paths:
 ## Princípios Fundamentais
 
 ### Null Safety no Dart
-- ✅ Dart 2.12+ tem null safety habilitado por padrão
-- ✅ Variáveis não são nullable por padrão
-- ✅ Use `?` apenas quando necessário
+- ✅ Dart 2.12+ tem null safety habilitado por default
+- ✅ Variáveis not são nullable por default
+- ✅ Use `?` only when necessary
 - ✅ Evite `null` quando possível
 
 ## Declaração de Tipos
 
-### Non-nullable por Padrão
-- ✅ Variáveis são non-nullable por padrão
-- ✅ Use tipos explícitos para clareza
+### Non-nullable por default
+- ✅ Variáveis são non-nullable por default
+- ✅ Use explicit types for clarity
 
 ```dart
-// ✅ Bom: non-nullable por padrão
+// ✅ Bom: non-nullable por default
 String userName = 'John';
 int age = 25;
 bool isActive = true;
 
-// ❌ Não funciona: não pode ser null
+// ❌ not funciona: not pode ser null
 String userName = null; // Error: A value of type 'Null' can't be assigned
 ```
 
 ### Nullable Types
-- ✅ Use `?` apenas quando realmente necessário
-- ✅ Documente por que uma variável pode ser null
+- ✅ Use `?` only when really necessary
+- ✅ Document why a variable can be null
 
 ```dart
 // ✅ Bom: nullable quando necessário
 String? optionalUserName;
 int? optionalAge;
 
-// ✅ Bom: nullable com documentação
+// ✅ Bom: nullable com documentation
 /// User name. Can be null if user hasn't set a name yet.
 String? userName;
 
 // ❌ Evite: nullable desnecessário
-String? userName = 'John'; // Não precisa ser nullable se sempre terá valor
+String? userName = 'John'; // not precisa ser nullable se sempre terá valor
 ```
 
 ## Inicialização
 
 ### Variáveis Locais
 - ✅ Inicialize variáveis imediatamente ou use `late`
-- ✅ Use `final` quando o valor não muda
+- ✅ Use `final` when the value does not change
 
 ```dart
 // ✅ Bom: inicialização imediata
@@ -63,13 +63,13 @@ void init() {
   userName = 'John';
 }
 
-// ❌ Erro: variável não inicializada
+// ❌ Erro: variable not inicializada
 String userName; // Error: 'userName' must be initialized
 ```
 
 ### Campos de Classe
 - ✅ Inicialize campos no construtor ou use `late`
-- ✅ Use `late` para inicialização tardia
+- ✅ Use `late` for late startup
 
 ```dart
 // ✅ Bom: inicialização no construtor
@@ -99,14 +99,14 @@ class User {
 ## Null Checks
 
 ### Null-aware Operators
-- ✅ Use `?.` para chamadas seguras
-- ✅ Use `??` para valores padrão
-- ✅ Use `??=` para atribuição condicional
+- ✅ Use `?.` for secure calls
+- ✅ Use `??` for default values
+- ✅ Use `??=` for conditional assignment
 
 ```dart
 // ✅ Bom: null-aware operator
 String? userName;
-int length = userName?.length ?? 0; // Retorna 0 se userName é null
+int length = userName?.length ?? 0; // returns 0 se userName é null
 
 // ✅ Bom: null-coalescing operator
 String displayName = userName ?? 'Anonymous';
@@ -119,7 +119,7 @@ userName ??= 'Default'; // Atribui apenas se for null
 ### Null Assertion
 - ✅ Use `!` apenas quando absolutamente seguro
 - ✅ Evite `!` quando possível (use null checks)
-- ✅ Documente por que é seguro usar `!`
+- ✅ Document why it is safe to use `!`
 
 ```dart
 // ✅ Bom: null check antes de usar
@@ -135,9 +135,9 @@ int length = userName!.length; // Pode lançar exceção se null
 // ✅ Melhor: usar null-aware operator
 int length = userName?.length ?? 0;
 
-// ✅ Bom: quando garantido que não é null
+// ✅ Bom: quando garantido que not é null
 String getUserName() {
-  final user = _currentUser!; // Garantido que não é null neste ponto
+  final user = _currentUser!; // Garantido que not é null neste ponto
   return user.name;
 }
 ```
@@ -145,23 +145,23 @@ String getUserName() {
 ## Collections Nullable
 
 ### List
-- ✅ Use `List<T?>` para listas que podem conter null
+- ✅ Use `List<T?>` for lists that can contain null
 - ✅ Prefira `List<T>` quando possível
 
 ```dart
-// ✅ Bom: lista não-nullable
+// ✅ Bom: lista not-nullable
 List<String> names = ['John', 'Jane'];
 
 // ✅ Bom: lista nullable quando necessário
 List<String?> names = ['John', null, 'Jane'];
 
 // ✅ Bom: lista nullable de non-nullable
-List<String>? names; // Lista pode ser null, mas elementos não são null
+List<String>? names; // Lista pode ser null, mas elementos not são null
 ```
 
 ### Map
-- ✅ Use `Map<K, V?>` quando valores podem ser null
-- ✅ Trate nulls ao acessar mapas
+- ✅ Use `Map<K, V?>` when values ​​can be null
+- ✅ Treat nulls when accessing maps
 
 ```dart
 // ✅ Bom: valores nullable
@@ -172,24 +172,24 @@ Map<String, int?> scores = {
 
 // ✅ Bom: acesso seguro
 int? score = scores['John']; // Pode ser null
-int safeScore = scores['John'] ?? 0; // Valor padrão
+int safeScore = scores['John'] ?? 0; // Valor default
 ```
 
 ## Funções e Métodos
 
-### Parâmetros Nullable
-- ✅ Use `required` para parâmetros obrigatórios
-- ✅ Use `?` para parâmetros opcionais que podem ser null
-- ✅ Use valores padrão quando possível
+### parameters Nullable
+- ✅ Use `required` for mandatory parameters
+- ✅ Use `?` for optional parameters that can be null
+- ✅ Use valores default quando possível
 
 ```dart
-// ✅ Bom: parâmetro obrigatório
+// ✅ Bom: parameter obrigatório
 void createUser(String name) { }
 
-// ✅ Bom: parâmetro opcional nullable
+// ✅ Bom: parameter opcional nullable
 void createUser(String name, {String? email}) { }
 
-// ✅ Bom: valor padrão (preferível sobre nullable)
+// ✅ Bom: valor default (preferível sobre nullable)
 void createUser(String name, {String email = ''}) { }
 
 // ✅ Bom: required para nullable quando necessário
@@ -200,33 +200,33 @@ void createUser({
 ```
 
 ### Retorno Nullable
-- ✅ Retorne `T?` quando o resultado pode ser null
+- ✅ Return `T?` when the result may be null
 - ✅ Documente quando null pode ser retornado
 
 ```dart
 // ✅ Bom: retorno nullable quando necessário
 String? findUser(String id) {
-  // Retorna null se não encontrar
+  // returns null se not encontrar
   return _users[id];
 }
 
 // ✅ Bom: retorno non-nullable quando sempre tem valor
 String getUserName() {
-  return _currentUser.name; // Garantido que não é null
+  return _currentUser.name; // Garantido que not é null
 }
 
-// ✅ Bom: documentação
+// ✅ Bom: documentation
 /// Finds a user by ID. Returns null if user not found.
 User? findUser(String id) {
   return _users[id];
 }
 ```
 
-## Null Safety com Generics
+## Null Safety with Generics
 
 ### Generic Types
-- ✅ Use `T?` para tipos genéricos nullable
-- ✅ Use `T` para tipos genéricos non-nullable
+- ✅ Use `T?` for generic nullable types
+- ✅ Use `T` for non-nullable generic types
 
 ```dart
 // ✅ Bom: generic non-nullable
@@ -248,8 +248,8 @@ final user = await userRepo.findById('123'); // User?
 
 ### APIs Externas
 - ✅ Trate nulls de APIs externas
-- ✅ Valide dados antes de usar
-- ✅ Use mappers para converter nulls
+- ✅ Validate data before use
+- ✅ Use mappers to convert nulls
 
 ```dart
 // ✅ Bom: tratamento de nulls de API
@@ -269,8 +269,8 @@ class UserModel {
 ```
 
 ### JSON Parsing
-- ✅ Trate nulls ao fazer parse de JSON
-- ✅ Use valores padrão quando necessário
+- ✅ Treat nulls when parsing JSON
+- ✅ Use valores default quando necessário
 
 ```dart
 // ✅ Bom: parse seguro de JSON
@@ -278,7 +278,7 @@ UserModel.fromJson(Map<String, dynamic> json)
     : name = json['name'] as String?,
       email = json['email'] as String?;
 
-// ✅ Bom: com valores padrão
+// ✅ Bom: com valores default
 UserModel.fromJson(Map<String, dynamic> json)
     : name = json['name'] as String? ?? 'Unknown',
       email = json['email'] as String? ?? '';
@@ -287,12 +287,12 @@ UserModel.fromJson(Map<String, dynamic> json)
 ## Boas Práticas
 
 ### Evitar Null
-- ✅ Prefira valores padrão sobre null
-- ✅ Use enums para estados ao invés de null
+- ✅ Prefira valores default sobre null
+- ✅ Use enums for states instead of null
 - ✅ Use Optional types quando apropriado
 
 ```dart
-// ✅ Bom: valor padrão
+// ✅ Bom: valor default
 String getUserName() => _userName ?? 'Anonymous';
 
 // ✅ Bom: enum ao invés de null
@@ -331,9 +331,9 @@ String getUserName() {
 String getUserName() => _userName ?? 'Anonymous';
 ```
 
-### Documentação
+### documentation
 - ✅ Documente quando nulls são esperados
-- ✅ Explique por que uma variável é nullable
+- ✅ Explain why a variable is nullable
 - ✅ Documente quando null pode ser retornado
 
 ```dart
@@ -351,14 +351,15 @@ class UserService {
 
 ## Checklist
 
-- [ ] Variáveis são non-nullable por padrão
-- [ ] Nullable (`?`) é usado apenas quando necessário
+- [ ] Variáveis são non-nullable por default
+- [ ] Nullable (`?`) is only used when necessary
 - [ ] Variáveis são inicializadas ou marcadas como `late`
 - [ ] Null checks são feitos antes de usar valores nullable
-- [ ] Null-aware operators (`?.`, `??`) são usados quando apropriado
+- [ ] Null-aware operators (`?.`, `??`) are used when appropriate
 - [ ] `!` é usado apenas quando absolutamente seguro
-- [ ] Funções retornam `T?` quando null é possível
-- [ ] Parâmetros nullable são documentados
+- [ ] Functions return `T?` when null is possible
+- [ ] parameters nullable são documentados
 - [ ] APIs externas tratam nulls adequadamente
+
 
 

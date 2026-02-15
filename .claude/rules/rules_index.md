@@ -29,3 +29,4 @@ paths:
 
 - There is no `project_specific.md` yet.
 - If needed, create one with `paths` scoped to the repo areas it should govern.
+

@@ -7,3 +7,4 @@ Project memory for `dart_odbc_fast`.
 - Keep rule content aligned with `.cursor/rules/` when updating shared guidance.
 - Apply both Dart/Flutter and Rust-native rules depending on the touched area.
 - Never suppress diagnostics/errors unless explicitly allowed in `.claude/rules/error_handling.md`.
+

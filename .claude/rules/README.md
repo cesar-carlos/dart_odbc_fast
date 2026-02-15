@@ -1,6 +1,6 @@
-﻿# Claude Rules - Guia de Uso
+﻿#Claude Rules - Usage Guide
 
-Este diretório contém as regras usadas pelo Claude Code para manter consistência e qualidade no projeto.
+This directory contains the rules used by Claude Code to maintain consistency and quality in the project.
 
 ## Estrutura
 
@@ -20,13 +20,13 @@ Este diretório contém as regras usadas pelo Claude Code para manter consistên
 └── error_handling.md
 ```
 
-## Padrão Claude
+## default Claude
 
 - Regras ficam em `.claude/rules/*.md`
 - Escopo por arquivo via frontmatter `paths`
-- Sem `paths`, a regra vale para o projeto inteiro
+- Without `paths`, the rule applies to the entire project
 
-Exemplo:
+Example:
 
 ```yaml
 ---
@@ -36,10 +36,10 @@ paths:
 ---
 ```
 
-## Origem das regras
+## Origin of rules
 
-- Essas regras foram derivadas de `./.cursor/rules` e convertidas para o formato de escopo do Claude (`paths`).
-- O conteúdo técnico (Clean Architecture, SOLID, style, null safety, testing, UI/UX, Rust native e tratamento de erros) foi mantido.
+- These rules were derived from `./.cursor/rules` and converted to Claude scope format (`paths`).
+- The technical content (Clean Architecture, SOLID, style, null safety, testing, UI/UX, Rust native and error handling) was maintained.
 
 ## Referências
 
@@ -50,3 +50,4 @@ paths:
 - https://doc.rust-lang.org/clippy/
 - https://dart.dev/language/error-handling
 - https://doc.rust-lang.org/std/error/
+

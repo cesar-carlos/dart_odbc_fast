@@ -5,7 +5,7 @@ paths:
 ---
 
 
-# Regras Gerais do Projeto
+# General Project Rules
 
 ## Princípios Fundamentais (Core Principles)
 
@@ -60,27 +60,27 @@ const _defaultAvatar = 'assets/default_avatar.png';
 enum _UserSortOption { name, email, date }
 ```
 
-## Documentação e Comentários
+## documentation e Comentários
 
-### Documentação Automática
+### documentation Automática
 
-- ❌ **NÃO gerar documentação automaticamente** sem necessidade real
-- ❌ **NÃO adicionar comentários** que só repetem o que o código já mostra
-- ❌ **NÃO suprimir erros/diagnósticos** (`// ignore`, `ignore_for_file`, `#[allow]`) fora da allowlist em `error_handling.md`
-- ✅ **Código deve ser autoexplicativo** com nomes claros e boa decomposição
-- ✅ Para APIs públicas exportadas de biblioteca, prefira `///` curtos quando o comportamento não for óbvio
-- ✅ Para código interno de feature, documente só quando houver decisão/limitação importante
+- ❌ **not gerar documentation automaticamente** sem necessidade real
+- ❌ **not add comments** that only repeat what the code already shows
+- ❌ **not suprimir erros/diagnósticos** (`// ignore`, `ignore_for_file`, `#[allow]`) fora da allowlist em `error_handling.md`
+- ✅ **Code must be self-explanatory** with clear names and good decomposition
+- ✅ For library-exported public APIs, prefer short `///` when the behavior is not obvious
+- ✅ For internal feature code, document only when there is an important decision/limitation
 
 ### Quando Documentar
 
-- ✅ Comente o **porquê** (trade-off, regra externa, workaround), não o **o quê**
-- ✅ Documente contratos públicos e casos não triviais (erros, side effects, invariantes)
-- ✅ Mantenha comentários sincronizados com o código
-- ✅ Prefira remover comentário redundante e melhorar o nome/extração de função
+- ✅ Comment on the **why** (trade-off, external rule, workaround), not the **what**
+- ✅ Documente contratos públicos e casos not triviais (erros, side effects, invariantes)
+- ✅ Keep comments synced with code
+- ✅ Prefer remove redundant comment and improve function name/extraction
 
-### Exemplo de Comportamento
+### Example of Behavior
 
-**❌ NÃO fazer:**
+**❌ not fazer:**
 
 ```dart
 /// Service for managing user operations.
@@ -99,7 +99,7 @@ class UserService {
 }
 ```
 
-**✅ Fazer (sem documentação automática):**
+**✅ Fazer (sem documentation automática):**
 
 ```dart
 class UserService {
@@ -119,19 +119,19 @@ class UserService {
 ///
 /// This service provides methods to create, update, and delete users.
 class UserService {
-  // Documentação criada apenas porque foi explicitamente solicitada
+  // documentation criada apenas porque foi explicitamente solicitada
 }
 ```
 
-## Arquivos de Documentação
+## Arquivos de documentation
 
-### Não Criar Automaticamente
+### not create Automaticamente
 
-- ❌ **NÃO criar** `README.md` automaticamente
-- ❌ **NÃO criar** arquivos `.md` de documentação
-- ❌ **NÃO criar** arquivos de changelog ou release notes
-- ❌ **NÃO criar** arquivos de exemplo ou guias
-- ✅ **Apenas criar** quando explicitamente solicitado
+- ❌ **not create** `README.md` automaticamente
+- ❌ **not create** arquivos `.md` de documentation
+- ❌ **not create** arquivos de changelog ou release notes
+- ❌ **not create** example files or guides
+- ✅ **Apenas create** quando explicitamente solicitado
 
 ### Comentários no Código
 
@@ -151,7 +151,7 @@ return await repository.getById(id);
 
 ```dart
 // ❌ Evite: explica o que (código já faz isso)
-// Obter usuário do cache
+// Obter user do cache
 final user = await cache.getUser(id);
 
 // ❌ Evite: comentário óbvio
@@ -164,20 +164,20 @@ _counter++;
 ### Código Autoexplicativo
 
 - ✅ Use nomes descritivos e claros
-- ✅ Nomenclatura deve deixar o código autoexplicativo
-- ✅ Evite comentários que apenas repetem o código
+- ✅ Nomenclature must make the code self-explanatory
+- ✅ Avoid comments that just repeat the code
 - ✅ Prefira código claro sobre comentários
 
 ### Tooling e Logging
 
-- ✅ Siga `coding_style.md` para rotina de **format/fix/analyze** e padrões de logging
+- ✅ Follow `coding_style.md` for **format/fix/analyze** routine and logging patterns
 - ✅ Evite `print`; prefira logging estruturado (`dart:developer` `log`)
 
 ### Evitar Números Mágicos
 
-- ❌ **NÃO usar números mágicos** no código
-- ✅ **SEMPRE usar constantes nomeadas** para valores literais
-- ✅ Use constantes com nomes descritivos que expliquem o propósito do valor
+- ❌ **not usar números mágicos** no código
+- ✅ **ALWAYS use named constants** for literal values
+- ✅ Use constants with descriptive names that explain the purpose of the value
 - ✅ Agrupe constantes relacionadas em classes ou arquivos dedicados
 
 **❌ Evite: Números mágicos**
@@ -212,7 +212,7 @@ if (user.age < minimumAge) {
 }
 ```
 
-**✅ Para constantes relacionadas, use classes:**
+**✅ For related constants, use classes:**
 
 ```dart
 class Timeouts {
@@ -228,19 +228,19 @@ class Limits {
 }
 ```
 
-### Exemplo
+### Example
 
 **❌ Evite:**
 
 ```dart
-// Criar usuário
+// create user
 void createUser(String name) {
   // Validar nome
   if (name.isEmpty) {
     // Lançar erro
     throw Exception('Name cannot be empty');
   }
-  // Salvar usuário
+  // Salvar user
   _saveUser(name);
 }
 ```
@@ -260,15 +260,15 @@ void createUser(String name) {
 
 ### Priorizar Componentes Reutilizáveis
 
-- ✅ **PRIORIZE criação de componentes** para padronização de layout
+- ✅ **PRIORIZE component creation** for layout standardization
 - ✅ **EVITE duplicação de código** - extraia padrões repetidos em componentes
 - ✅ Componentes devem ser reutilizáveis em diferentes contextos
-- ✅ Use composição de componentes ao invés de copiar/colar código
+- ✅ Use component composition instead of copying/pasting code
 
 **❌ Evite: Código duplicado**
 
 ```dart
-// ❌ Evite: mesmo padrão repetido em múltiplos lugares
+// ❌ Evite: mesmo default repetido em múltiplos lugares
 // Page 1
 Container(
   padding: const EdgeInsets.all(16),
@@ -363,15 +363,15 @@ const CardContainer(title: 'Title 1', content: 'Content 1')
 const CardContainer(title: 'Title 2', content: 'Content 2')
 ```
 
-### Quando Criar Componentes
+### Quando create Componentes
 
-Crie um componente quando:
-- ✅ O mesmo padrão de UI aparece **2 ou mais vezes**
-- ✅ O componente tem **responsabilidade única e clara**
-- ✅ O componente pode ser **reutilizado em diferentes contextos**
-- ✅ O componente ajuda a **manter consistência visual**
+Create a component when:
+- ✅ The same UI default appears **2 or more times**
+- ✅ The component has **single and clear responsibility**
+- ✅ The component can be **reused in different contexts**
+- ✅ The component helps **maintain visual consistency**
 
-### Exemplo: Botão Personalizado
+### Example: Custom Button
 
 ```dart
 // ✅ Bom: componente de botão padronizado
@@ -411,22 +411,23 @@ class AppButton extends StatelessWidget {
 - [ ] Escrever código conciso e técnico
 - [ ] Usar padrões funcionais e declarativos quando apropriado
 - [ ] Preferir composição sobre herança
-- [ ] Usar nomes descritivos com verbos auxiliares (isLoading, hasError, canProceed)
+- [ ] Use descriptive names with auxiliary verbs (isLoading, hasError, canProceed)
 - [ ] Estruturar arquivos logicamente: exported widget, subwidgets, helpers, static content, types
 
-### Documentação e Comentários
-- [ ] NÃO gerar documentação automática sem necessidade
-- [ ] NÃO criar arquivos `.md` sem solicitação explícita
-- [ ] NÃO adicionar comentários redundantes
-- [ ] Código deve ser autoexplicativo
+### documentation e Comentários
+- [ ] not gerar documentation automática sem necessidade
+- [ ] not create arquivos `.md` sem solicitação explícita
+- [ ] not add redundant comments
+- [ ] Código must ser autoexplicativo
 - [ ] Documentar API pública exportada quando necessário
-- [ ] Comentários apenas para explicar "por quê", não "o quê"
-- [ ] Usar nomenclatura clara ao invés de comentários
+- [ ] Comments only to explain "why", not "what"
+- [ ] Use clear nomenclature instead of comments
 
 ### Código Limpo
 - [ ] Evitar números mágicos - usar constantes nomeadas
 - [ ] Manter código limpo e manutenível
-- [ ] **PRIORIZAR criação de componentes** para padronização
+- [ ] **PRIORIZE creation of components** for standardization
 - [ ] **EVITAR duplicação de código** - extrair padrões em componentes
+
 
 

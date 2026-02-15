@@ -1,8 +1,8 @@
-# [REQ-005] Request Options Per Call
+﻿# [REQ-005] Request Options Per Call
 
 **Type**: `Feature`
 **Priority**: `P1`
-**Phase**: `Fase 1`
+**Phase**: `Phase 1`
 **Scope**: `Core`
 
 ### Description
@@ -70,3 +70,4 @@ Future<Result<QueryResult>> executeQuery(
 ---
 
 **Last updated**: 2026-02-11
+

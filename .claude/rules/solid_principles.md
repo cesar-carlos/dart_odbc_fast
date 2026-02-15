@@ -8,23 +8,23 @@ paths:
 
 ## Single Responsibility Principle (SRP)
 
-- Cada classe deve ter uma única responsabilidade
-- Uma classe deve ter apenas uma razão para mudar
-- Separe funcionalidades distintas em classes diferentes
-- Evite classes "God Class" que fazem tudo
+- Each class must have a single responsibility
+- A class must have only one reason to change
+- Separe features distintas em classes diferentes
+- Avoid "God Class" classes that do everything
 
-**Exemplo Correto:**
+**Correct Example:**
 
 ```dart
 class User {
   final String id;
   final String name;
-  // Apenas responsável por representar um usuário
+  // Apenas responsável por representar um user
 }
 
 class UserValidator {
   bool validate(User user) {
-    // Apenas responsável por validar usuário
+    // Apenas responsável por validar user
   }
 }
 
@@ -37,11 +37,11 @@ class UserRepository {
 
 ## Open/Closed Principle (OCP)
 
-- Classes devem ser abertas para extensão, mas fechadas para modificação
-- Use interfaces e herança para estender comportamento
+- Classes must be open for extension, but closed for modification
+- Use interfaces and inheritance to extend behavior
 - Evite modificar código existente, adicione novas implementações
 
-**Exemplo Correto:**
+**Correct Example:**
 
 ```dart
 abstract class PaymentMethod {
@@ -61,11 +61,11 @@ class PayPal implements PaymentMethod {
 
 ## Liskov Substitution Principle (LSP)
 
-- Objetos de uma classe base devem poder ser substituídos por objetos de suas classes derivadas
-- Subtipos devem ser substituíveis por seus tipos base sem quebrar o programa
+- Objects of a base class must be able to be replaced by objects of its derived classes
+- Subtypes must be replaceable with their base types without breaking the program
 - Mantenha contratos de comportamento consistentes
 
-**Exemplo Correto:**
+**Correct Example:**
 
 ```dart
 import 'dart:developer' as developer;
@@ -92,11 +92,11 @@ void makeAnimalSound(Animal animal) {
 
 ## Interface Segregation Principle (ISP)
 
-- Muitas interfaces específicas são melhores que uma interface geral
-- Clientes não devem ser forçados a depender de interfaces que não usam
+- Many specific interfaces are better than one general interface
+- Clients should not be forced to depend on interfaces they do not use
 - Crie interfaces pequenas e focadas
 
-**Exemplo Correto:**
+**Correct Example:**
 
 ```dart
 abstract class Readable {
@@ -116,12 +116,12 @@ class FileReader implements Readable {
 
 ## Dependency Inversion Principle (DIP)
 
-- Dependa de abstrações, não de implementações concretas
-- Classes de alto nível não devem depender de classes de baixo nível
+- Dependa de abstrações, not de implementações concretas
+- Classes de alto nível not devem depender de classes de baixo nível
 - Use injeção de dependência via construtor
 - Defina interfaces no domínio, implemente na infraestrutura
 
-**Exemplo Correto:**
+**Correct Example:**
 
 ```dart
 // Domain - Interface (abstração)
@@ -131,7 +131,7 @@ abstract class IUserRepository {
 
 // Application - Depende da abstração
 class UserService {
-  final IUserRepository repository; // Interface, não implementação
+  final IUserRepository repository; // Interface, not implementação
 
   UserService(this.repository);
 
@@ -146,5 +146,6 @@ class UserRepository implements IUserRepository {
   Future<User> getById(String id) { /* implementação */ }
 }
 ```
+
 
 

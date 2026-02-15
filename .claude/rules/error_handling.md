@@ -1,4 +1,4 @@
----
+﻿---
 paths:
   - "lib/**/*.dart"
   - "test/**/*.dart"
@@ -10,11 +10,11 @@ paths:
 
 ## Core Policy
 
-- ✅ Treat recoverable failures as values (`Result` in Rust, typed exceptions/results in Dart)
-- ✅ Propagate errors with context at each boundary
-- ✅ Preserve original error chain/stack trace when rethrowing/forwarding
-- ❌ Never swallow errors silently
-- ❌ Never suppress diagnostics unless the suppression is in the allowlist below
+- âœ… Treat recoverable failures as values ​​​​(`Result` in Rust, typed exceptions/results in Dart)
+- âœ… Propagate errors with context at each boundary
+- âœ… Preserve original error chain/stack trace when rethrowing/forwarding
+- âŒ Never swallow errors silently
+- âŒ Never suppress diagnostics unless the suppression is in the allowlist below
 
 ## Suppression Allowlist (Only These Cases)
 
@@ -32,27 +32,27 @@ Anything else is forbidden.
 
 ## Dart Error Handling (Market Baseline)
 
-- ✅ Prefer typed catches (`on SomeException`) over broad `catch`
-- ✅ Use `rethrow` to preserve stack trace when propagating
-- ✅ Throw only `Exception`/`Error` subtypes
-- ❌ Do not catch `Error` unless there is a hard boundary reason
-- ❌ Do not use empty `catch` blocks
+- âœ… Prefer typed catches (`on SomeException`) over broad `catch`
+- âœ… Use `rethrow` to preserve stack trace when propagating
+- âœ… Throw only `Exception`/`Error` subtypes
+- âŒ Do not catch `Error` unless there is a hard boundary reason
+- âŒ Do not use empty `catch` blocks
 
 ## Rust Error Handling (Market Baseline)
 
-- ✅ Return `Result<T, E>` for recoverable failures; use `panic!` for unrecoverable invariants
-- ✅ Use `?` for propagation and preserve source chains
-- ✅ Prefer meaningful custom error types implementing `std::error::Error`
-- ✅ Add context when crossing abstraction boundaries
-- ❌ Avoid `unwrap()`/`expect()` in runtime/library paths (tests/bootstrap are exceptions)
-- ❌ Avoid blanket `#[allow(...)]` without scoped reason
+- âœ… Return `Result<T, E>` for recoverable failures; use `panic!` for unrecoverable invariants
+- âœ… Use `?` for propagation and preserving source chains
+- âœ… Prefer meaningful custom error types implementing `std::error::Error`
+- âœ… Add context when crossing abstraction boundaries
+- âŒ Avoid `unwrap()`/`expect()` in runtime/library paths (tests/bootstrap are exceptions)
+- âŒ Avoid blanket `#[allow(...)]` without scoped reason
 
 ## Suppression Hygiene
 
-- ✅ Smallest scope possible (line > item > module > file)
-- ✅ Add explicit reason metadata
-- ✅ Revisit and remove suppressions quickly
-- ❌ Never use `ignore_for_file: type=lint` outside allowlisted generated files
+- âœ… Smallest scope possible (line > item > module > file)
+- âœ… Add explicit reason metadata
+- âœ… Revisit and remove suppressions quickly
+- âŒ Never use `ignore_for_file: type=lint` outside allowlisted generated files
 
 ### Dart suppression template
 
@@ -79,3 +79,4 @@ Anything else is forbidden.
 - https://doc.rust-lang.org/std/error/
 - https://rust-lang.github.io/api-guidelines/interoperability.html
 - https://doc.rust-lang.org/rustc/lints/levels.html
+

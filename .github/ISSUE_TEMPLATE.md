@@ -1,25 +1,25 @@
-# GitHub Issue Template
+﻿# GitHub Issue Template
 
-**Use este template para criar novas issues no rastreador do projeto.**
+**Use this template to create new issues in the project tracker.**
 
 ---
 
-## Metadados Obligatórios
+## Metadados ObligatÃ³rios
 
 - **Tipo**: `Feature` | `Bug` | `Enhancement` | `Refactoring` | `Documentation`
-- **Prioridade**: `P0` | `P1` | `P2`
-- **Fase**: `Fase 0` | `Fase 1` | `Fase 2`
+- **Priority**: `P0` | `P1` | `P2`
+- **Phase**: `Phase 0` | `Phase 1` | `Phase 2`
 - **Escopo**: `Core` | `Plugin`
 
-## Título
+## TÃ­tulo
 
-Título curto e descritivo em inglês (padrão GitHub).
+Short and descriptive title in English (GitHub standard).
 
-**Exemplo**: `Add support for output parameters in prepared statements`
+**Example**: `Add support for output parameters in prepared statements`
 
-## Descrição
+## Description
 
-Descrição detalhada do que precisa ser implementado ou melhorado.
+Detailed description of what needs to be implemented or improved.
 
 **Template**:
 ```
@@ -50,50 +50,50 @@ Links to relevant documentation or similar implementations.
 
 ---
 
-## Seções Adicionais (use conforme necessário)
+## SeÃ§Ãµes Adicionais (use conforme necessÃ¡rio)
 
 ### Implementation Details
-Detalhes técnicos da implementação (opcional).
+Technical implementation details (optional).
 
 ### Testing Strategy
 Plano de testes (opcional).
 
 ### Breaking Changes
-Mudanças que quebram compatibilidade com versões anteriores (se houver).
+Changes that break compatibility with previous versions (if any).
 
 ---
 
 ## Notas Importantes
 
-1. **Referenciar issues do `doc/issues/`** quando criar a issue pública
-2. **Adicionar links para arquivos de código** relacionados
-3. **Mencionar fase e escopo** nos labels da issue
-4. **Usar labels do projeto**: `phase-0`, `phase-1`, `phase-2`, `core`, `plugin`, `enhancement`, `bug`, `documentation`
-5. **Marcar issue relacionada** no README/ROADMAP.md quando apropriado
+1. **Referenciar issues do `doc/issues/`** quando create a issue pÃºblica
+2. **Add links to related code files**
+3. **Mention phase and scope** in the issue labels
+4. **Use project labels**: `phase-0`, `phase-1`, `phase-2`, `core`, `plugin`, `enhancement`, `bug`, `documentation`
+5. **Mark related issue** in README/ROADMAP.md when appropriate
 
 ---
 
-## Labels Padrão do Projeto
+## Project Standard Labels
 
-**Fases:**
-- `phase-0`: Fase 0 - Estabilização
-- `phase-1`: Fase 1 - Paridade útil
-- `phase-2`: Fase 2 - Expansão ODBC-first
+**Phases:**
+- `phase-0`: Phase 0 - Stabilization
+- `phase-1`: Phase 1 - Useful parity
+- `phase-2`: Phase 2 - ODBC-first Expansion
 
 **Escopos:**
-- `core`: Funcionalidade portável entre drivers ODBC
-- `plugin`: Funcionalidade específica de banco
+- `core`: feature portÃ¡vel entre drivers ODBC
+- `plugin`: feature especÃ­fica de banco
 
 **Tipos:**
-- `enhancement`: Nova funcionalidade
-- `bug`: Correção de bug
-- `refactoring`: Reestruturação de código
-- `documentation`: Atualização de documentação
-- `performance`: Melhoria de performance
+- `enhancement`: Nova feature
+- `bug`: Bug fix
+- `refactoring`: Code restructuring
+- `documentation`: Documentation update
+- `performance`: Performance improvement
 
 ---
 
-## Exemplo de Issue Completo
+## Complete Issue Example
 
 ```markdown
 # [REQ-005] Add request options per call
@@ -140,3 +140,4 @@ Add an optional `RequestOptions` parameter to relevant methods (`executeQuery`, 
 
 **Last updated**: 2026-02-11
 ```
+

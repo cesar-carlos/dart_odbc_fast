@@ -1,37 +1,37 @@
-# Cursor Rules - Guia de Uso
+﻿# Cursor Rules - Usage Guide
 
-Este diretório contém as regras do Cursor para manter a consistência e qualidade do código. As regras estão organizadas em **genéricas** (reutilizáveis) e **específicas do projeto**.
+This directory contains Cursor rules to maintain code consistency and quality. The rules are organized into **generic** (reusable) and **project-specific**.
 
-## 📁 Estrutura dos Arquivos
+## ðŸ“ File Structure
 
 ```
 .cursor/rules/
-├── README.md                 # Este arquivo
-├── rules_index.mdc          # Índice completo das regras
-│
-├── 🔄 REGRAS GENÉRICAS (Reutilizáveis)
-│   ├── general_rules.mdc        # Regras gerais e princípios fundamentais
-│   ├── clean_architecture.mdc   # Regras genéricas de Clean Architecture (camadas/dependências)
-│   ├── solid_principles.mdc     # Princípios SOLID
-│   ├── coding_style.mdc         # Guia de estilo Dart 2026
-│   ├── null_safety.mdc          # Boas práticas de null safety
-│   ├── testing.mdc              # Padrões de testes
-│   ├── flutter_widgets.mdc      # Widgets Flutter (estrutura/performance/layout/tokens)
-│   ├── ui_ux_design.mdc         # Princípios de UI/UX para desktop
-│   └── rust_style.mdc           # Padrões de Rust nativo (fmt/clippy/FFI)
-│   └── error_handling.mdc       # Tratamento de erro e política de supressão
-│
-└── 🎯 REGRAS ESPECÍFICAS
-    └── project_specifics.mdc    # Regras específicas deste projeto
+â”œâ”€â”€ README.md                 # Este arquivo
+â”œâ”€â”€ rules_index.mdc          # Ãndice completo das regras
+â”‚
+â”œâ”€â”€ ðŸ”„ REGRAS GENÃ‰RICAS (ReutilizÃ¡veis)
+â”‚   â”œâ”€â”€ general_rules.mdc        # Regras gerais e princÃ­pios fundamentais
+â”‚   â”œâ”€â”€ clean_architecture.mdc   # Regras genÃ©ricas de Clean Architecture (camadas/dependÃªncias)
+â”‚   â”œâ”€â”€ solid_principles.mdc     # PrincÃ­pios SOLID
+â”‚   â”œâ”€â”€ coding_style.mdc         # Guia de estilo Dart 2026
+â”‚   â”œâ”€â”€ null_safety.mdc          # Boas prÃ¡ticas de null safety
+â”‚   â”œâ”€â”€ testing.mdc              # PadrÃµes de testes
+â”‚   â”œâ”€â”€ flutter_widgets.mdc      # Widgets Flutter (estrutura/performance/layout/tokens)
+â”‚   â”œâ”€â”€ ui_ux_design.mdc         # PrincÃ­pios de UI/UX para desktop
+â”‚   â””â”€â”€ rust_style.mdc           # PadrÃµes de Rust nativo (fmt/clippy/FFI)
+â”‚   â””â”€â”€ error_handling.mdc       # Tratamento de erro e polÃ­tica de supressÃ£o
+â”‚
+â””â”€â”€ ðŸŽ¯ REGRAS ESPECÃFICAS
+    â””â”€â”€ project_specifics.mdc    # Regras especÃ­ficas deste projeto
 ```
 
-## 🔄 Copiando Regras para Outros Projetos
+## ðŸ”„ Copying Rules to Other Projects
 
-### 1. Regras Genéricas (Copie TUDO)
+### 1. Regras GenÃ©ricas (Copie TUDO)
 
-Essas regras são **100% reutilizáveis** em qualquer projeto Flutter/Dart:
+These rules are **100% reusable** in any Flutter/Dart project:
 
-✅ **Copie estes arquivos sem modificações:**
+âœ… **Copie estes arquivos sem modificaÃ§Ãµes:**
 
 - `rules_index.mdc`
 - `general_rules.mdc`
@@ -42,61 +42,61 @@ Essas regras são **100% reutilizáveis** em qualquer projeto Flutter/Dart:
 - `testing.mdc`
 - `flutter_widgets.mdc`
 - `ui_ux_design.mdc` (se for app desktop)
-- `rust_style.mdc` (se houver código Rust no projeto)
+- `rust_style.mdc` (if there is Rust code in the project)
 - `error_handling.mdc`
 
-### 2. Regras Específicas (Adapte)
+### 2. Regras EspecÃ­ficas (Adapte)
 
-Este arquivo precisa ser **adaptado** para cada projeto:
+This file needs to be **adapted** for each project:
 
-⚠️ **Adapte este arquivo:**
+âš ï¸ **Adapt this file:**
 
-- `project_specifics.mdc` - Ajuste para seu projeto
+- `project_specifics.mdc` - Adjust for your project
 
 ### Como Adaptar `project_specifics.mdc`
 
-Abra o arquivo e modifique:
+Open the file and modify:
 
-1. **Project Type**: Tipo do seu projeto (Desktop App, Mobile App, Web App)
+1. **Project Type**: Type of your project (Desktop App, Mobile App, Web App)
 2. **Architecture**: Arquitetura usada (Clean Architecture, MVVM, Simple, etc.)
-3. **Project Dependencies**: Dependências específicas do seu projeto
+3. **Project Dependencies**: Dependencies specific to your project
 4. **Project Structure**: Estrutura de pastas
-5. **Entry Point Pattern**: Padrão de inicialização
-6. **Data Flow**: Fluxo de dados específico
-7. **Patterns Used**: Padrões usados no projeto
+5. **Entry Point Pattern**: Initialization pattern
+6. **Data Flow**: Specific data flow
+7. **Patterns Used**: Patterns used in the project
 
-## 📋 Exemplo de Uso
+## ðŸ“‹ Usage Example
 
-### Para um novo projeto com Clean Architecture:
+### For a new project with Clean Architecture:
 
 ```bash
-# 1. Copie todos os arquivos genéricos
+# 1. Copie todos os arquivos genÃ©ricos
 cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 
 # 2. Edite apenas project_specifics.mdc
-# Ajuste: arquitetura, dependências, estrutura
+# Ajuste: arquitetura, dependÃªncias, estrutura
 ```
 
-### Para um novo projeto com arquitetura simples:
+### For a new project with simple architecture:
 
 ```bash
-# 1. Copie todos os arquivos genéricos
+# 1. Copie todos os arquivos genÃ©ricos
 cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 
 # 2. Simplifique project_specifics.mdc
 # Remova: regras de Clean Architecture, camadas complexas
-# Mantenha: dependências, padrões simples
+# Mantenha: dependÃªncias, padrÃµes simples
 ```
 
-## ✨ Conteúdo das Regras Genéricas
+## âœ¨ Contents of Generic Rules
 
 ### `general_rules.mdc`
 
-- Princípios fundamentais (código conciso, composição, naming)
-- Regras de documentação (não criar docs automáticos)
-- Código autoexplicativo
-- Evitar números mágicos
-- Priorizar componentes reutilizáveis
+- Fundamental principles (concise code, composition, naming)
+- Documentation rules (do not create automatic docs)
+- CÃ³digo autoexplicativo
+- Evitar nÃºmeros mÃ¡gicos
+- Priorizar componentes reutilizÃ¡veis
 
 ### `solid_principles.mdc`
 
@@ -105,24 +105,24 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Liskov Substitution Principle (LSP)
 - Interface Segregation Principle (ISP)
 - Dependency Inversion Principle (DIP)
-- Exemplos e violações comuns
+- Examples and common violations
 
 ### `coding_style.mdc`
 
-- Convenções de nomenclatura (2026)
-- Declaração de tipos
+- ConvenÃ§Ãµes de nomenclatura (2026)
+- Type declaration
 - Const constructors
 - Arrow syntax e expression bodies
 - Trailing commas
 - Import organization
-- Funções e métodos (< 20 linhas)
+- FunÃ§Ãµes e mÃ©todos (< 20 linhas)
 - Recursos modernos do Dart 3+ (Pattern matching, Records, Switch expressions)
 
 ### `null_safety.mdc`
 
 - Nullable vs non-nullable
 - Null-aware operators (`?.`, `??`, `??=`)
-- Inicialização de variáveis
+- Variable initialization
 - Null checks
 - APIs externas
 
@@ -132,7 +132,7 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - AAA pattern (Arrange, Act, Assert)
 - Nomenclatura de testes
 - Mocking e isolamento
-- package:checks para assertions
+- package:checks for assertions
 
 ### `flutter_widgets.mdc`
 
@@ -141,14 +141,14 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 - Performance (const, ListView.builder, RepaintBoundary)
 - Material 3 theming
 - Layout e responsividade
-- Tear-offs para widgets
+- Tear-offs for widgets
 
 ### `ui_ux_design.mdc`
 
 - Hierarquia visual
 - Color palette (60-30-10 rule)
 - Typography
-- Navegação desktop
+- Desktop navigation
 - Feedback mechanisms
 - Accessibility (WCAG 2.1 AA)
 - Responsive design
@@ -156,45 +156,45 @@ cp -r .cursor/rules/*.mdc /seu-novo-projeto/.cursor/rules/
 
 ### `rust_style.mdc`
 
-- Convenções oficiais de estilo Rust
+- ConvenÃ§Ãµes oficiais de estilo Rust
 - `cargo fmt`/rustfmt e Clippy
-- API Guidelines para crates
-- Boas práticas de erro (`Result`, sem `unwrap` indevido)
-- Segurança de FFI (`#[repr(C)]`, panics não atravessam FFI)
+- API Guidelines for crates
+- Boas prÃ¡ticas de erro (`Result`, sem `unwrap` indevido)
+- FFI security (`#[repr(C)]`, panics do not cross FFI)
 
 ### `error_handling.mdc`
 
 - Regra transversal de tratamento de erro (Dart + Rust)
-- Proibição de suprimir diagnósticos fora da allowlist
-- Regras de propagação com contexto
-- Templates de supressão com motivo + issue + prazo de remoção
+- Prohibition of suppressing diagnoses outside the allowlist
+- Propagation rules with context
+- Deletion templates with reason + issue + removal deadline
 
-## 🎯 Ajustando Globs
+## ðŸŽ¯ Ajustando Globs
 
-Se sua estrutura de pastas for diferente, ajuste os `globs` no frontmatter:
+If your folder structure is different, adjust the `globs` in frontmatter:
 
 ```yaml
 ---
-description: Descrição da regra
+description: DescriÃ§Ã£o da regra
 globs: ["seu_path/**/*.dart"] # Ajuste aqui
 alwaysApply: true
 ---
 ```
 
-**Exemplos de ajustes:**
+**Adjustment examples:**
 
 ```yaml
-# Se usar lib/screens/ ao invés de lib/pages/
+# Se usar lib/screens/ ao invÃ©s de lib/pages/
 globs: ["lib/screens/**/*.dart", "lib/widgets/**/*.dart"]
 
-# Se usar lib/features/ ao invés de lib/presentation/
+# Se usar lib/features/ ao invÃ©s de lib/presentation/
 globs: ["lib/features/**/*.dart"]
 
 # Se usar lib/modules/
 globs: ["lib/modules/**/*.dart"]
 ```
 
-## 📚 Referências
+## ðŸ“š ReferÃªncias
 
 - [Cursor Documentation on Rules](https://docs.cursor.com/en/context/rules)
 - [Flutter AI Rules](https://docs.flutter.dev/ai/ai-rules)
@@ -207,38 +207,38 @@ globs: ["lib/modules/**/*.dart"]
 - [Dart Error Handling](https://dart.dev/language/error-handling)
 - [Rust std::error](https://doc.rust-lang.org/std/error/)
 
-## 🔍 Verificação Rápida
+## ðŸ” Quick Check
 
-Após copiar as regras para um novo projeto:
+After copying the rules to a new project:
 
-- [ ] Todos os arquivos `.mdc` genéricos foram copiados
-- [ ] `project_specifics.mdc` foi adaptado para o novo projeto
-- [ ] Globs foram ajustados se necessário
-- [ ] Arquitetura está corretamente documentada
-- [ ] Dependências estão listadas
-- [ ] Estrutura de pastas está documentada
+- [ ] All generic `.mdc` files were copied
+- [ ] `project_specifics.mdc` has been adapted for the new project
+- [ ] Globs foram ajustados se necessÃ¡rio
+- [ ] Arquitetura estÃ¡ corretamente documentada
+- [ ] Dependencies are listed
+- [ ] Estrutura de pastas estÃ¡ documentada
 
-## 💡 Dicas
+## ðŸ’¡ Dicas
 
-1. **Mantenha as regras genéricas sem modificações** - elas são baseadas em best practices
-2. **Adapte apenas project_specifics.mdc** - cada projeto é único
+1. **Keep the generic rules without modifications** - they are based on best practices
+2. **Adapt only project_specifics.mdc** - each project is unique
 3. **Revise rules_index.mdc** periodicamente - mantenha atualizado
-4. **Teste as regras** - o Cursor aplicará automaticamente ao trabalhar nos arquivos
-5. **Compartilhe conhecimento** - use estas regras como referência para o time
+4. **Test the rules** - Cursor will automatically apply when working on files
+5. **Share knowledge** - use these rules as a reference for the team
 
-## 🚀 Quick Start para Novo Projeto
+## ðŸš€ Quick Start for New Project
 
 ```bash
 # 1. Crie a pasta de regras
 mkdir -p /seu-projeto/.cursor/rules
 
-# 2. Copie os arquivos genéricos
+# 2. Copie os arquivos genÃ©ricos
 cp general_rules.mdc solid_principles.mdc coding_style.mdc \
    null_safety.mdc testing.mdc flutter_widgets.mdc rust_style.mdc error_handling.mdc \
    ui_ux_design.mdc rules_index.mdc \
    /seu-projeto/.cursor/rules/
 
-# 3. Copie e adapte as regras específicas
+# 3. Copie e adapte as regras especÃ­ficas
 cp project_specifics.mdc /seu-projeto/.cursor/rules/
 
 # 4. Edite project_specifics.mdc no seu editor
@@ -247,6 +247,7 @@ code /seu-projeto/.cursor/rules/project_specifics.mdc
 
 ---
 
-**Última atualização**: Janeiro 2026
-**Versão Dart/Flutter**: Dart 3+, Flutter 3.19+
+**last updated**: January 2026
+**Dart/Flutter version**: Dart 3+, Flutter 3.19+
 **Baseado em**: Effective Dart 2026, Flutter AI Rules, Clean Architecture, SOLID Principles
+
