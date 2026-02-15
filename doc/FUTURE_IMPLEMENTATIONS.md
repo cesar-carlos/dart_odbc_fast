@@ -4,10 +4,10 @@ Consolidated backlog of items not yet included in implemented scope.
 
 ## Summary
 
-| Item                                | Status              | Priority |
-| ----------------------------------- | ------------------- | -------- |
-| Schema reflection (PK/FK/Indexes)   | Open                | High     |
-| Output parameters by driver/plugin  | Out of current scope| Medium   |
+| Item                               | Status               | Priority |
+| ---------------------------------- | -------------------- | -------- |
+| Schema reflection (PK/FK/Indexes)  | Open                 | High     |
+| Output parameters by driver/plugin | Out of current scope | Medium   |
 
 ## 1. Schema reflection (PK/FK/Indexes)
 

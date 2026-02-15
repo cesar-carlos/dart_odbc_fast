@@ -15,16 +15,16 @@ If version is `>=1.0.0`:
 
 ## Quick table (pre-1.0.0)
 
-| Change type                      | Bump  |
-| -------------------------------- | ----- |
-| Rename/remove public API         | MINOR |
-| Change public return type        | MINOR |
-| Add required parameter           | MINOR |
-| Add new method                   | PATCH |
-| Add optional parameter           | PATCH |
-| Bug fix                          | PATCH |
-| Performance                      | PATCH |
-| Documentation                    | PATCH |
+| Change type               | Bump  |
+| ------------------------- | ----- |
+| Rename/remove public API  | MINOR |
+| Change public return type | MINOR |
+| Add required parameter    | MINOR |
+| Add new method            | PATCH |
+| Add optional parameter    | PATCH |
+| Bug fix                   | PATCH |
+| Performance               | PATCH |
+| Documentation             | PATCH |
 
 ## Breaking checklist
 

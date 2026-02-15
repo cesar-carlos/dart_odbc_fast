@@ -4,8 +4,8 @@ This directory contains only the canonical documents for day-to-day use by contr
 
 ## Quick Guide
 
-| Document                                                       | Purpose                                                                    |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Document                                                       | Purpose                                                                   |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | [BUILD.md](BUILD.md)                                           | Local setup, Rust build, optional bindings generation, and test execution |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                       | Diagnostics and fixes for common build, runtime, and CI issues            |
 | [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)                 | Release process with tags + GitHub Actions + pub.dev publishing           |
