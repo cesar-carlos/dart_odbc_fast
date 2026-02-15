@@ -10,9 +10,9 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 
 ## Examples
 
-- [main.dart](main.dart): high-level quickstart with `OdbcService` (initialize, connect, query, metrics, disconnect).
-- [simple_demo.dart](simple_demo.dart): low-level API with `NativeOdbcConnection`, prepared statements, and result parsing.
-- [async_demo.dart](async_demo.dart): async API with `AsyncNativeOdbcConnection`.
+- [main.dart](main.dart): high-level `OdbcService` walkthrough including options, driver detection, named params, multi-result full, catalog calls, cache maintenance, and metrics.
+- [simple_demo.dart](simple_demo.dart): low-level API with `connectWithTimeout`, structured errors, `TransactionHandle`, `CatalogQuery`, prepared statements, and result parsing.
+- [async_demo.dart](async_demo.dart): async API with `AsyncNativeOdbcConnection` (`requestTimeout` + `autoRecoverOnWorkerCrash`).
 - [named_parameters_demo.dart](named_parameters_demo.dart): named params with `@name` and `:name`, including prepared statement reuse.
 - [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti`.
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.

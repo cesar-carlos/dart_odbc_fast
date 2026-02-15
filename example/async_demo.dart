@@ -17,6 +17,7 @@ void main() async {
 
   final async = AsyncNativeOdbcConnection(
     requestTimeout: const Duration(seconds: 30),
+    autoRecoverOnWorkerCrash: true,
   );
 
   if (!await async.initialize()) {

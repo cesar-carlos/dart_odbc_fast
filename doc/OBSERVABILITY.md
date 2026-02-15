@@ -9,6 +9,13 @@ Guia de telemetria e metricas operacionais do `odbc_fast`.
 - `OdbcService.getMetrics()`: metricas operacionais de execucao
 - `OdbcService.getPreparedStatementsMetrics()`: metricas de cache de prepared statements
 
+## APIs operacionais relacionadas
+
+- `OdbcService.clearStatementCache()`: limpa cache de prepared statements
+- `OdbcService.detectDriver(connectionString)`: identifica driver a partir da connection string
+- `ConnectionOptions.queryTimeout`: timeout por query (camada de repositorio)
+- `ConnectionOptions.autoReconnectOnConnectionLost`: tentativa de reconnect com backoff
+
 ## Inicializacao OTLP
 
 ```dart

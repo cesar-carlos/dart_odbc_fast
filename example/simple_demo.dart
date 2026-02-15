@@ -22,9 +22,18 @@ void main() async {
     return;
   }
 
-  final connId = native.connect(dsn);
+  final connId = native.connectWithTimeout(dsn, 30 * 1000);
   if (connId == 0) {
-    AppLogger.severe('Connection failed: ${native.getError()}');
+    final structured = native.getStructuredError();
+    if (structured != null) {
+      AppLogger.severe(
+        'Connection failed: ${structured.message} '
+        '(sqlState=${structured.sqlStateString}, '
+        'native=${structured.nativeCode})',
+      );
+    } else {
+      AppLogger.severe('Connection failed: ${native.getError()}');
+    }
     return;
   }
 
@@ -61,6 +70,8 @@ void main() async {
     }
 
     await _verifyInsertedData(native, connId, 3);
+    _runTransactionHandleDemo(native, connId);
+    _runCatalogQueryDemo(native, connId);
   } finally {
     native.disconnect(connId);
     AppLogger.info('Disconnected');
@@ -98,6 +109,37 @@ Future<void> _createTestTable(
     AppLogger.info('Table ready: simple_test_table');
   } finally {
     native.closeStatement(stmt);
+  }
+}
+
+void _runTransactionHandleDemo(
+  NativeOdbcConnection native,
+  int connId,
+) {
+  // 1 == read committed in low-level integer mapping.
+  final txn = native.beginTransactionHandle(connId, 1);
+  if (txn == null) {
+    AppLogger.warning('TransactionHandle unavailable: ${native.getError()}');
+    return;
+  }
+
+  final rolledBack = txn.rollback();
+  AppLogger.info(
+    'TransactionHandle demo: rollback=${rolledBack ? 'ok' : 'failed'}',
+  );
+}
+
+void _runCatalogQueryDemo(
+  NativeOdbcConnection native,
+  int connId,
+) {
+  final catalog = native.catalogQuery(connId);
+
+  final typeInfo = catalog.typeInfo();
+  if (typeInfo != null) {
+    AppLogger.info('CatalogQuery.typeInfo rows=${typeInfo.rowCount}');
+  } else {
+    AppLogger.warning('CatalogQuery.typeInfo unavailable');
   }
 }
 
