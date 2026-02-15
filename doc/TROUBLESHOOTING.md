@@ -127,3 +127,15 @@ Abra issue em https://github.com/cesar-carlos/dart_odbc_fast/issues com:
 2. SO e versoes (Dart/Rust/driver ODBC)
 3. passos para reproduzir
 4. trecho minimo de codigo
+
+## 11. Benchmark Rust (bulk array vs parallel) foi pulado
+
+Se `cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture` nao executar benchmark:
+
+1. defina `ENABLE_E2E_TESTS=true`
+2. configure `ODBC_TEST_DSN` valido
+3. confirme conectividade ODBC local (driver + DSN)
+
+Opcional:
+
+- ajuste volume com `BULK_BENCH_SMALL_ROWS` e `BULK_BENCH_MEDIUM_ROWS`

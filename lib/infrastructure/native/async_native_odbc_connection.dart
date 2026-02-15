@@ -512,8 +512,10 @@ class AsyncNativeOdbcConnection {
   }
 
   Future<int> clearAllStatements() async {
-    // Stub implementation - returns success until native is updated
-    return 0;
+    final r = await _sendRequest<IntResponse>(
+      ClearAllStatementsRequest(_nextRequestId()),
+    );
+    return r.value;
   }
 
   /// Returns catalog tables for [connectionId] (optional [catalog] and
@@ -626,6 +628,28 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  /// Performs parallel bulk insert on [poolId]. Returns rows inserted,
+  /// or negative value on error.
+  Future<int> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer,
+    int parallelism,
+  ) async {
+    final r = await _sendRequest<IntResponse>(
+      BulkInsertParallelRequest(
+        _nextRequestId(),
+        poolId,
+        table,
+        columns,
+        dataBuffer,
+        parallelism,
+      ),
+    );
+    return r.value;
+  }
+
   /// Returns ODBC metrics from the worker (query count, errors, latency, etc.).
   Future<OdbcMetrics?> getMetrics() async {
     final r = await _sendRequest<MetricsResponse>(
@@ -667,12 +691,58 @@ class AsyncNativeOdbcConnection {
     return r.error == null;
   }
 
-  /// Runs [sql] in the worker and yields one [ParsedRowBuffer].
+  Future<int> _streamStart(
+    int connectionId,
+    String sql, {
+    int chunkSize = 1000,
+  }) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamStartRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      ),
+    );
+    return r.value;
+  }
+
+  Future<int> _streamStartBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamStartBatchedRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+    );
+    return r.value;
+  }
+
+  Future<StreamFetchResponse> _streamFetch(int streamId) {
+    return _sendRequest<StreamFetchResponse>(
+      StreamFetchRequest(_nextRequestId(), streamId),
+    );
+  }
+
+  Future<bool> _streamClose(int streamId) async {
+    final r = await _sendRequest<BoolResponse>(
+      StreamCloseRequest(_nextRequestId(), streamId),
+    );
+    return r.value;
+  }
+
+  /// Runs [sql] in the worker using native batched streaming.
   ///
-  /// Fetches the full result in one shot, then parses it. For very large
-  /// result sets, consider sync mode or a dedicated streaming API.
-  /// [fetchSize] and [chunkSize] are hints; behavior may match sync batching.
-  /// When [maxBufferBytes] is set, caps the result buffer size.
+  /// This path uses `odbc_stream_start_batched` + `odbc_stream_fetch`,
+  /// yielding chunks progressively. [maxBufferBytes] caps internal pending
+  /// bytes for message framing.
   Stream<ParsedRowBuffer> streamQueryBatched(
     int connectionId,
     String sql, {
@@ -680,35 +750,119 @@ class AsyncNativeOdbcConnection {
     int chunkSize = 64 * 1024,
     int? maxBufferBytes,
   }) async* {
-    final data = await executeQueryParams(
+    final streamId = await _streamStartBatched(
       connectionId,
       sql,
-      [],
-      maxBufferBytes: maxBufferBytes,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
     );
-    if (data == null || data.isEmpty) return;
-    yield BinaryProtocolParser.parse(data);
+    if (streamId == 0) {
+      return;
+    }
+
+    var pending = BytesBuilder(copy: false);
+    final limit = maxBufferBytes;
+    try {
+      while (true) {
+        final fetched = await _streamFetch(streamId);
+        if (!fetched.success) {
+          return;
+        }
+
+        final data = fetched.data;
+        if (data != null && data.isNotEmpty) {
+          pending.add(data);
+          if (limit != null && pending.length > limit) {
+            throw const AsyncError(
+              code: AsyncErrorCode.queryFailed,
+              message: 'Streaming buffer exceeded maxBufferBytes',
+            );
+          }
+
+          while (pending.length >= BinaryProtocolParser.headerSize) {
+            final all = pending.toBytes();
+            final msgLen = BinaryProtocolParser.messageLengthFromHeader(all);
+            if (all.length < msgLen) {
+              break;
+            }
+
+            final msg = all.sublist(0, msgLen);
+            yield BinaryProtocolParser.parse(msg);
+
+            final remainder = all.sublist(msgLen);
+            pending = BytesBuilder(copy: false);
+            if (remainder.isNotEmpty) {
+              pending.add(remainder);
+            }
+          }
+        }
+
+        if (!fetched.hasMore) {
+          break;
+        }
+      }
+
+      if (pending.length > 0) {
+        throw const FormatException(
+          'Leftover bytes after stream; expected complete protocol messages',
+        );
+      }
+    } finally {
+      await _streamClose(streamId);
+    }
   }
 
-  /// Runs [sql] in the worker and yields one [ParsedRowBuffer].
+  /// Runs [sql] in the worker using native streaming.
   ///
-  /// Same as [streamQueryBatched] with default chunking; full result is
-  /// fetched then parsed. [chunkSize] is a hint.
-  /// When [maxBufferBytes] is set, caps the result buffer size.
+  /// This path uses `odbc_stream_start` + `odbc_stream_fetch`. Data is
+  /// accumulated and parsed at the end, matching sync `streamQuery` behavior.
+  /// [maxBufferBytes] caps total accumulated bytes.
   Stream<ParsedRowBuffer> streamQuery(
     int connectionId,
     String sql, {
     int chunkSize = 1000,
     int? maxBufferBytes,
   }) async* {
-    final data = await executeQueryParams(
+    final streamId = await _streamStart(
       connectionId,
       sql,
-      [],
-      maxBufferBytes: maxBufferBytes,
+      chunkSize: chunkSize,
     );
-    if (data == null || data.isEmpty) return;
-    yield BinaryProtocolParser.parse(data);
+    if (streamId == 0) {
+      return;
+    }
+
+    final buffer = BytesBuilder(copy: false);
+    final limit = maxBufferBytes;
+    try {
+      while (true) {
+        final fetched = await _streamFetch(streamId);
+        if (!fetched.success) {
+          return;
+        }
+
+        final data = fetched.data;
+        if (data != null && data.isNotEmpty) {
+          buffer.add(data);
+          if (limit != null && buffer.length > limit) {
+            throw const AsyncError(
+              code: AsyncErrorCode.queryFailed,
+              message: 'Streaming buffer exceeded maxBufferBytes',
+            );
+          }
+        }
+
+        if (!fetched.hasMore) {
+          break;
+        }
+      }
+
+      if (buffer.length > 0) {
+        yield BinaryProtocolParser.parse(buffer.toBytes());
+      }
+    } finally {
+      await _streamClose(streamId);
+    }
   }
 
   /// Disposes the current worker and re-initializes a fresh one.

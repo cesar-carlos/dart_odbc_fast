@@ -434,6 +434,9 @@ mod tests {
         let data = vec![0xFF, 0, 0, 0, 0];
         let result = ParamValue::deserialize(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown ParamValue tag"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown ParamValue tag"));
     }
 }

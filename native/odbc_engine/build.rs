@@ -7,6 +7,16 @@ fn main() {
 
     std::fs::create_dir_all(&out_dir).unwrap();
 
+    #[cfg(all(target_os = "windows", target_env = "msvc"))]
+    {
+        let def = PathBuf::from(&crate_dir).join("odbc_exports.def");
+        if def.exists() {
+            // Apply DEF export list only when linking the cdylib. Applying this
+            // to test binaries/executables breaks linking with unresolved exports.
+            println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def.display());
+        }
+    }
+
     cbindgen::Builder::new()
         .with_crate(crate_dir)
         .with_language(cbindgen::Language::C)

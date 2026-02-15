@@ -267,10 +267,6 @@ impl BatchedStreamingState {
 
     pub fn has_more(&self) -> bool {
         !self.done
-            && self
-                .current_batch
-                .as_ref()
-                .is_some_and(|b| self.offset < b.len())
     }
 
     #[cfg(test)]
@@ -334,10 +330,11 @@ mod tests {
 
         let c3 = state.fetch_next_chunk().unwrap();
         assert_eq!(c3, Some(vec![5, 6]));
-        assert!(!state.has_more());
+        assert!(state.has_more());
 
         let c4 = state.fetch_next_chunk().unwrap();
         assert_eq!(c4, None);
+        assert!(!state.has_more());
     }
 
     #[test]

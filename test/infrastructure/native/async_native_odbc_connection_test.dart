@@ -95,6 +95,122 @@ void _fakeWorkerNamedSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: supports low-level stream start/fetch/close requests.
+void _fakeWorkerStreamingSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+
+  var fetched = false;
+  final payload = _createStreamTestBuffer();
+
+  receivePort.listen((Object? message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is StreamStartRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 501));
+      return;
+    }
+    if (message is StreamStartBatchedRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 502));
+      return;
+    }
+    if (message is StreamFetchRequest) {
+      if (!fetched) {
+        fetched = true;
+        mainSendPort.send(
+          StreamFetchResponse(
+            message.requestId,
+            success: true,
+            data: payload,
+          ),
+        );
+      } else {
+        mainSendPort.send(
+          StreamFetchResponse(
+            message.requestId,
+            success: true,
+            data: Uint8List(0),
+          ),
+        );
+      }
+      return;
+    }
+    if (message is StreamCloseRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: supports bulk insert requests.
+void _fakeWorkerBulkSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((Object? message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is BulkInsertParallelRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 42));
+      return;
+    }
+    if (message is BulkInsertArrayRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 10));
+      return;
+    }
+  });
+}
+
+Uint8List _createStreamTestBuffer() {
+  final bytes = <int>[];
+
+  const magic = 0x4F444243;
+  const version = 1;
+  const columnCount = 1;
+  const rowCount = 1;
+  const odbcInteger = 2;
+  const columnName = 'id';
+
+  // payload = metadata(2+2+2) + row(1+4+4)
+  const payloadSize = 15;
+
+  bytes
+    ..addAll(magic.toBytes(4))
+    ..addAll(version.toBytes(2))
+    ..addAll(columnCount.toBytes(2))
+    ..addAll(rowCount.toBytes(4))
+    ..addAll(payloadSize.toBytes(4))
+    ..addAll(odbcInteger.toBytes(2))
+    ..addAll(columnName.length.toBytes(2))
+    ..addAll(columnName.codeUnits)
+    ..add(0) // not null
+    ..addAll(4.toBytes(4)) // int32 length
+    ..addAll(1.toBytes(4)); // value = 1
+
+  return Uint8List.fromList(bytes);
+}
+
+extension on int {
+  List<int> toBytes(int length) {
+    final out = <int>[];
+    for (var i = 0; i < length; i++) {
+      out.add((this >> (i * 8)) & 0xFF);
+    }
+    return out;
+  }
+}
+
 void main() {
   loadTestEnv();
   group('AsyncError', () {
@@ -340,8 +456,7 @@ void main() {
       expect(result, isA<bool>());
     });
 
-    test('should delegate streaming methods directly', () {
-      // Streaming methods should be delegated, not wrapped in Isolate
+    test('should expose streaming methods as Stream', () {
       final stream1 = async.streamQuery(1, 'SELECT 1', chunkSize: 100);
       final stream2 = async.streamQueryBatched(1, 'SELECT 1', fetchSize: 100);
 
@@ -595,6 +710,71 @@ void main() {
       expect(odbcError.message, equals('Connection timeout'));
       expect(odbcError.sqlState, isNull);
       expect(odbcError.nativeCode, isNull);
+    });
+  });
+
+  group('AsyncNativeOdbcConnection streaming protocol', () {
+    late AsyncNativeOdbcConnection async;
+
+    setUp(() {
+      async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerStreamingSupport,
+      );
+    });
+
+    tearDown(() {
+      async.dispose();
+    });
+
+    test('streamQueryBatched should parse streamed native payload', () async {
+      await async.initialize();
+      final chunks =
+          await async.streamQueryBatched(1, 'SELECT 1', fetchSize: 10).toList();
+
+      expect(chunks.length, equals(1));
+      expect(chunks.first.rowCount, equals(1));
+      expect(chunks.first.columnCount, equals(1));
+      expect(chunks.first.columns.first.name, equals('id'));
+      expect(chunks.first.rows.first.first, equals(1));
+    });
+
+    test('streamQuery should parse streamed native payload', () async {
+      await async.initialize();
+      final chunks = await async.streamQuery(1, 'SELECT 1').toList();
+
+      expect(chunks.length, equals(1));
+      expect(chunks.first.rowCount, equals(1));
+      expect(chunks.first.columnCount, equals(1));
+      expect(chunks.first.columns.first.name, equals('id'));
+      expect(chunks.first.rows.first.first, equals(1));
+    });
+  });
+
+  group('AsyncNativeOdbcConnection bulk insert parallel', () {
+    late AsyncNativeOdbcConnection async;
+
+    setUp(() {
+      async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerBulkSupport,
+      );
+    });
+
+    tearDown(() {
+      async.dispose();
+    });
+
+    test('bulkInsertParallel should return rows inserted', () async {
+      await async.initialize();
+
+      final inserted = await async.bulkInsertParallel(
+        1,
+        't',
+        const ['a'],
+        Uint8List.fromList([0, 1, 2, 3]),
+        4,
+      );
+
+      expect(inserted, equals(42));
     });
   });
 }

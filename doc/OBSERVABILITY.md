@@ -32,6 +32,14 @@ final repository = TelemetryRepositoryImpl(
 await repository.initialize(otlpEndpoint: 'http://localhost:4318');
 ```
 
+### Contrato FFI (Dart -> Rust)
+
+- `OpenTelemetryFFI` usa a biblioteca nativa carregada por `library_loader.dart`.
+- Simbolos esperados: `otel_init`, `otel_export_trace`, `otel_export_trace_to_string`, `otel_get_last_error`, `otel_cleanup_strings`, `otel_shutdown`.
+- Compatibilidade da API Dart:
+  - `initialize()` retorna `1` em sucesso (compatibilidade com versoes anteriores).
+  - Erros de exportacao podem ser consultados por `getLastErrorMessage()`.
+
 ## Fallback para console
 
 Quando houver falhas consecutivas na exportacao OTLP, o repositorio pode usar fallback.

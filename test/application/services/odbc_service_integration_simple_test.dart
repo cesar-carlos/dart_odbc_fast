@@ -701,6 +701,18 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  }) async {
+    return const Success(0);
+  }
+
+  @override
   Future<Result<OdbcMetrics>> getMetrics() async {
     return Success(
       OdbcMetrics(

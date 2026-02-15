@@ -15,16 +15,16 @@ Se esta em `>=1.0.0`:
 
 ## Tabela rapida (pre-1.0.0)
 
-| Tipo de mudanca | Bump |
-| --- | --- |
-| Renomear/remover API publica | MINOR |
-| Alterar retorno publico | MINOR |
+| Tipo de mudanca                 | Bump  |
+| ------------------------------- | ----- |
+| Renomear/remover API publica    | MINOR |
+| Alterar retorno publico         | MINOR |
 | Adicionar parametro obrigatorio | MINOR |
-| Adicionar metodo novo | PATCH |
-| Adicionar parametro opcional | PATCH |
-| Bug fix | PATCH |
-| Performance | PATCH |
-| Documentacao | PATCH |
+| Adicionar metodo novo           | PATCH |
+| Adicionar parametro opcional    | PATCH |
+| Bug fix                         | PATCH |
+| Performance                     | PATCH |
+| Documentacao                    | PATCH |
 
 ## Checklist de breaking
 
@@ -38,10 +38,10 @@ Marque como breaking se qualquer item for verdadeiro:
 ## Exemplos
 
 1. `execute(String sql)` -> `execute(String sql, {Duration? timeout})`
-Resultado: PATCH.
+   Resultado: PATCH.
 
 2. `execute(String sql)` -> `executeQuery(String sql)`
-Resultado: MINOR (pre-1.0.0) / MAJOR (pos-1.0.0).
+   Resultado: MINOR (pre-1.0.0) / MAJOR (pos-1.0.0).
 
 ## Comandos uteis
 

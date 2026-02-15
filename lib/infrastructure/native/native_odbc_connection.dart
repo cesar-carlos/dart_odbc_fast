@@ -384,6 +384,26 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
         rowCount,
       );
 
+  /// Performs parallel bulk insert through [poolId].
+  ///
+  /// Uses pool-managed parallel workers in Rust. Returns rows inserted on
+  /// success, or negative value on failure.
+  @override
+  int bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer,
+    int parallelism,
+  ) =>
+      _native.bulkInsertParallel(
+        poolId,
+        table,
+        columns,
+        dataBuffer,
+        parallelism,
+      );
+
   /// Gets performance and operational metrics.
   ///
   /// Returns [OdbcMetrics] containing query counts, error counts,
@@ -401,6 +421,39 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// Returns true on success, false on failure.
   bool clearStatementCache() => _native.clearStatementCache();
+
+  /// Starts a low-level streaming query and returns a native stream ID.
+  int streamStart(
+    int connectionId,
+    String sql, {
+    int chunkSize = 1000,
+  }) =>
+      _native.streamStart(
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      );
+
+  /// Starts a low-level batched streaming query and returns stream ID.
+  int streamStartBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      _native.streamStartBatched(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  /// Fetches the next chunk for a low-level native stream.
+  bindings.StreamFetchResult streamFetch(int streamId) =>
+      _native.streamFetch(streamId);
+
+  /// Closes a low-level native stream.
+  bool streamClose(int streamId) => _native.streamClose(streamId);
 
   /// Executes a SQL query and returns results as a batched stream.
   ///

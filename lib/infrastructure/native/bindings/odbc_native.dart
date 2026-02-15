@@ -608,7 +608,7 @@ class OdbcNative {
       return callWithBuffer(
         (buf, bufLen, outWritten) => _bindings.odbc_execute(
           stmtId,
-          null,
+          ffi.nullptr,
           0,
           timeoutOverrideMs,
           fetchSize,
@@ -688,11 +688,10 @@ class OdbcNative {
     return _bindings.odbc_close_statement(stmtId) == 0;
   }
 
-  /// Clears all prepared statements (stub implementation).
+  /// Clears all prepared statements.
   ///
-  /// Returns 0 on success. This is a stub that returns success
-  /// until the native Rust function is implemented.
-  int clearAllStatements() => 0;
+  /// Returns 0 on success, non-zero on failure.
+  int clearAllStatements() => _bindings.odbc_clear_all_statements();
 
   /// Starts a batched streaming query.
   ///
@@ -824,6 +823,56 @@ class OdbcNative {
             dataPtr,
             dataBuffer.length,
             rowCount,
+            rowsInserted,
+          );
+          if (code != 0) return -1;
+          return rowsInserted.value;
+        } finally {
+          malloc.free(dataPtr);
+        }
+      } finally {
+        malloc.free(rowsInserted);
+      }
+    } finally {
+      utf8Ptrs.forEach(malloc.free);
+      malloc
+        ..free(colPtrs)
+        ..free(tablePtr);
+    }
+  }
+
+  /// Performs a parallel bulk insert operation through [poolId].
+  ///
+  /// [dataBuffer] must be built using [BulkInsertBuilder.build()].
+  /// Returns inserted row count on success, -1 on failure.
+  int bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer,
+    int parallelism,
+  ) {
+    final tablePtr = table.toNativeUtf8();
+    final colPtrs = malloc<ffi.Pointer<bindings.Utf8>>(columns.length);
+    final utf8Ptrs = <ffi.Pointer<ffi.Opaque>>[];
+    try {
+      for (var i = 0; i < columns.length; i++) {
+        final p = columns[i].toNativeUtf8();
+        utf8Ptrs.add(p);
+        (colPtrs + i).value = p.cast<bindings.Utf8>();
+      }
+      final rowsInserted = malloc<ffi.Uint32>();
+      try {
+        final dataPtr = _allocUint8List(dataBuffer);
+        try {
+          final code = _bindings.odbc_bulk_insert_parallel(
+            poolId,
+            tablePtr.cast<bindings.Utf8>(),
+            colPtrs,
+            columns.length,
+            dataPtr,
+            dataBuffer.length,
+            parallelism,
             rowsInserted,
           );
           if (code != 0) return -1;

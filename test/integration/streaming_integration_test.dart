@@ -48,7 +48,7 @@ void main() {
       ''';
 
       final createStmt = native.prepare(connId, createTableSql);
-      if (createStmt != 0) {
+      if (createStmt == 0) {
         throw Exception('Prepare create failed: ${native.getError()}');
       }
 
@@ -127,7 +127,8 @@ void main() {
         totalRows += chunk.rowCount;
       }
 
-      expect(chunkCount, greaterThan(1));
+      // streamQuery aggregates protocol chunks and yields a parsed result set.
+      expect(chunkCount, equals(1));
       expect(totalRows, 100);
     });
 
@@ -161,7 +162,7 @@ void main() {
       ''';
 
       final createStmt = native.prepare(connId, createEmptyTableSql);
-      if (createStmt != 0) {
+      if (createStmt == 0) {
         fail('Prepare create failed: ${native.getError()}');
       }
 

@@ -356,6 +356,28 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.bulkInsertParallel',
+      () => _service.bulkInsertParallel(
+        poolId,
+        table,
+        columns,
+        dataBuffer,
+        rowCount,
+        parallelism: parallelism,
+      ),
+    );
+  }
+
+  @override
   Future<Result<OdbcMetrics>> getMetrics() async {
     return _telemetry.inOperation(
       'ODBC.getMetrics',

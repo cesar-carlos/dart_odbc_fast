@@ -4,11 +4,10 @@ Backlog consolidado de itens que ainda nao fazem parte do escopo implementado.
 
 ## Resumo
 
-| Item | Status | Prioridade |
-| --- | --- | --- |
-| Schema reflection (PK/FK/Indexes) | Aberto | Alta |
-| Bulk insert paralelo via FFI | Aberto | Media |
-| Output parameters por driver/plugin | Fora de escopo atual | Media |
+| Item                                | Status               | Prioridade |
+| ----------------------------------- | -------------------- | ---------- |
+| Schema reflection (PK/FK/Indexes)   | Aberto               | Alta       |
+| Output parameters por driver/plugin | Fora de escopo atual | Media      |
 
 ## 1. Schema reflection (PK/FK/Indexes)
 
@@ -24,20 +23,7 @@ Backlog consolidado de itens que ainda nao fazem parte do escopo implementado.
 3. Metodos no repositorio/servico Dart.
 4. Testes de integracao com banco real.
 
-## 2. Bulk insert paralelo via FFI
-
-### Estado atual
-
-- O engine Rust possui base para parallel insert.
-- O caminho exposto para Dart usa bulk insert tradicional por conexao.
-
-### Falta implementar
-
-1. Surface FFI estavel para caminho paralelo.
-2. API Dart para selecionar estrategia paralela.
-3. Validacao de throughput (benchmarks e stress).
-
-## 3. Output parameters por driver/plugin
+## 2. Output parameters por driver/plugin
 
 ### Estado atual
 

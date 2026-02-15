@@ -9,6 +9,27 @@ use std::iter::once;
 
 const DEFAULT_PARAMSET_SIZE: usize = 1000;
 
+pub(crate) fn validate_i32_bulk_data(columns: &[&str], data: &[Vec<i32>]) -> Result<()> {
+    let n_cols = columns.len();
+    if data.len() != n_cols {
+        return Err(OdbcError::ValidationError(
+            "data length must match columns length".to_string(),
+        ));
+    }
+    if data.is_empty() {
+        return Ok(());
+    }
+    let n_rows = data[0].len();
+    for col in data.iter().skip(1) {
+        if col.len() != n_rows {
+            return Err(OdbcError::ValidationError(
+                "all columns must have same row count".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub struct ArrayBinding {
     paramset_size: usize,
 }
@@ -31,20 +52,12 @@ impl ArrayBinding {
         columns: &[&str],
         data: &[Vec<i32>],
     ) -> Result<usize> {
+        validate_i32_bulk_data(columns, data)?;
         let n_cols = columns.len();
-        if data.len() != n_cols {
-            return Err(OdbcError::ValidationError(
-                "data length must match columns length".to_string(),
-            ));
+        if n_cols == 0 {
+            return Ok(0);
         }
         let n_rows = data[0].len();
-        for col in data.iter().skip(1) {
-            if col.len() != n_rows {
-                return Err(OdbcError::ValidationError(
-                    "all columns must have same row count".to_string(),
-                ));
-            }
-        }
         if n_rows == 0 {
             return Ok(0);
         }
@@ -80,7 +93,7 @@ impl ArrayBinding {
                     .column_mut(buf_idx)
                     .as_slice::<i32>()
                     .ok_or_else(|| OdbcError::InternalError("I32 column expected".to_string()))?;
-                col.copy_from_slice(&col_data[chunk_start..end]);
+                col[..chunk_len].copy_from_slice(&col_data[chunk_start..end]);
             }
 
             inserter.execute().map_err(OdbcError::from)?;
@@ -136,7 +149,7 @@ impl ArrayBinding {
                     .column_mut(0)
                     .as_slice::<i32>()
                     .ok_or_else(|| OdbcError::InternalError("I32 column expected".to_string()))?;
-                id_col.copy_from_slice(&ids[chunk_start..end]);
+                id_col[..chunk_len].copy_from_slice(&ids[chunk_start..end]);
             }
             {
                 let mut name_col = inserter
@@ -428,6 +441,41 @@ impl Default for ArrayBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::OdbcError;
+
+    #[test]
+    fn test_validate_i32_bulk_data_mismatched_columns() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1], vec![2], vec![3]];
+        let r = validate_i32_bulk_data(&columns, &data);
+        assert!(r.is_err());
+        assert!(matches!(r.unwrap_err(), OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_i32_bulk_data_different_column_lengths() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1, 2], vec![3]];
+        let r = validate_i32_bulk_data(&columns, &data);
+        assert!(r.is_err());
+        assert!(matches!(r.unwrap_err(), OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_i32_bulk_data_zero_rows() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![], vec![]];
+        let r = validate_i32_bulk_data(&columns, &data);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_validate_i32_bulk_data_valid() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1, 2, 3], vec![4, 5, 6]];
+        let r = validate_i32_bulk_data(&columns, &data);
+        assert!(r.is_ok());
+    }
 
     #[test]
     fn test_array_binding_new() {

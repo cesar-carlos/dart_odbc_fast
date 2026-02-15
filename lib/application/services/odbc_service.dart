@@ -146,6 +146,15 @@ abstract class IOdbcService {
     int rowCount,
   );
 
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  });
+
   Future<Result<OdbcMetrics>> getMetrics();
 
   bool isInitialized();
@@ -442,6 +451,25 @@ class OdbcService implements IOdbcService {
       columns,
       dataBuffer,
       rowCount,
+    );
+  }
+
+  @override
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  }) async {
+    return _repository.bulkInsertParallel(
+      poolId,
+      table,
+      columns,
+      dataBuffer,
+      rowCount,
+      parallelism: parallelism,
     );
   }
 

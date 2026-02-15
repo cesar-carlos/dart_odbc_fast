@@ -1,7 +1,6 @@
 // Main example: high-level API with OdbcService (sync mode).
 // Run: dart run example/main.dart
 
-import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 import 'common.dart';

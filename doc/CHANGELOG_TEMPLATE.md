@@ -4,7 +4,7 @@ Template recomendado para `CHANGELOG.md`, baseado em Keep a Changelog.
 
 ## Estrutura base
 
-````markdown
+```markdown
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example item.
 
 [0.3.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.1...v0.3.2
-````
+```
 
 ## Como escrever boas entradas
 

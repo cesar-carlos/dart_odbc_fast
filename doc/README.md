@@ -4,16 +4,16 @@ Este diretorio contem apenas os documentos canonicos para uso diario de contribu
 
 ## Guia rapido
 
-| Documento | Objetivo |
-| --- | --- |
-| [BUILD.md](BUILD.md) | Setup local, build Rust, geracao opcional de bindings e execucao de testes |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Diagnostico e correcoes para erros frequentes de build, runtime e CI |
-| [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | Processo de release com tags + GitHub Actions + publicacao no pub.dev |
-| [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md) | Politica oficial de versionamento e deprecation |
-| [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md) | Referencia curta para decidir bump de versao |
-| [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md) | Modelo padrao para atualizar `CHANGELOG.md` |
-| [OBSERVABILITY.md](OBSERVABILITY.md) | Telemetria, metricas operacionais e fallback de exportacao |
-| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Backlog tecnico consolidado e priorizado |
+| Documento                                                      | Objetivo                                                                   |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [BUILD.md](BUILD.md)                                           | Setup local, build Rust, geracao opcional de bindings e execucao de testes |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                       | Diagnostico e correcoes para erros frequentes de build, runtime e CI       |
+| [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)                 | Processo de release com tags + GitHub Actions + publicacao no pub.dev      |
+| [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md)               | Politica oficial de versionamento e deprecation                            |
+| [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md) | Referencia curta para decidir bump de versao                               |
+| [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md)                 | Modelo padrao para atualizar `CHANGELOG.md`                                |
+| [OBSERVABILITY.md](OBSERVABILITY.md)                           | Telemetria, metricas operacionais e fallback de exportacao                 |
+| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md)         | Backlog tecnico consolidado e priorizado                                   |
 
 ## Documentacao gerada
 

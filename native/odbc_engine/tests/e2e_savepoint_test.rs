@@ -7,6 +7,8 @@ use odbc_engine::engine::{
     execute_query_with_connection, IsolationLevel, OdbcConnection, OdbcEnvironment, Savepoint,
 };
 use odbc_engine::protocol::BinaryProtocolDecoder;
+#[cfg(feature = "ffi-tests")]
+use std::ffi::CString;
 
 mod helpers;
 use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 
 /// Wrapper for connection pool operations.
@@ -51,4 +53,21 @@ class ConnectionPool {
   ///
   /// Returns true on success, false on failure.
   bool close() => _backend.poolClose(_poolId);
+
+  /// Performs parallel bulk insert using this pool.
+  ///
+  /// Returns inserted row count on success, or negative value on failure.
+  int bulkInsertParallel(
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer, {
+    int parallelism = 2,
+  }) =>
+      _backend.bulkInsertParallel(
+        _poolId,
+        table,
+        columns,
+        dataBuffer,
+        parallelism,
+      );
 }

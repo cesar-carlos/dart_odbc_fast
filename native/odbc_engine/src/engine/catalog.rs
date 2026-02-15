@@ -166,4 +166,11 @@ mod tests {
         let r = validate_and_parse_table("dbo.");
         assert!(r.is_err());
     }
+
+    #[test]
+    fn test_validate_and_parse_table_trimmed_schema_and_table() {
+        let (schema, name) = validate_and_parse_table("  dbo  .  mytable  ").unwrap();
+        assert_eq!(schema.as_deref(), Some("dbo"));
+        assert_eq!(name, "mytable");
+    }
 }

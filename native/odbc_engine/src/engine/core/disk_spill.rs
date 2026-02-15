@@ -121,4 +121,15 @@ mod tests {
         let out = s.read_back().unwrap();
         assert_eq!(out, b"hello");
     }
+
+    #[test]
+    fn test_disk_spill_exceeds_threshold_spills_to_disk() {
+        let mut s = DiskSpillStream::new(1);
+        s.write_chunk(&[42]).unwrap();
+        let big = vec![0u8; 2 * 1024 * 1024];
+        s.write_chunk(&big).unwrap();
+        let out = s.read_back().unwrap();
+        assert_eq!(out.len(), 1 + 2 * 1024 * 1024);
+        assert_eq!(out[0], 42);
+    }
 }

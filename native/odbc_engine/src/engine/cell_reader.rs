@@ -2,6 +2,22 @@ use crate::error::{OdbcError, Result};
 use crate::protocol::OdbcType;
 use odbc_api::CursorRow;
 
+pub(crate) fn text_bytes_to_i32_le_bytes(bytes: &[u8]) -> Vec<u8> {
+    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
+    if let Ok(value) = s.parse::<i32>() {
+        return value.to_le_bytes().to_vec();
+    }
+    bytes.to_vec()
+}
+
+pub(crate) fn text_bytes_to_i64_le_bytes(bytes: &[u8]) -> Vec<u8> {
+    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
+    if let Ok(value) = s.parse::<i64>() {
+        return value.to_le_bytes().to_vec();
+    }
+    bytes.to_vec()
+}
+
 pub fn read_cell_bytes(
     row: &mut CursorRow<'_>,
     column_number: u16,
@@ -46,13 +62,7 @@ fn read_i32_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<O
     let Some(text_bytes) = text_bytes else {
         return Ok(None);
     };
-
-    let s = std::str::from_utf8(&text_bytes).unwrap_or("").trim();
-    if let Ok(value) = s.parse::<i32>() {
-        return Ok(Some(value.to_le_bytes().to_vec()));
-    }
-
-    Ok(Some(text_bytes))
+    Ok(Some(text_bytes_to_i32_le_bytes(&text_bytes)))
 }
 
 fn read_i64_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
@@ -60,19 +70,50 @@ fn read_i64_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<O
     let Some(text_bytes) = text_bytes else {
         return Ok(None);
     };
-
-    let s = std::str::from_utf8(&text_bytes).unwrap_or("").trim();
-    if let Ok(value) = s.parse::<i64>() {
-        return Ok(Some(value.to_le_bytes().to_vec()));
-    }
-
-    Ok(Some(text_bytes))
+    Ok(Some(text_bytes_to_i64_le_bytes(&text_bytes)))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
     use crate::test_helpers::load_dotenv;
+
+    #[test]
+    fn test_text_bytes_to_i32_le_bytes_valid_number() {
+        let out = text_bytes_to_i32_le_bytes(b"42");
+        assert_eq!(out, 42i32.to_le_bytes());
+    }
+
+    #[test]
+    fn test_text_bytes_to_i32_le_bytes_trimmed_negative() {
+        let out = text_bytes_to_i32_le_bytes(b"  -1  ");
+        assert_eq!(out, (-1i32).to_le_bytes());
+    }
+
+    #[test]
+    fn test_text_bytes_to_i32_le_bytes_empty_fallback() {
+        let out = text_bytes_to_i32_le_bytes(b"");
+        assert_eq!(out, b"");
+    }
+
+    #[test]
+    fn test_text_bytes_to_i32_le_bytes_non_numeric_fallback() {
+        let out = text_bytes_to_i32_le_bytes(b"abc");
+        assert_eq!(out, b"abc");
+    }
+
+    #[test]
+    fn test_text_bytes_to_i64_le_bytes_valid_number() {
+        let out = text_bytes_to_i64_le_bytes(b"42");
+        assert_eq!(out, 42i64.to_le_bytes());
+    }
+
+    #[test]
+    fn test_text_bytes_to_i64_le_bytes_fallback() {
+        let out = text_bytes_to_i64_le_bytes(b"not-a-number");
+        assert_eq!(out, b"not-a-number");
+    }
 
     fn get_test_dsn() -> Option<String> {
         load_dotenv();

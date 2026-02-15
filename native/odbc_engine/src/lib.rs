@@ -111,4 +111,15 @@ mod tests {
             _ => panic!("Expected EmptyConnectionString error"),
         }
     }
+
+    #[test]
+    fn test_load_dotenv_invokes_once() {
+        crate::test_helpers::load_dotenv();
+    }
+
+    #[test]
+    fn test_load_dotenv_idempotent() {
+        crate::test_helpers::load_dotenv();
+        crate::test_helpers::load_dotenv();
+    }
 }

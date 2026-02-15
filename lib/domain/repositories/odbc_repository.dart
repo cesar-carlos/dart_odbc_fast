@@ -284,6 +284,19 @@ abstract class IOdbcRepository {
     int rowCount,
   );
 
+  /// Performs parallel bulk insert using a pool.
+  ///
+  /// When [parallelism] <= 1, implementation may fallback to single-connection
+  /// bulk insert.
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  });
+
   /// Gets performance and operational metrics.
   ///
   /// Returns [OdbcMetrics] containing query counts, error counts,

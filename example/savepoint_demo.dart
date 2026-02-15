@@ -1,7 +1,6 @@
 // Savepoint demo with OdbcService.
 // Run: dart run example/savepoint_demo.dart
 
-import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 import 'common.dart';

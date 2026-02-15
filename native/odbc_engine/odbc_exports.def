@@ -27,6 +27,7 @@ odbc_prepare
 odbc_execute
 odbc_cancel
 odbc_close_statement
+odbc_clear_all_statements
 odbc_stream_start_batched
 odbc_pool_create
 odbc_pool_get_connection

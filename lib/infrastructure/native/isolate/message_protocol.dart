@@ -18,6 +18,11 @@ enum RequestType {
   prepare,
   executePrepared,
   closeStatement,
+  streamStart,
+  streamStartBatched,
+  streamFetch,
+  streamClose,
+  clearAllStatements,
   poolCreate,
   poolGetConnection,
   poolReleaseConnection,
@@ -25,6 +30,7 @@ enum RequestType {
   poolGetState,
   poolClose,
   bulkInsertArray,
+  bulkInsertParallel,
   getMetrics,
   getCacheMetrics,
   clearCache,
@@ -181,6 +187,54 @@ class CloseStatementRequest extends WorkerRequest {
   final int stmtId;
 }
 
+/// Start low-level streaming query.
+class StreamStartRequest extends WorkerRequest {
+  const StreamStartRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.chunkSize = 1000,
+  }) : super(requestId, RequestType.streamStart);
+  final int connectionId;
+  final String sql;
+  final int chunkSize;
+}
+
+/// Start low-level batched streaming query.
+class StreamStartBatchedRequest extends WorkerRequest {
+  const StreamStartBatchedRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.fetchSize = 1000,
+    this.chunkSize = 64 * 1024,
+  }) : super(requestId, RequestType.streamStartBatched);
+  final int connectionId;
+  final String sql;
+  final int fetchSize;
+  final int chunkSize;
+}
+
+/// Fetch next chunk from an active stream.
+class StreamFetchRequest extends WorkerRequest {
+  const StreamFetchRequest(int requestId, this.streamId)
+      : super(requestId, RequestType.streamFetch);
+  final int streamId;
+}
+
+/// Close active stream.
+class StreamCloseRequest extends WorkerRequest {
+  const StreamCloseRequest(int requestId, this.streamId)
+      : super(requestId, RequestType.streamClose);
+  final int streamId;
+}
+
+/// Close all prepared statements.
+class ClearAllStatementsRequest extends WorkerRequest {
+  const ClearAllStatementsRequest(int requestId)
+      : super(requestId, RequestType.clearAllStatements);
+}
+
 /// Create connection pool.
 class PoolCreateRequest extends WorkerRequest {
   const PoolCreateRequest(
@@ -242,6 +296,23 @@ class BulkInsertArrayRequest extends WorkerRequest {
   final List<String> columns;
   final Uint8List dataBuffer;
   final int rowCount;
+}
+
+/// Parallel bulk insert through pool.
+class BulkInsertParallelRequest extends WorkerRequest {
+  const BulkInsertParallelRequest(
+    int requestId,
+    this.poolId,
+    this.table,
+    this.columns,
+    this.dataBuffer,
+    this.parallelism,
+  ) : super(requestId, RequestType.bulkInsertParallel);
+  final int poolId;
+  final String table;
+  final List<String> columns;
+  final Uint8List dataBuffer;
+  final int parallelism;
 }
 
 /// Get metrics.
@@ -429,4 +500,19 @@ class StructuredErrorResponse extends WorkerResponse {
 class DetectDriverResponse extends WorkerResponse {
   const DetectDriverResponse(super.requestId, this.driverName);
   final String? driverName;
+}
+
+/// Response for stream fetch operation.
+class StreamFetchResponse extends WorkerResponse {
+  const StreamFetchResponse(
+    super.requestId, {
+    required this.success,
+    this.data,
+    this.hasMore = false,
+    this.error,
+  });
+  final bool success;
+  final Uint8List? data;
+  final bool hasMore;
+  final String? error;
 }

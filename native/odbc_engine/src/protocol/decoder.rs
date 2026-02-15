@@ -310,10 +310,7 @@ mod tests {
 
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("column metadata"));
+        assert!(result.unwrap_err().to_string().contains("column metadata"));
     }
 
     #[test]
@@ -330,10 +327,7 @@ mod tests {
 
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("column name"));
+        assert!(result.unwrap_err().to_string().contains("column name"));
     }
 
     #[test]
@@ -369,10 +363,7 @@ mod tests {
 
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("data length"));
+        assert!(result.unwrap_err().to_string().contains("data length"));
     }
 
     #[test]
@@ -391,10 +382,7 @@ mod tests {
 
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cell data"));
+        assert!(result.unwrap_err().to_string().contains("cell data"));
     }
 
     #[test]
@@ -411,9 +399,6 @@ mod tests {
 
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("row data"));
+        assert!(result.unwrap_err().to_string().contains("row data"));
     }
 }

@@ -16,7 +16,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [named_parameters_demo.dart](named_parameters_demo.dart): named params with `@name` and `:name`, including prepared statement reuse.
 - [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti`.
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.
-- [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, and state/health checks.
+- [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, state/health checks, and parallel bulk insert.
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit.
 
 ## Shared helper

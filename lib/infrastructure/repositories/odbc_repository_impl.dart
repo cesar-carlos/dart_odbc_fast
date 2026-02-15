@@ -1434,6 +1434,110 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
+  Future<Result<int>> bulkInsertParallel(
+    int poolId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount, {
+    int parallelism = 0,
+  }) async {
+    final buffer = Uint8List.fromList(dataBuffer);
+
+    if (parallelism <= 1) {
+      final connId = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .poolGetConnection(poolId)
+          : (_native as NativeOdbcConnection).poolGetConnection(poolId);
+      if (connId == 0) {
+        return _convertNativeErrorToFailure<int>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage:
+              'Failed to get pool connection for bulk insert fallback',
+        );
+      }
+
+      try {
+        final n = _isAsync
+            ? await (_native as AsyncNativeOdbcConnection).bulkInsertArray(
+                connId,
+                table,
+                columns,
+                buffer,
+                rowCount,
+              )
+            : (_native as NativeOdbcConnection).bulkInsertArray(
+                connId,
+                table,
+                columns,
+                buffer,
+                rowCount,
+              );
+
+        if (n < 0) {
+          return await _convertNativeErrorToFailure<int>(
+            errorFactory: ({required message, sqlState, nativeCode}) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to bulk insert in fallback mode',
+          );
+        }
+        return Success(n);
+      } on Exception catch (e) {
+        return Failure<int, OdbcError>(QueryError(message: e.toString()));
+      } finally {
+        if (_isAsync) {
+          await (_native as AsyncNativeOdbcConnection)
+              .poolReleaseConnection(connId);
+        } else {
+          (_native as NativeOdbcConnection).poolReleaseConnection(connId);
+        }
+      }
+    }
+
+    try {
+      final n = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).bulkInsertParallel(
+              poolId,
+              table,
+              columns,
+              buffer,
+              parallelism,
+            )
+          : (_native as NativeOdbcConnection).bulkInsertParallel(
+              poolId,
+              table,
+              columns,
+              buffer,
+              parallelism,
+            );
+
+      if (n < 0) {
+        return await _convertNativeErrorToFailure<int>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to execute parallel bulk insert',
+        );
+      }
+      return Success(n);
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
   Future<Result<OdbcMetrics>> getMetrics() async {
     try {
       if (_isAsync) {

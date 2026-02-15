@@ -104,4 +104,67 @@ mod tests {
             OptimizationRule::UseArrayFetch { size: 500 }
         ));
     }
+
+    struct TestDriverPlugin;
+
+    impl DriverPlugin for TestDriverPlugin {
+        fn name(&self) -> &str {
+            "TestDriver"
+        }
+
+        fn get_capabilities(&self) -> DriverCapabilities {
+            DriverCapabilities {
+                supports_prepared_statements: true,
+                supports_batch_operations: true,
+                supports_streaming: true,
+                supports_array_fetch: false,
+                max_row_array_size: 1000,
+                driver_name: "TestDriver".to_string(),
+                driver_version: "1.0".to_string(),
+            }
+        }
+
+        fn map_type(&self, odbc_type: i16) -> OdbcType {
+            match odbc_type {
+                1 => OdbcType::Varchar,
+                2 => OdbcType::Integer,
+                3 => OdbcType::BigInt,
+                _ => OdbcType::Varchar,
+            }
+        }
+
+        fn optimize_query(&self, sql: &str) -> String {
+            sql.trim().to_string()
+        }
+
+        fn get_optimization_rules(&self) -> Vec<OptimizationRule> {
+            vec![
+                OptimizationRule::UsePreparedStatements,
+                OptimizationRule::EnableStreaming,
+            ]
+        }
+    }
+
+    #[test]
+    fn test_driver_plugin_trait_impl_returns_expected_values() {
+        let plugin = TestDriverPlugin;
+        assert_eq!(plugin.name(), "TestDriver");
+
+        let cap = plugin.get_capabilities();
+        assert!(cap.supports_prepared_statements);
+        assert!(cap.supports_streaming);
+        assert_eq!(cap.driver_name, "TestDriver");
+
+        assert_eq!(plugin.map_type(1), OdbcType::Varchar);
+        assert_eq!(plugin.map_type(2), OdbcType::Integer);
+        assert_eq!(plugin.map_type(99), OdbcType::Varchar);
+
+        let optimized = plugin.optimize_query("  SELECT 1  ");
+        assert_eq!(optimized, "SELECT 1");
+
+        let rules = plugin.get_optimization_rules();
+        assert_eq!(rules.len(), 2);
+        assert!(matches!(rules[0], OptimizationRule::UsePreparedStatements));
+        assert!(matches!(rules[1], OptimizationRule::EnableStreaming));
+    }
 }

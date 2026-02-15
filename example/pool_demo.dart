@@ -29,6 +29,7 @@ void main() async {
 
   try {
     await _createPoolTestTable(native, pool);
+    _demoParallelBulkInsert(pool);
     await _demoConnectionReuse(native, pool);
     _demoHealthCheck(pool);
     _demoPoolState(pool);
@@ -37,6 +38,25 @@ void main() async {
     pool.close();
     AppLogger.info('Pool closed');
   }
+}
+
+void _demoParallelBulkInsert(ConnectionPool pool) {
+  final payload = BulkInsertBuilder()
+      .table('pool_test_table')
+      .addColumn('name', BulkColumnType.text, maxLen: 100)
+      .addRow(['parallel-a']).addRow(['parallel-b']).build();
+
+  final inserted = pool.bulkInsertParallel(
+    'pool_test_table',
+    const ['name'],
+    payload,
+  );
+
+  if (inserted < 0) {
+    AppLogger.warning('Parallel bulk insert failed');
+    return;
+  }
+  AppLogger.info('Parallel bulk insert rows: $inserted');
 }
 
 Future<void> _createPoolTestTable(

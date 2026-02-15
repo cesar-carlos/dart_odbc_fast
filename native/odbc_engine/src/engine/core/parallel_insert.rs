@@ -6,6 +6,27 @@ use std::sync::Arc;
 
 const DEFAULT_BATCH_SIZE: usize = 10_000;
 
+pub(crate) fn validate_i32_parallel_input(columns: &[&str], data: &[Vec<i32>]) -> Result<()> {
+    let n_cols = columns.len();
+    if data.len() != n_cols {
+        return Err(OdbcError::ValidationError(
+            "data length must match columns length".to_string(),
+        ));
+    }
+    if data.is_empty() {
+        return Ok(());
+    }
+    let n_rows = data[0].len();
+    for col in data.iter().skip(1) {
+        if col.len() != n_rows {
+            return Err(OdbcError::ValidationError(
+                "all columns must have same row count".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub struct ParallelBulkInsert {
     pool: Arc<ConnectionPool>,
     batch_size: usize,
@@ -40,20 +61,12 @@ impl ParallelBulkInsert {
         columns: &[&str],
         data: Vec<Vec<i32>>,
     ) -> Result<usize> {
+        validate_i32_parallel_input(columns, &data)?;
         let n_cols = columns.len();
-        if data.len() != n_cols {
-            return Err(OdbcError::ValidationError(
-                "data length must match columns length".to_string(),
-            ));
+        if n_cols == 0 {
+            return Ok(0);
         }
         let n_rows = data[0].len();
-        for col in data.iter().skip(1) {
-            if col.len() != n_rows {
-                return Err(OdbcError::ValidationError(
-                    "all columns must have same row count".to_string(),
-                ));
-            }
-        }
         if n_rows == 0 {
             return Ok(0);
         }
@@ -94,7 +107,42 @@ impl ParallelBulkInsert {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::OdbcError;
     use crate::test_helpers::load_dotenv;
+
+    #[test]
+    fn test_validate_i32_parallel_input_mismatched_columns() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1], vec![2], vec![3]];
+        let r = validate_i32_parallel_input(&columns, &data);
+        assert!(r.is_err());
+        assert!(matches!(r.unwrap_err(), OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_i32_parallel_input_different_column_lengths() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1, 2], vec![3]];
+        let r = validate_i32_parallel_input(&columns, &data);
+        assert!(r.is_err());
+        assert!(matches!(r.unwrap_err(), OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn test_validate_i32_parallel_input_zero_rows() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![], vec![]];
+        let r = validate_i32_parallel_input(&columns, &data);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_validate_i32_parallel_input_valid() {
+        let columns = ["a", "b"];
+        let data: Vec<Vec<i32>> = vec![vec![1, 2, 3], vec![4, 5, 6]];
+        let r = validate_i32_parallel_input(&columns, &data);
+        assert!(r.is_ok());
+    }
 
     #[test]
     fn test_default_batch_size() {

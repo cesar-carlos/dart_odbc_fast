@@ -53,7 +53,7 @@ void main() {
       }
 
       final createStmt = native.prepare(connId, createTableSql);
-      if (createStmt != 0) {
+      if (createStmt == 0) {
         throw Exception('Prepare create failed: ${native.getError()}');
       }
 
@@ -77,6 +77,8 @@ void main() {
     test('poolGetConnection returns valid connection ID', () {
       final connId = native.poolGetConnection(poolId);
       expect(connId, greaterThan(0));
+      final released = native.poolReleaseConnection(connId);
+      expect(released, isTrue);
     });
 
     test('poolReleaseConnection succeeds for valid connection', () {

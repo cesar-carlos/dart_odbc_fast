@@ -19,7 +19,7 @@
 - Streaming queries (`streamQueryBatched`, `streamQuery`)
 - Connection pooling
 - Transactions and savepoints
-- Bulk insert payload builder
+- Bulk insert payload builder and parallel bulk insert via pool
 - Structured errors (SQLSTATE/native code)
 - Runtime metrics and telemetry hooks
 
@@ -34,6 +34,7 @@
 - Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
 - Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolClose`
+- Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with fallback when `parallelism <= 1`)
 - Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`
 
 ### Low-level wrappers (`NativeOdbcConnection`)
@@ -41,6 +42,7 @@
 - Connection extras: `connectWithTimeout`, `getStructuredError`
 - Wrapper helpers: `PreparedStatement`, `PreparedStatement.executeNamed`, `TransactionHandle`, `ConnectionPool`, `CatalogQuery`
 - Streaming: `streamQueryBatched` (preferred), `streamQuery`
+- Bulk insert: `bulkInsertArray`, `bulkInsertParallel`
 
 ## Requirements
 
@@ -66,8 +68,9 @@ Native binary resolution order is documented in [doc/BUILD.md](doc/BUILD.md).
 
 ## Quick Start (High-level service)
 
+`ServiceLocator` is exported by `package:odbc_fast/odbc_fast.dart`.
+
 ```dart
-import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 Future<void> main() async {
@@ -120,6 +123,10 @@ If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 
 - `requestTimeout` for worker response timeout
 - `autoRecoverOnWorkerCrash` for automatic worker re-initialization
+
+Async streaming (`streamQuery` / `streamQueryBatched`) uses the native
+stream protocol through the worker isolate (`stream_start/fetch/close`),
+instead of fetching full result sets in a single call.
 
 ## Connection options example
 
@@ -194,9 +201,14 @@ dart test test/validation/
 # benchmarks
 dart run benchmarks/m1_baseline.dart
 dart run benchmarks/m2_performance.dart
+
+# rust bulk insert benchmark (array vs parallel)
+cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture
 ```
 
 Integration/stress tests require `ODBC_TEST_DSN` in `.env` or environment.
+For the Rust bulk benchmark, also set `ENABLE_E2E_TESTS=true`.
+Optional tuning: `BULK_BENCH_SMALL_ROWS` and `BULK_BENCH_MEDIUM_ROWS`.
 
 ## Project structure
 

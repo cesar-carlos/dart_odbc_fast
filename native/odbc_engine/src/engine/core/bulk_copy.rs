@@ -84,6 +84,23 @@ mod tests {
     #[test]
     fn test_bulk_copy_executor_stub() {
         let bcp = BulkCopyExecutor::new(1000);
+        #[cfg(feature = "sqlserver-bcp")]
+        assert_eq!(bcp.batch_size(), 1000);
+        #[cfg(not(feature = "sqlserver-bcp"))]
         assert_eq!(bcp.batch_size(), 0);
+    }
+
+    #[cfg(feature = "sqlserver-bcp")]
+    #[test]
+    fn test_bulk_copy_executor_new_and_batch_size() {
+        let bcp = BulkCopyExecutor::new(5000);
+        assert_eq!(bcp.batch_size(), 5000);
+    }
+
+    #[cfg(feature = "sqlserver-bcp")]
+    #[test]
+    fn test_bulk_copy_executor_new_min_batch_size_one() {
+        let bcp = BulkCopyExecutor::new(0);
+        assert_eq!(bcp.batch_size(), 1);
     }
 }

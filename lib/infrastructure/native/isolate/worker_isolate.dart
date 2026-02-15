@@ -1,4 +1,5 @@
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
@@ -169,6 +170,43 @@ void _handleRequest(
         final ok = conn.closeStatement(request.stmtId);
         sendPort.send(BoolResponse(request.requestId, value: ok));
 
+      case ClearAllStatementsRequest():
+        final code = conn.clearAllStatements();
+        sendPort.send(IntResponse(request.requestId, code));
+
+      case StreamStartRequest():
+        final streamId = conn.streamStart(
+          request.connectionId,
+          request.sql,
+          chunkSize: request.chunkSize,
+        );
+        sendPort.send(IntResponse(request.requestId, streamId));
+
+      case StreamStartBatchedRequest():
+        final streamId = conn.streamStartBatched(
+          request.connectionId,
+          request.sql,
+          fetchSize: request.fetchSize,
+          chunkSize: request.chunkSize,
+        );
+        sendPort.send(IntResponse(request.requestId, streamId));
+
+      case StreamFetchRequest():
+        final result = conn.streamFetch(request.streamId);
+        sendPort.send(
+          StreamFetchResponse(
+            request.requestId,
+            success: result.success,
+            data: result.data == null ? null : Uint8List.fromList(result.data!),
+            hasMore: result.hasMore,
+            error: result.success ? null : conn.getError(),
+          ),
+        );
+
+      case StreamCloseRequest():
+        final ok = conn.streamClose(request.streamId);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
       case PoolCreateRequest():
         final poolId = conn.poolCreate(
           request.connectionString,
@@ -218,6 +256,16 @@ void _handleRequest(
           request.columns,
           request.dataBuffer,
           request.rowCount,
+        );
+        sendPort.send(IntResponse(request.requestId, rows));
+
+      case BulkInsertParallelRequest():
+        final rows = conn.bulkInsertParallel(
+          request.poolId,
+          request.table,
+          request.columns,
+          request.dataBuffer,
+          request.parallelism,
         );
         sendPort.send(IntResponse(request.requestId, rows));
 
@@ -380,8 +428,22 @@ void _sendErrorResponse(
     case PrepareRequest():
     case PoolCreateRequest():
     case PoolGetConnectionRequest():
+    case StreamStartRequest():
+    case StreamStartBatchedRequest():
+    case ClearAllStatementsRequest():
       sendPort.send(IntResponse(id, 0));
+    case StreamFetchRequest():
+      sendPort.send(
+        StreamFetchResponse(
+          id,
+          success: false,
+          error: error,
+        ),
+      );
+    case StreamCloseRequest():
+      sendPort.send(BoolResponse(id, value: false));
     case BulkInsertArrayRequest():
+    case BulkInsertParallelRequest():
       sendPort.send(IntResponse(id, -1));
     case PoolGetStateRequest():
       sendPort.send(PoolStateResponse(id, error: error));

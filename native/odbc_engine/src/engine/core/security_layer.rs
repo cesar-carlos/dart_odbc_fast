@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_security_layer_default() {
-        let layer = SecurityLayer::default();
+        let layer = SecurityLayer;
         let buffer = layer.secure_buffer(vec![5, 6, 7]);
         assert_eq!(buffer.as_slice(), &[5, 6, 7]);
     }
