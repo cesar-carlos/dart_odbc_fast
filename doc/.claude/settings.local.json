@@ -13,7 +13,13 @@
       "Bash(dart pub login --help:*)",
       "Bash(dart pub login:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run:*)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run watch 22045216847 --repo cesar-carlos/dart_odbc_fast)",
+      "Bash(curl:*)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run list --repo cesar-carlos/dart_odbc_fast --limit 5)"
     ]
   }
 }

@@ -27,7 +27,7 @@
 
 ### High-level service (`OdbcService`)
 
-- Query execution: `executeQuery`, `executeQueryParams`
+- Query execution: `executeQuery`, `executeQueryNamed`
 - Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
