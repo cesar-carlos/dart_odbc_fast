@@ -1,4 +1,4 @@
-# Release v0.1.6 - Batched Streaming + Publish Fixes
+﻿# Release v0.1.6 - Batched Streaming + Publish Fixes
 
 This release adds cursor-based batched streaming and fixes pub publishing so
 native Dart sources under `lib/infrastructure/native/` are included correctly.
@@ -38,3 +38,4 @@ Run: `dart pub get`
 - Added `streamQueryBatched` for efficient large result sets
 - `executeQuery` now prefers batched streaming with safe fallback
 - Fixed publish packaging so `dart analyze` / `dartdoc` work on pub.dev
+

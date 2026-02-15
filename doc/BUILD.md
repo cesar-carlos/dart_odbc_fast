@@ -1,12 +1,14 @@
-# BUILD.md - Guia de Build e Desenvolvimento
+﻿# BUILD.md - Guia de Build e Desenvolvimento
 
-Este guia cobre o processo completo de build e desenvolvimento do ODBC Fast, incluindo o Rust native engine, bindings FFI do Dart, e configuração do ambiente.
+This guide covers the complete ODBC Fast build and development process, including the Rust native engine, Dart FFI bindings, and Environment configuration.
 
 ## Índice
 
 - [Pré-requisitos](#pré-requisitos)
-- [Estrutura do Projeto](#estrutura-do-projeto)
-- [Configuração do Ambiente](#configuração-do-ambiente)
+- [Project Structure](#project-structure)
+  - [Onde a DLL must ficar](#onde-a-dll-must-ficar-ordem-de-busca)
+  - [Copy the DLL to the correct location](#copy-the-dll-to-the-correct-location)
+- [configuration do Environment](#configuration-do-Environment)
 - [Build Manual](#build-manual)
 - [Gerar Bindings FFI](#gerar-bindings-ffi)
 - [Desenvolvimento](#desenvolvimento)
@@ -41,7 +43,7 @@ sudo apt-get install -y dart
 sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 ```
 
-## Estrutura do Projeto
+## Project Structure
 
 ```
 dart_odbc_fast/
@@ -54,20 +56,75 @@ dart_odbc_fast/
 │           └── library_loader.dart
 ├── native/                       # Rust workspace
 │   ├── Cargo.toml               # Workspace root
+│   ├── target/                  # Saída do cargo (workspace)
+│   │   └── release/
+│   │       ├── odbc_engine.dll  # Windows (local preferido)
+│   │       └── libodbc_engine.so # Linux
 │   └── odbc_engine/             # Membro do workspace
 │       ├── Cargo.toml
 │       ├── build.rs             # Build script (cbindgen)
-│       ├── .cargo/config.toml   # Configuração do Cargo
+│       ├── .cargo/config.toml   # configuration do Cargo
+│       ├── target/release/      # Saída alternativa (build no membro)
 │       └── src/
 ├── hook/                        # Native Assets hooks
 │   └── build.dart               # Hook de build automático
-├── ffigen.yaml                  # Configuração do ffigen
+├── ffigen.yaml                  # configuration do ffigen
 └── pubspec.yaml                 # Dependências Dart
 ```
 
-## Configuração do Ambiente
+### Onde a DLL must ficar (ordem de busca)
 
-### 1. Clonar o Repositório
+The loader (`library_loader.dart`) and hook (`hook/build.dart`) look for the library in this order:
+
+| Priority | Location (from project root) | When is it used |
+| ---------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1 | `native/target/release/odbc_engine.dll` (Windows) or `libodbc_engine.so` (Linux) | Build from workspace: `cd native && cargo build --release` |
+| 2 | `native/odbc_engine/target/release/odbc_engine.dll` (or `.so`) | Build on member only: `cd native/odbc_engine && cargo build --release` |
+| 3          | Native Assets (pacote) / cache `~/.cache/odbc_fast/<version>/`                    | Produção: `dart pub get` baixa da GitHub Release ou usa cache            |
+| 4          | PATH (Windows) / LD_LIBRARY_PATH (Linux)                                         | DLL instalada no sistema                                                 |
+
+For development, the correct location is **1** or **2**. To avoid having to copy anything, always use:
+
+```bash
+cd native
+cargo build --release
+```
+
+The binary will be generated in `native/target/release/` and will already be found by Dart.
+
+### Copy the DLL to the correct location
+
+If you generated the DLL elsewhere (for example to not overwrite one in use, or after manual download):
+
+**Windows (PowerShell, in the project root):**
+
+```powershell
+# example: DLL foi gerada em native/target_release_new/release/
+Copy-Item -Path "native\target_release_new\release\odbc_engine.dll" -Destination "native\target\release\odbc_engine.dll" -Force
+
+# Ou, se buildou só no membro e quer padronizar no workspace:
+New-Item -ItemType Directory -Force -Path "native\target\release" | Out-Null
+Copy-Item -Path "native\odbc_engine\target\release\odbc_engine.dll" -Destination "native\target\release\odbc_engine.dll" -Force
+```
+
+**Linux/macOS:**
+
+```bash
+# example: copiar de odbc_engine/target para workspace target
+mkdir -p native/target/release
+cp native/odbc_engine/target/release/libodbc_engine.so native/target/release/
+```
+
+**Download manual da GitHub Release:**
+
+1. Download the binary from [Release](https://github.com/cesar-carlos/dart_odbc_fast/releases) (e.g.: `odbc_engine.dll` for Windows).
+2. Place it in one of the locations that the loader uses:
+   - `native/target/release/odbc_engine.dll` (recommended for dev), or
+   - In a directory that is in the PATH (Windows) or LD_LIBRARY_PATH (Linux).
+
+## configuration do Environment
+
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/cesar-carlos/dart_odbc_fast.git
@@ -105,12 +162,12 @@ cd native
 cargo build --release
 ```
 
-O binário será criado em:
+The binary will be created at:
 
 - Windows: `native/target/release/odbc_engine.dll`
 - Linux: `native/target/release/libodbc_engine.so`
 
-### Build com Cross-Compilation
+### Build with Cross-Compilation
 
 ```bash
 # Windows (no Linux)
@@ -122,16 +179,16 @@ cargo build --release --target x86_64-unknown-linux-gnu
 
 ## Gerar Bindings FFI
 
-Os bindings FFI são gerados automaticamente pelo hook, mas podem ser gerados manualmente:
+FFI bindings are automatically generated by the hook, but can be generated manually:
 
 ```bash
 # A partir da raiz do projeto
 dart run ffigen -v info
 ```
 
-O arquivo gerado será: `lib/infrastructure/native/bindings/odbc_bindings.dart`
+The generated file will be: `lib/infrastructure/native/bindings/odbc_bindings.dart`
 
-### Configuração do ffigen
+### configuration do ffigen
 
 ```yaml
 # ffigen.yaml
@@ -163,14 +220,14 @@ functions:
    dart run ffigen -v info
    ```
 
-3. **Testar com Dart**
+3. **Test with Dart**
    ```bash
    dart test
    ```
 
 ### Testes
 
-**Todos os testes:**
+**All tests:**
 
 ```bash
 dart test
@@ -182,7 +239,7 @@ dart test
 # Testes de validação
 dart test test/validation/
 
-# Testes de integração (requer DSN configurado)
+# Testes de integration (requer DSN configurado)
 dart test test/integration/
 
 # Testes de stress
@@ -193,7 +250,7 @@ dart test test/stress/
 
 ### Otimizações Ativas
 
-O projeto usa várias otimizações para build time e runtime:
+The project uses several optimizations for build time and runtime:
 
 #### Build Time (native/Cargo.toml)
 
@@ -210,8 +267,8 @@ strip = true          # Binário menor
 #### Runtime
 
 - **Streaming**: Processamento de resultados em batches
-- **Pooling**: Pool de conexões reutilizáveis
-- **Protocolo binário**: Transferência eficiente de dados
+- **Pooling**: Pool de connections reutilizáveis
+- **Binary protocol**: Efficient data transfer
 - **Zero-copy**: Mínima cópia de memória entre Rust e Dart
 
 ### Benchmarks
@@ -235,9 +292,9 @@ cargo build --release
 
 **Solução 2**: Verificar caminho da biblioteca
 
-### Erro: "failed to remove file ... odbc_engine.dll" / "Acesso negado" (DLL em uso)
+### Error: "failed to remove file ... odbc_engine.dll" / "Access denied" (DLL in use)
 
-A DLL antiga está em uso (IDE, processo Dart, antivírus). Para gerar a nova DLL sem sobrescrever:
+Old DLL is in use (IDE, Dart process, antivirus). To generate the new DLL without overwriting:
 
 **PowerShell (workspace = `native/`):**
 
@@ -249,9 +306,9 @@ cargo build -p odbc_engine --release
 
 A nova DLL fica em `native/target_release_new/release/odbc_engine.dll`. Depois:
 
-1. Feche Cursor/IDE e qualquer processo que use a DLL.
-2. Copie `target_release_new\release\odbc_engine.dll` para `target\release\odbc_engine.dll`, ou
-3. Rode de novo `cargo build -p odbc_engine --release` (sem CARGO_TARGET_DIR) para gravar em `target/release/`.
+1. Close Cursor/IDE and any process that uses the DLL.
+2. Copy `target_release_new\release\odbc_engine.dll` to `target\release\odbc_engine.dll`, or
+3. Run `cargo build -p odbc_engine --release` again (without CARGO_TARGET_DIR) to write to `target/release/`.
 
 ```dart
 // lib/infrastructure/native/bindings/library_loader.dart
@@ -276,20 +333,20 @@ sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 
 **Windows:**
 
-- Verifique que o MSVC Toolchain está instalado
+- Check that MSVC Toolchain is installed
 - `rustup default stable-msvc`
 
 ### Build muito lento
 
 **Verificar:**
 
-1. Sanitizers não estão ativos (veja `native/odbc_engine/.cargo/config.toml`)
-2. LTO está configurado como "thin" (não "fat")
+1. Sanitizers not estão ativos (veja `native/odbc_engine/.cargo/config.toml`)
+2. LTO está configurado como "thin" (not "fat")
 3. Cache do Cargo está funcionando
 
-### CI/CD falhando
+### CI/CD failurendo
 
-Veja [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) para detalhes do pipeline automatizado.
+See [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) for automated pipeline details.
 
 ## Recursos Adicionais
 
@@ -298,10 +355,13 @@ Veja [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) para detalhes do pipeline au
 - [ODBC API Reference](https://docs.microsoft.com/en-us/sql/odbc/reference/syntax/odbc-api-reference)
 - [Native Assets](https://dart.dev/guides/libraries/native-objects)
 
-## Suporte
+## Support
 
-Para problemas específicos:
+For specific problems:
 
 1. Verifique [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-2. Abra uma issue no [GitHub](https://github.com/cesar-carlos/dart_odbc_fast/issues)
-3. Consulte [api_governance.md](api_governance.md) para políticas de versionamento
+2. Open an issue on [GitHub](https://github.com/cesar-carlos/dart_odbc_fast/issues)
+3. See [api_governance.md](api_governance.md) for versioning policies
+
+
+

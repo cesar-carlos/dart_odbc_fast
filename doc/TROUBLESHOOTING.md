@@ -1,19 +1,21 @@
-# TROUBLESHOOTING.md - Solução de Problemas
+﻿# TROUBLESHOOTING.md - Solução de Problemas
 
-Este documento cobre problemas comuns e suas soluções para desenvolvimento, build e deploy do ODBC Fast.
+This document covers common problems and their solutions for developing, building and deploying ODBC Fast.
 
 ## Índice
 
 - [Desenvolvimento Local](#desenvolvimento-local)
 - [Build e Compilação](#build-e-compilação)
 - [FFI e Bindings](#ffi-e-bindings)
-- [Runtime e Execução](#runtime-e-execução)
+- [Runtime e execution](#runtime-e-execution)
+  - [Async API hangs or times out](#async-api-hangs-or-times-out)
+  - [Worker isolate crash](#worker-isolate-crash)
 - [CI/CD e Releases](#cicd-e-releases)
-- [ODBC e Conexões](#odbc-e-conexões)
+- [ODBC e connections](#odbc-e-connections)
 
 ## Desenvolvimento Local
 
-### Dart pub get falha
+### Dart pub get failure
 
 **Sintoma**:
 
@@ -31,7 +33,7 @@ dart pub cache repair
 dart pub get
 ```
 
-### Testes falham com "odbc_engine.dll not found"
+### Tests failed with "odbc_engine.dll not found" / "Failed to lookup symbol 'odbc_init'"
 
 **Sintoma**:
 
@@ -39,20 +41,38 @@ dart pub get
 StateError: ODBC engine library not found
 ```
 
-**Causa**: Binário Rust não foi compilado
+ou
+
+```
+Invalid argument(s): Failed to lookup symbol 'odbc_init': error code 127
+```
+
+**Cause**: Rust binary has not been compiled or is not in a location that the loader looks for.
 
 **Solução**:
 
-```bash
-cd native
-cargo build --release
+1. **Compilar e deixar no local correto** (recomendado):
 
-# Verificar que o binário existe
-ls target/release/odbc_engine.dll  # Windows
-ls target/release/libodbc_engine.so  # Linux
-```
+   ```bash
+   cd native
+   cargo build --release
+   ```
 
-### Ffigen não gera bindings
+   The binary will be generated in `native/target/release/` (workspace), which is the first location the loader uses. It is not necessary to copy anything.
+
+2. **Verify that the binary exists** (from the project root):
+
+   ```bash
+   # Windows
+   dir native\target\release\odbc_engine.dll
+
+   # Linux
+   ls native/target/release/libodbc_engine.so
+   ```
+
+3. **If the DLL was generated in another directory** (e.g. to avoid "Access Denied" when overwriting): copy it to the correct location. See [BUILD.md - Copy the DLL to the correct location](BUILD.md#copy-the-dll-to-the-correct-location).
+
+### Ffigen not gera bindings
 
 **Sintoma**:
 
@@ -62,24 +82,24 @@ ffigen failed to generate bindings
 
 **Causas possíveis**:
 
-1. **Header file não existe**:
+1. **Header file not existe**:
 
 ```bash
 # Verificar
 ls native/odbc_engine/include/odbc_engine.h
 
-# Se não existir, buildar o Rust primeiro
+# Se not existir, buildar o Rust primeiro
 cd native/odbc_engine
 cargo build
 ```
 
-2. **Clang/LLVM não instalado (Linux)**:
+2. **Clang/LLVM not instalado (Linux)**:
 
 ```bash
 sudo apt-get install -y libclang-dev llvm
 ```
 
-3. **Configuração incorreta do ffigen.yaml**:
+3. **configuration incorreta do ffigen.yaml**:
 
 ```yaml
 output: "lib/infrastructure/native/bindings/odbc_bindings.dart"
@@ -99,7 +119,7 @@ headers:
 
 ```bash
 # native/odbc_engine/.cargo/config.toml
-# Remover se existir:
+# remove se existir:
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-fsanitize=address",
@@ -109,7 +129,7 @@ rustflags = [
 
 **Resultado esperado**: Build time de 3-5 minutos
 
-### Cross-compilation falha
+### Cross-compilation failure
 
 **Sintoma**:
 
@@ -124,7 +144,7 @@ sudo apt-get install -y mingw-w64
 rustup target add x86_64-pc-windows-msvc
 ```
 
-### ODBC headers não encontrados
+### ODBC headers not encontrados
 
 **Sintoma** (Linux):
 
@@ -138,7 +158,7 @@ fatal error: sql.h: No such file or directory
 sudo apt-get install -y unixodbc unixodbc-dev
 ```
 
-### cbindgen falha
+### cbindgen failure
 
 **Sintoma**:
 
@@ -154,13 +174,13 @@ error: failed to run custom build command for `odbc_engine`
 # Instalar cbindgen
 cargo install cbindgen
 
-# Verificar configuração
+# Verificar configuration
 cat native/odbc_engine/cbindgen.toml
 ```
 
 ## FFI e Bindings
 
-### "Invalid function pointer" ao chamar funções nativas
+### "Invalid function pointer" when calling native functions
 
 **Sintoma**:
 
@@ -168,7 +188,7 @@ cat native/odbc_engine/cbindgen.toml
 Invalid argument(s): Invalid function pointer
 ```
 
-**Causa**: Bindings desincronizados com o header
+**Cause**: Bindings out of sync with the header
 
 **Solução**:
 
@@ -176,11 +196,11 @@ Invalid argument(s): Invalid function pointer
 # Regenerar bindings
 dart run ffigen -v info
 
-# Verificar que a versão do binário corresponde
+# Verificar que a version do binário corresponde
 cd native && cargo build --release
 ```
 
-### Segmentation fault ao chamar função nativa
+### Segmentation fault when calling native function
 
 **Sintoma**: Processo Dart crasha
 
@@ -189,7 +209,7 @@ cd native && cargo build --release
 1. **Mismatch entre Dart e Rust ABI**:
 
 ```bash
-# Verificar que está usando a versão correta do binário
+# Verificar que está usando a version correta do binário
 rm ~/.cache/odbc_fast/* -rf
 dart pub get
 ```
@@ -197,7 +217,7 @@ dart pub get
 2. **Memory corruption no Rust**:
 
 ```bash
-# Rodar com sanitizers (development)
+# Rodar com sanitizers (mustlopment)
 cd native/odbc_engine
 RUSTFLAGS="-Z sanitizer=address" cargo test
 ```
@@ -209,7 +229,35 @@ RUSTFLAGS="-Z sanitizer=address" cargo test
 // Ex: IntPtr vs int vs Pointer<Void>
 ```
 
-## Runtime e Execução
+## Runtime e execution
+
+### Biblioteca not encontrada / onde colocar a DLL
+
+If the app or tests fail to load the library (e.g. "ODBC engine library not found" or "Failed to lookup symbol 'odbc_init'"), the DLL/.so needs to be in one of the locations that the loader uses. The search order and how to copy the DLL to the correct location are in **[BUILD.md - Where the DLL must be and Copy the DLL](BUILD.md#where-the-dll-must-be-search-order)**. Summary:
+
+- **Development**: `cd native && cargo build --release` generates in `native/target/release/` (it is already the correct location).
+- **Manual download**: download from [GitHub Release](https://github.com/cesar-carlos/dart_odbc_fast/releases) and place it in `native/target/release/odbc_engine.dll` (Windows) or `native/target/release/libodbc_engine.so` (Linux).
+
+### Async API hangs or times out
+
+If the UI freezes when using `AsyncNativeOdbcConnection` or requests never complete, use `requestTimeout` to avoid indefinite hangs:
+
+```dart
+final async = AsyncNativeOdbcConnection(
+  requestTimeout: Duration(seconds: 30), // Default; null = no limit
+);
+```
+
+If the worker does not respond within the timeout, requests throw `AsyncError` with code `requestTimeout`. Call `dispose()` when done; pending requests complete with `workerTerminated` instead of hanging.
+
+### Worker isolate crash
+
+If the async worker isolate terminates unexpectedly (crash, OOM, or external kill), the client receives errors for all pending requests (e.g. `workerTerminated`). You can optionally enable automatic recovery:
+
+- **`AsyncNativeOdbcConnection(autoRecoverOnWorkerCrash: true)`**: after `_failAllPending`, the connection calls `recoverWorker()` (dispose + re-initialize). Use this only if you want the same instance to be reusable; note that **previous connection IDs are invalid** — callers must reconnect after a worker crash.
+- **`WorkerCrashRecovery.handleWorkerCrash(async, error, stackTrace)`** (in `lib/infrastructure/native/isolate/error_recovery.dart`): can be invoked from your own `ReceivePort` listener to trigger the same recovery (log + `async.recoverWorker()`).
+
+After recovery, always **reconnect** (obtain new connection IDs); do not reuse IDs from before the crash. See [OBSERVABILITY.md](OBSERVABILITY.md) for logging.
 
 ### "ODBC connection failed"
 
@@ -250,7 +298,7 @@ final result = await service.connect(
 
 **Sintoma**: Memória cresce indefinidamente
 
-**Causa**: Result sets não sendo liberados
+**Causa**: Result sets not sendo liberados
 
 **Solução**:
 
@@ -275,11 +323,11 @@ await for (final batch in result) {
 OdbcError: Buffer too small: need XXXXX bytes, got 16777216
 ```
 
-**Causa**: O resultado da query serializado excede o limite padrão do buffer (16 MB).
+**Cause**: The serialized query result exceeds the default buffer limit (16 MB).
 
 **Soluções**:
 
-1. **Aumentar o buffer na conexão** (para result sets grandes conhecidos):
+1. **Increase the connection buffer** (for known large result sets):
 
 ```dart
 await service.connect(
@@ -290,7 +338,7 @@ await service.connect(
 );
 ```
 
-2. **Paginar a query no SQL** (recomendado para tabelas muito grandes):
+2. **Page the query in SQL** (recommended for very large tables):
 
 ```sql
 -- SQL Server: OFFSET/FETCH
@@ -300,7 +348,7 @@ SELECT * FROM Produto ORDER BY Id OFFSET 0 ROWS FETCH NEXT 1000 ROWS ONLY;
 SELECT TOP 1000 * FROM Produto ORDER BY Id;
 ```
 
-### Pool de conexões esgotado
+### Pool de connections esgotado
 
 **Sintoma**:
 
@@ -317,10 +365,10 @@ await service.poolCreate(
   maxConnections: 20,  // ← Aumentar
 );
 
-// Ou garantir que conexões são liberadas
+// Ou garantir que connections são liberadas
 try {
   final conn = await service.poolGetConnection();
-  // Usar conexão
+  // Usar connection
 } finally {
   await service.poolReleaseConnection(conn);
 }
@@ -328,7 +376,7 @@ try {
 
 ## CI/CD e Releases
 
-### GitHub Actions workflow falha com "cp: cannot stat"
+### GitHub Actions workflow failure with "cp: cannot stat"
 
 **Sintoma** (workflow):
 
@@ -336,7 +384,7 @@ try {
 cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
 ```
 
-**Causa**: Workspace Cargo cria binário em `native/target/`, não `native/odbc_engine/target/`
+**Causa**: Workspace Cargo cria binário em `native/target/`, not `native/odbc_engine/target/`
 
 **Solução**:
 
@@ -349,7 +397,7 @@ cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
        uploads/${{ matrix.artifact }}
 ```
 
-### Release workflow retorna 403 Forbidden
+### Release workflow returns 403 Forbidden
 
 **Sintoma**:
 
@@ -357,14 +405,14 @@ cp: cannot stat 'native/odbc_engine/target/.../libodbc_engine.so'
 GitHub release failed with status: 403
 ```
 
-**Causa**: Workflow sem permissão para criar releases
+**Cause**: Workflow without permission to create releases
 
 **Solução**:
 
 ```yaml
 # .github/workflows/release.yml
 permissions:
-  contents: write # ← Adicionar
+  contents: write # ← add
 ```
 
 ### "Pattern 'uploads/\*' does not match any files"
@@ -375,7 +423,7 @@ permissions:
 Pattern 'uploads/*' does not match any files
 ```
 
-**Causa**: Artifacts são baixados com subdiretório
+**Cause**: Artifacts are downloaded with subdirectory
 
 **Solução**:
 
@@ -388,9 +436,9 @@ Pattern 'uploads/*' does not match any files
     merge-multiple: true # ← Importante
 ```
 
-### Download automático não funciona
+### Download automático not funciona
 
-**Sintoma**: `dart pub get` não baixa o binário
+**Symptom**: `dart pub get` does not download the binary
 
 **Verificar**:
 
@@ -405,18 +453,18 @@ final url = 'https://github.com/cesar-carlos/dart_odbc_fast'
 
 ```bash
 # Verificar no GitHub que os arquivos estão na RAIZ
-# Não em: uploads/odbc_engine.dll
-# Deve ser: odbc_engine.dll
+# not em: uploads/odbc_engine.dll
+# must ser: odbc_engine.dll
 ```
 
-3. **Versão corresponde**:
+3. **version corresponde**:
 
 ```bash
-# pubspec.yaml version deve corresponder à tag no GitHub
+# pubspec.yaml version must corresponder à tag no GitHub
 version: 0.1.5  # → v0.1.5
 ```
 
-### ffigen no CI falha com "--verbose"
+### ffigen no CI failure with "--verbose"
 
 **Sintoma**:
 
@@ -436,7 +484,7 @@ dart run ffigen --verbose
 dart run ffigen -v info
 ```
 
-## ODBC e Conexões
+## ODBC e connections
 
 ### "Driver not found" no Windows
 
@@ -448,7 +496,7 @@ IM002 [Microsoft][ODBC Driver Manager] Data source name not found
 
 **Solução**:
 
-1. **Instalar o driver ODBC correto**:
+1. **Install the correct ODBC driver**:
    - SQL Server: [ODBC Driver 17 for SQL Server](https://docs.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
    - PostgreSQL: [psqlODBC](https://odbc.postgresql.org/)
 
@@ -485,11 +533,11 @@ sudo apt-get install -y unixodbc unixodbc-dev
 odbcinst -j
 ```
 
-### Conexão cai após alguns minutos
+### connection cai após alguns minutos
 
 **Sintoma**: `OdbcError.connectionLost` após tempo
 
-**Causa**: Timeout de conexão ou firewall
+**Causa**: Timeout de connection ou firewall
 
 **Solução**:
 
@@ -500,9 +548,9 @@ await service.poolCreate(
   maxConnections: 10,
 );
 
-// Pool valida conexões automaticamente
+// Pool valida connections automaticamente
 final conn = await service.poolGetConnection();
-// Conexão é validada antes de ser retornada
+// connection é validada antes de ser returnsda
 ```
 
 ## Diagnóstico
@@ -564,9 +612,9 @@ nm native/target/release/libodbc_engine.so | grep Odbc
 
 ## Pedindo Ajuda
 
-Se você não conseguiu resolver seu problema:
+Se você not conseguiu resolver seu problema:
 
-1. **Verifique a documentação**:
+1. **Verifique a documentation**:
    - [BUILD.md](BUILD.md) - Build e desenvolvimento
    - [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Pipeline de releases
    - [README.md](../README.md) - Visão geral
@@ -574,14 +622,17 @@ Se você não conseguiu resolver seu problema:
 2. **Search issues existentes**:
    https://github.com/cesar-carlos/dart_odbc_fast/issues
 
-3. **Criar nova issue**:
-   - Descreva o problema detalhadamente
+3. **create nova issue**:
+   - Describe the problem in detail
    - Inclua mensagens de erro completas
    - Informe seu sistema operacional e versões
-   - Forneça steps para reproduzir
+   - Provide steps to reproduce
 
-4. **Logs úteis para incluir**:
+4. **Useful logs to include**:
    - `dart --version`
    - `rustc --version`
-   - Output completo do erro
-   - Arquivo de configuração (sem credenciais)
+   - Full error output
+   - Arquivo de configuration (sem credenciais)
+
+
+

@@ -1,82 +1,161 @@
+// Savepoint usage demo with OdbcService transactions
+// and ServiceLocator.
+//
+// Prerequisites: Set ODBC_TEST_DSN in environment or .env.
+// Run: dart run example/savepoint_demo.dart
+
 import 'dart:io';
 
+import 'package:dotenv/dotenv.dart';
+import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
-/// Savepoint usage demo: create, rollback to, and release savepoints.
-///
-/// Requires a database that supports SAVEPOINT (e.g. PostgreSQL, MySQL).
-/// SQL Server uses SAVE TRANSACTION / ROLLBACK TRANSACTION instead.
-///
-/// Prerequisites: Set ODBC_TEST_DSN in environment or .env.
-/// Run: dart run example/savepoint_demo.dart
-Future<void> main() async {
-  print('=== ODBC Fast - Savepoint Demo ===\n');
+void main() async {
+  AppLogger.initialize();
 
-  final dsn = Platform.environment['ODBC_TEST_DSN'];
+  final dsn = _getExampleDsn();
   if (dsn == null || dsn.isEmpty) {
-    print('Set ODBC_TEST_DSN to run this demo.');
+    AppLogger.warning(
+      'ODBC_TEST_DSN not set. Set ODBC_TEST_DSN=... to run this demo.',
+    );
     return;
   }
 
   final locator = ServiceLocator()..initialize();
-  await locator.service.initialize();
+  final service = locator.syncService;
 
-  final service = locator.service;
-  final connResult = await service.connect(dsn);
-  if (connResult.fold((_) => false, (_) => true)) {
-    print('Connect failed');
-    return;
-  }
+  print('=== ODBC Fast - Savepoint Demo ===\n');
 
-  final conn = connResult.getOrElse((_) => throw StateError('no conn'));
-  final beginResult = await service.beginTransaction(
-    conn.id,
-    IsolationLevel.readCommitted,
+  final initResult = await service.initialize();
+  initResult.fold(
+    (_) => print('OK: ODBC initialized'),
+    (error) => print('ERR Init failed: $error'),
   );
-  if (beginResult.fold((_) => false, (_) => true)) {
-    print('Begin transaction failed');
-    await service.disconnect(conn.id);
+
+  if (!initResult.isSuccess()) {
     return;
   }
 
-  final txnId = beginResult.getOrElse((_) => throw StateError('no txn'));
-
-  try {
-    await service.executeQuery(
-      conn.id,
-      'CREATE TABLE IF NOT EXISTS sp_demo (id INT)',
-    );
-    await service.executeQuery(conn.id, 'INSERT INTO sp_demo VALUES (1)');
-
-    final createSp =
-        await service.createSavepoint(conn.id, txnId, 'before_second');
-    if (createSp.fold((_) => false, (_) => true)) {
-      print('Create savepoint failed (DB may not support SAVEPOINT)');
-      await service.rollbackTransaction(conn.id, txnId);
-      return;
-    }
-
-    await service.executeQuery(conn.id, 'INSERT INTO sp_demo VALUES (2)');
-    await service.rollbackToSavepoint(conn.id, txnId, 'before_second');
-    await service.executeQuery(conn.id, 'INSERT INTO sp_demo VALUES (3)');
-
-    await service.commitTransaction(conn.id, txnId);
-
-    final q = await service.executeQuery(
-      conn.id,
-      'SELECT id FROM sp_demo ORDER BY id',
-    );
-    q.fold(
-      (result) {
-        print('Rows after savepoint rollback: ${result.rows}');
+  final connResult = await service.connect(dsn);
+  final connection = connResult.getOrNull();
+  if (connection == null) {
+    connResult.fold(
+      (_) {},
+      (error) {
+        final msg = error is OdbcError ? error.message : error.toString();
+        print('ERR Connect failed: $msg');
+        if (error is OdbcError) {
+          if (error.sqlState != null) {
+            print('  SQLSTATE: ${error.sqlState}');
+          }
+          if (error.nativeCode != null) {
+            print('  Native code: ${error.nativeCode}');
+          }
+        }
       },
-      (_) => print('Query failed'),
     );
-
-    await service.executeQuery(conn.id, 'DROP TABLE IF EXISTS sp_demo');
-  } finally {
-    await service.disconnect(conn.id);
+    return;
   }
 
-  print('\nDemo completed.');
+  print('OK: Connected: ${connection.id}');
+
+  print('\nBeginning transaction...');
+  final txnResult = await service.beginTransaction(connection.id);
+  final txnId = txnResult.getOrNull();
+  if (txnId == null) {
+    txnResult.fold(
+      (_) {},
+      (error) => print(
+        'ERR Begin transaction failed: '
+        '${error is OdbcError ? error.message : error}',
+      ),
+    );
+    return;
+  }
+
+  print('OK: Transaction begun: ID=$txnId');
+
+  print('\nCreating savepoint "sp1"...');
+  final spResult = await service.createSavepoint(
+    connection.id,
+    txnId,
+    'sp1',
+  );
+  spResult.fold(
+    (_) => print('OK: Savepoint created'),
+    (error) => print(
+      'ERR Create savepoint failed: '
+      '${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nExecuting query...');
+  final queryResult = await service.executeQuery(
+    'SELECT 1',
+    connectionId: connection.id,
+  );
+  queryResult.fold(
+    (qr) => print('OK: Query returned ${qr.rowCount} rows'),
+    (error) => print(
+      'ERR Query failed: ${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nRolling back to savepoint "sp1"...');
+  final rbResult = await service.rollbackToSavepoint(
+    connection.id,
+    txnId,
+    'sp1',
+  );
+  rbResult.fold(
+    (_) => print('OK: Rolled back to savepoint'),
+    (error) => print(
+      'ERR Rollback to savepoint failed: '
+      '${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nExecuting query after rollback...');
+  final qr2 = await service.executeQuery(
+    'SELECT 1',
+    connectionId: connection.id,
+  );
+  qr2.fold(
+    (qr) => print('OK: Query returned ${qr.rowCount} rows'),
+    (error) => print(
+      'ERR Query failed: ${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nCommitting transaction...');
+  final commitResult = await service.commitTransaction(connection.id, txnId);
+  commitResult.fold(
+    (_) => print('OK: Transaction committed'),
+    (error) => print(
+      'ERR Commit failed: ${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nDisconnecting...');
+  final discResult = await service.disconnect(connection.id);
+  discResult.fold(
+    (_) => print('OK: Disconnected'),
+    (error) => print(
+      'ERR Disconnect error: ${error is OdbcError ? error.message : error}',
+    ),
+  );
+
+  print('\nOK: Demo completed successfully!');
+}
+
+String? _getExampleDsn() {
+  const path = '.env';
+  final file = File(path);
+  if (file.existsSync()) {
+    final env = DotEnv(includePlatformEnvironment: true)..load([path]);
+    final v = env['ODBC_TEST_DSN'];
+    if (v != null && v.isNotEmpty) return v;
+  }
+  return Platform.environment['ODBC_TEST_DSN'] ??
+      Platform.environment['ODBC_DSN'];
 }

@@ -1,4 +1,4 @@
-# ODBC Fast - Enterprise ODBC Data Platform
+﻿# ODBC Fast - Enterprise ODBC Data Platform
 
 [![CI](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/ci.yml/badge.svg)](https://github.com/cesar-carlos/dart_odbc_fast/actions/workflows/ci.yml)
 
@@ -43,6 +43,7 @@ bindings + a clean architecture façade (`OdbcService` / `IOdbcRepository`).
 - **Metadata/catalog queries** (tables / columns / type info)
 - **Connection pooling** helpers (create/get/release/health/state/close)
 - **Bulk insert payload builder** (binary protocol) + bulk insert execution
+- **Named parameters** (@name and :name syntax)
 - **Metrics/observability** (query count, errors, latency, uptime)
 - **Savepoints** (nested transaction markers)
 - **Automatic retry** with exponential backoff for transient errors
@@ -151,7 +152,7 @@ Rust library:
 1. **Automatic Download**: On first `dart pub get`, the appropriate binary
    for your platform is downloaded from GitHub Releases
 2. **Local Cache**: Binaries are cached in `~/.cache/odbc_fast/`
-3. **Development**: When building from source, the local build is used
+3. **mustlopment**: When building from source, the local build is used
 4. **Multi-Platform**: Supports Windows (x64) and Linux (x64)
 
 ### Supported Platforms
@@ -161,7 +162,7 @@ Rust library:
 
 ## Building
 
-### For Development
+### For mustlopment
 
 If you want to build from source:
 
@@ -190,13 +191,13 @@ cd ../..
 dart test
 ```
 
-📖 **Para instruções detalhadas, veja [doc/BUILD.md](doc/BUILD.md)**
+📖 **For detailed instructions, see [doc/BUILD.md](doc/BUILD.md)**
 
 ## Status
 
-✅ **PROJETO COMPLETO & COMPILÁVEL** - Todas as 16 fases implementadas  
+✅ **COMPLETE & COMPILABLE PROJECT** - All 16 phases implemented
 ✅ **Rust Engine**: 0 erros, build OK, 3 tests passando  
-✅ **Dart API**: 0 erros, análise limpa  
+✅ **Dart API**: 0 erros, analysis limpa  
 ✅ **FFI Artifacts**: DLL (1.06 MB), Header, Bindings OK
 
 ### Milestones
@@ -240,10 +241,23 @@ dart_odbc_fast/
 ## Documentation
 
 - **Build**: [doc/BUILD.md](doc/BUILD.md)
+- **Observability**: [doc/OBSERVABILITY.md](doc/OBSERVABILITY.md)
 - **Troubleshooting**: [doc/TROUBLESHOOTING.md](doc/TROUBLESHOOTING.md)
+- **Versioning**: [doc/VERSIONING_STRATEGY.md](doc/VERSIONING_STRATEGY.md) - Release strategy and versioning guidelines
 - **Release automation**: [doc/RELEASE_AUTOMATION.md](doc/RELEASE_AUTOMATION.md)
 - **Future implementations**: [doc/FUTURE_IMPLEMENTATIONS.md](doc/FUTURE_IMPLEMENTATIONS.md)
 - **Index**: [doc/README.md](doc/README.md)
+
+### Versioning
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) with Dart community conventions for pre-1.0.0 releases. See [doc/VERSIONING_STRATEGY.md](doc/VERSIONING_STRATEGY.md) for complete guidelines on:
+
+- When to use MAJOR/MINOR/PATCH bumps
+- Breaking change policies and deprecation cycles
+- Roadmap to 1.0.0
+- Release types (stable, beta, RC, dev)
+
+For quick reference during mustlopment, see [doc/VERSIONING_QUICK_REFERENCE.md](doc/VERSIONING_QUICK_REFERENCE.md).
 
 ## Testing
 
@@ -273,6 +287,7 @@ You can run the bundled example:
 
 ```bash
 dart run example/main.dart
+dart run example/named_parameters_demo.dart
 ```
 
 It reads `ODBC_TEST_DSN` (or `ODBC_DSN`) from:
@@ -304,7 +319,9 @@ ODBC Fast provides **true non-blocking database operations** using Dart isolates
 import 'package:odbc_fast/odbc_fast.dart';
 
 Future<void> asyncDemo(String dsn) async {
-  final async = AsyncNativeOdbcConnection();
+  final async = AsyncNativeOdbcConnection(
+    requestTimeout: Duration(seconds: 30), // Avoid UI hangs; null = no limit
+  );
 
   await async.initialize();
   final connId = await async.connect(dsn);
@@ -502,10 +519,13 @@ See `.github/workflows/ci.yml` and `.github/workflows/release.yml` for details.
 
 ## Support the project
 
-If this project helps you, consider buying the developer a coffee via Pix:
+If this project helps you, consider buying the mustloper a coffee via Pix:
 
 - **Pix**: `cesar_carlos@msn.com`
 
 ## License
 
 MIT (see [LICENSE](LICENSE)).
+
+
+

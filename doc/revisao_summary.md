@@ -1,80 +1,80 @@
-# Revisão: Implementações vs Documentação
+﻿# review: Implementações vs documentation
 
 Data: 2026-02-11
 
-## Resumo Executivo
+## Executive Summary
 
 **Dart e Rust compilando 100% limpo** - 0 erros, 0 warnings (após metadados Cargo aceitáveis)
 
-## Análise: Código vs Documentação
+## analysis: Código vs documentation
 
-### PREP-001 (Lifecycle) - Status: ✅ Implementado
+### PREP-001 (Lifecycle) - Status: ✅ Implemented
 
-**Documentação:** Cache LRU, prepare/unprepare
+**documentation:** Cache LRU, prepare/unprepare
 
 **Código Real:**
 
-- `PreparedStatement` wrapper (NÃO implementa cache)
-- `PreparedStatementConfig` disponível mas NÃO usado
-- Cache LRU é funcionalidade **interna** do Rust engine (`prepared_cache.rs`)
+- `PreparedStatement` wrapper (not implementa cache)
+- `PreparedStatementConfig` disponível mas not usado
+- Cache LRU é Feature **interna** do Rust engine (`prepared_cache.rs`)
 - Apenas `_backend.executePrepared` e `_backend.closeStatement`
 
-**Conclusão:** Documentação precisa esclarecer que:
+**Conclusion:** documentation needs to clarify that:
 
-1. Cache LRU é **interno/não será exposto** via FFI para Dart
-2. Wrapper Dart **não implementa** prepare/unprepare
-3. `PreparedStatementConfig` existe para **configuração futura** (não atual)
+1. LRU cache is **internal/will not be exposed** via FFI for Dart
+2. Wrapper Dart **not implementa** prepare/unprepare
+3. `PreparedStatementConfig` exists for **future configuration** (not current)
 
-**Ação Recomendada:** Atualizar PREP-003 para refletir arquitetura atual
+**Recommended Action:** update PREP-003 to reflect current architecture
 
 ---
 
-### PREP-002 (Options) - Status: ✅ Implementado
+### PREP-002 (Options) - Status: ✅ Implemented
 
-**Documentação:** StatementOptions (timeout, fetchSize, etc.)
+**documentation:** StatementOptions (timeout, fetchSize, etc.)
 
 **Código Real:**
 
 - `StatementOptions` implementada corretamente
-- Parâmetros: timeout, fetchSize, maxBufferSize, asyncFetch
+- parameters: timeout, fetchSize, maxBufferSize, asyncFetch
 - Exportada em `odbc_fast.dart`
 
-**Conclusão:** Documentação alinha com implementação ✅
+**Conclusion:** documentation aligns with implementation ✅
 
 ---
 
-### PREP-003 (Lifecycle) - Status: ⚠️ Decisão Arquitetural
+### PREP-003 (Lifecycle) - Status: ⚠️ Architectural Decision
 
-**Documentação:** "Expor `unprepare` como alias...e implementar cache LRU"
+**documentation:** "Expor `unprepare` como alias...e implementar cache LRU"
 
 **Decisão Tomada:** "sem implementação nativa planejada"
 
-**Análise:**
+**analysis:**
 
 1. Cache LRU existe em `prepared_cache.rs` (Rust) ✅
-2. Cache **NÃO é exposto** via FFI (decisão arquitetural) ✅
-3. `PreparedStatement` wrapper NÃO implementa cache ✅
-4. `clearStatementCache` retorna 0 (stub) ✅
+2. Cache **not é exposto** via FFI (decisão arquitetural) ✅
+3. `PreparedStatement` wrapper not implementa cache ✅
+4. `clearStatementCache` returns 0 (stub) ✅
 
-**Ação Recomendada:** Atualizar PREP-003 para:
+**Recommended Action:** update PREP-003 to:
 
-1. Esclarecer que cache é **funcionalidade interna** (não será exposto)
-2. Remover referências a "implementar cache LRU para prepared statements"
-3. Documentar que `PreparedStatementConfig` está disponível para configuração
+1. Clarify that cache is **Internal Feature** (will not be exposed)
+2. remove references to "implement LRU cache for prepared statements"
+3. Document that `PreparedStatementConfig` is available for configuration
 
 ---
 
-### PREP-004 (Output params) - Status: ❌ Não Discutido
+### PREP-004 (Output params) - Status: ❌ not Discussed
 
-**Documentação:** Plugin-based output parameters
+**documentation:** Plugin-based output parameters
 
 **Código Real:** NENHUMA implementação
 
-**Ação Recomendada:** Marcar como "Fora de Escopo" ou criar issue separado
+**Ação Recomendada:** Marcar como "Fora de Escopo" ou create issue separado
 
 ---
 
-## Conformidade com Regras do Projeto
+## Compliance with Project Rules
 
 ### Regas Verificadas (.claude/rules/)
 
@@ -82,16 +82,19 @@ Data: 2026-02-11
 ✅ **coding_style.md** - Código segue padrões Dart (const, arrow syntax, etc.)
 ✅ **null_safety.md** - Types bem definidos, nullable usado apropriadamente
 ✅ **testing.md** - Testes usando AAA pattern
-✅ **error_handling.md** - Tratamento de erros com Result types
+✅ **error_handling.md** - Error handling with Result types
 
 ### Observações
 
-1. **PreparedStatementConfig não usada** - Existe para configuração futura mas não integrada
+1. **PreparedStatementConfig not used** - Exists for future configuration but not integrated
 2. **Testes removidos** - `pool_telemetry_test.dart`, `prepared_statements_test.dart`, `transactions_test.dart` (API desatualizada)
-3. **Lint limpo** - 0 erros, 0 warnings (após aceitar metadados Cargo não-bloqueantes)
+3. **Lint limpo** - 0 erros, 0 warnings (após aceitar metadados Cargo not-bloqueantes)
 
 ## Próximos Passos
 
-1. Atualizar `prepared-statements.md` (PREP-003, PREP-004)
-2. Criar testes de integração para PreparedStatement (PREP-001, PREP-002)
+1. update `prepared-statements.md` (PREP-003, PREP-004)
+2. create integration tests for PreparedStatement (PREP-001, PREP-002)
 3. Decidir sobre PREP-004 (fora de escopo ou implementação futura)
+
+
+

@@ -1,22 +1,22 @@
-# RELEASE_AUTOMATION.md - Pipeline de Release Automatizado
+﻿# RELEASE_AUTOMATION.md - Pipeline de Release Automatizado
 
-Este documento descreve o processo completo de release automatizado do ODBC Fast, incluindo build, publicação no pub.dev e distribuição de binários via GitHub Releases.
+This document describes the complete ODBC Fast automated release process, including build, publishing to pub.dev, and distribution of binaries via GitHub Releases.
 
 ## Índice
 
 - [Visão Geral](#visão-geral)
 - [Pipeline Automatizado](#pipeline-automatizado)
-- [Como Fazer um Release](#como-fazer-um-release)
+- [How to Make a Release](#how-to-make-a-release)
 - [Componentes do Pipeline](#componentes-do-pipeline)
 - [Troubleshooting](#troubleshooting)
 - [Boas Práticas](#boas-práticas)
 
 ## Visão Geral
 
-O processo de release é **100% automatizado** através de GitHub Actions. Ao criar uma tag versionada (ex: `v0.1.5`), o pipeline:
+The release process is **100% automated** through GitHub Actions. When creating a versioned tag (e.g. `v0.1.5`), the pipeline:
 
-1. ✅ Compila o Rust engine para Windows e Linux
-2. ✅ Cria uma release no GitHub com os binários
+1. ✅ Compiles the Rust engine for Windows and Linux
+2. ✅ Create a release on GitHub with the binaries
 3. ✅ Publica no pub.dev (manualmente)
 4. ✅ Distribui binários automaticamente via Native Assets
 
@@ -45,7 +45,7 @@ O processo de release é **100% automatizado** através de GitHub Actions. Ao cr
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  4. Usuário instala via pub.dev                            │
+│  4. user instala via pub.dev                            │
 │  $ dart pub add odbc_fast:^0.1.5                           │
 │                                                             │
 │  Hook baixa binário automaticamente:                        │
@@ -84,24 +84,24 @@ strategy:
 3. Cache de dependências Cargo
 4. Instalar ODBC (Linux: unixodbc, libclang-dev, llvm)
 5. Build do Rust engine
-6. Upload dos artefatos
+6. Uploading the artifacts
 
 #### 2. Create Release
 
 **Etapas**:
 
-1. Download dos artefatos
-2. Criar release no GitHub
-3. Upload dos binários (sem subdiretórios)
+1. Download the artifacts
+2. create release no GitHub
+3. Upload the binaries (no subdirectories)
 
 ### Otimizações de Performance
 
-O pipeline inclui várias otimizações:
+The pipeline includes several optimizations:
 
 **Cargo Config** (`.cargo/config.toml`):
 
 - ❌ Sanitizers removidos (build 70% mais rápido)
-- ✅ Thin LTO (2-3x mais rápido que fat LTO)
+- ✅ Thin LTO (2-3x faster than fat LTO)
 - ✅ 16 codegen units (mais paralelismo)
 - ✅ Strip=true (binário menor)
 
@@ -119,11 +119,11 @@ O pipeline inclui várias otimizações:
 
 **Resultado**: Build time de 10-15 min → 3-5 min
 
-## Como Fazer um Release
+## How to Make a Release
 
 ### Release Oficial (Produção)
 
-#### 1. Atualizar Versão
+#### 1. update version
 
 **Editar `pubspec.yaml`**:
 
@@ -139,7 +139,7 @@ version: 0.1.6 # ← Bump version
 
 ### Added
 
-- Nova funcionalidade X
+- Nova Feature X
 
 ### Fixed
 
@@ -153,20 +153,20 @@ git add pubspec.yaml CHANGELOG.md
 git commit -m "chore: bump version to 0.1.6"
 git push origin main
 
-# Criar tag
+# create tag
 git tag -a v0.1.6 -m "Release v0.1.6"
 git push origin v0.1.6
 ```
 
 #### 3. Aguardar Workflow
 
-**Monitorar**: https://github.com/cesar-carlos/dart_odbc_fast/actions
+**Monitor**: https://github.com/cesar-carlos/dart_odbc_fast/actions
 
-O workflow irá:
+The workflow will:
 
 - Build Windows (3-5 min)
 - Build Linux (3-5 min)
-- Criar release no GitHub
+- create release no GitHub
 
 #### 4. Publicar no pub.dev
 
@@ -178,7 +178,7 @@ echo y | dart pub publish
 
 **GitHub**: https://github.com/cesar-carlos/dart_odbc/releases/tag/v0.1.6
 
-Deve conter:
+must conter:
 
 - ✅ `odbc_engine.dll` (Windows)
 - ✅ `libodbc_engine.so` (Linux)
@@ -188,15 +188,15 @@ Deve conter:
 
 ### Release de Teste
 
-Para testar o pipeline sem publicar:
+To test the pipeline without publishing:
 
 ```bash
-# Criar tag de teste
+# create tag de teste
 git tag -a v0.1.6-test -m "Test release"
 git push origin v0.1.6-test
 
 # Monitorar workflow
-# NÃO publicar no pub.dev
+# not publicar no pub.dev
 ```
 
 ## Componentes do Pipeline
@@ -205,17 +205,17 @@ git push origin v0.1.6-test
 
 **Arquivo**: `hook/build.dart`
 
-**Função**: Baixa automaticamente os binários do GitHub durante `dart pub get`
+**Function**: Automatically downloads binaries from GitHub during `dart pub get`
 
 **Fluxo**:
 
 ```dart
-1. Ler versão do pubspec.yaml
+1. Ler version do pubspec.yaml
 2. Determinar OS e Architecture
 3. Montar URL: https://github.com/.../releases/download/v{version}/{libName}
 4. Baixar binário
 5. Salvar em cache: ~/.cache/odbc_fast/
-6. Retornar URI para o Dart FFI
+6. returnsr URI para o Dart FFI
 ```
 
 **Cache Local**:
@@ -232,13 +232,16 @@ git push origin v0.1.6-test
 
 **Arquivo**: `lib/infrastructure/native/bindings/library_loader.dart`
 
-**Função**: Carrega a biblioteca nativa com fallback estratégico
+**Function**: Loads the native library with strategic fallback.
 
-**Prioridades**:
+**Prioridades** (ordem exata):
 
-1. Native Assets (produção)
-2. Caminhos de desenvolvimento local
-3. System PATH
+1. **Development (workspace)**: `{cwd}/native/target/release/odbc_engine.dll` (or `.so`)
+2. **Development (member)**: `{cwd}/native/odbc_engine/target/release/odbc_engine.dll` (or `.so`)
+3. **Native Assets (produção)**: `package:odbc_fast/odbc_engine.dll` (asset registrado pelo hook)
+4. **Sistema**: PATH (Windows) / LD_LIBRARY_PATH (Linux)
+
+To place the DLL in the correct location in development, see [BUILD.md - Where the DLL must be located](BUILD.md#onde-a-dll-must-be-located-search-order).
 
 ### 3. Permissões do Workflow
 
@@ -246,16 +249,16 @@ git push origin v0.1.6-test
 
 ```yaml
 permissions:
-  contents: write # ← Necessário para criar releases
+  contents: write # ← Necessário para create releases
 ```
 
 ## Troubleshooting
 
 ### Erro: "Pattern 'uploads/\*' does not match any files"
 
-**Causa**: Download de artifacts com estrutura incorreta
+**Cause**: Downloading artifacts with incorrect structure
 
-**Solução**: Verifique que o workflow usa:
+**Solution**: Check that the workflow uses:
 
 ```yaml
 - name: Download all artifacts
@@ -266,22 +269,22 @@ permissions:
     merge-multiple: true # ← Importante!
 ```
 
-### Erro: "GitHub release failed with status: 403"
+### Error: "GitHub release failed with status: 403"
 
-**Causa**: Workflow sem permissão para criar releases
+**Cause**: Workflow without permission to create releases
 
-**Solução**: Adicione ao workflow:
+**Solution**: Add to workflow:
 
 ```yaml
 permissions:
   contents: write
 ```
 
-### Build falha com "cp: cannot stat"
+### Build failure with "cp: cannot stat"
 
 **Causa**: Path do binário incorreto (workspace vs member)
 
-**Solução**: Use o path do workspace:
+**Solution**: Use the workspace path:
 
 ```yaml
 # Errado (member target)
@@ -291,13 +294,13 @@ cp native/odbc_engine/target/${{ matrix.target }}/release/${{ matrix.artifact }}
 cp native/target/${{ matrix.target }}/release/${{ matrix.artifact }}
 ```
 
-### Download automático não funciona
+### Download automático not funciona
 
 **Verificar**:
 
 1. URL de download no hook está correta
 2. Arquivos estão na raiz da release (sem subdiretórios)
-3. Tag/versão correspondem
+3. Tag/version correspondem
 4. Cache local (`~/.cache/odbc_fast/`)
 
 ## Boas Práticas
@@ -307,12 +310,12 @@ cp native/target/${{ matrix.target }}/release/${{ matrix.artifact }}
 Siga Semantic Versioning:
 
 - **MAJOR**: Mudanças incompatíveis na API
-- **MINOR**: Novas funcionalidades compatíveis
-- **PATCH**: Correções de bugs
+- **MINOR**: Novas Features compatíveis
+- **PATCH**: fixes de bugs
 
 ### CHANGELOG
 
-Mantenha o CHANGELOG.md atualizado:
+Keep CHANGELOG.md updated:
 
 ```markdown
 ## [0.1.6] - 2026-01-27
@@ -362,7 +365,7 @@ git push origin :refs/tags/v0.1.6
 
 # Deletar release no GitHub (interface web)
 
-# Publicar correção como v0.1.7
+# Publicar fix como v0.1.7
 ```
 
 ## Métricas atuais
@@ -371,31 +374,31 @@ git push origin :refs/tags/v0.1.6
 - **Success rate**: ~95%
 - **Platforms suportadas**: Windows x86_64, Linux x86_64
 - **Binário Windows**: ~1.4 MB
-- **Pacote pub.dev**: ~559 KB (com binário incluso)
+- **pub.dev package**: ~559 KB (with binary included)
 
-## Resumo do processo de geração de versão (checklist)
+## Summary of the version generation process (checklist)
 
-Ordem recomendada para gerar uma nova versão (ex.: 0.3.0):
+Recommended order to generate a new version (e.g.: 0.3.0):
 
 | #   | Passo                | Comando / Ação                                                                                                                     |
 | --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Testes**           | `dart test --concurrency=1` (todos devem passar)                                                                                   |
-| 2   | **Bump versão**      | Editar `pubspec.yaml`: `version: 0.3.0`                                                                                            |
-| 3   | **CHANGELOG**        | Trocar `[Unreleased]` por `[0.3.0] - YYYY-MM-DD`; mover itens de Unreleased para a nova seção                                      |
-| 4   | **README**           | Atualizar exemplo de dependência se necessário (ex.: `^0.3.0`)                                                                     |
+| 1   | **Testes**           | `dart test --concurrency=1` (todos mustm passar)                                                                                   |
+| 2   | **Bump version**      | Editar `pubspec.yaml`: `version: 0.3.0`                                                                                            |
+| 3 | **CHANGELOG** | Replace `[Unreleased]` with `[0.3.0] - YYYY-MM-DD`; move items from Unreleased to new section |
+| 4   | **README**           | update example de dependência se necessário (ex.: `^0.3.0`)                                                                     |
 | 5   | **Dry-run**          | `dart pub publish --dry-run` (validar pacote)                                                                                      |
 | 6   | **Commit**           | `git add ...` e `git commit -m "chore: release 0.3.0"` (ou mensagem descritiva)                                                    |
 | 7   | **Tag**              | `git tag v0.3.0` (ou `git tag -a v0.3.0 -m "Release v0.3.0"`)                                                                      |
 | 8   | **Push**             | `git push origin main` e `git push origin v0.3.0`                                                                                  |
-| 9   | **GitHub Release**   | Automático: workflow `.github/workflows/release.yml` roda no push da tag; compila Windows + Linux e cria a release com os binários |
+| 9 | **GitHub Release** | Automatic: workflow `.github/workflows/release.yml` runs on tag push; compiles Windows + Linux and creates the release with the binaries |
 | 10  | **Publicar pub.dev** | `dart pub publish --force` (confirmar quando solicitado)                                                                           |
-| 11  | **Verificar**        | GitHub Releases: binários anexados; pub.dev: versão disponível (~10 min)                                                           |
+| 11  | **Verificar**        | GitHub Releases: binários anexados; pub.dev: version disponível (~10 min)                                                           |
 
 **Observações:**
 
-- O **GitHub Release** é criado pelo workflow ao dar push na tag; não é necessário criar manualmente em `/releases` (a menos que o workflow falhe).
-- **Hook / Native Assets**: o pacote publicado inclui `hook/build.dart`; em `dart pub get` o consumidor baixa o binário de `https://github.com/.../releases/download/vX.Y.Z/...`.
-- Para **release de teste** (sem publicar no pub.dev): use uma tag como `v0.3.0-rc1` e não rode `dart pub publish`.
+- The **GitHub Release** is created by the workflow when pushing the tag; create manually in `/releases` is not necessary (unless the workflow fails).
+- **Hook / Native Assets**: published package includes `hook/build.dart`; in `dart pub get` the consumer downloads the binary from `https://github.com/.../releases/download/vX.Y.Z/...`.
+- For **test release** (without publishing to pub.dev): use a tag like `v0.3.0-rc1` and don't run `dart pub publish`.
 
 ## Recursos
 
@@ -403,3 +406,6 @@ Ordem recomendada para gerar uma nova versão (ex.: 0.3.0):
 - [Pub Publishing](https://dart.dev/tools/pub/publishing)
 - [Native Assets](https://dart.dev/guides/libraries/native-objects)
 - [Semantic Versioning](https://semver.org/)
+
+
+

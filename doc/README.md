@@ -1,12 +1,12 @@
-# Documentation - ODBC Fast
+﻿# Documentation - ODBC Fast
 
 Index of all project documentation.
 
-## Build & Development
+## Build & mustlopment
 
 | Document             | Description                                                                                   |
 | -------------------- | --------------------------------------------------------------------------------------------- |
-| [BUILD.md](BUILD.md) | Complete guide for building and developing (Rust + Dart, prerequisites, FFI, troubleshooting) |
+| [BUILD.md](BUILD.md) | Complete guide for building and mustloping (Rust + Dart, prerequisites, FFI, troubleshooting) |
 
 ## Release & Deployment
 
@@ -18,7 +18,8 @@ Index of all project documentation.
 
 | Document                                 | Description                                                            |
 | ---------------------------------------- | ---------------------------------------------------------------------- |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions for development, build, runtime, and CI/CD |
+| [OBSERVABILITY.md](OBSERVABILITY.md)     | OTLP telemetry, fallback to ConsoleExporter, ODBC metrics              |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions for mustlopment, build, runtime, and CI/CD |
 
 ## Governance
 
@@ -30,7 +31,7 @@ Index of all project documentation.
 
 | Document                                               | Description                                                                                                              |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Itens documentados e deixados para implementação futura: bulk insert paralelo, Schema PK/FK/Indexes, queryTimeout global |
+| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Items documented and left for future implementation: parallel bulk insert, Schema PK/FK/Indexes, global queryTimeout |
 
 ## Additional Resources
 
@@ -49,7 +50,7 @@ Index of all project documentation.
 
 ### For Contributors
 
-- [BUILD.md](BUILD.md) - Set up development environment
+- [BUILD.md](BUILD.md) - Set up mustlopment environment
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Solve common issues
 - [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Understand the release process
 
@@ -57,3 +58,6 @@ Index of all project documentation.
 
 - [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Create a new release
 - [api_governance.md](api_governance.md) - Versioning and compatibility policies
+
+
+

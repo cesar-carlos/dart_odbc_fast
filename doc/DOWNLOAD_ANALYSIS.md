@@ -1,41 +1,41 @@
-# DOWNLOAD_ANALYSIS.md - Análise do Processo de Download da DLL
+﻿# DOWNLOAD_ANALYSIS.md - analysis do Processo de Download da DLL
 
 ## Visão Geral
 
-Este documento analisa o fluxo de download da biblioteca nativa (DLL/SO) quando um usuário executa `dart pub get` no pacote `odbc_fast`.
+This document analyzes the native library (DLL/OS) download flow when a user runs `dart pub get` on the `odbc_fast` package.
 
 ## Fluxo Atual
 
 ### 1. Momento do Download
 
-O download acontece **durante** `dart pub get`, através do hook de Native Assets em `hook/build.dart`.
+The download happens **during** `dart pub get`, via the Native Assets hook in `hook/build.dart`.
 
 ### 2. Estratégia de Resolução da Biblioteca
 
-A função `_getLibraryPath()` em `hook/build.dart` segue esta ordem de prioridade:
+The `_getLibraryPath()` function in `hook/build.dart` follows this priority order:
 
 ```
 1. Cache Local (~/.cache/odbc_fast/<version>/)
-   └─ Se existe: retorna caminho cacheado ✓
+   └─ Se existe: returns caminho cacheado ✓
 
 2. Build Local de Desenvolvimento
    ├─ native/target/release/<libname> (workspace)
    └─ native/odbc_engine/target/release/<libname> (local)
-      └─ Se existe: retorna caminho de dev ✓
+      └─ Se existe: returns caminho de dev ✓
 
 3. Download do GitHub Release
    └─ https://github.com/cesar-carlos/dart_odbc_fast/releases/download/v<version>/<libname>
-      ├─ Se CI/pub.dev: PULA (evita timeout na análise)
-      ├─ Se sucesso: baixa, cacheia, retorna caminho ✓
-      └─ Se falha: retorna null ✗
+      ├─ Se CI/pub.dev: PULA (evita timeout na analysis)
+      ├─ Se success: baixa, cacheia, returns caminho ✓
+      └─ Se failure: returns null ✗
 
 4. Retorno Null
    └─ Permite que testes continuem sem biblioteca
 ```
 
-### 3. Cache por Versão
+### 3. Cache por version
 
-O cache é organizado por versão para evitar conflitos:
+The cache is organized by version to avoid conflicts:
 
 ```
 ~/.cache/odbc_fast/
@@ -51,14 +51,14 @@ O cache é organizado por versão para evitar conflitos:
 
 ### 🔴 Críticos
 
-#### 1. Release Inexistente Causa Falha Silenciosa
+#### 1. Release Inexistente Causa failure Silenciosa
 
-**Problema**: Se a GitHub Release para a versão atual não existir ainda (ex: durante desenvolvimento de nova versão), o hook retorna `null` e nenhum asset é registrado.
+**Problem**: If the GitHub Release for the current version does not exist yet (e.g. during development of a new version), the hook returns `null` and no assets are registered.
 
 **Impacto**:
 
-- Usuário recebe erro em tempo de execução: `"ODBC engine library not found"`
-- Mensagem de erro não explica que a release não existe
+- user recebe erro em tempo de execution: `"ODBC engine library not found"`
+- Error message does not explain that the release does not exist
 
 **Solução sugerida**:
 
@@ -72,7 +72,7 @@ Future<Uri?> _downloadFromGitHub(...) async {
     // ... download logic ...
     if (response.statusCode == 404) {
       print('[odbc_fast] WARNING: Release v$version not found on GitHub.');
-      print('[odbc_fast] This is expected during development. For production,');
+      print('[odbc_fast] This is expected during mustlopment. For production,');
       print('[odbc_fast] ensure the release exists: ');
       print('[odbc_fast] https://github.com/cesar-carlos/dart_odbc_fast/releases');
       return null;
@@ -87,14 +87,14 @@ Future<Uri?> _downloadFromGitHub(...) async {
 
 #### 2. Sem Verificação de Integridade (Checksum)
 
-**Problema**: O hook baixa a DLL sem verificar se o arquivo foi baixado corretamente ou se foi corrompido durante o download.
+**Issue**: The hook downloads the DLL without checking whether the file was downloaded correctly or whether it was corrupted during the download.
 
 **Riscos**:
 
-- Download corrompido causa crash em tempo de execução
-- Possibilidade de ataque MITM (embora baixa probabilidade com HTTPS)
+- Download corrompido causa crash em tempo de execution
+- Possibility of MITM attack (although low probability with HTTPS)
 
-**Solução sugerida**: Adicionar verificação SHA-256
+**Solução sugerida**: add verificação SHA-256
 
 ```dart
 // No pubspec.yaml ou arquivo separado:
@@ -127,9 +127,9 @@ Future<Uri?> _downloadFromGitHub(...) async {
 
 #### 3. Erro de Rede Sem Retry
 
-**Problema**: Se houver falha temporária de rede, o download falha imediatamente sem tentar novamente.
+**Problem**: If there is a temporary network failure, the download fails immediately without trying again.
 
-**Solução sugerida**: Adicionar retry com exponential backoff
+**Suggested solution**: add retry with exponential backoff
 
 ```dart
 Future<Uri?> _downloadFromGitHub(...) async {
@@ -157,7 +157,7 @@ Future<Uri?> _downloadFromGitHub(...) async {
 
 #### 4. Sem Timeout Configurável
 
-**Problema**: `HttpClient` não tem timeout, pode travar indefinidamente em conexões lentas.
+**Problema**: `HttpClient` not tem timeout, pode travar indefinidamente em connections lentas.
 
 **Solução sugerida**:
 
@@ -171,7 +171,7 @@ final request = await client.getUrl(Uri.parse(url));
 
 #### 5. Mensagens de Erro Pouco Informativas
 
-**Problema**: Quando o download falha, a mensagem não explica claramente o que o usuário deve fazer.
+**Problem**: When the download fails, the message does not clearly explain what the user should do.
 
 **Solução sugerida**: Melhorar mensagens de erro
 
@@ -185,7 +185,7 @@ final request = await client.getUrl(Uri.parse(url));
   print('[odbc_fast] 1. Check your internet connection');
   print('[odbc_fast] 2. Verify the release exists:');
   print('[odbc_fast]    https://github.com/cesar-carlos/dart_odbc_fast/releases');
-  print('[odbc_fast] 3. For development, build locally:');
+  print('[odbc_fast] 3. For mustlopment, build locally:');
   print('[odbc_fast]    cd native/odbc_engine && cargo build --release');
   return null;
 }
@@ -195,13 +195,13 @@ final request = await client.getUrl(Uri.parse(url));
 
 #### 6. Barra de Progresso Falta
 
-**Problema**: Usuário não tem feedback visual durante o download da DLL (~1 MB).
+**Issue**: user does not have visual feedback when downloading the DLL (~1 MB).
 
-**Solução sugerida**: Adicionar progress indicator (depende de `package:http` com streaming).
+**Suggested solution**: add progress indicator (depends on `package:http` with streaming).
 
-## Cenários de Uso
+## Usage Scenarios
 
-### Cenário 1: Usuário Final (Produção)
+### Cenário 1: user Final (Produção)
 
 ```bash
 $ dart pub add odbc_fast
@@ -212,7 +212,7 @@ Resolving dependencies...
 Got dependencies!
 ```
 
-**Status**: ✓ Funciona bem
+**Status**: ✓ Works well
 
 ### Cenário 2: Desenvolvimento do Pacote
 
@@ -221,10 +221,10 @@ $ cd dart_odbc_fast
 $ dart pub get
 Resolving dependencies...
 Got dependencies!
-# Não faz download porque encontra em native/target/release/
+# not faz download porque encontra em native/target/release/
 ```
 
-**Status**: ✓ Funciona bem
+**Status**: ✓ Works well
 
 ### Cenário 3: Primeiro `pub get` Após Release Nova
 
@@ -235,54 +235,57 @@ $ dart pub get
 # Erro em runtime: "ODBC engine library not found"
 ```
 
-**Status**: ✗ Problema - release não existe ainda
+**Status**: ✗ Problem - release does not exist yet
 
 ### Cenário 4: pub.dev Analysis
 
 ```bash
-# pub.dev executa o hook durante análise
+# pub.dev executa o hook durante analysis
 $ PUB_ENVIRONMENT="pub.dev" dart pub get
-# Hook detecta ambiente e PULA download
-# Análise continua sem timeout
+# Hook detecta Environment e PULA download
+# analysis continua sem timeout
 ```
 
-**Status**: ✓ Funciona bem (após nossa correção)
+**Status**: ✓ Works well (after our fix)
 
-## Recomendações
+## recommendations
 
-### Imediatas (Antes da Próxima Release)
+### Imediatas (Antes da next Release)
 
-1. **Melhorar mensagens de erro** quando release não existe (404)
-2. **Adicionar timeout** ao HttpClient
-3. **Documentar** claramente no README que a release deve existir primeiro
+1. **Melhorar mensagens de erro** quando release not existe (404)
+2. **add timeout** to HttpClient
+3. **Document** clearly in the README that the release must exist first
 
 ### Curto Prazo (Próximas Versões)
 
-1. Implementar **retry com exponential backoff**
-2. Adicionar **verificação de checksum**
-3. Criar **script de verificação** pós-download
+1. Implement **retry with exponential backoff**
+2. add **verificação de checksum**
+3. create **script de verificação** pós-download
 
 ### Longo Prazo
 
-1. Considerar usar **package:http** ao invés de `HttpClient` para melhor suporte a streaming/progresso
-2. Implementar **fallback para URLs alternativas** (ex: AWS S3, CDN)
-3. Adicionar **telemetria anônima** para entender falhas de download
+1. Consider using **package:http** instead of `HttpClient` for better streaming/progress support
+2. Implement **fallback for alternative URLs** (e.g. AWS S3, CDN)
+3. Add **anonymous telemetry** to understand download failures
 
 ## Conclusão
 
-O fluxo atual funciona bem para a maioria dos cenários, mas tem algumas áreas que podem ser melhoradas:
+The current flow works well for most scenarios, but there are some areas that could be improved:
 
 **Pontos Fortes**:
 
-- ✓ Cache por versão evita conflitos
-- ✓ Suporta build local para desenvolvimento
+- ✓ Cache por version evita conflitos
+- ✓ Supports local build for development
 - ✓ Detecta e pula download em CI/pub.dev
 
 **Pontos a Melhorar**:
 
 - ✗ Sem verificação de integridade
-- ✗ Sem retry em caso de falha de rede
+- ✗ Sem retry em caso de failure de rede
 - ✗ Mensagens de erro podem ser mais claras
 - ✗ Sem feedback visual de progresso
 
-A prioridade mais alta é **melhorar as mensagens de erro**, especialmente quando a release não existe, para que desenvolvedores saibam o que fazer.
+The highest priority is to improve error messages, especially when the release does not exist, so that developers know what to do.
+
+
+
