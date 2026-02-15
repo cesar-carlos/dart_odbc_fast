@@ -40,8 +40,11 @@ class TelemetryException implements Exception {
   final dynamic stackTrace;
 
   @override
-  String toString() =>
-      'TelemetryException[$code]: $message${timestamp != null ? ' at ${timestamp!.toIso8601String()}' : ''}${stackTrace != null ? '\n$stackTrace' : ''}';
+  String toString() {
+    final ts = timestamp != null ? ' at ${timestamp!.toIso8601String()}' : '';
+    final st = stackTrace != null ? '\n$stackTrace' : '';
+    return 'TelemetryException[$code]: $message$ts$st';
+  }
 }
 
 /// Error when telemetry initialization fails.

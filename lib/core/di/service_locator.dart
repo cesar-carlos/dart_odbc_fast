@@ -81,12 +81,12 @@ class ServiceLocator {
 
     _nativeConnection = NativeOdbcConnection();
     _repository = OdbcRepositoryImpl(_nativeConnection);
-    _service = OdbcService(_repository, null);
+    _service = OdbcService(_repository);
 
     if (useAsync) {
       _asyncNativeConnection = AsyncNativeOdbcConnection();
       _asyncRepository = OdbcRepositoryImpl(_asyncNativeConnection);
-      _asyncService = OdbcService(_asyncRepository, null);
+      _asyncService = OdbcService(_asyncRepository);
     }
 
     AppLogger.info('ServiceLocator initialized (async: $useAsync)');

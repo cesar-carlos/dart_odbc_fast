@@ -20,7 +20,6 @@ class WorkerCrashRecovery {
     StackTrace? stackTrace,
   ]) async {
     AppLogger.severe('Worker isolate crashed: $error', error, stackTrace);
-    async.dispose();
-    await async.initialize();
+    await async.recoverWorker();
   }
 }

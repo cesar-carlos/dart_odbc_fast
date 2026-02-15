@@ -18,7 +18,6 @@ abstract class TelemetryExporter {
 /// Used when OTLP exporter is unavailable or fails.
 /// Provides simple stdout/stderr output for all telemetry data.
 class ConsoleExporter implements TelemetryExporter {
-
   ConsoleExporter({io.IOSink? output}) : _output = output ?? io.stdout;
   final io.IOSink _output;
 
@@ -27,7 +26,7 @@ class ConsoleExporter implements TelemetryExporter {
     try {
       final traceJson = _serializeTrace(trace);
       _output.writeln('[TRACE] $traceJson');
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(e);
     }
@@ -38,7 +37,7 @@ class ConsoleExporter implements TelemetryExporter {
     try {
       final spanJson = _serializeSpan(span);
       _output.writeln('[SPAN]  $spanJson');
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(e);
     }
@@ -49,7 +48,7 @@ class ConsoleExporter implements TelemetryExporter {
     try {
       final metricJson = _serializeMetric(metric);
       _output.writeln('[METRIC] $metricJson');
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(e);
     }
@@ -60,7 +59,7 @@ class ConsoleExporter implements TelemetryExporter {
     try {
       final eventJson = _serializeEvent(event);
       _output.writeln('[EVENT] $eventJson');
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(e);
     }

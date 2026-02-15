@@ -26,12 +26,9 @@ class TelemetryBuffer {
 
   final int _batchSize;
   final Duration _flushInterval;
-  void Function()? _onFlush;
 
-  /// Sets the callback to be called when buffer flushes.
-  void setOnFlush(void Function() callback) {
-    _onFlush = callback;
-  }
+  /// Callback to be called when buffer flushes.
+  void Function()? onFlush;
 
   final List<Trace> _traces = [];
   final List<Span> _spans = [];
@@ -133,7 +130,7 @@ class TelemetryBuffer {
     _flushTimer = Timer.periodic(_flushInterval, (_) {
       if (size > 0) {
         flush();
-        _onFlush?.call();
+        onFlush?.call();
       }
     });
   }

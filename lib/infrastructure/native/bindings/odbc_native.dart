@@ -3,13 +3,13 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
+    show PreparedStatementMetrics;
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show callWithBuffer, initialBufferSize, maxBufferSize;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as bindings;
-
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
@@ -466,6 +466,37 @@ class OdbcNative {
     }
   }
 
+  /// Gets prepared statement cache metrics.
+  ///
+  /// Returns [PreparedStatementMetrics] on success, null on failure.
+  PreparedStatementMetrics? getCacheMetrics() {
+    const metricsSize = 64;
+    final buf = malloc<ffi.Uint8>(metricsSize);
+    final outWritten = malloc<ffi.Uint32>();
+    try {
+      final code =
+          _bindings.odbc_get_cache_metrics(buf, metricsSize, outWritten);
+      if (code != 0) return null;
+      final n = outWritten.value;
+      if (n < metricsSize) return null;
+      return PreparedStatementMetrics.fromBytes(
+        Uint8List.fromList(buf.asTypedList(metricsSize)),
+      );
+    } finally {
+      malloc
+        ..free(buf)
+        ..free(outWritten);
+    }
+  }
+
+  /// Clears the prepared statement cache.
+  ///
+  /// Returns true on success, false on failure.
+  bool clearStatementCache() {
+    final code = _bindings.odbc_clear_statement_cache();
+    return code == 0;
+  }
+
   /// Queries the database catalog for table information.
   ///
   /// The [connectionId] must be a valid active connection.
@@ -561,11 +592,17 @@ class OdbcNative {
   /// The [stmtId] must be a valid prepared statement identifier.
   /// The [params] should be a binary buffer containing serialized parameters,
   /// or null if no parameters are needed.
+  /// The [timeoutOverrideMs] overrides statement timeout (0 = use stored).
+  /// The [fetchSize] specifies rows per batch (default: 1000).
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
   Uint8List? execute(
     int stmtId, [
     Uint8List? params,
+    int timeoutOverrideMs = 0,
+    int fetchSize = 1000,
+    int? maxBufferBytes,
   ]) {
     if (params == null || params.isEmpty) {
       return callWithBuffer(
@@ -573,10 +610,13 @@ class OdbcNative {
           stmtId,
           null,
           0,
+          timeoutOverrideMs,
+          fetchSize,
           buf,
           bufLen,
           outWritten,
         ),
+        maxSize: maxBufferBytes,
       );
     }
     return _withParamsBuffer(
@@ -586,10 +626,13 @@ class OdbcNative {
           stmtId,
           paramsPtr,
           params.length,
+          timeoutOverrideMs,
+          fetchSize,
           buf,
           bufLen,
           outWritten,
         ),
+        maxSize: maxBufferBytes,
       ),
     );
   }
@@ -599,13 +642,34 @@ class OdbcNative {
   /// The [stmtId] must be a valid prepared statement identifier.
   /// The [params] list should contain [ParamValue] instances for each
   /// parameter placeholder, in order, or null if no parameters are needed.
+  /// The [timeoutOverrideMs] overrides statement timeout (0 = use stored).
+  /// The [fetchSize] specifies rows per batch (default: 1000).
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   ///
   /// Returns binary result data on success, null on failure.
-  Uint8List? executeTyped(int stmtId, [List<ParamValue>? params]) {
+  Uint8List? executeTyped(
+    int stmtId, [
+    List<ParamValue>? params,
+    int timeoutOverrideMs = 0,
+    int fetchSize = 1000,
+    int? maxBufferBytes,
+  ]) {
     if (params == null || params.isEmpty) {
-      return execute(stmtId);
+      return execute(
+        stmtId,
+        null,
+        timeoutOverrideMs,
+        fetchSize,
+        maxBufferBytes,
+      );
     }
-    return execute(stmtId, serializeParams(params));
+    return execute(
+      stmtId,
+      serializeParams(params),
+      timeoutOverrideMs,
+      fetchSize,
+      maxBufferBytes,
+    );
   }
 
   /// Cancels a prepared statement execution.
@@ -629,23 +693,6 @@ class OdbcNative {
   /// Returns 0 on success. This is a stub that returns success
   /// until the native Rust function is implemented.
   int clearAllStatements() => 0;
-
-  /// Gets prepared statement metrics (stub implementation).
-  ///
-  /// Returns default metrics until the native Rust function is implemented.
-  ({
-    int totalStatements,
-    int totalExecutions,
-    int cacheHits,
-    int totalPrepares
-  })? getStatementsMetrics() {
-    return (
-      totalStatements: 0,
-      totalExecutions: 0,
-      cacheHits: 0,
-      totalPrepares: 0,
-    );
-  }
 
   /// Starts a batched streaming query.
   ///
@@ -908,6 +955,23 @@ class OdbcMetrics {
       avgLatencyMillis: d.getUint64(32, Endian.little),
     );
   }
+}
+
+/// Deserializes [PreparedStatementMetrics] from binary data.
+///
+/// The [b] must contain at least 64 bytes of metrics data.
+PreparedStatementMetrics fromBytes(Uint8List b) {
+  final d = ByteData.sublistView(b);
+  return PreparedStatementMetrics(
+    cacheSize: d.getUint64(0, Endian.little),
+    cacheMaxSize: d.getUint64(8, Endian.little),
+    cacheHits: d.getUint64(16, Endian.little),
+    cacheMisses: d.getUint64(24, Endian.little),
+    totalPrepares: d.getUint64(32, Endian.little),
+    totalExecutions: d.getUint64(40, Endian.little),
+    memoryUsageBytes: d.getUint64(48, Endian.little),
+    avgExecutionsPerStmt: d.getFloat64(56, Endian.little),
+  );
 }
 
 /// Result of a stream fetch operation.

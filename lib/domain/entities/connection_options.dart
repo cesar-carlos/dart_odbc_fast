@@ -3,6 +3,18 @@
 /// Used when [ConnectionOptions.maxResultBufferBytes] is null.
 const int defaultMaxResultBufferBytes = 16 * 1024 * 1024;
 
+/// Default maximum number of reconnect attempts when
+/// [ConnectionOptions.autoReconnectOnConnectionLost] is true.
+const int defaultMaxReconnectAttempts = 3;
+
+/// Default delay between reconnect attempts when
+/// [ConnectionOptions.autoReconnectOnConnectionLost] is true.
+const Duration defaultReconnectBackoff = Duration(seconds: 1);
+
+/// Default initial result buffer size in bytes (64 KB) when not set per
+/// connection.
+const int defaultInitialResultBufferBytes = 64 * 1024;
+
 /// Options for connection establishment and statement execution.
 ///
 /// Used when calling connect to configure timeouts. [loginTimeout] is passed
@@ -15,6 +27,10 @@ class ConnectionOptions {
     this.loginTimeout,
     this.queryTimeout,
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
+    this.autoReconnectOnConnectionLost = false,
+    this.maxReconnectAttempts,
+    this.reconnectBackoff,
   });
 
   /// Timeout for establishing the connection. When set, used as [loginTimeout]
@@ -33,6 +49,24 @@ class ConnectionOptions {
   /// When null, [defaultMaxResultBufferBytes] is used.
   final int? maxResultBufferBytes;
 
+  /// Initial size in bytes for query result buffer allocation. When null,
+  /// [defaultInitialResultBufferBytes] is used. Larger values can reduce
+  /// reallocation rounds for large result sets.
+  final int? initialResultBufferBytes;
+
+  /// When true, the repository may attempt to reconnect and re-execute the
+  /// operation on connection-lost errors. Default is false.
+  final bool autoReconnectOnConnectionLost;
+
+  /// Maximum number of reconnect attempts when
+  /// [ConnectionOptions.autoReconnectOnConnectionLost] is true.
+  /// When null, [defaultMaxReconnectAttempts] is used.
+  final int? maxReconnectAttempts;
+
+  /// Delay between reconnect attempts.
+  /// When null, [defaultReconnectBackoff] is used.
+  final Duration? reconnectBackoff;
+
   /// Effective login timeout in milliseconds:
   /// [loginTimeout] ?? [connectionTimeout], or 0 if neither is set.
   int get loginTimeoutMs {
@@ -40,4 +74,13 @@ class ConnectionOptions {
     if (d == null) return 0;
     return d.inMilliseconds.clamp(0, 0x7FFFFFFF);
   }
+
+  /// Effective max reconnect attempts when
+  /// [ConnectionOptions.autoReconnectOnConnectionLost] is true.
+  int get effectiveMaxReconnectAttempts =>
+      maxReconnectAttempts ?? defaultMaxReconnectAttempts;
+
+  /// Effective delay between reconnect attempts.
+  Duration get effectiveReconnectBackoff =>
+      reconnectBackoff ?? defaultReconnectBackoff;
 }

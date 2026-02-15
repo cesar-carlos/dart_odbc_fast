@@ -135,3 +135,23 @@ Uint8List serializeParams(List<ParamValue> params) {
   }
   return Uint8List.fromList(out);
 }
+
+/// Converts a list of objects to `ParamValue` instances.
+///
+/// Supports null, int, String, `List<int>`, and `ParamValue`.
+/// Other types are converted to string.
+List<ParamValue> paramValuesFromObjects(List<Object?> params) {
+  return params.map((Object? o) {
+    if (o == null) return const ParamValueNull();
+    if (o is ParamValue) return o;
+    if (o is int) {
+      if (o >= -0x80000000 && o <= 0x7FFFFFFF) {
+        return ParamValueInt32(o);
+      }
+      return ParamValueInt64(o);
+    }
+    if (o is String) return ParamValueString(o);
+    if (o is List<int>) return ParamValueBinary(o);
+    return ParamValueString(o.toString());
+  }).toList();
+}

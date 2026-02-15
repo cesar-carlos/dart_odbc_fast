@@ -26,6 +26,8 @@ enum RequestType {
   poolClose,
   bulkInsertArray,
   getMetrics,
+  getCacheMetrics,
+  clearCache,
   catalogTables,
   catalogColumns,
   catalogTypeInfo,
@@ -160,10 +162,16 @@ class ExecutePreparedRequest extends WorkerRequest {
   const ExecutePreparedRequest(
     int requestId,
     this.stmtId,
-    this.serializedParams,
-  ) : super(requestId, RequestType.executePrepared);
+    this.serializedParams, {
+    this.timeoutOverrideMs = 0,
+    this.fetchSize = 1000,
+    this.maxResultBufferBytes,
+  }) : super(requestId, RequestType.executePrepared);
   final int stmtId;
   final Uint8List serializedParams;
+  final int timeoutOverrideMs;
+  final int fetchSize;
+  final int? maxResultBufferBytes;
 }
 
 /// Close prepared statement.
@@ -240,6 +248,18 @@ class BulkInsertArrayRequest extends WorkerRequest {
 class GetMetricsRequest extends WorkerRequest {
   const GetMetricsRequest(int requestId)
       : super(requestId, RequestType.getMetrics);
+}
+
+/// Get cache metrics.
+class GetCacheMetricsRequest extends WorkerRequest {
+  const GetCacheMetricsRequest(int requestId)
+      : super(requestId, RequestType.getCacheMetrics);
+}
+
+/// Clear cache.
+class ClearCacheRequest extends WorkerRequest {
+  const ClearCacheRequest(int requestId)
+      : super(requestId, RequestType.clearCache);
 }
 
 /// Catalog tables.
@@ -350,6 +370,37 @@ class MetricsResponse extends WorkerResponse {
   final int uptimeSecs;
   final int totalLatencyMillis;
   final int avgLatencyMillis;
+  final String? error;
+}
+
+/// Response for cache metrics (sendable record).
+class CacheMetricsResponse extends WorkerResponse {
+  const CacheMetricsResponse(
+    super.requestId, {
+    this.cacheSize = 0,
+    this.cacheMaxSize = 0,
+    this.cacheHits = 0,
+    this.cacheMisses = 0,
+    this.totalPrepares = 0,
+    this.totalExecutions = 0,
+    this.memoryUsageBytes = 0,
+    this.avgExecutionsPerStmt = 0.0,
+    this.error,
+  });
+  final int cacheSize;
+  final int cacheMaxSize;
+  final int cacheHits;
+  final int cacheMisses;
+  final int totalPrepares;
+  final int totalExecutions;
+  final int memoryUsageBytes;
+  final double avgExecutionsPerStmt;
+  final String? error;
+}
+
+/// Response for clear cache.
+class ClearCacheResponse extends WorkerResponse {
+  const ClearCacheResponse(super.requestId, {this.error});
   final String? error;
 }
 

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 /// Backend interface for low-level ODBC operations.
@@ -42,8 +43,17 @@ abstract class OdbcConnectionBackend {
   ///
   /// The [stmtId] must be a valid prepared statement identifier.
   /// The [params] list contains parameter values for the statement.
+  /// The [timeoutOverrideMs] overrides statement timeout (0 = use stored).
+  /// The [fetchSize] specifies rows per batch (default: 1000).
+  /// When [maxBufferBytes] is set, caps the result buffer size.
   /// Returns binary result data on success, null on failure.
-  Uint8List? executePrepared(int stmtId, [List<ParamValue>? params]);
+  Uint8List? executePrepared(
+    int stmtId,
+    List<ParamValue>? params,
+    int timeoutOverrideMs,
+    int fetchSize, {
+    int? maxBufferBytes,
+  });
 
   /// Closes and releases a prepared statement.
   ///
@@ -60,12 +70,7 @@ abstract class OdbcConnectionBackend {
   ///
   /// Returns metrics including cache hits, executions, etc.
   /// Returns null if metrics cannot be retrieved.
-  ({
-    int totalStatements,
-    int totalExecutions,
-    int cacheHits,
-    int totalPrepares
-  })? getStatementsMetrics();
+  PreparedStatementMetrics? getCacheMetrics();
 
   /// Queries the database catalog for table information.
   ///

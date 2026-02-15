@@ -1,17 +1,21 @@
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
+import 'package:odbc_fast/odbc_fast.dart'
+    show SimpleTelemetryService, TelemetryException;
 
 /// Simplified interface for telemetry service operations.
 ///
 /// Provides methods for starting/ending traces, spans, and recording metrics.
-/// Methods return [Future<void>] for async operations that interact with the repository.
+/// Methods return [Future<void>] for async operations that interact with
+/// the repository.
 ///
 /// ## Architecture
 ///
 /// This service follows the Clean Architecture pattern:
-/// - **Domain Layer**: Defines [ITelemetryService] interface and [TelemetryException] error types
-/// - **Application Layer**: [SimpleTelemetryService] implements the interface for use cases
-/// - **Infrastructure Layer**: [ITelemetryRepository] defines repository interface
+/// - **Domain Layer**: Defines [ITelemetryService] and [TelemetryException]
+/// - **Application Layer**: [SimpleTelemetryService] implements the interface
+/// - **Infrastructure Layer**: [ITelemetryRepository] defines repository
+///   interface
 ///
 /// ## Usage Example
 ///
@@ -34,8 +38,8 @@ import 'package:odbc_fast/domain/telemetry/entities.dart';
 ///
 /// ## Thread Safety
 ///
-/// **IMPORTANT**: [Trace] and [Span] objects returned by [startTrace] and [startSpan]
-/// are NOT thread-safe. Do NOT share these objects across isolates.
+/// **IMPORTANT**: [Trace] and [Span] returned by [startTrace]/[startSpan]
+/// are NOT thread-safe. Do NOT share across isolates.
 /// Always create new Trace/Span objects within the same isolate that needs them.
 ///
 /// ## Key Features
@@ -44,7 +48,8 @@ import 'package:odbc_fast/domain/telemetry/entities.dart';
 /// - **Metrics**: Counters, gauges, and histograms
 /// - **Events**: Log entries with severity levels
 /// - **Auto-batching**: Automatic buffer flushing at intervals
-/// - **Error Handling**: Repository handles errors internally; service doesn't need to catch
+/// - **Error Handling**: Repository handles errors internally; service does
+///   not need to catch
 abstract class ITelemetryService {
   /// Service name identifier.
   ///
@@ -75,7 +80,8 @@ abstract class ITelemetryService {
   /// Creates a child span within a trace.
   ///
   /// The [parentId] should be a trace ID from [startTrace].
-  /// The [spanName] should describe the sub-operation (e.g., "query.execution").
+  /// The [spanName] should describe the sub-operation
+  /// (e.g., "query.execution").
   /// Returns a [Span] object containing span ID.
   ///
   /// **Thread Safety**: The returned [Span] object is not thread-safe.

@@ -4,7 +4,8 @@ import 'package:odbc_fast/domain/telemetry/entities.dart';
 ///
 /// Provides methods for exporting traces, metrics, and events.
 /// Implementations can send data to OpenTelemetry, console, or custom backends.
-/// Methods return Future<void> to simplify error handling - errors are handled internally.
+/// Methods return `Future<void>` to simplify error handling; errors are handled
+/// internally.
 abstract class ITelemetryRepository {
   /// Export a trace to telemetry backend.
   ///

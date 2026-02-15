@@ -14,7 +14,7 @@ abstract class ITelemetryService {
   /// Starts a new trace for an ODBC operation.
   ///
   /// The [operationName] should be descriptive (e.g., "odbc.query").
-  /// Returns [ResultDart] with trace on success or [TelemetryException] on error.
+  /// Returns [ResultDart] with trace on success or [TelemetryException].
   Future<ResultDart<Trace, TelemetryException>> startTrace(
     String operationName,
   );
@@ -32,7 +32,7 @@ abstract class ITelemetryService {
   ///
   /// The [parentId] should be a traceId of parent trace.
   /// The [spanName] should be descriptive (e.g., "query.execution").
-  /// Returns [ResultDart] with span on success or [TelemetryException] on error.
+  /// Returns [ResultDart] with span on success or [TelemetryException] on error
   Future<ResultDart<Span, TelemetryException>> startSpan({
     required String parentId,
     required String spanName,
@@ -141,7 +141,7 @@ class TelemetryService implements ITelemetryService {
   /// Starts a new trace for an ODBC operation.
   ///
   /// The [operationName] should be descriptive (e.g., "odbc.query").
-  /// Returns [ResultDart] with trace on success or [TelemetryException] on error.
+  /// Returns [ResultDart] with trace on success or [TelemetryException] on erro
   @override
   Future<ResultDart<Trace, TelemetryException>> startTrace(
     String operationName,
@@ -179,30 +179,23 @@ class TelemetryService implements ITelemetryService {
     }
 
     final now = DateTime.now().toUtc();
-    final duration = now.difference(cached.startTime);
     final updatedTrace = cached.copyWith(
       endTime: now,
       attributes: {...cached.attributes, ...attributes},
     );
 
-    final result = await _repository.updateTrace(
+    await _repository.updateTrace(
       traceId: traceId,
       endTime: now,
       attributes: updatedTrace.attributes,
     );
-
-    return result.fold(
-      Failure.new,
-      (success) {
-        _activeTraces.remove(traceId);
-        return const Success(null);
-      },
-    );
+    _activeTraces.remove(traceId);
+    return const Success(unit);
   }
 
   /// Creates a child span within an existing trace.
   ///
-  /// Returns [ResultDart] with span on success or [TelemetryException] on error.
+  /// Returns [ResultDart] with span on success or [TelemetryException] on error
   @override
   Future<ResultDart<Span, TelemetryException>> startSpan({
     required String parentId,
@@ -244,25 +237,18 @@ class TelemetryService implements ITelemetryService {
     }
 
     final now = DateTime.now().toUtc();
-    final duration = now.difference(cached.startTime);
     final updatedSpan = cached.copyWith(
       endTime: now,
       attributes: {...cached.attributes, ...attributes},
     );
 
-    final result = await _repository.updateSpan(
+    await _repository.updateSpan(
       spanId: spanId,
       endTime: now,
       attributes: updatedSpan.attributes,
     );
-
-    return result.fold(
-      Failure.new,
-      (success) {
-        _activeSpans.remove(spanId);
-        return const Success(null);
-      },
-    );
+    _activeSpans.remove(spanId);
+    return const Success(unit);
   }
 
   /// Records a counter metric.
@@ -278,18 +264,14 @@ class TelemetryService implements ITelemetryService {
   }) async {
     final metric = Metric(
       name: name,
-      type: metricType,
       value: value,
       unit: unit,
       timestamp: DateTime.now().toUtc(),
       attributes: attributes,
     );
 
-    final result = await _repository.exportMetric(metric);
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.exportMetric(metric);
+    return Success(unit);
   }
 
   /// Records a gauge metric (current value).
@@ -303,18 +285,14 @@ class TelemetryService implements ITelemetryService {
   }) async {
     final metric = Metric(
       name: name,
-      type: 'gauge',
       value: value,
       unit: 'count',
       timestamp: DateTime.now().toUtc(),
       attributes: attributes,
     );
 
-    final result = await _repository.exportMetric(metric);
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.exportMetric(metric);
+    return const Success(unit);
   }
 
   /// Records a timing metric.
@@ -328,18 +306,14 @@ class TelemetryService implements ITelemetryService {
   }) async {
     final metric = Metric(
       name: name,
-      type: 'histogram',
       value: duration.inMilliseconds.toDouble(),
       unit: 'ms',
       timestamp: DateTime.now().toUtc(),
       attributes: attributes,
     );
 
-    final result = await _repository.exportMetric(metric);
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.exportMetric(metric);
+    return const Success(unit);
   }
 
   /// Records a telemetry event (log entry).
@@ -360,11 +334,8 @@ class TelemetryService implements ITelemetryService {
       context: context,
     );
 
-    final result = await _repository.exportEvent(event);
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.exportEvent(event);
+    return const Success(unit);
   }
 
   /// Flushes all pending telemetry data.
@@ -372,11 +343,8 @@ class TelemetryService implements ITelemetryService {
   /// Returns [ResultDart] with success or [TelemetryException] on error.
   @override
   Future<ResultDart<void, TelemetryException>> flush() async {
-    final result = await _repository.flush();
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.flush();
+    return const Success(unit);
   }
 
   /// Shutdown telemetry exporter and release resources.
@@ -384,10 +352,7 @@ class TelemetryService implements ITelemetryService {
   /// Returns [ResultDart] with success or [TelemetryException] on error.
   @override
   Future<ResultDart<void, TelemetryException>> shutdown() async {
-    final result = await _repository.shutdown();
-    return result.fold(
-      Failure.new,
-      (_) => const Success(null),
-    );
+    await _repository.shutdown();
+    return const Success(unit);
   }
 }

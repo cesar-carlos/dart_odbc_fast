@@ -1,4 +1,8 @@
 name: odbc_fast
+# v0.3.1 - Development phase (pre-1.0.0)
+# Breaking changes: MINOR bumps (0.4.0, 0.5.0)
+# New features/bugfixes: PATCH bumps (0.3.2, 0.3.3)
+# See doc/VERSIONING_STRATEGY.md for versioning guidelines
 version: 0.3.1
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 

@@ -22,14 +22,16 @@ typedef BufferCallback = int Function(
 
 /// Calls a buffer callback function with dynamically sized buffers.
 ///
-/// Starts with [initialBufferSize] and doubles the buffer size if the
-/// callback returns -2 (buffer too small), up to [maxSize] or [maxBufferSize].
+/// Starts with [initialSize] or [initialBufferSize] and doubles the buffer
+/// size if the callback returns -2 (buffer too small), up to [maxSize] or
+/// [maxBufferSize].
 ///
 /// When [maxSize] is null, [maxBufferSize] is used.
+/// When [initialSize] is null, [initialBufferSize] is used.
 /// Returns the data as [Uint8List] on success, null on failure.
-Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize}) {
+Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
   final limit = maxSize ?? maxBufferSize;
-  var size = initialBufferSize;
+  var size = initialSize ?? initialBufferSize;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
     final outWritten = malloc<ffi.Uint32>()..value = 0;

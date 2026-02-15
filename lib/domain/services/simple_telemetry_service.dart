@@ -1,7 +1,8 @@
+import 'dart:async' show unawaited;
 import 'dart:math' show Random;
 
-import 'package:odbc_fast/domain/services/itelemetry_service.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
+import 'package:odbc_fast/domain/services/itelemetry_service.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
 
 /// Simplified telemetry service for ODBC operations.
@@ -20,27 +21,31 @@ class SimpleTelemetryService implements ITelemetryService {
   String get serviceName => 'odbc_fast';
 
   /// Generates a UUID v4 for unique trace IDs.
-  ///
-  /// Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
   String _generateTraceId() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
-    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
 
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-$hex';
+
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '$hex';
   }
 
   /// Generates a UUID v4 for unique span IDs.
-  ///
-  /// Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
   String _generateSpanId() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
-    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
 
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-$hex';
+
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '$hex';
   }
 
   @override
@@ -60,6 +65,7 @@ class SimpleTelemetryService implements ITelemetryService {
     );
 
     _activeTraces[traceId] = trace;
+    unawaited(_repository.exportTrace(trace));
     return trace;
   }
 
@@ -78,7 +84,6 @@ class SimpleTelemetryService implements ITelemetryService {
     }
 
     final now = DateTime.now().toUtc();
-    final duration = now.difference(cached.startTime);
 
     await _repository.updateTrace(
       traceId: traceId,
@@ -115,6 +120,7 @@ class SimpleTelemetryService implements ITelemetryService {
     );
 
     _activeSpans[spanId] = span;
+    unawaited(_repository.exportSpan(span));
     return span;
   }
 
@@ -133,7 +139,6 @@ class SimpleTelemetryService implements ITelemetryService {
     }
 
     final now = DateTime.now().toUtc();
-    final duration = now.difference(cached.startTime);
 
     await _repository.updateSpan(
       spanId: spanId,
@@ -254,5 +259,39 @@ class SimpleTelemetryService implements ITelemetryService {
   @override
   Future<void> shutdown() async {
     await _repository.shutdown();
+  }
+
+  /// Wraps an async operation with trace lifecycle and timing.
+  ///
+  /// Starts a trace, executes [fn], ends the trace, and records timing.
+  /// On error, attaches error attributes to the trace and rethrows.
+  Future<T> inOperation<T>(
+    String operationName,
+    Future<T> Function() fn,
+  ) async {
+    final trace = startTrace(operationName);
+    final stopwatch = Stopwatch()..start();
+    try {
+      final result = await fn();
+      await recordTiming(
+        name: '$operationName.duration',
+        duration: stopwatch.elapsed,
+        attributes: {'operation': operationName},
+      );
+      await endTrace(traceId: trace.traceId);
+      return result;
+    } catch (e, s) {
+      await endTrace(
+        traceId: trace.traceId,
+        attributes: {'error': e.toString()},
+      );
+      await recordEvent(
+        name: '$operationName.error',
+        severity: TelemetrySeverity.error,
+        message: e.toString(),
+        context: {'stackTrace': s.toString()},
+      );
+      rethrow;
+    }
   }
 }

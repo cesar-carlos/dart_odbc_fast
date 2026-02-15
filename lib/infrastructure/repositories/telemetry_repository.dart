@@ -1,18 +1,32 @@
 import 'dart:convert';
-import 'dart:math' show Random;
+import 'dart:math' show Random, min;
 
-import 'package:odbc_fast/domain/errors/telemetry_error.dart' as err;
+import 'package:odbc_fast/domain/errors/telemetry_error.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
-// import 'package:odbc_fast/infrastructure/native/telemetry/opentelemetry_ffi.dart'; // TODO: Fix TelemetryException conflict
+import 'package:odbc_fast/infrastructure/native/bindings/opentelemetry_ffi.dart';
+import 'package:odbc_fast/infrastructure/native/telemetry/console.dart';
 import 'package:odbc_fast/infrastructure/native/telemetry/telemetry_buffer.dart';
 import 'package:result_dart/result_dart.dart';
 
-/// Implementation of [ITelemetryRepository] using OpenTelemetry FFI with buffering.
+/// Record of a telemetry export failure for fallback tracking.
+class TelemetryFailureRecord {
+  const TelemetryFailureRecord({
+    required this.timestamp,
+    required this.error,
+    required this.exporter,
+  });
+  final DateTime timestamp;
+  final TelemetryException error;
+  final String exporter;
+}
+
+/// Implementation of [ITelemetryRepository] using OpenTelemetry FFI
+/// with buffering.
 ///
 /// Provides concrete implementation of telemetry repository interface,
-/// translating domain telemetry operations into native OpenTelemetry calls
-/// via FFI with in-memory batching.
+/// translating domain telemetry operations into native OpenTelemetry
+/// calls via FFI with in-memory batching.
 ///
 /// Features:
 /// - Batching: Accumulates telemetry data before export
@@ -34,7 +48,7 @@ import 'package:result_dart/result_dart.dart';
 class TelemetryRepositoryImpl implements ITelemetryRepository {
   /// Creates a new [TelemetryRepositoryImpl] instance.
   ///
-  /// The [ffi] parameter provides access to native OpenTelemetry functions.
+  /// The `_ffi` parameter provides access to native OpenTelemetry functions.
   /// [batchSize] specifies how many items to buffer before auto-flush.
   /// [flushInterval] specifies how often to auto-flush buffered data.
   /// [maxRetries] specifies the maximum number of retry attempts for exports.
@@ -48,8 +62,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     int maxRetries = 3,
     Duration retryBaseDelay = const Duration(milliseconds: 100),
     Duration retryMaxDelay = const Duration(seconds: 10),
-    TelemetryExporter? fallbackExporter,
-  }) : _buffer = TelemetryBuffer(
+  })  : _buffer = TelemetryBuffer(
           batchSize: batchSize,
           flushInterval: flushInterval,
         ),
@@ -58,20 +71,20 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
           baseDelay: retryBaseDelay,
           maxDelay: retryMaxDelay,
         ) {
-    _buffer.setOnFlush(_exportBatch);
+    _buffer.onFlush = _exportBatch;
   }
 
   final OpenTelemetryFFI _ffi;
   final TelemetryBuffer _buffer;
   final _RetryHelper _retry;
   bool _isInitialized = false;
-  bool _isShuttingDown = false;
+  TelemetryExporter? _currentExporter;
 
   /// Configuration for automatic fallback behavior.
   ///
   /// Controls when to switch from OTLP to ConsoleExporter.
   int consecutiveFailureThreshold = 3;
-  int failureCheckInterval = Duration(seconds: 30);
+  Duration failureCheckInterval = const Duration(seconds: 30);
   TelemetryExporter? fallbackExporter;
 
   /// Updates the active exporter.
@@ -80,7 +93,6 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   void _updateExporterIfNeeded(TelemetryExporter? exporter) {
     if (fallbackExporter != null && exporter != _currentExporter) {
       _currentExporter = exporter;
-      _failureCount = 0;
     }
   }
 
@@ -90,7 +102,6 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   /// The exporter will receive all failed telemetry data.
   void setFallbackExporter(ConsoleExporter exporter) {
     _updateExporterIfNeeded(exporter);
-    _failureCount = 0;
   }
 
   /// Checks if should trigger fallback.
@@ -102,9 +113,10 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     }
 
     final now = DateTime.now().toUtc();
-    final recentFailures = _recentFailures
-        .where((failure) =>
-            failure.timestamp.isAfter(now.subtract(failureCheckInterval)));
+    final recentFailures = _recentFailures.where(
+      (failure) =>
+          failure.timestamp.isAfter(now.subtract(failureCheckInterval)),
+    );
 
     return recentFailures.length >= consecutiveFailureThreshold;
   }
@@ -114,15 +126,19 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
 
   /// Records a failure for tracking.
   void _recordFailure(TelemetryException error) {
-    _recentFailures.add(TelemetryFailureRecord(
-      timestamp: DateTime.now().toUtc(),
-      error: error,
-      exporter: _currentExporter.runtimeType.toString(),
-    ));
-
-    // Keep only recent failures within time window
-    _recentFailures.removeWhere((failure) =>
-        failure.timestamp.isBefore(DateTime.now().toUtc().subtract(failureCheckInterval)));
+    _recentFailures
+      ..add(
+        TelemetryFailureRecord(
+          timestamp: DateTime.now().toUtc(),
+          error: error,
+          exporter: _currentExporter?.runtimeType.toString() ?? 'unknown',
+        ),
+      )
+      ..removeWhere(
+        (failure) => failure.timestamp.isBefore(
+          DateTime.now().toUtc().subtract(failureCheckInterval),
+        ),
+      );
 
     // Auto-switch to fallback if threshold exceeded
     if (_shouldTriggerFallback() && fallbackExporter != null) {
@@ -142,12 +158,22 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     _isFlushing = true;
     try {
       final batch = _buffer.flush();
-
-      // Export using current exporter
-      _currentExporter?.exportTraceBatch(batch);
+      final exporter = _currentExporter;
+      if (exporter != null && !batch.isEmpty) {
+        batch.traces.forEach(exporter.exportTrace);
+        batch.spans.forEach(exporter.exportSpan);
+        batch.metrics.forEach(exporter.exportMetric);
+        batch.events.forEach(exporter.exportEvent);
+      }
     } on Exception catch (e) {
-      // Record failure and attempt fallback
-      _recordFailure(e is err.TelemetryException ? Exception());
+      _recordFailure(
+        e is TelemetryException
+            ? e
+            : TelemetryException.now(
+                message: e.toString(),
+                code: 'EXPORT_BATCH',
+              ),
+      );
       _updateExporterIfNeeded(fallbackExporter);
     } finally {
       _isFlushing = false;
@@ -178,38 +204,16 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     return jsonEncode(map);
   }
 
-  String _serializeMetric(Metric metric) {
-    final map = {
-      'name': metric.name,
-      'value': metric.value,
-      'unit': metric.unit,
-      'timestamp': metric.timestamp.toIso8601String(),
-      'attributes': metric.attributes,
-    };
-    return jsonEncode(map);
-  }
-
-  String _serializeEvent(TelemetryEvent event) {
-    final map = {
-      'name': event.name,
-      'timestamp': event.timestamp.toIso8601String(),
-      'severity': event.severity.name,
-      'attributes': event.context,
-    };
-    return jsonEncode(map);
-  }
-
   bool _isFlushing = false;
 
-  @override
   Future<ResultDart<void, TelemetryException>> initialize({
     String otlpEndpoint = 'http://localhost:4318',
   }) async {
     try {
-      final initialized = _ffi.initialize(otlpEndpoint: otlpEndpoint);
+      final initialized = _ffi.initialize(otlpEndpoint) != 0;
       if (initialized) {
         _isInitialized = true;
-        return const Success(null);
+        return const Success(unit);
       }
       return Failure(
         TelemetryInitializationException(
@@ -219,11 +223,11 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
       );
     } on Exception catch (e) {
       return Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Unexpected error during telemetry initialization: $e',
           code: 'INIT_ERROR',
         ),
-      )
+      );
     }
   }
 
@@ -239,7 +243,14 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
         _exportBatch();
       }
     } on Exception catch (e) {
-      _recordFailure(e is err.TelemetryException ? e : Exception(e.toString()));
+      _recordFailure(
+        e is TelemetryException
+            ? e
+            : TelemetryException.now(
+                message: e.toString(),
+                code: 'EXPORT_TRACE',
+              ),
+      );
     }
   }
 
@@ -247,11 +258,11 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   Future<ResultDart<void, TelemetryException>> exportSpan(Span span) async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     return _retry.execute(
@@ -260,21 +271,23 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
         if (shouldFlush) {
           _exportBatch();
         }
-        return const Success(null);
+        return const Success(unit);
       },
       operationName: 'exportSpan',
     );
   }
 
   @override
-  Future<ResultDart<void, TelemetryException>> exportMetric(Metric metric) async {
+  Future<ResultDart<void, TelemetryException>> exportMetric(
+    Metric metric,
+  ) async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     return _retry.execute(
@@ -283,7 +296,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
         if (shouldFlush) {
           _exportBatch();
         }
-        return const Success(null);
+        return const Success(unit);
       },
       operationName: 'exportMetric',
     );
@@ -291,14 +304,15 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
 
   @override
   Future<ResultDart<void, TelemetryException>> exportEvent(
-      TelemetryEvent event,) async {
+    TelemetryEvent event,
+  ) async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     return _retry.execute(
@@ -307,7 +321,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
         if (shouldFlush) {
           _exportBatch();
         }
-        return const Success(null);
+        return const Success(unit);
       },
       operationName: 'exportEvent',
     );
@@ -321,11 +335,11 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   }) async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     try {
@@ -338,14 +352,14 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
       );
       final traceJson = _serializeTrace(updatedTrace);
       _ffi.exportTrace(traceJson);
-      return const Success(null);
+      return const Success(unit);
     } on Exception {
       return Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Failed to update trace: $traceId',
           code: 'UPDATE_TRACE_FAILED',
         ),
-      )
+      );
     }
   }
 
@@ -357,11 +371,11 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   }) async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     try {
@@ -376,14 +390,14 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
       );
       final spanJson = _serializeSpan(updatedSpan);
       _ffi.exportTrace(spanJson);
-      return const Success(null);
+      return const Success(unit);
     } on Exception {
       return Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Failed to update span: $spanId',
           code: 'UPDATE_SPAN_FAILED',
         ),
-      )
+      );
     }
   }
 
@@ -391,33 +405,31 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   Future<ResultDart<void, TelemetryException>> flush() async {
     if (!_isInitialized) {
       return const Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Telemetry not initialized',
           code: 'NOT_INITIALIZED',
         ),
-      )
+      );
     }
 
     try {
       _exportBatch();
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(
-        err.TelemetryException
+        TelemetryException(
           message: 'Failed to flush telemetry buffer: $e',
           code: 'FLUSH_FAILED',
         ),
-      )
+      );
     }
   }
 
   @override
   Future<ResultDart<void, TelemetryException>> shutdown() async {
     if (!_isInitialized) {
-      return const Success(null);
+      return const Success(unit);
     }
-
-    _isShuttingDown = true;
 
     try {
       if (_buffer.size > 0) {
@@ -429,16 +441,13 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
       _ffi.shutdown();
 
       _isInitialized = false;
-      return const Success(null);
+      return const Success(unit);
     } on Exception catch (e) {
       return Failure(
         TelemetryShutdownException(
           message: 'Failed to shutdown telemetry: $e',
         ),
       );
-    }
-  } finally {
-    _isShuttingDown = false;
     }
   }
 }
@@ -451,7 +460,7 @@ class _RetryHelper {
     required int maxRetries,
     required Duration baseDelay,
     required Duration maxDelay,
-  })  : _retry = _RetryHelperImpl(
+  }) : _retry = _RetryHelperImpl(
           maxRetries: maxRetries,
           baseDelay: baseDelay,
           maxDelay: maxDelay,
@@ -469,21 +478,17 @@ class _RetryHelper {
       operationName: operationName,
     );
 
-    // Convert generic Exception to TelemetryException if needed
-    if (result.isError()) {
-      final error = result.exceptionOrNull();
-      if (error != null && error is! TelemetryException) {
-        // Wrap non-TelemetryException errors
-        return Failure(
-          err.TelemetryException
-            message: error.toString(),
-            code: 'RETRY_WRAP_ERROR',
-          ),
-        )
-      }
-    }
-
-    return result;
+    return result.fold(
+      (_) => const Success(unit),
+      (e) => Failure(
+        e is TelemetryException
+            ? e
+            : TelemetryException(
+                message: e.toString(),
+                code: 'RETRY_WRAP_ERROR',
+              ),
+      ),
+    );
   }
 }
 
@@ -507,47 +512,37 @@ class _RetryHelperImpl {
     Future<ResultDart<void, Exception>> Function() operation, {
     String? operationName,
   }) async {
-    Exception? lastException;
-
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
         final result = await operation();
 
-        // If success, return immediately
         if (result.isSuccess()) {
           return result;
         }
 
-        // Extract failure to check if retryable
         final failure = result.exceptionOrNull();
         if (failure == null || !_isRetryable(failure)) {
-          return result; // Not retryable, return as-is
+          return result;
         }
 
-        lastException = failure;
-
-        // Don't delay after last attempt
         if (attempt < _maxRetries) {
           final delay = _calculateDelay(attempt);
-          await Future.delayed(delay);
+          await Future<void>.delayed(delay);
         }
-      } on Exception catch (e) {
-        // Unexpected exception - wrap and continue retry
-        lastException = e;
-
-        // Don't delay after last attempt
+      } on Exception catch (_) {
         if (attempt < _maxRetries) {
           final delay = _calculateDelay(attempt);
-          await Future.delayed(delay);
+          await Future<void>.delayed(delay);
         }
       }
     }
 
     // All retries exhausted
+    final msg = 'Operation ${operationName ?? ''} failed after '
+        '$_maxRetries retries';
     return Failure(
       TelemetryExportException(
-        message:
-            'Operation ${operationName ?? ''} failed after $_maxRetries retries',
+        message: msg,
         attemptNumber: _maxRetries,
       ),
     );
@@ -559,13 +554,11 @@ class _RetryHelperImpl {
     final exponentialDelay = _baseDelay.inMilliseconds * (1 << attempt);
 
     // Cap at maxDelay
-    final cappedDelay =
-        exponentialDelay.min(_maxDelay.inMilliseconds);
+    final cappedDelay = min(exponentialDelay, _maxDelay.inMilliseconds);
 
     // Add jitter: +/- jitterFactor * delay
     const jitterFactor = 0.1;
-    final jitter =
-        (_random.nextDouble() * 2 - 1) * jitterFactor * cappedDelay;
+    final jitter = (_random.nextDouble() * 2 - 1) * jitterFactor * cappedDelay;
     final finalDelay =
         (cappedDelay + jitter).clamp(0, _maxDelay.inMilliseconds);
 

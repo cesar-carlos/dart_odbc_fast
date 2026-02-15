@@ -148,7 +148,13 @@ void _handleRequest(
       case ExecutePreparedRequest():
         final bytes =
             request.serializedParams.isEmpty ? null : request.serializedParams;
-        final data = conn.executePreparedRaw(request.stmtId, bytes);
+        final data = conn.executePreparedRaw(
+          request.stmtId,
+          bytes,
+          request.timeoutOverrideMs,
+          request.fetchSize,
+          maxBufferBytes: request.maxResultBufferBytes,
+        );
         if (data != null) {
           sendPort.send(QueryResponse(request.requestId, data: data));
         } else {
@@ -236,6 +242,39 @@ void _handleRequest(
             ),
           );
         }
+      case GetCacheMetricsRequest():
+        final m = conn.getCacheMetrics();
+        if (m != null) {
+          sendPort.send(
+            CacheMetricsResponse(
+              request.requestId,
+              cacheSize: m.cacheSize,
+              cacheMaxSize: m.cacheMaxSize,
+              cacheHits: m.cacheHits,
+              cacheMisses: m.cacheMisses,
+              totalPrepares: m.totalPrepares,
+              totalExecutions: m.totalExecutions,
+              memoryUsageBytes: m.memoryUsageBytes,
+              avgExecutionsPerStmt: m.avgExecutionsPerStmt,
+            ),
+          );
+        } else {
+          sendPort.send(
+            CacheMetricsResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case ClearCacheRequest():
+        final cleared = conn.clearStatementCache();
+        sendPort.send(
+          ClearCacheResponse(
+            request.requestId,
+            error: cleared ? null : conn.getError(),
+          ),
+        );
 
       case CatalogTablesRequest():
         final data = conn.catalogTables(
@@ -354,5 +393,9 @@ void _sendErrorResponse(
       sendPort.send(StructuredErrorResponse(id, message: error, error: error));
     case DetectDriverRequest():
       sendPort.send(DetectDriverResponse(id, null));
+    case GetCacheMetricsRequest():
+      sendPort.send(CacheMetricsResponse(id, error: error));
+    case ClearCacheRequest():
+      sendPort.send(ClearCacheResponse(id, error: error));
   }
 }

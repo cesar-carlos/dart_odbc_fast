@@ -1,15 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+import 'package:odbc_fast/domain/entities/odbc_metrics.dart' as domain;
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
+    as bindings;
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
-import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/catalog_query.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/connection_pool.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/prepared_statement.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart';
+import 'package:odbc_fast/odbc_fast.dart';
 
 /// Native ODBC connection implementation using FFI bindings.
 ///
@@ -26,8 +23,8 @@ import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart
 /// ```
 class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Creates a new [NativeOdbcConnection] instance.
-  NativeOdbcConnection() : _native = OdbcNative();
-  final OdbcNative _native;
+  NativeOdbcConnection() : _native = bindings.OdbcNative();
+  final bindings.OdbcNative _native;
   bool _isInitialized = false;
 
   /// Initializes the ODBC environment.
@@ -177,16 +174,62 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     return PreparedStatement(this, stmtId);
   }
 
+  /// Prepares a SQL statement with named parameters and returns a
+  /// `PreparedStatement` wrapper that supports `executeNamed`.
+  ///
+  /// Supports @name and :name syntax. Converts to positional placeholders
+  /// before preparing. The returned `PreparedStatement` can use
+  /// `executeNamed` with a map of parameter values.
+  PreparedStatement? prepareStatementNamed(
+    int connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  }) {
+    final extractResult = NamedParameterParser.extract(sql);
+    final stmtId =
+        prepare(connectionId, extractResult.cleanedSql, timeoutMs: timeoutMs);
+    if (stmtId == 0) return null;
+    return PreparedStatement(
+      this,
+      stmtId,
+      paramNamesForNamedExecution: extractResult.paramNames,
+    );
+  }
+
   @override
-  Uint8List? executePrepared(int stmtId, [List<ParamValue>? params]) =>
-      _native.executeTyped(stmtId, params);
+  Uint8List? executePrepared(
+    int stmtId,
+    List<ParamValue>? params,
+    int timeoutOverrideMs,
+    int fetchSize, {
+    int? maxBufferBytes,
+  }) =>
+      _native.executeTyped(
+        stmtId,
+        params,
+        timeoutOverrideMs,
+        fetchSize,
+        maxBufferBytes,
+      );
 
   /// Executes a prepared statement with params already serialized (bytes).
   ///
   /// Used by the worker isolate. [serializedParams] is the output of
   /// [serializeParams] or null/empty for no params.
-  Uint8List? executePreparedRaw(int stmtId, Uint8List? serializedParams) =>
-      _native.execute(stmtId, serializedParams);
+  Uint8List? executePreparedRaw(
+    int stmtId,
+    Uint8List? serializedParams,
+    int timeoutOverrideMs,
+    int fetchSize, {
+    int? maxBufferBytes,
+  }) =>
+      _native.execute(
+        stmtId,
+        serializedParams,
+        timeoutOverrideMs,
+        fetchSize,
+        maxBufferBytes,
+      );
 
   @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
@@ -195,12 +238,7 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   int clearAllStatements() => _native.clearAllStatements();
 
   @override
-  ({
-    int totalStatements,
-    int totalExecutions,
-    int cacheHits,
-    int totalPrepares
-  })? getStatementsMetrics() => _native.getStatementsMetrics();
+  PreparedStatementMetrics? getCacheMetrics() => _native.getCacheMetrics();
 
   /// Executes a SQL query with parameters.
   ///
@@ -350,7 +388,19 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// Returns [OdbcMetrics] containing query counts, error counts,
   /// uptime, and latency information, or null on failure.
-  OdbcMetrics? getMetrics() => _native.getMetrics();
+  OdbcMetrics? getMetrics() => domain.OdbcMetrics(
+        queryCount: _native.getMetrics()?.queryCount ?? 0,
+        errorCount: _native.getMetrics()?.errorCount ?? 0,
+        uptimeSecs: _native.getMetrics()?.uptimeSecs ?? 0,
+        totalLatencyMillis: _native.getMetrics()?.totalLatencyMillis ?? 0,
+        avgLatencyMillis: _native.getMetrics()?.avgLatencyMillis ?? 0,
+      );
+
+  ///
+  /// Clears the prepared statement cache.
+  ///
+  /// Returns true on success, false on failure.
+  bool clearStatementCache() => _native.clearStatementCache();
 
   /// Executes a SQL query and returns results as a batched stream.
   ///

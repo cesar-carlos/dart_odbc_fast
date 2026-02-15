@@ -20,39 +20,61 @@ String _libraryName() {
 /// 1. Native Assets (automatic download from GitHub Releases)
 /// 2. Development local - native/target/release/ (workspace) or native/odbc_engine/target/release/ (local)
 /// 3. System library paths - PATH/LD_LIBRARY_PATH
+/// 4. Custom path - allows loading from custom path (for debugging)
 ///
+/// Finds package root by walking up until a directory contains pubspec.yaml.
+String? _findPackageRoot() {
+  var dir = Directory.current;
+  while (true) {
+    if (File('${dir.path}${Platform.pathSeparator}pubspec.yaml').existsSync()) {
+      return dir.path;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) return null;
+    dir = parent;
+  }
+}
+
+DynamicLibrary? _tryLoadFromRoot(String root, String name, String sep) {
+  final workspace = '$root${sep}native${sep}target${sep}release$sep$name';
+  final fWorkspace = File(workspace);
+  if (fWorkspace.existsSync()) {
+    return DynamicLibrary.open(fWorkspace.absolute.path);
+  }
+  final local =
+      '$root${sep}native${sep}odbc_engine${sep}target${sep}release$sep$name';
+  final fLocal = File(local);
+  if (fLocal.existsSync()) {
+    return DynamicLibrary.open(fLocal.absolute.path);
+  }
+  return null;
+}
+
 /// Returns the loaded [DynamicLibrary] instance.
 DynamicLibrary loadOdbcLibrary() {
   final name = _libraryName();
+  final cwd = Directory.current.path;
+  final sep = Platform.pathSeparator;
 
-  // 1. Native Assets (production) - baixado automaticamente da GitHub Release
-  // O hook/build.dart baixa e registra o asset, que é carregado aqui
+  // 1. CWD-relative (e.g. when running from project root)
+  final fromCwd = _tryLoadFromRoot(cwd, name, sep);
+  if (fromCwd != null) return fromCwd;
+
+  // 2. Package root-relative (e.g. when dart test runs from test/subdir)
+  final root = _findPackageRoot();
+  if (root != null) {
+    final fromRoot = _tryLoadFromRoot(root, name, sep);
+    if (fromRoot != null) return fromRoot;
+  }
+
+  // 3. Native Assets (produção) - package:odbc_fast/
   try {
     return DynamicLibrary.open('package:odbc_fast/$name');
   } on Object catch (_) {
     // Native Assets não disponível, continua para próxima opção
   }
 
-  // 2. Desenvolvimento local - native/target/release/ (workspace target)
-  final cwd = Directory.current.path;
-  final devPathWorkspace = '$cwd${Platform.pathSeparator}native'
-      '${Platform.pathSeparator}target${Platform.pathSeparator}release'
-      '${Platform.pathSeparator}$name';
-
-  if (File(devPathWorkspace).existsSync()) {
-    return DynamicLibrary.open(devPathWorkspace);
-  }
-
-  // 2b. Fallback: native/odbc_engine/target/release/ (local target)
-  final devPathLocal = '$cwd${Platform.pathSeparator}native'
-      '${Platform.pathSeparator}odbc_engine${Platform.pathSeparator}target'
-      '${Platform.pathSeparator}release${Platform.pathSeparator}$name';
-
-  if (File(devPathLocal).existsSync()) {
-    return DynamicLibrary.open(devPathLocal);
-  }
-
-  // 3. Sistema - PATH/LD_LIBRARY_PATH
+  // 4. Sistema - PATH/LD_LIBRARY_PATH
   try {
     return DynamicLibrary.open(name);
   } catch (e) {

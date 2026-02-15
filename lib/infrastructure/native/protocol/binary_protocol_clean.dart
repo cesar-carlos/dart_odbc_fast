@@ -1,8 +1,9 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 /// Metadata for a single column in a query result.
 ///
-/// Contains the column name and ODBC type code.
+/// Contains column name and ODBC type code.
 class ColumnMetadata {
   /// Creates a new [ColumnMetadata] instance.
   ///
@@ -38,10 +39,10 @@ class ParsedRowBuffer {
     required this.columnCount,
   });
 
-  /// Column metadata for all columns in the result set.
+  /// Column metadata (name and ODBC type).
   final List<ColumnMetadata> columns;
 
-  /// Row data, where each row is a list of dynamic values.
+  /// Row data, where each row is a list of values.
   final List<List<dynamic>> rows;
 
   /// Number of rows in the result set.
@@ -62,7 +63,7 @@ class BinaryProtocolParser {
   /// Magic number identifying binary protocol data (ASCII "ODBC").
   static const int magic = 0x4F444243;
 
-  /// Size of the protocol header in bytes.
+  /// Size of protocol header in bytes.
   static const int headerSize = 16;
 
   /// Returns total message length (header + payload) from the first 16 bytes.
@@ -71,9 +72,9 @@ class BinaryProtocolParser {
     if (data.length < headerSize) {
       throw const FormatException('Buffer too small for header');
     }
-    final base = data.offsetInBytes;
-    final payloadSize =
-        data.buffer.asByteData().getUint32(base + 12, Endian.little);
+
+    final byteData = ByteData.sublistView(data);
+    final payloadSize = byteData.getUint32(12, Endian.little);
     return headerSize + payloadSize;
   }
 
@@ -85,55 +86,96 @@ class BinaryProtocolParser {
   ///
   /// Throws [FormatException] if the data is invalid or malformed.
   static ParsedRowBuffer parse(Uint8List data) {
-    if (data.length < headerSize) {
+    if (data.length < messageLengthFromHeader(data)) {
       throw const FormatException('Buffer too small for header');
-    }
-
-    final messageLength = messageLengthFromHeader(data);
-    if (data.length < messageLength) {
-      throw const FormatException('Buffer too small for payload');
     }
 
     final reader = _BufferReader(data);
 
-    final readMagic = reader.readUint32();
-    if (readMagic != magic) {
-      throw FormatException(
-        'Invalid magic number: 0x${readMagic.toRadixString(16)}',
-      );
-    }
-
     final version = reader.readUint16();
     if (version != 1) {
-      throw FormatException('Unsupported version: $version');
+      throw FormatException('Unsupported protocol version: $version');
     }
 
     final columnCount = reader.readUint16();
+    if (columnCount < 0 || columnCount > 255) {
+      throw FormatException('Invalid column count: $columnCount');
+    }
+
     final rowCount = reader.readUint32();
-    reader.readUint32();
 
     final columns = <ColumnMetadata>[];
     for (var i = 0; i < columnCount; i++) {
+      final nameLength = reader.readUint8();
+      final name = reader.readString(nameLength);
       final odbcType = reader.readUint16();
-      final nameLen = reader.readUint16();
-      final name = reader.readString(nameLen);
-      columns.add(ColumnMetadata(name: name, odbcType: odbcType));
+
+      columns.add(
+        ColumnMetadata(
+          name: name,
+          odbcType: odbcType,
+        ),
+      );
     }
 
     final rows = <List<dynamic>>[];
-    for (var r = 0; r < rowCount; r++) {
-      final row = <dynamic>[];
-      for (var c = 0; c < columnCount; c++) {
-        final isNull = reader.readUint8();
-        if (isNull == 1) {
-          row.add(null);
-        } else {
-          final dataLen = reader.readUint32();
-          final data = reader.readBytes(dataLen);
-          row.add(_convertData(data, columns[c].odbcType));
+    for (var i = 0; i < rowCount; i++) {
+      final rowValues = <dynamic>[];
+
+      for (var j = 0; j < columnCount; j++) {
+        final isNull = reader.readUint8() == 1;
+        final type = reader.readUint8();
+
+        switch (type) {
+          case 0:
+            rowValues.add(null);
+          case 1:
+            final length = reader.readUint32();
+            if (isNull) {
+              rowValues.add(null);
+            } else {
+              final string = reader.readString(length);
+              rowValues.add(string);
+            }
+          case 2:
+            reader.readUint32();
+            rowValues.add(reader.readUint32());
+          case 3:
+            reader.readUint32();
+            rowValues.add(reader.readUint64());
+          case 4:
+            reader.readUint32();
+            final hasValue = reader.readUint8() == 1;
+            if (hasValue) {
+              final doubleValue = reader.readFloat64();
+              rowValues.add(doubleValue);
+            } else {
+              rowValues.add(null);
+            }
+          case 5:
+            reader.readUint32();
+            rowValues.add(reader.readFloat64());
+          case 6:
+            reader.readUint32();
+            final hasDate = reader.readUint8() == 1;
+            if (hasDate) {
+              final dateValue = DateTime.fromMillisecondsSinceEpoch(
+                reader.readUint64(),
+                isUtc: true,
+              );
+              rowValues.add(dateValue);
+            } else {
+              rowValues.add(null);
+            }
+          case 7:
+            final length = reader.readUint32();
+            rowValues.add(reader.readBinary(length));
+          default:
+            rowValues.add(null);
         }
       }
-      rows.add(row);
+
+      rows.add(rowValues);
     }
 
     return ParsedRowBuffer(
@@ -143,78 +185,60 @@ class BinaryProtocolParser {
       columnCount: columnCount,
     );
   }
-
-  /// Converts binary data to a Dart value based on ODBC type.
-  ///
-  /// Type 1: String
-  /// Type 2: 32-bit integer
-  /// Type 3: 64-bit integer
-  /// Default: String
-  static dynamic _convertData(Uint8List data, int odbcType) {
-    switch (odbcType) {
-      case 1:
-        return String.fromCharCodes(data);
-      case 2:
-        if (data.length >= 4) {
-          final byteData = ByteData.sublistView(data);
-          return byteData.getInt32(0, Endian.little);
-        }
-        return String.fromCharCodes(data);
-      case 3:
-        if (data.length >= 8) {
-          final byteData = ByteData.sublistView(data);
-          return byteData.getInt64(0, Endian.little);
-        }
-        return String.fromCharCodes(data);
-      default:
-        return String.fromCharCodes(data);
-    }
-  }
 }
 
-/// Internal buffer reader for parsing binary protocol data.
-///
-/// Provides methods to read various data types from a byte buffer
-/// with automatic offset tracking.
 class _BufferReader {
-  /// Creates a new [_BufferReader] instance.
-  ///
-  /// The data parameter is the byte buffer to read from.
   _BufferReader(this._data);
 
   final Uint8List _data;
   int _offset = 0;
 
-  /// Reads a single unsigned 8-bit integer.
   int readUint8() {
-    return _data[_offset++];
+    final value = _data[_offset];
+    _offset += 1;
+    return value;
   }
 
-  /// Reads an unsigned 16-bit integer in little-endian format.
   int readUint16() {
-    final value = _data.buffer.asByteData().getUint16(_offset, Endian.little);
+    final value = _data.buffer.asByteData().getUint16(_offset);
     _offset += 2;
     return value;
   }
 
-  /// Reads an unsigned 32-bit integer in little-endian format.
   int readUint32() {
-    final value = _data.buffer.asByteData().getUint32(_offset, Endian.little);
+    final value = _data.buffer.asByteData().getUint32(_offset);
     _offset += 4;
     return value;
   }
 
-  /// Reads a string of the specified [length] from the buffer.
-  String readString(int length) {
-    final bytes = _data.sublist(_offset, _offset + length);
-    _offset += length;
-    return String.fromCharCodes(bytes);
+  int readUint64() {
+    final value = _data.buffer.asByteData().getUint64(_offset);
+    _offset += 8;
+    return value;
   }
 
-  /// Reads [length] bytes from the buffer as a [Uint8List].
-  Uint8List readBytes(int length) {
+  int readInt8() {
+    final value = _data.buffer.asByteData().getInt8(_offset);
+    _offset += 1;
+    return value;
+  }
+
+  double readFloat64() {
+    final value = _data.buffer.asByteData().getFloat64(_offset);
+    _offset += 8;
+    return value;
+  }
+
+  String readString(int length) {
+    final bytes = _data.sublist(_offset, _offset + length);
+    final value = utf8.decode(bytes);
+    _offset += length;
+    return value;
+  }
+
+  Uint8List readBinary(int length) {
     final bytes = _data.sublist(_offset, _offset + length);
     _offset += length;
-    return bytes;
+    return Uint8List.fromList(bytes);
   }
 }

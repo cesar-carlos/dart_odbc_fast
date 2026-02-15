@@ -23,6 +23,12 @@ enum AsyncErrorCode {
 
   /// Environment not initialized.
   notInitialized,
+
+  /// Request to worker timed out (worker did not respond in time).
+  requestTimeout,
+
+  /// Worker isolate terminated (disposed or crashed).
+  workerTerminated,
 }
 
 /// Sendable error type that can cross isolate boundaries.
@@ -128,6 +134,8 @@ class AsyncError implements Exception {
         ),
       AsyncErrorCode.invalidParameter => ValidationError(message: message),
       AsyncErrorCode.notInitialized => const EnvironmentNotInitializedError(),
+      AsyncErrorCode.requestTimeout => QueryError(message: message),
+      AsyncErrorCode.workerTerminated => QueryError(message: message),
     };
   }
 }
