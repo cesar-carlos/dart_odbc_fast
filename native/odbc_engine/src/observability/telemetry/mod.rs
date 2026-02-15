@@ -19,6 +19,11 @@ struct TelemetryState {
     last_error: Option<String>,
 }
 
+fn lock_telemetry_state(
+) -> std::result::Result<std::sync::MutexGuard<'static, Option<TelemetryState>>, i32> {
+    TELEMETRY_STATE.lock().map_err(|_| 4)
+}
+
 impl TelemetryState {
     fn new(exporter: Box<dyn TelemetryExporter + Send>) -> Self {
         Self {
@@ -78,7 +83,10 @@ pub unsafe extern "C" fn otel_init(
         }
     };
 
-    let mut state = TELEMETRY_STATE.lock().unwrap();
+    let mut state = match lock_telemetry_state() {
+        Ok(state) => state,
+        Err(code) => return code,
+    };
     *state = Some(TelemetryState::new(exporter));
 
     0
@@ -101,7 +109,10 @@ pub unsafe extern "C" fn otel_export_trace(trace_json: *const u8, trace_len: usi
         return 1;
     }
 
-    let mut state = TELEMETRY_STATE.lock().unwrap();
+    let mut state = match lock_telemetry_state() {
+        Ok(state) => state,
+        Err(code) => return code,
+    };
     let telemetry_state = match state.as_ref() {
         Some(s) => s,
         None => return 2,
@@ -168,7 +179,10 @@ pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *
         return 1;
     }
 
-    let state = TELEMETRY_STATE.lock().unwrap();
+    let state = match lock_telemetry_state() {
+        Ok(state) => state,
+        Err(code) => return code,
+    };
     let error_message = match state.as_ref().and_then(|s| s.get_last_error()) {
         Some(msg) => msg,
         None => "No error".to_string(),
@@ -202,7 +216,10 @@ pub extern "C" fn otel_cleanup_strings() {
 /// Shutdown OpenTelemetry and release resources.
 #[no_mangle]
 pub extern "C" fn otel_shutdown() {
-    let mut state = TELEMETRY_STATE.lock().unwrap();
+    let mut state = match lock_telemetry_state() {
+        Ok(state) => state,
+        Err(_) => return,
+    };
     *state = None;
 }
 

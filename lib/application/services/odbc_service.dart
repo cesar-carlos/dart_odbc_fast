@@ -30,6 +30,11 @@ abstract class IOdbcService {
     List<dynamic> params,
   );
 
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  );
+
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
@@ -225,6 +230,14 @@ class OdbcService implements IOdbcService {
       sql,
       params,
     );
+  }
+
+  @override
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  ) {
+    return _repository.streamQuery(connectionId, sql);
   }
 
   @override

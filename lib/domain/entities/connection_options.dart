@@ -83,4 +83,38 @@ class ConnectionOptions {
   /// Effective delay between reconnect attempts.
   Duration get effectiveReconnectBackoff =>
       reconnectBackoff ?? defaultReconnectBackoff;
+
+  /// Returns a human-readable validation message when options are invalid.
+  ///
+  /// Returns null when all configured values are valid.
+  String? validate() {
+    if (connectionTimeout != null && connectionTimeout! < Duration.zero) {
+      return 'connectionTimeout cannot be negative';
+    }
+    if (loginTimeout != null && loginTimeout! < Duration.zero) {
+      return 'loginTimeout cannot be negative';
+    }
+    if (queryTimeout != null && queryTimeout! < Duration.zero) {
+      return 'queryTimeout cannot be negative';
+    }
+    if (maxResultBufferBytes != null && maxResultBufferBytes! <= 0) {
+      return 'maxResultBufferBytes must be greater than zero';
+    }
+    if (initialResultBufferBytes != null && initialResultBufferBytes! <= 0) {
+      return 'initialResultBufferBytes must be greater than zero';
+    }
+    if (maxResultBufferBytes != null &&
+        initialResultBufferBytes != null &&
+        initialResultBufferBytes! > maxResultBufferBytes!) {
+      return 'initialResultBufferBytes cannot be greater than '
+          'maxResultBufferBytes';
+    }
+    if (maxReconnectAttempts != null && maxReconnectAttempts! < 0) {
+      return 'maxReconnectAttempts cannot be negative';
+    }
+    if (reconnectBackoff != null && reconnectBackoff! < Duration.zero) {
+      return 'reconnectBackoff cannot be negative';
+    }
+    return null;
+  }
 }

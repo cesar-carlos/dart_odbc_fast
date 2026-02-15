@@ -1,10 +1,10 @@
-/// Helper functions for E2E tests
-/// Provides utilities to check if E2E tests can run (connection available)
+/// Helper functions for E2E tests.
+/// Provides utilities to check whether E2E tests can run (connection available).
 use super::env::get_sqlserver_test_dsn;
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 use odbc_engine::test_helpers::load_dotenv;
 
-/// Tipo de banco de dados detectado
+/// Detected database type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseType {
     SqlServer,
@@ -17,11 +17,11 @@ pub enum DatabaseType {
     Unknown,
 }
 
-/// Detecta o tipo de banco de dados pela string de conexão
+/// Detects database type from the connection string.
 pub fn detect_database_type(conn_str: &str) -> DatabaseType {
     let conn_lower = conn_str.to_lowercase();
 
-    // SQL Server - vários drivers possíveis
+    // SQL Server - several possible drivers.
     if conn_lower.contains("sql server")
         || conn_lower.contains("driver={odbc driver")
         || (conn_lower.contains("server=")
@@ -31,7 +31,7 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
         return DatabaseType::SqlServer;
     }
 
-    // Sybase Anywhere
+    // Sybase Anywhere.
     if conn_lower.contains("sql anywhere")
         || conn_lower.contains("sybase")
         || conn_lower.contains("servername=")
@@ -39,27 +39,27 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
         return DatabaseType::Sybase;
     }
 
-    // PostgreSQL
+    // PostgreSQL.
     if conn_lower.contains("postgresql") {
         return DatabaseType::PostgreSQL;
     }
 
-    // MySQL
+    // MySQL.
     if conn_lower.contains("mysql") {
         return DatabaseType::MySQL;
     }
 
-    // Oracle
+    // Oracle.
     if conn_lower.contains("oracle") {
         return DatabaseType::Oracle;
     }
 
-    // MongoDB (ODBC connector)
+    // MongoDB (ODBC connector).
     if conn_lower.contains("mongodb") {
         return DatabaseType::MongoDB;
     }
 
-    // SQLite
+    // SQLite.
     if conn_lower.contains("sqlite") {
         return DatabaseType::SQLite;
     }
@@ -67,7 +67,7 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
     DatabaseType::Unknown
 }
 
-/// Obtém a string de conexão e detecta o tipo de banco
+/// Gets the connection string and detected database type.
 #[allow(dead_code)]
 pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
     load_dotenv();
@@ -78,14 +78,14 @@ pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
     Some((conn_str, db_type))
 }
 
-/// Verifica se é possível conectar ao banco de dados para testes E2E
-/// Retorna `true` se a conexão está disponível e funcional
+/// Checks whether an E2E database connection can be established.
+/// Returns `true` when the connection is available and working.
 #[allow(dead_code)] // Test helper API; used by e2e tests when ODBC is configured
 pub fn can_connect_to_sqlserver() -> bool {
-    // Carregar variáveis do .env
+    // Load variables from .env.
     load_dotenv();
 
-    // Verificar se connection string está disponível
+    // Verify whether connection string is available.
     let conn_str = match get_sqlserver_test_dsn() {
         Some(s) => s,
         None => {
@@ -93,35 +93,35 @@ pub fn can_connect_to_sqlserver() -> bool {
         }
     };
 
-    // Tentar inicializar ambiente ODBC
+    // Try to initialize ODBC environment.
     let env = OdbcEnvironment::new();
     if env.init().is_err() {
         return false;
     }
 
-    // Tentar conectar ao banco de dados
+    // Try to connect to database.
     let handles = env.get_handles();
     match OdbcConnection::connect(handles, &conn_str) {
         Ok(conn) => {
-            // Se conectou com sucesso, desconectar e retornar true
+            // Connected successfully, disconnect and return true.
             let _ = conn.disconnect();
             let db_type = detect_database_type(&conn_str);
             eprintln!(
-                "✓ Connection successful with: {} (detected as {:?})",
+                "[OK] Connection successful with: {} (detected as {:?})",
                 conn_str, db_type
             );
             true
         }
         Err(e) => {
-            eprintln!("✗ Connection failed: {:?}", e);
+            eprintln!("[ERROR] Connection failed: {:?}", e);
             eprintln!("  Connection string: {}", conn_str);
             false
         }
     }
 }
 
-/// Verifica se o teste deve rodar para um banco de dados específico
-/// Retorna true se o banco conectado é o esperado
+/// Checks whether a test should run for a specific database type.
+/// Returns true when the connected database matches the expected one.
 #[allow(dead_code)]
 pub fn is_database_type(expected: DatabaseType) -> bool {
     load_dotenv();
@@ -131,7 +131,7 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
             return true;
         } else {
             eprintln!(
-                "⚠️  Skipping test: requires {:?}, but connected to {:?}",
+                "[WARN] Skipping test: requires {:?}, but connected to {:?}",
                 expected, db_type
             );
             return false;
@@ -141,11 +141,11 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
     false
 }
 
-/// Verifica se testes E2E devem ser executados
-/// Só executa quando ENABLE_E2E_TESTS estiver explicitamente habilitado
+/// Checks whether E2E tests should run.
+/// Runs only when ENABLE_E2E_TESTS is explicitly enabled.
 #[allow(dead_code)] // Test helper API; used by e2e tests when ENABLE_E2E_TESTS is set
 pub fn should_run_e2e_tests() -> bool {
-    // Carregar variáveis do .env
+    // Load variables from .env.
     load_dotenv();
 
     fn parse_env_bool(raw: &str) -> Option<bool> {

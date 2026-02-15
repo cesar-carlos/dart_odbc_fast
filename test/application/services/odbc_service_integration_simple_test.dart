@@ -26,6 +26,8 @@ import '../../helpers/load_env.dart';
 
 void main() {
   loadTestEnv();
+  final runningOnCi =
+      (Platform.environment['CI'] ?? '').toLowerCase() == 'true';
   group('OdbcService basic operations', () {
     late MockOdbcRepository mockRepo;
     late OdbcService service;
@@ -84,6 +86,18 @@ void main() {
       expect(result.isSuccess(), isTrue);
       expect(result.getOrNull()!.rows.length, equals(1));
       expect(mockRepo.executeQueryParamsCalled, isTrue);
+    });
+
+    test('StreamQuery operation', () async {
+      await service.initialize();
+      final connResult = await service.connect('test');
+      final chunks = await service
+          .streamQuery(connResult.getOrNull()!.id, 'SELECT * FROM users')
+          .toList();
+
+      expect(chunks, isNotEmpty);
+      expect(chunks.first.isSuccess(), isTrue);
+      expect(mockRepo.streamQueryCalled, isTrue);
     });
 
     test('PrepareNamed operation', () async {
@@ -279,60 +293,60 @@ void main() {
     });
   });
 
-  if (getTestEnv('ODBC_TEST_DSN') == null) {
-    return;
-  }
+  group(
+    'OdbcService E2E',
+    () {
+      ServiceLocator? locator;
+      String? dsn;
+      String? skipReason;
 
-  group('OdbcService E2E', () {
-    ServiceLocator? locator;
-    String? dsn;
-    String? skipReason;
-
-    setUpAll(() async {
-      dsn = getTestEnv('ODBC_TEST_DSN');
-      if (dsn == null || dsn!.isEmpty) {
-        skipReason = 'ODBC_TEST_DSN not configured';
-        return;
-      }
-      try {
-        final sl = ServiceLocator()..initialize(useAsync: true);
-        await sl.syncService.initialize();
-        await sl.asyncService.initialize();
-        locator = sl;
-      } on Object catch (e) {
-        skipReason = 'Native environment unavailable: $e';
-      }
-    });
-
-    tearDownAll(() {
-      locator?.shutdown();
-    });
-
-    test(
-      'should connect and execute query with real ODBC',
-      () async {
-        if (skipReason != null ||
-            dsn == null ||
-            dsn!.isEmpty ||
-            locator == null) {
+      setUpAll(() async {
+        dsn = getTestEnv('ODBC_TEST_DSN');
+        if (dsn == null || dsn!.isEmpty) {
+          skipReason = 'ODBC_TEST_DSN not configured';
           return;
         }
+        try {
+          final sl = ServiceLocator()..initialize(useAsync: true);
+          await sl.syncService.initialize();
+          await sl.asyncService.initialize();
+          locator = sl;
+        } on Object catch (e) {
+          skipReason = 'Native environment unavailable: $e';
+        }
+      });
 
-        final connResult = await locator!.syncService.connect(dsn!);
-        final connection =
-            connResult.getOrElse((_) => throw Exception('Failed to connect'));
+      tearDownAll(() {
+        locator?.shutdown();
+      });
 
-        final queryResult = await locator!.syncService.executeQueryParams(
-          connection.id,
-          'SELECT 1',
-          [],
-        );
+      test(
+        'should connect and execute query with real ODBC',
+        () async {
+          if (skipReason != null ||
+              dsn == null ||
+              dsn!.isEmpty ||
+              locator == null) {
+            return;
+          }
 
-        expect(queryResult.isSuccess(), isTrue);
-        await locator!.syncService.disconnect(connection.id);
-      },
-    );
-  });
+          final connResult = await locator!.syncService.connect(dsn!);
+          final connection =
+              connResult.getOrElse((_) => throw Exception('Failed to connect'));
+
+          final queryResult = await locator!.syncService.executeQueryParams(
+            connection.id,
+            'SELECT 1',
+            [],
+          );
+
+          expect(queryResult.isSuccess(), isTrue);
+          await locator!.syncService.disconnect(connection.id);
+        },
+      );
+    },
+    skip: runningOnCi ? 'Disabled in CI workflow (integration/e2e)' : null,
+  );
 }
 
 /// Mock ODBC repository for testing.
@@ -347,6 +361,7 @@ class MockOdbcRepository implements IOdbcRepository {
   bool connectCalled = false;
   bool disconnectCalled = false;
   bool executeQueryCalled = false;
+  bool streamQueryCalled = false;
   bool executeQueryParamsCalled = false;
   bool executeQueryNamedCalled = false;
   bool executeQueryMultiFullCalled = false;
@@ -409,6 +424,24 @@ class MockOdbcRepository implements IOdbcRepository {
           [2, 'Bob'],
         ],
         rowCount: 2,
+      ),
+    );
+  }
+
+  @override
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  ) async* {
+    streamQueryCalled = true;
+    _queryCount++;
+    yield const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [
+          [1, 'Alice'],
+        ],
+        rowCount: 1,
       ),
     );
   }

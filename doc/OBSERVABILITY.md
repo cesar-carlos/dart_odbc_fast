@@ -1,22 +1,22 @@
-# OBSERVABILITY.md
+﻿# OBSERVABILITY.md
 
-Guia de telemetria e metricas operacionais do `odbc_fast`.
+Telemetry and operational metrics guide for `odbc_fast`.
 
-## Componentes
+## Components
 
-- `TelemetryRepositoryImpl`: integra com backend OTLP via FFI
-- `SimpleTelemetryService`: camada de servico para eventos/metricas
-- `OdbcService.getMetrics()`: metricas operacionais de execucao
-- `OdbcService.getPreparedStatementsMetrics()`: metricas de cache de prepared statements
+- `TelemetryRepositoryImpl`: integrates with OTLP backend via FFI
+- `SimpleTelemetryService`: service layer for events/metrics
+- `OdbcService.getMetrics()`: runtime operational metrics
+- `OdbcService.getPreparedStatementsMetrics()`: prepared-statement cache metrics
 
-## APIs operacionais relacionadas
+## Related operational APIs
 
-- `OdbcService.clearStatementCache()`: limpa cache de prepared statements
-- `OdbcService.detectDriver(connectionString)`: identifica driver a partir da connection string
-- `ConnectionOptions.queryTimeout`: timeout por query (camada de repositorio)
-- `ConnectionOptions.autoReconnectOnConnectionLost`: tentativa de reconnect com backoff
+- `OdbcService.clearStatementCache()`: clears prepared statements cache
+- `OdbcService.detectDriver(connectionString)`: identifies driver from connection string
+- `ConnectionOptions.queryTimeout`: per-query timeout (repository layer)
+- `ConnectionOptions.autoReconnectOnConnectionLost`: reconnect attempts with backoff
 
-## Inicializacao OTLP
+## OTLP initialization
 
 ```dart
 import 'package:odbc_fast/infrastructure/native/bindings/opentelemetry_ffi.dart';
@@ -32,17 +32,18 @@ final repository = TelemetryRepositoryImpl(
 await repository.initialize(otlpEndpoint: 'http://localhost:4318');
 ```
 
-### Contrato FFI (Dart -> Rust)
+### FFI contract (Dart -> Rust)
 
-- `OpenTelemetryFFI` usa a biblioteca nativa carregada por `library_loader.dart`.
-- Simbolos esperados: `otel_init`, `otel_export_trace`, `otel_export_trace_to_string`, `otel_get_last_error`, `otel_cleanup_strings`, `otel_shutdown`.
-- Compatibilidade da API Dart:
-  - `initialize()` retorna `1` em sucesso (compatibilidade com versoes anteriores).
-  - Erros de exportacao podem ser consultados por `getLastErrorMessage()`.
+- `OpenTelemetryFFI` uses native library loaded by `library_loader.dart`.
+- Expected symbols: `otel_init`, `otel_export_trace`, `otel_export_trace_to_string`, `otel_get_last_error`, `otel_cleanup_strings`, `otel_shutdown`.
+- Dart API compatibility:
+  - `initialize()` returns `1` on success (backward compatibility)
+  - export failures can be inspected with `getLastErrorMessage()`
+  - internal telemetry-state lock poisoning returns code `4` from `otel_*` FFI functions
 
-## Fallback para console
+## Console fallback
 
-Quando houver falhas consecutivas na exportacao OTLP, o repositorio pode usar fallback.
+When consecutive OTLP export failures happen, repository can use fallback exporter.
 
 ```dart
 import 'package:odbc_fast/infrastructure/native/telemetry/console.dart';
@@ -50,11 +51,11 @@ import 'package:odbc_fast/infrastructure/native/telemetry/console.dart';
 repository.setFallbackExporter(ConsoleExporter());
 ```
 
-## Metricas de ODBC
+## ODBC metrics
 
 ### `getMetrics()`
 
-Campos principais:
+Main fields:
 
 - `queryCount`
 - `errorCount`
@@ -64,7 +65,7 @@ Campos principais:
 
 ### `getPreparedStatementsMetrics()`
 
-Campos principais:
+Main fields:
 
 - `cacheSize`, `cacheMaxSize`
 - `cacheHits`, `cacheMisses`
@@ -72,18 +73,18 @@ Campos principais:
 - `totalPrepares`, `totalExecutions`
 - `avgExecutionsPerStmt`
 
-## Exemplo minimo
+## Minimal example
 
 ```dart
 final metricsResult = await service.getMetrics();
 metricsResult.fold(
   (m) => print('queries=${m.queryCount} avg=${m.avgLatencyMillis}ms'),
-  (e) => print('erro: $e'),
+  (e) => print('error: $e'),
 );
 ```
 
-## Recomendacoes
+## Recommendations
 
-1. Em producao, usar endpoint OTLP com TLS e autenticacao.
-2. Ativar fallback apenas como contingencia, nao como caminho principal.
-3. Monitorar `errorCount` e `cacheHitRate` para identificar regressao.
+1. In production, use OTLP endpoint with TLS and authentication
+2. Enable fallback only as contingency, not as primary path
+3. Monitor `errorCount` and `cacheHitRate` to detect regressions

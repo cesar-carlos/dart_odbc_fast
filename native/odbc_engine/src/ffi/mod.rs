@@ -3284,12 +3284,12 @@ mod tests {
         use std::sync::Once;
         static INIT: Once = Once::new();
 
-        // Carrega .env apenas uma vez
+        // Load .env only once.
         INIT.call_once(|| {
             let _ = dotenvy::dotenv();
         });
 
-        // Verifica se os testes e2e estão habilitados
+        // Check whether E2E tests are enabled
         let enabled = std::env::var("ENABLE_E2E_TESTS").ok().and_then(|val| {
             let normalized = val.trim().to_lowercase();
             match normalized.as_str() {

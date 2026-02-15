@@ -82,9 +82,11 @@ class AsyncNativeOdbcConnection {
   ReceivePort? _receivePort;
   Isolate? _workerIsolate;
   bool _isInitialized = false;
+  bool _isShuttingDown = false;
   int _requestIdCounter = 0;
   final Map<int, Completer<WorkerResponse>> _pendingRequests = {};
   final Map<int, List<String>> _namedParamOrderByStmtId = {};
+  Completer<void>? _recoveryInFlight;
 
   /// Initializes the worker isolate and ODBC environment.
   ///
@@ -99,6 +101,7 @@ class AsyncNativeOdbcConnection {
   /// Returns `true` if initialization succeeds, `false` otherwise.
   Future<bool> initialize() async {
     if (_isInitialized) return true;
+    _isShuttingDown = false;
 
     final handshake = Completer<SendPort>();
     _receivePort = ReceivePort();
@@ -117,10 +120,11 @@ class AsyncNativeOdbcConnection {
             message: 'Worker isolate error: $error',
           ),
         );
-        if (autoRecoverOnWorkerCrash) {
-          AppLogger.severe('Worker isolate crashed: $error', error, stackTrace);
-          await recoverWorker();
-        }
+        await _triggerAutoRecovery(
+          reason: 'Worker isolate crashed',
+          error: error,
+          stackTrace: stackTrace,
+        );
       },
       onDone: () async {
         if (_pendingRequests.isNotEmpty) {
@@ -131,10 +135,7 @@ class AsyncNativeOdbcConnection {
             ),
           );
         }
-        if (autoRecoverOnWorkerCrash) {
-          AppLogger.severe('Worker isolate terminated');
-          await recoverWorker();
-        }
+        await _triggerAutoRecovery(reason: 'Worker isolate terminated');
       },
     );
 
@@ -194,6 +195,66 @@ class AsyncNativeOdbcConnection {
   }
 
   int _nextRequestId() => _requestIdCounter++;
+
+  Future<String?> _safeGetWorkerError() async {
+    try {
+      final message = await getError();
+      final trimmed = message.trim();
+      if (trimmed.isEmpty || trimmed == 'No error') {
+        return null;
+      }
+      return trimmed;
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _runSingleRecovery(Future<void> Function() operation) async {
+    final inFlight = _recoveryInFlight;
+    if (inFlight != null) {
+      await inFlight.future;
+      return;
+    }
+
+    final completer = Completer<void>();
+    _recoveryInFlight = completer;
+
+    try {
+      await operation();
+      completer.complete();
+    } on Object catch (e, st) {
+      completer.completeError(e, st);
+      rethrow;
+    } finally {
+      if (identical(_recoveryInFlight, completer)) {
+        _recoveryInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _triggerAutoRecovery({
+    required String reason,
+    Object? error,
+    StackTrace? stackTrace,
+  }) async {
+    if (!autoRecoverOnWorkerCrash || _isShuttingDown) {
+      return;
+    }
+
+    await _runSingleRecovery(() async {
+      if (error != null) {
+        AppLogger.severe(reason, error, stackTrace);
+      } else {
+        AppLogger.severe(reason);
+      }
+      await _recoverWorkerInternal();
+    });
+  }
+
+  Future<void> _recoverWorkerInternal() async {
+    dispose();
+    await initialize();
+  }
 
   /// Whether the worker isolate and ODBC environment are initialized.
   bool get isInitialized => _isInitialized;
@@ -757,7 +818,11 @@ class AsyncNativeOdbcConnection {
       chunkSize: chunkSize,
     );
     if (streamId == 0) {
-      return;
+      final workerError = await _safeGetWorkerError();
+      throw AsyncError(
+        code: AsyncErrorCode.queryFailed,
+        message: workerError ?? 'Failed to start batched stream',
+      );
     }
 
     var pending = BytesBuilder(copy: false);
@@ -766,7 +831,11 @@ class AsyncNativeOdbcConnection {
       while (true) {
         final fetched = await _streamFetch(streamId);
         if (!fetched.success) {
-          return;
+          final workerError = fetched.error ?? await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Batched stream fetch failed',
+          );
         }
 
         final data = fetched.data;
@@ -829,7 +898,11 @@ class AsyncNativeOdbcConnection {
       chunkSize: chunkSize,
     );
     if (streamId == 0) {
-      return;
+      final workerError = await _safeGetWorkerError();
+      throw AsyncError(
+        code: AsyncErrorCode.queryFailed,
+        message: workerError ?? 'Failed to start stream',
+      );
     }
 
     final buffer = BytesBuilder(copy: false);
@@ -838,7 +911,11 @@ class AsyncNativeOdbcConnection {
       while (true) {
         final fetched = await _streamFetch(streamId);
         if (!fetched.success) {
-          return;
+          final workerError = fetched.error ?? await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Stream fetch failed',
+          );
         }
 
         final data = fetched.data;
@@ -871,8 +948,7 @@ class AsyncNativeOdbcConnection {
   /// reconnect. Use when [autoRecoverOnWorkerCrash] is true and the worker
   /// has crashed.
   Future<void> recoverWorker() async {
-    dispose();
-    await initialize();
+    await _runSingleRecovery(_recoverWorkerInternal);
   }
 
   /// Shuts down the worker isolate and releases resources.
@@ -883,6 +959,7 @@ class AsyncNativeOdbcConnection {
   /// [isInitialized] is false and [initialize] can be called again. In-flight
   /// requests will complete with [AsyncError] (workerTerminated).
   void dispose() {
+    _isShuttingDown = true;
     _failAllPending(
       const AsyncError(
         code: AsyncErrorCode.workerTerminated,

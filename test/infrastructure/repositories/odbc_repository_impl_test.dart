@@ -4,6 +4,7 @@
 /// returns connectionLost; see E2E or integration tests when ODBC is available.
 library;
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
@@ -29,6 +30,25 @@ void main() {
       final result = await repository.executeQuery('invalid-id', 'SELECT 1');
       expect(result.isSuccess(), isFalse);
       result.fold(
+        (_) => fail('Expected failure'),
+        (Exception e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid connection ID',
+          );
+        },
+      );
+    });
+
+    test('streamQuery emits ValidationError when connectionId invalid',
+        () async {
+      final chunks =
+          await repository.streamQuery('invalid-id', 'SELECT 1').toList();
+      expect(chunks.length, 1);
+      final first = chunks.first;
+      expect(first.isSuccess(), isFalse);
+      first.fold(
         (_) => fail('Expected failure'),
         (Exception e) {
           expect(e, isA<ValidationError>());
@@ -109,6 +129,43 @@ void main() {
           expect(
             (e as ValidationError).message,
             'Connection string cannot be empty',
+          );
+        },
+      );
+    });
+
+    test(
+        'connect with invalid options returns ValidationError '
+        'before native call', () async {
+      final result = await repository.connect(
+        'DSN=Fake',
+        options: const ConnectionOptions(
+          queryTimeout: Duration(seconds: -1),
+        ),
+      );
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (Exception e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'queryTimeout cannot be negative',
+          );
+        },
+      );
+    });
+
+    test('poolCreate with maxSize <= 0 returns ValidationError', () async {
+      final result = await repository.poolCreate('DSN=Fake', 0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (Exception e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Pool maxSize must be greater than zero',
           );
         },
       );

@@ -141,7 +141,8 @@ class TelemetryService implements ITelemetryService {
   /// Starts a new trace for an ODBC operation.
   ///
   /// The [operationName] should be descriptive (e.g., "odbc.query").
-  /// Returns [ResultDart] with trace on success or [TelemetryException] on erro
+  /// Returns [ResultDart] with trace on success
+  /// or [TelemetryException] on error.
   @override
   Future<ResultDart<Trace, TelemetryException>> startTrace(
     String operationName,

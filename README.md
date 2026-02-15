@@ -28,6 +28,7 @@
 ### High-level service (`OdbcService`)
 
 - Query execution: `executeQuery`, `executeQueryParams`
+- Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`
@@ -128,6 +129,25 @@ Async streaming (`streamQuery` / `streamQueryBatched`) uses the native
 stream protocol through the worker isolate (`stream_start/fetch/close`),
 instead of fetching full result sets in a single call.
 
+For high-level incremental consumption without materializing all rows:
+
+```dart
+await for (final chunkResult in service.streamQuery(conn.id, 'SELECT * FROM big_table')) {
+  chunkResult.fold(
+    (chunk) => print('chunk rows=${chunk.rowCount}'),
+    (err) => print('stream error: $err'),
+  );
+}
+```
+
+Streaming errors are now classified with clearer messages:
+
+- protocol/frame errors: `Streaming protocol error: ...`
+- timeout: `Query timed out`
+- worker interruption/dispose: `Streaming interrupted: ...`
+- SQL/driver errors (when structured error is available):
+  `Streaming SQL error: ...` (+ SQLSTATE/native code)
+
 ## Connection options example
 
 ```dart
@@ -144,6 +164,27 @@ final result = await service.connect(
   ),
 );
 ```
+
+Validation rules:
+
+- timeouts/backoff must be non-negative
+- `maxResultBufferBytes` and `initialResultBufferBytes` must be `> 0`
+- `initialResultBufferBytes` cannot be greater than `maxResultBufferBytes`
+
+## Pool checkout validation tuning
+
+By default, the Rust pool validates a connection on checkout (`SELECT 1`),
+which is safer but adds latency under high contention.
+
+For controlled high-throughput workloads, disable checkout validation:
+
+- connection string override (per pool):
+  `DSN=MyDsn;PoolTestOnCheckout=false;`
+- environment override (global fallback):
+  `ODBC_POOL_TEST_ON_CHECKOUT=false`
+
+Accepted boolean values: `true/false`, `1/0`, `yes/no`, `on/off`.
+Connection-string override takes precedence over environment value.
 
 ## Examples
 
@@ -235,6 +276,8 @@ dart_odbc_fast/
 ## CI/CD
 
 - CI workflow: `.github/workflows/ci.yml`
+  - runs `cargo fmt`, `cargo clippy`, Rust build, `dart analyze`, and unit-only Dart tests (excluding `test/integration`, `test/e2e`, `test/stress`, `test/my_test`)
+  - forces `ENABLE_E2E_TESTS=0` and `RUN_SKIPPED_TESTS=0`
 - Release workflow: `.github/workflows/release.yml`
 
 ## Support

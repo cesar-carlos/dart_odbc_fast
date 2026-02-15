@@ -13,10 +13,10 @@ void main(List<String> args) async {
     final targetOS = input.config.code.targetOS;
     final targetArchitecture = input.config.code.targetArchitecture;
 
-    // Define nome da biblioteca por plataforma
+    // Define native library name by platform
     final libName = _getLibraryName(targetOS);
 
-    // Caminho da biblioteca compilada
+    // Path to the compiled library.
     final libPath = await _getLibraryPath(
       targetOS,
       targetArchitecture,
@@ -24,13 +24,13 @@ void main(List<String> args) async {
       packageName,
     );
 
-    // Se a biblioteca não foi encontrada, não adiciona o asset
-    // (permite que testes continuem mesmo sem a biblioteca)
+    // If library is not found, do not add the asset
+    // (allows tests to continue without native library)
     if (libPath == null) {
       return;
     }
 
-    // Registra o asset nativo
+    // Register the native asset.
     output.assets.code.add(
       CodeAsset(
         package: packageName,
@@ -42,21 +42,21 @@ void main(List<String> args) async {
   });
 }
 
-/// Verifica se deve pular download externo (CI/pub.dev environments).
+/// Checks whether external download should be skipped (CI/pub.dev environments).
 bool _shouldSkipDownload() {
-  // Pular download se PUB_ENVIRONMENT estiver definido (indicando pub.dev)
+  // Skip download when PUB_ENVIRONMENT is set (pub.dev context)
   final pubEnv = Platform.environment['PUB_ENVIRONMENT'];
   if (pubEnv != null && pubEnv.contains('pub.dev')) {
     return true;
   }
 
-  // Pular download se CI estiver definido
+  // Skip download when CI is set
   final ci = Platform.environment['CI'];
   if (ci == 'true') {
     return true;
   }
 
-  // Permitir desabilitar explicitamente via variável de ambiente
+  // Allow explicit opt-out via environment variable
   final skipDownload = Platform.environment['ODBC_FAST_SKIP_DOWNLOAD'];
   if (skipDownload == 'true') {
     return true;
@@ -76,13 +76,13 @@ String _getLibraryName(OS os) {
   }
 }
 
-/// Retorna o caminho da biblioteca nativa.
+/// Returns native library path.
 ///
-/// Estratégia de busca em ordem de prioridade:
-/// 1. Cache local (~/.cache/odbc_fast/)
-/// 2. Desenvolvimento (native/target/release/)
-/// 3. Download automático da GitHub Release (pulado em CI/pub.dev)
-/// 4. null (permite testes sem biblioteca)
+/// Search strategy in priority order:
+/// 1. Local cache (~/.cache/odbc_fast/)
+/// 2. Development build output (native/target/release/)
+/// 3. Automatic GitHub Release download (skipped in CI/pub.dev)
+/// 4. null (allows tests without native library)
 Future<Uri?> _getLibraryPath(
   OS os,
   Architecture arch,
@@ -94,13 +94,13 @@ Future<Uri?> _getLibraryPath(
     File.fromUri(packageRoot.resolve('pubspec.yaml')),
   );
 
-  // 1. Verificar cache local primeiro (por versão)
+  // 1. Check local cache first (versioned)
   final cachedLib = _getCachedLibrary(os, arch, libName, version);
   if (cachedLib != null) {
     return cachedLib;
   }
 
-  // 2. Desenvolvimento: native/target/release/ (workspace target)
+  // 2. Development: native/target/release/ (workspace target)
   final devPath = packageRoot.resolve('native/target/release/$libName');
   if (File.fromUri(devPath).existsSync()) {
     return devPath;
@@ -113,7 +113,7 @@ Future<Uri?> _getLibraryPath(
     return devPathLocal;
   }
 
-  // 4. Baixar da GitHub Release (apenas em produção/build, pulado em CI/pub.dev)
+  // 4. Download from GitHub Release (production/build only, skipped in CI/pub.dev)
   final downloaded = await _downloadFromGitHub(
     os,
     arch,
@@ -126,13 +126,14 @@ Future<Uri?> _getLibraryPath(
     return downloaded;
   }
 
-  // Biblioteca não encontrada - retorna null ao invés de lançar exceção
-  // Isso permite que testes continuem mesmo sem a biblioteca
+  // Library not found: return null instead of throwing
+  // This allows tests to continue without native library
   return null;
 }
 
-/// Retorna o caminho da biblioteca no cache local, se existir.
-/// [version] inclui a versão no path para evitar reutilizar DLL de outra versão
+/// Returns cached library path if available.
+/// [version] includes the version in path to avoid reusing a DLL from
+/// another version.
 Uri? _getCachedLibrary(
   OS os,
   Architecture arch,
@@ -150,15 +151,15 @@ Uri? _getCachedLibrary(
       return cached.uri;
     }
   } on FileSystemException {
-    // Cache não disponível, continuar
+    // Cache not available, continue
   }
   return null;
 }
 
-/// Retorna o diretório de cache para bibliotecas nativas.
+/// Returns cache directory for native libraries.
 ///
-/// [version] quando não null, usa subpasta por versão para evitar DLL
-/// incompatível entre versões diferentes do pacote.
+/// When [version] is not null, uses a version subfolder to avoid loading
+/// incompatible DLL versions across package upgrades.
 Uri _getCacheDirectory([String? version]) {
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -172,10 +173,10 @@ Uri _getCacheDirectory([String? version]) {
   return base;
 }
 
-/// Baixa a biblioteca nativa da GitHub Release.
+/// Downloads native library from GitHub Release.
 ///
-/// Retorna o caminho do arquivo baixado, ou null se falhar.
-/// Pula download em ambientes de CI/pub.dev para evitar timeouts.
+/// Returns downloaded file path, or null on failure.
+/// Skips download in CI/pub.dev to avoid timeouts.
 Future<Uri?> _downloadFromGitHub(
   OS os,
   Architecture arch,
@@ -184,7 +185,7 @@ Future<Uri?> _downloadFromGitHub(
   Uri packageRoot,
   String? version,
 ) async {
-  // Não tentar download em ambientes de CI/pub.dev
+  // Do not attempt download in CI/pub.dev environments
   if (_shouldSkipDownload()) {
     print('[odbc_fast] Skipping external download in CI/pub.dev environment');
     return null;
@@ -203,7 +204,7 @@ Future<Uri?> _downloadFromGitHub(
     print('[odbc_fast] Version: $version');
     print('[odbc_fast] URL: $url');
 
-    // Criar diretório de cache (por versão)
+    // Create versioned cache directory
     final cacheDirPath = _getCacheDirectory(version).toFilePath();
     final targetDir = Directory(
       '$cacheDirPath${Platform.pathSeparator}$platform',
@@ -216,7 +217,7 @@ Future<Uri?> _downloadFromGitHub(
       '${targetDir.path}${Platform.pathSeparator}$libName',
     );
 
-    // Download com retry e timeout
+    // Download with retry and timeout.
     const maxRetries = 3;
     var attempt = 0;
 
@@ -235,14 +236,14 @@ Future<Uri?> _downloadFromGitHub(
           await sink.close();
 
           final fileSize = await targetFile.length();
-          print('[odbc_fast] ✓ Downloaded successfully');
+          print('[odbc_fast] [OK] Downloaded successfully');
           print('[odbc_fast]   Path: ${targetFile.path}');
           print('[odbc_fast]   Size: ${_formatBytes(fileSize)}');
           return targetFile.uri;
         }
 
         if (response.statusCode == 404) {
-          print('[odbc_fast] ✗ Release not found (HTTP 404)');
+          print('[odbc_fast] [ERROR] Release not found (HTTP 404)');
           print('[odbc_fast]');
           print('[odbc_fast] This can happen if:');
           print('[odbc_fast]   1. The GitHub release for v$version has not '
@@ -288,10 +289,10 @@ Future<Uri?> _downloadFromGitHub(
     }
 
     // All retries failed
-    print('[odbc_fast] ✗ Failed to download after $maxRetries attempts');
+    print('[odbc_fast] [ERROR] Failed to download after $maxRetries attempts');
     return null;
   } on IOException catch (e) {
-    print('[odbc_fast] ✗ Download failed');
+    print('[odbc_fast] [ERROR] Download failed');
     print('[odbc_fast]');
     print('[odbc_fast] Error details: $e');
     print('[odbc_fast]');
@@ -307,14 +308,14 @@ Future<Uri?> _downloadFromGitHub(
   }
 }
 
-/// Formata bytes para representação humana.
+/// Formats bytes as human-readable text.
 String _formatBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
-/// Extrai a versão do pubspec.yaml.
+/// Extracts package version from pubspec.yaml.
 Future<String?> _extractVersion(File pubspec) async {
   try {
     final lines = await pubspec.readAsLines();
@@ -330,7 +331,7 @@ Future<String?> _extractVersion(File pubspec) async {
   return null;
 }
 
-/// Converte OS para string usada no cache.
+/// Converts OS enum to cache key string.
 String _osToString(OS os) {
   switch (os) {
     case OS.windows:
@@ -342,7 +343,7 @@ String _osToString(OS os) {
   }
 }
 
-/// Converte Architecture para string usada no cache.
+/// Converts Architecture enum to cache key string.
 String _archToString(Architecture arch) {
   switch (arch) {
     case Architecture.x64:

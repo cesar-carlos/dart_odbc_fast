@@ -1,90 +1,97 @@
-# VERSIONING_STRATEGY.md - Estrategia de versionamento
+﻿# VERSIONING_STRATEGY.md - Versioning Strategy
 
-## Objetivo
+## Objective
 
-Definir uma politica unica para versao do pacote, tags e comunicacao de breaking changes.
+Define a single policy for package versions, tags, and breaking-change communication.
 
-## Estado atual
+## Current state
 
-- Versao atual do pacote: `0.3.1`
-- Fase: pre-1.0.0 (API ainda evoluindo)
+- Current package version: `0.3.1`
+- Phase: pre-1.0.0 (API still evolving)
 
-## Regra principal (pre-1.0.0)
+## Main rule (pre-1.0.0)
 
-Para `0.x.y`:
+For `0.x.y`:
 
-- Breaking change de API publica: incrementa **MINOR** (`0.3.1` -> `0.4.0`)
-- Nova feature compativel: incrementa **PATCH** (`0.3.1` -> `0.3.2`)
-- Bug fix/performance/docs: incrementa **PATCH**
+- Public API breaking change: bump **MINOR** (`0.3.1` -> `0.4.0`)
+- Backward-compatible feature: bump **PATCH** (`0.3.1` -> `0.3.2`)
+- Bug fix/performance/docs: bump **PATCH**
 
-## Regra apos 1.0.0
+## Rule after 1.0.0
 
-Para `x.y.z`:
+For `x.y.z`:
 
 - Breaking change: **MAJOR**
-- Nova feature compativel: **MINOR**
+- Backward-compatible feature: **MINOR**
 - Bug fix/performance/docs: **PATCH**
 
-## O que conta como breaking
+## What counts as breaking
 
-1. Remover metodo/classe/enum publica.
-2. Renomear API publica.
-3. Alterar tipo de retorno publico.
-4. Adicionar parametro obrigatorio.
-5. Remover parametro existente.
-6. Mudar comportamento contratual sem fallback.
+1. Removing public method/class/enum
+2. Renaming public API
+3. Changing public return type
+4. Adding required parameter
+5. Removing existing parameter
+6. Contract behavior change without fallback
 
-## O que nao e breaking
+## What does not count as breaking
 
-1. Adicionar metodo novo.
-2. Adicionar parametro opcional com valor padrao.
-3. Melhoria interna sem alterar assinatura/contrato.
-4. Melhorias de erro, logs e performance sem mudanca funcional externa.
+1. Adding new method
+2. Adding optional parameter with default value
+3. Internal improvements without signature/contract changes
+4. Error/log/performance improvements without external functional changes
 
-## Politica de deprecation
+## Deprecation policy
 
-1. Primeiro release: marcar como `@Deprecated` e documentar alternativa.
-2. Manter por pelo menos 2 releases pre-1.0.0 (ou 2 MINOR apos 1.0.0).
-3. Remover apenas em release de breaking change.
+1. First release: mark as `@Deprecated` and document alternative
+2. Keep for at least 2 pre-1.0.0 releases (or 2 MINOR releases after 1.0.0)
+3. Remove only in a breaking release
 
 ## Tags
 
-Formato:
+Format:
 
-- Estavel: `vX.Y.Z`
+- Stable: `vX.Y.Z`
 - Release candidate: `vX.Y.Z-rc.N`
 - Beta: `vX.Y.Z-beta.N`
 - Dev: `vX.Y.Z-dev.N`
 
-## Checklist de bump
+## Bump checklist
 
-1. Definir tipo de mudanca (breaking ou nao).
-2. Atualizar `pubspec.yaml`.
-3. Atualizar `CHANGELOG.md` com secoes corretas.
-4. Validar testes/build.
-5. Criar tag.
+1. Define change type (breaking or not)
+2. Update `pubspec.yaml`
+3. Update `CHANGELOG.md` with correct sections
+4. Validate tests/build
+5. Create tag
 
-## Exemplo de decisao
+Operational note:
 
-### Exemplo A - parametro opcional novo
+- Release workflow automatically validates:
+  - tag format
+  - tag consistency with `pubspec.yaml`
+  - matching section in `CHANGELOG.md`
 
-Mudanca:
+## Decision examples
+
+### Example A - new optional parameter
+
+Change:
 
 ```dart
 Future<QueryResult> execute(String sql, {Duration? timeout});
 ```
 
-Decisao em `0.3.1`: `0.3.2` (PATCH).
+Decision at `0.3.1`: `0.3.2` (PATCH).
 
-### Exemplo B - renomear metodo publico
+### Example B - rename public method
 
-Mudanca:
+Change:
 
 - `execute` -> `executeQuery`
 
-Decisao em `0.3.2`: `0.4.0` (MINOR).
+Decision at `0.3.2`: `0.4.0` (MINOR).
 
-## Documentos relacionados
+## Related documents
 
 - [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md)
 - [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md)

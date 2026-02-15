@@ -1,5 +1,5 @@
 ---
-description: Index of available Cursor rules in this repo
+description: Index of available Cursor rules in this repository
 globs: ["**/*"]
 alwaysApply: true
 ---
@@ -8,28 +8,28 @@ alwaysApply: true
 
 ## Behavioral Guardrails
 
-- ❌ Never commit, push, or create docs unless explicitly requested
-- ✅ Prefer self-explanatory code via naming and structure
+- Do not commit, push, or create docs unless explicitly requested.
+- Prefer self-explanatory code through naming and structure.
 
-## Rules (single source of truth per topic)
+## Rule Files
 
-### Generic (reusable)
+### Generic
 
-- **`general_rules.mdc`**: core coding principles (readability, duplication, docs/comments policy)
-- **`clean_architecture.mdc`**: layer boundaries and dependency direction (generic)
-- **`coding_style.mdc`**: Dart language/style (naming, formatting, imports, modern Dart, logging, codegen)
-- **`null_safety.mdc`**: sound null-safety guidelines and patterns
-- **`solid_principles.mdc`**: SOLID principles with examples
-- **`flutter_widgets.mdc`**: widget construction/performance patterns (composition, const, lists, layout, theming tokens)
-- **`ui_ux_design.mdc`**: desktop UI/UX principles (Fluent vs Material policy, navigation, a11y, responsive desktop)
-- **`testing.mdc`**: unit/widget testing conventions (AAA, naming, isolation, mocking)
-- **`rust_style.mdc`**: Rust native code rules (rustfmt, clippy, API design, FFI safety)
-- **`error_handling.mdc`**: unified error handling policy and suppression allowlist (Dart + Rust)
+- `general_rules.mdc`: core coding principles and documentation policy
+- `clean_architecture.mdc`: layer boundaries and dependency direction
+- `coding_style.mdc`: Dart style and project coding conventions
+- `null_safety.mdc`: null safety guidelines and patterns
+- `solid_principles.mdc`: SOLID principles
+- `flutter_widgets.mdc`: widget construction and performance patterns
+- `ui_ux_design.mdc`: desktop UI/UX principles
+- `testing.mdc`: unit and widget testing conventions
+- `rust_style.mdc`: Rust native code standards
+- `error_handling.mdc`: unified error handling and suppression policy
 
-### Project-specific
+### Project-Specific
 
-- There is no `project_specifics.mdc` currently.
+- No `project_specifics.mdc` file is currently defined.
 
-## Copying to other projects
+## Reuse
 
-See `README.md` in this folder. Keep generic rules and create project-specific rules only when needed.
+Use `README.md` in this folder for guidance on copying rules to other projects.

@@ -1,24 +1,26 @@
-# Estimativa heuristica de cobertura (NAO e cobertura real).
-# Conta arquivos .rs e #[test], aplica formulas (ex.: testes / (arquivos * 3)).
-# Nao roda testes, nao usa instrumentacao. Rapido, mas impreciso.
+﻿# Heuristic coverage estimate (NOT real coverage).
+# Counts .rs files and #[test], then applies formulas (for example: tests / (files * 3)).
+# Does not execute tests and does not use instrumentation. Fast, but imprecise.
 #
-# Para cobertura real (HTML + LCOV), use: .\scripts\run_coverage.ps1
-# (requer cargo install cargo-tarpaulin)
+# For real coverage (HTML + LCOV), use: .\scripts\run_coverage.ps1
+# (requires cargo install cargo-tarpaulin)
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=== Estimativa de Cobertura (heuristica, nao executa testes) ===" -ForegroundColor Cyan
+Write-Host "=== Coverage Estimate (heuristic, does not execute tests) ===" -ForegroundColor Cyan
 Write-Host ""
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $srcPath = Join-Path $projectRoot "src"
 $testsPath = Join-Path $projectRoot "tests"
 
-# Contar arquivos fonte
-$sourceFiles = Get-ChildItem -Path $srcPath -Filter "*.rs" -Recurse | Where-Object { $_.Name -ne "mod.rs" -or (Get-Content $_.FullName | Measure-Object -Line).Lines -gt 10 }
+# Count source files
+$sourceFiles = Get-ChildItem -Path $srcPath -Filter "*.rs" -Recurse | Where-Object {
+    $_.Name -ne "mod.rs" -or (Get-Content $_.FullName | Measure-Object -Line).Lines -gt 10
+}
 $totalSourceFiles = $sourceFiles.Count
 
-# Contar linhas de codigo (aproximado)
+# Count lines of code (approximate)
 $totalLines = 0
 $sourceFiles | ForEach-Object {
     $content = Get-Content $_.FullName -Raw
@@ -26,12 +28,12 @@ $sourceFiles | ForEach-Object {
     $totalLines += $lines
 }
 
-Write-Host "Estatisticas Gerais:" -ForegroundColor Yellow
-Write-Host "  Arquivos fonte: $totalSourceFiles"
-Write-Host "  Linhas de codigo (aproximado): $totalLines"
+Write-Host "General Stats:" -ForegroundColor Yellow
+Write-Host "  Source files: $totalSourceFiles"
+Write-Host "  Lines of code (approx): $totalLines"
 Write-Host ""
 
-# Analisar módulos
+# Analyze modules
 $modules = @{
     "ffi" = @{ files = 0; tests = 0; description = "FFI Layer (C API)" }
     "engine" = @{ files = 0; tests = 0; description = "Engine Core" }
@@ -46,7 +48,7 @@ $modules = @{
     "async_bridge" = @{ files = 0; tests = 0; description = "Async Bridge" }
 }
 
-# Contar arquivos por modulo
+# Count files by module
 $sourceFiles | ForEach-Object {
     $fullPath = $_.FullName
     $relativePath = $fullPath.Replace($srcPath, "").Replace("\", "/").TrimStart("/")
@@ -59,7 +61,7 @@ $sourceFiles | ForEach-Object {
     }
 }
 
-# Contar testes inline
+# Count inline tests
 $testFiles = Get-ChildItem -Path $srcPath -Filter "*.rs" -Recurse
 $testFiles | ForEach-Object {
     $content = Get-Content $_.FullName -Raw
@@ -77,7 +79,7 @@ $testFiles | ForEach-Object {
     }
 }
 
-# Contar testes de integração
+# Count integration tests
 $integrationTests = Get-ChildItem -Path $testsPath -Filter "*.rs" -ErrorAction SilentlyContinue
 $integrationTestCount = 0
 if ($integrationTests) {
@@ -88,7 +90,7 @@ if ($integrationTests) {
     }
 }
 
-Write-Host "Cobertura por Modulo:" -ForegroundColor Yellow
+Write-Host "Coverage by module:" -ForegroundColor Yellow
 Write-Host ""
 
 $totalTests = 0
@@ -96,40 +98,40 @@ $modules.GetEnumerator() | Sort-Object Name | ForEach-Object {
     $module = $_.Key
     $info = $_.Value
     $totalTests += $info.tests
-    
+
     $coverage = if ($info.files -gt 0) {
-        [math]::Round(($info.tests / ($info.files * 3)) * 100, 1)  # Estimativa: 3 testes por arquivo
+        [math]::Round(($info.tests / ($info.files * 3)) * 100, 1)  # Estimate: 3 tests per file
     } else {
         0
     }
-    
+
     $coverageColor = if ($coverage -ge 80) { "Green" }
                      elseif ($coverage -ge 50) { "Yellow" }
                      else { "Red" }
-    
+
     Write-Host "  $($info.description.PadRight(25)) " -NoNewline
-    Write-Host "Arquivos: $($info.files.ToString().PadLeft(2)) " -NoNewline -ForegroundColor Cyan
-    Write-Host "Testes: $($info.tests.ToString().PadLeft(3)) " -NoNewline -ForegroundColor Cyan
-    Write-Host "Cobertura estimada: " -NoNewline
+    Write-Host "Files: $($info.files.ToString().PadLeft(2)) " -NoNewline -ForegroundColor Cyan
+    Write-Host "Tests: $($info.tests.ToString().PadLeft(3)) " -NoNewline -ForegroundColor Cyan
+    Write-Host "Estimated coverage: " -NoNewline
     Write-Host "$coverage%" -ForegroundColor $coverageColor
 }
 
 Write-Host ""
-Write-Host "Testes de Integracao:" -ForegroundColor Yellow
-Write-Host "  Testes E2E/Integracao: $integrationTestCount"
+Write-Host "Integration tests:" -ForegroundColor Yellow
+Write-Host "  E2E/Integration tests: $integrationTestCount"
 Write-Host ""
 
 $totalTests += $integrationTestCount
 
-Write-Host "Resumo Geral:" -ForegroundColor Yellow
-Write-Host "  Total de testes: $totalTests"
-Write-Host "  Testes unitários (inline): $($totalTests - $integrationTestCount)"
-Write-Host "  Testes de integração: $integrationTestCount"
+Write-Host "Overall summary:" -ForegroundColor Yellow
+Write-Host "  Total tests: $totalTests"
+Write-Host "  Unit tests (inline): $($totalTests - $integrationTestCount)"
+Write-Host "  Integration tests: $integrationTestCount"
 Write-Host ""
 
-# Estimar cobertura geral
+# Estimate overall coverage
 $estimatedCoverage = if ($totalSourceFiles -gt 0) {
-    [math]::Round(($totalTests / ($totalSourceFiles * 2.5)) * 100, 1)  # Estimativa: 2.5 testes por arquivo
+    [math]::Round(($totalTests / ($totalSourceFiles * 2.5)) * 100, 1)  # Estimate: 2.5 tests per file
 } else {
     0
 }
@@ -138,10 +140,10 @@ $coverageColor = if ($estimatedCoverage -ge 80) { "Green" }
                  elseif ($estimatedCoverage -ge 50) { "Yellow" }
                  else { "Red" }
 
-Write-Host "Cobertura Estimada Geral: " -NoNewline -ForegroundColor Yellow
+Write-Host "Estimated overall coverage: " -NoNewline -ForegroundColor Yellow
 Write-Host "$estimatedCoverage%" -ForegroundColor $coverageColor
 Write-Host ""
 
-Write-Host "Nota: Esta e uma ESTIMATIVA (estrutura + contagem de #[test])." -ForegroundColor Gray
-Write-Host "   Cobertura REAL: .\scripts\run_coverage.ps1 (cargo tarpaulin)" -ForegroundColor Gray
+Write-Host "Note: This is an ESTIMATE (structure + #[test] count)." -ForegroundColor Gray
+Write-Host "   REAL coverage: .\scripts\run_coverage.ps1 (cargo tarpaulin)" -ForegroundColor Gray
 Write-Host ""

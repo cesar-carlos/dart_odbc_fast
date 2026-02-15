@@ -1,8 +1,8 @@
-# BUILD.md - Build e desenvolvimento
+﻿# BUILD.md - Build and Development
 
-Guia objetivo para preparar o ambiente, compilar o engine Rust e validar o pacote Dart.
+Practical guide to prepare the environment, compile the Rust engine, and validate the Dart package.
 
-## Pre-requisitos
+## Prerequisites
 
 ### Windows
 
@@ -11,7 +11,7 @@ winget install Rustlang.Rust.MSVC
 winget install Google.DartSDK
 ```
 
-- ODBC Driver Manager ja vem no Windows.
+- ODBC Driver Manager is already available on Windows.
 
 ### Linux (Ubuntu/Debian)
 
@@ -21,32 +21,32 @@ sudo apt-get update
 sudo apt-get install -y dart unixodbc unixodbc-dev libclang-dev llvm
 ```
 
-## Build local (fluxo recomendado)
+## Local Build (recommended flow)
 
-Na raiz do repositorio:
+From repository root:
 
 ```bash
 cd native
 cargo build --release
 ```
 
-Saida esperada:
+Expected output:
 
 - Windows: `native/target/release/odbc_engine.dll`
 - Linux: `native/target/release/libodbc_engine.so`
 
-## Ordem de busca da biblioteca nativa
+## Native Library Resolution Order
 
-`library_loader.dart` tenta carregar nesta ordem:
+`library_loader.dart` attempts to load in this order:
 
-1. `native/target/release/<lib>` (workspace)
-2. `native/odbc_engine/target/release/<lib>` (build no membro)
+1. `native/target/release/<lib>` (workspace target)
+2. `native/odbc_engine/target/release/<lib>` (member-local target)
 3. `package:odbc_fast/<lib>` (Native Assets)
 4. PATH/LD_LIBRARY_PATH
 
-Dica: usar sempre `cd native && cargo build --release` evita copia manual de DLL/.so.
+Tip: always using `cd native && cargo build --release` avoids manual DLL/.so copy steps.
 
-## Copia manual (somente quando necessario)
+## Manual Copy (only when needed)
 
 ### Windows
 
@@ -62,23 +62,23 @@ mkdir -p native/target/release
 cp native/odbc_engine/target/release/libodbc_engine.so native/target/release/
 ```
 
-## Bindings FFI (opcional)
+## FFI Bindings (optional)
 
-Os bindings sao mantidos no repo. Regenerar apenas quando a surface C mudar:
+Bindings are maintained in the repository. Regenerate only when the C surface changes:
 
 ```bash
 dart run ffigen -v info
 ```
 
-Arquivo de configuracao: `ffigen.yaml`
+Config file: `ffigen.yaml`
 
-## Testes
+## Tests
 
 ```bash
 dart test
 ```
 
-Suites uteis:
+Useful suites:
 
 ```bash
 dart test test/domain/
@@ -86,18 +86,24 @@ dart test test/infrastructure/native/
 dart test test/integration/
 ```
 
-Observacao: parte dos testes de integracao depende de DSN real (`ODBC_TEST_DSN`).
+CI scope (`.github/workflows/ci.yml`):
 
-Para incluir os 10 testes normalmente ignorados (slow, stress, native-assets):
+1. Runs quality gate (`cargo fmt`, `cargo clippy`, Rust build, and `dart analyze`)
+2. Runs only unit test scope (`test/application`, `test/domain`, `test/infrastructure`, and `test/helpers/database_detection_test.dart`)
+3. Does not run `test/integration`, `test/e2e`, `test/stress`, or `test/my_test`
+
+Note: part of integration coverage depends on a real DSN (`ODBC_TEST_DSN`).
+
+To include the 10 normally-skipped tests (slow, stress, native-assets):
 
 ```bash
 RUN_SKIPPED_TESTS=1 dart test
 ```
 
-Ou no PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Aceita `1`, `true`, `yes`.
+In PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Accepted values: `1`, `true`, `yes`.
 
-## Troubleshooting relacionado
+## Related Troubleshooting
 
-- Erros de biblioteca nao encontrada: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- Erros de release/tag/workflow: [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)
-- Politica de versao: [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md)
+- Library not found issues: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- Release/tag/workflow issues: [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)
+- Versioning policy: [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md)

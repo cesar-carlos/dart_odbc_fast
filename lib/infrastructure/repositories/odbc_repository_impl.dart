@@ -12,6 +12,7 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
@@ -70,6 +71,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   /// Message used when a query times out (ConnectionOptions.queryTimeout).
   static const String _queryTimedOutMessage = 'Query timed out';
+  static const String _streamProtocolErrorPrefix = 'Streaming protocol error';
+  static const String _streamInterruptedPrefix = 'Streaming interrupted';
 
   /// Whether this repository uses async backend (non-blocking operations).
   bool get _isAsync => _native is AsyncNativeOdbcConnection;
@@ -237,9 +240,15 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionString, {
     ConnectionOptions? options,
   }) async {
-    if (connectionString.isEmpty) {
+    if (connectionString.trim().isEmpty) {
       return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
+      );
+    }
+    final optionsValidation = options?.validate();
+    if (optionsValidation != null) {
+      return Failure<Connection, OdbcError>(
+        ValidationError(message: optionsValidation),
       );
     }
 
@@ -329,6 +338,116 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
   }
 
+  Stream<ParsedRowBuffer> _streamNativeQueryWithFallback(
+    int nativeId,
+    String sql, {
+    int? maxBufferBytes,
+  }) async* {
+    var emittedFromBatched = false;
+
+    try {
+      final batched = _isAsync
+          ? (_native as AsyncNativeOdbcConnection)
+              .streamQueryBatched(nativeId, sql, maxBufferBytes: maxBufferBytes)
+          : (_native as NativeOdbcConnection).streamQueryBatched(nativeId, sql);
+
+      await for (final chunk in batched) {
+        emittedFromBatched = true;
+        yield chunk;
+      }
+      return;
+    } on Exception {
+      if (emittedFromBatched) {
+        rethrow;
+      }
+    }
+
+    final fallback = _isAsync
+        ? (_native as AsyncNativeOdbcConnection)
+            .streamQuery(nativeId, sql, maxBufferBytes: maxBufferBytes)
+        : (_native as NativeOdbcConnection).streamQuery(nativeId, sql);
+
+    await for (final chunk in fallback) {
+      yield chunk;
+    }
+  }
+
+  bool _isStreamingTimeoutException(
+    Exception error,
+    String normalizedMessage,
+  ) {
+    if (error is TimeoutException) {
+      return true;
+    }
+    if (error is AsyncError && error.code == AsyncErrorCode.requestTimeout) {
+      return true;
+    }
+    final lower = normalizedMessage.toLowerCase();
+    return lower.contains('timeout') || lower.contains('timed out');
+  }
+
+  bool _isStreamingProtocolException(
+    Exception error,
+    String normalizedMessage,
+  ) {
+    if (error is FormatException) {
+      return true;
+    }
+    final lower = normalizedMessage.toLowerCase();
+    return lower.contains('protocol') ||
+        lower.contains('leftover bytes') ||
+        lower.contains('invalid magic') ||
+        lower.contains('buffer too small');
+  }
+
+  bool _isStreamingInterruptionException(Exception error) {
+    return error is AsyncError && error.code == AsyncErrorCode.workerTerminated;
+  }
+
+  Future<Failure<QueryResult, OdbcError>> _streamingFailureFromException(
+    Exception error,
+  ) async {
+    final normalizedMessage = error.toString();
+    if (_isStreamingTimeoutException(error, normalizedMessage)) {
+      return const Failure<QueryResult, OdbcError>(
+        QueryError(message: _queryTimedOutMessage),
+      );
+    }
+
+    if (_isStreamingProtocolException(error, normalizedMessage)) {
+      return Failure<QueryResult, OdbcError>(
+        QueryError(message: '$_streamProtocolErrorPrefix: $normalizedMessage'),
+      );
+    }
+
+    if (_isStreamingInterruptionException(error)) {
+      return Failure<QueryResult, OdbcError>(
+        QueryError(message: '$_streamInterruptedPrefix: $normalizedMessage'),
+      );
+    }
+
+    final structuredError = _isAsync
+        ? await (_native as AsyncNativeOdbcConnection).getStructuredError()
+        : (_native as NativeOdbcConnection).getStructuredError();
+    if (structuredError != null) {
+      return Failure<QueryResult, OdbcError>(
+        QueryError(
+          message: 'Streaming SQL error: ${structuredError.message}',
+          sqlState: structuredError.sqlStateString,
+          nativeCode: structuredError.nativeCode,
+        ),
+      );
+    }
+
+    final nativeError = _isAsync
+        ? await (_native as AsyncNativeOdbcConnection).getError()
+        : (_native as NativeOdbcConnection).getError();
+    final message = nativeError.isNotEmpty && nativeError != 'No error'
+        ? nativeError
+        : normalizedMessage;
+    return Failure<QueryResult, OdbcError>(QueryError(message: message));
+  }
+
   @override
   Future<Result<QueryResult>> executeQuery(
     String connectionId,
@@ -347,21 +466,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         final columns = <String>[];
         final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
 
-        Stream<ParsedRowBuffer> stream;
-        try {
-          stream = _isAsync
-              ? (_native as AsyncNativeOdbcConnection)
-                  .streamQueryBatched(nativeId, sql, maxBufferBytes: maxBytes)
-              : (_native as NativeOdbcConnection)
-                  .streamQueryBatched(nativeId, sql);
-        } on Exception {
-          stream = _isAsync
-              ? (_native as AsyncNativeOdbcConnection)
-                  .streamQuery(nativeId, sql, maxBufferBytes: maxBytes)
-              : (_native as NativeOdbcConnection).streamQuery(nativeId, sql);
-        }
-
-        await for (final chunk in stream) {
+        await for (final chunk in _streamNativeQueryWithFallback(
+          nativeId,
+          sql,
+          maxBufferBytes: maxBytes,
+        )) {
           if (columns.isEmpty && chunk.columns.isNotEmpty) {
             columns.addAll(chunk.columns.map((c) => c.name));
           }
@@ -376,19 +485,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
         return Success(result);
       } on Exception catch (e) {
-        return _convertNativeErrorToFailure<QueryResult>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
-        );
+        return _streamingFailureFromException(e);
       }
     }
 
@@ -406,6 +503,61 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
 
     return _withReconnect(connectionId, runWithTimeout);
+  }
+
+  @override
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  ) async* {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      yield const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+      return;
+    }
+
+    final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+
+    Stream<Result<QueryResult>> createSource() async* {
+      try {
+        await for (final chunk in _streamNativeQueryWithFallback(
+          nativeId,
+          sql,
+          maxBufferBytes: maxBytes,
+        )) {
+          yield Success(_toQueryResult(chunk));
+        }
+      } on Exception catch (e) {
+        yield await _streamingFailureFromException(e);
+      }
+    }
+
+    final source = createSource();
+
+    if (queryTimeout != null && queryTimeout != Duration.zero) {
+      await for (final item in source.timeout(
+        queryTimeout,
+        onTimeout: (sink) {
+          sink
+            ..add(
+              const Failure<QueryResult, OdbcError>(
+                QueryError(message: _queryTimedOutMessage),
+              ),
+            )
+            ..close();
+        },
+      )) {
+        yield item;
+      }
+      return;
+    }
+
+    await for (final item in source) {
+      yield item;
+    }
   }
 
   @override
@@ -1195,6 +1347,16 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionString,
     int maxSize,
   ) async {
+    if (connectionString.trim().isEmpty) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Connection string cannot be empty'),
+      );
+    }
+    if (maxSize <= 0) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Pool maxSize must be greater than zero'),
+      );
+    }
     if (!_isAsync && !(_native as NativeOdbcConnection).isInitialized) {
       final r = await initialize();
       final err = r.exceptionOrNull();
@@ -1396,19 +1558,21 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
     try {
+      final buffer =
+          dataBuffer is Uint8List ? dataBuffer : Uint8List.fromList(dataBuffer);
       final n = _isAsync
           ? await (_native as AsyncNativeOdbcConnection).bulkInsertArray(
               nativeId,
               table,
               columns,
-              Uint8List.fromList(dataBuffer),
+              buffer,
               rowCount,
             )
           : (_native as NativeOdbcConnection).bulkInsertArray(
               nativeId,
               table,
               columns,
-              Uint8List.fromList(dataBuffer),
+              buffer,
               rowCount,
             );
 
@@ -1442,7 +1606,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     int rowCount, {
     int parallelism = 0,
   }) async {
-    final buffer = Uint8List.fromList(dataBuffer);
+    final buffer =
+        dataBuffer is Uint8List ? dataBuffer : Uint8List.fromList(dataBuffer);
 
     if (parallelism <= 1) {
       final connId = _isAsync

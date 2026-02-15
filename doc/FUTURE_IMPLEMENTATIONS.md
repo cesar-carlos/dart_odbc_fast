@@ -1,43 +1,43 @@
-# FUTURE_IMPLEMENTATIONS.md - Backlog tecnico
+﻿# FUTURE_IMPLEMENTATIONS.md - Technical Backlog
 
-Backlog consolidado de itens que ainda nao fazem parte do escopo implementado.
+Consolidated backlog of items not yet included in implemented scope.
 
-## Resumo
+## Summary
 
-| Item                                | Status               | Prioridade |
-| ----------------------------------- | -------------------- | ---------- |
-| Schema reflection (PK/FK/Indexes)   | Aberto               | Alta       |
-| Output parameters por driver/plugin | Fora de escopo atual | Media      |
+| Item                                | Status              | Priority |
+| ----------------------------------- | ------------------- | -------- |
+| Schema reflection (PK/FK/Indexes)   | Open                | High     |
+| Output parameters by driver/plugin  | Out of current scope| Medium   |
 
 ## 1. Schema reflection (PK/FK/Indexes)
 
-### Estado atual
+### Current state
 
-- Existe suporte de catalogo basico (tabelas/colunas/tipos).
-- Entidades de dominio para PK/FK/Indexes ja existem.
+- Basic catalog support exists (tables/columns/types)
+- Domain entities for PK/FK/Indexes already exist
 
-### Falta implementar
+### Missing implementation
 
-1. Funcoes Rust para listar PK/FK/Indexes.
-2. Exposicao FFI correspondente.
-3. Metodos no repositorio/servico Dart.
-4. Testes de integracao com banco real.
+1. Rust functions to list PK/FK/Indexes
+2. Matching FFI exposure
+3. Dart repository/service methods
+4. Integration tests with real database
 
-## 2. Output parameters por driver/plugin
+## 2. Output parameters by driver/plugin
 
-### Estado atual
+### Current state
 
-- Nao existe API publica para output parameters.
-- Existem pontos de extensao no engine/plugins, mas sem contrato estavel para Dart.
+- No public API for output parameters
+- Engine/plugin extension points exist, but no stable Dart contract yet
 
-### Decisao atual
+### Current decision
 
-- Fora do escopo imediato.
-- Retornar ao tema quando houver requisito de driver especifico (ex.: SQL Server OUTPUT, Oracle REF CURSOR).
+- Out of immediate scope
+- Revisit when there is a concrete driver-specific requirement (for example: SQL Server OUTPUT, Oracle REF CURSOR)
 
-## Criterios para mover item de aberto para implementado
+## Criteria to move from open to implemented
 
-1. API publica definida e documentada.
-2. Testes unitarios e de integracao cobrindo fluxo principal.
-3. Exemplo funcional em `example/` (quando aplicavel).
-4. Entrada no `CHANGELOG.md`.
+1. Public API defined and documented
+2. Unit and integration tests covering main flow
+3. Working example in `example/` (when applicable)
+4. Entry in `CHANGELOG.md`

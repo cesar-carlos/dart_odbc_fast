@@ -1,148 +1,40 @@
 ---
-description: Princípios SOLID - Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion
+description: SOLID principles for maintainable architecture
 globs: ["lib/**/*.dart"]
 alwaysApply: true
 ---
 
-# Princípios SOLID
+# SOLID Principles
 
-## Single Responsibility Principle (SRP)
+## SRP - Single Responsibility Principle
 
-- Cada classe deve ter uma única responsabilidade
-- Uma classe deve ter apenas uma razão para mudar
-- Separe funcionalidades distintas em classes diferentes
-- Evite classes "God Class" que fazem tudo
+- A class should have one reason to change.
+- Split validation, persistence, and orchestration concerns.
 
-**Exemplo Correto:**
+## OCP - Open/Closed Principle
 
-```dart
-class User {
-  final String id;
-  final String name;
-  // Apenas responsável por representar um usuário
-}
+- Prefer extension through interfaces and composition.
+- Avoid editing stable code paths when adding new behavior.
 
-class UserValidator {
-  bool validate(User user) {
-    // Apenas responsável por validar usuário
-  }
-}
+## LSP - Liskov Substitution Principle
 
-class UserRepository {
-  Future<User> save(User user) {
-    // Apenas responsável por persistência
-  }
-}
-```
+- Subtypes must honor the base contract.
+- Do not change expected behavior in overrides.
 
-## Open/Closed Principle (OCP)
+## ISP - Interface Segregation Principle
 
-- Classes devem ser abertas para extensão, mas fechadas para modificação
-- Use interfaces e herança para estender comportamento
-- Evite modificar código existente, adicione novas implementações
+- Prefer small focused interfaces over large generic ones.
+- Clients should depend only on the members they use.
 
-**Exemplo Correto:**
+## DIP - Dependency Inversion Principle
 
-```dart
-abstract class PaymentMethod {
-  Future<void> pay(double amount);
-}
+- Depend on abstractions, not concretions.
+- Define contracts in domain/application boundaries.
+- Bind implementations in infrastructure/composition root.
 
-class CreditCard implements PaymentMethod {
-  @override
-  Future<void> pay(double amount) { /* implementação */ }
-}
+## Checklist
 
-class PayPal implements PaymentMethod {
-  @override
-  Future<void> pay(double amount) { /* implementação */ }
-}
-```
-
-## Liskov Substitution Principle (LSP)
-
-- Objetos de uma classe base devem poder ser substituídos por objetos de suas classes derivadas
-- Subtipos devem ser substituíveis por seus tipos base sem quebrar o programa
-- Mantenha contratos de comportamento consistentes
-
-**Exemplo Correto:**
-
-```dart
-import 'dart:developer' as developer;
-
-abstract class Animal {
-  void makeSound();
-}
-
-class Dog implements Animal {
-  @override
-  void makeSound() => developer.log('Woof!');
-}
-
-class Cat implements Animal {
-  @override
-  void makeSound() => developer.log('Meow!');
-}
-
-// Qualquer Animal pode ser usado
-void makeAnimalSound(Animal animal) {
-  animal.makeSound(); // Funciona com Dog, Cat ou qualquer subtipo
-}
-```
-
-## Interface Segregation Principle (ISP)
-
-- Muitas interfaces específicas são melhores que uma interface geral
-- Clientes não devem ser forçados a depender de interfaces que não usam
-- Crie interfaces pequenas e focadas
-
-**Exemplo Correto:**
-
-```dart
-abstract class Readable {
-  Future<String> read();
-}
-
-abstract class Writable {
-  Future<void> write(String data);
-}
-
-// Classe pode implementar apenas o que precisa
-class FileReader implements Readable {
-  @override
-  Future<String> read() { /* implementação */ }
-}
-```
-
-## Dependency Inversion Principle (DIP)
-
-- Dependa de abstrações, não de implementações concretas
-- Classes de alto nível não devem depender de classes de baixo nível
-- Use injeção de dependência via construtor
-- Defina interfaces no domínio, implemente na infraestrutura
-
-**Exemplo Correto:**
-
-```dart
-// Domain - Interface (abstração)
-abstract class IUserRepository {
-  Future<User> getById(String id);
-}
-
-// Application - Depende da abstração
-class UserService {
-  final IUserRepository repository; // Interface, não implementação
-
-  UserService(this.repository);
-
-  Future<User> getUser(String id) {
-    return repository.getById(id);
-  }
-}
-
-// Infrastructure - Implementa a abstração
-class UserRepository implements IUserRepository {
-  @override
-  Future<User> getById(String id) { /* implementação */ }
-}
-```
+- [ ] Responsibilities are separated by concern.
+- [ ] Extensions avoid modifications to stable modules.
+- [ ] Interfaces are small and cohesive.
+- [ ] High-level modules depend on abstractions.

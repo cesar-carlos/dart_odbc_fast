@@ -126,13 +126,13 @@ The test suite supports running E2E tests against multiple database systems (SQL
 
 **Database type validation (helpers in `helpers::e2e`):**
 
-| Helper | Uso |
-|--------|-----|
-| `detect_database_type(conn_str)` | Infere `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) pela string de connection. |
-| `is_database_type(expected: DatabaseType)` | returns `true` só se o banco conectado (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) for o esperado. Caso contrário imprime "⚠️ Skipping test: requires X, but connected to Y" e returns `false`. Use no início de testes específicos de um banco (ex.: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
-| `get_connection_and_db_type()` | returns `Option<(String, DatabaseType)>` (connection string + tipo detectado). Útil para adaptar DDL/SQL por banco (ex.: `e2e_bulk_operations_test`). |
+| Helper | Usage |
+|--------|-------|
+| `detect_database_type(conn_str)` | Infers `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) from the connection string. |
+| `is_database_type(expected: DatabaseType)` | Returns `true` only when the connected database (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) matches the expected type. Otherwise prints `"[WARN] Skipping test: requires X, but connected to Y"` and returns `false`. Use this at the start of database-specific tests (for example: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
+| `get_connection_and_db_type()` | Returns `Option<(String, DatabaseType)>` (connection string + detected type). Useful to adapt DDL/SQL per database (for example: `e2e_bulk_operations_test`). |
 
-example em teste específico de SQL Server:
+Example in a SQL Server-specific test:
 
 ```rust
 use helpers::{is_database_type, should_run_e2e_tests, DatabaseType};
@@ -158,9 +158,9 @@ if !is_database_type(DatabaseType::SqlServer) { return; }
    - Skip database-specific tests when not applicable
    - Run generic tests on any configured database
 
-**📖 For complete documentation, see [MULTI_DATABASE_TESTING.md](MULTI_DATABASE_TESTING.md)**
+**For complete documentation, see [MULTI_DATABASE_TESTING.md](MULTI_DATABASE_TESTING.md)**
 
-**📖 DSN / `.env` configuration:** see [E2E_TESTS_ENV_CONFIG.md](../E2E_TESTS_ENV_CONFIG.md)
+**DSN / `.env` configuration:** see [E2E_TESTS_ENV_CONFIG.md](../E2E_TESTS_ENV_CONFIG.md)
 
 ## Test Strategy
 
@@ -240,6 +240,3 @@ To run with logging:
 ```bash
 RUST_LOG=debug cargo test --lib ffi::tests
 ```
-
-
-

@@ -1,41 +1,19 @@
-﻿# Release v0.1.6 - Batched Streaming + Publish Fixes
+﻿# RELEASE_NOTES.md (Legacy Manual Template)
 
-This release adds cursor-based batched streaming and fixes pub publishing so
-native Dart sources under `lib/infrastructure/native/` are included correctly.
+This file is legacy.
 
-## What's Included
+Current flow:
 
-**Windows x86_64:**
-- Pre-built binary: `odbc_engine.dll`
-- Automatic download via Native Assets
-- No compilation required
+1. Official release is created by `.github/workflows/release.yml`.
+2. The `create-release` job uses `generate_release_notes: true`.
+3. Binaries are attached automatically:
+   - `odbc_engine.dll`
+   - `libodbc_engine.so`
 
-**Linux x86_64:**
-- Pre-built binary: `libodbc_engine.so` (via GitHub Releases)
-- Automatic download via Native Assets
+When to edit manually:
 
-## Installation
-
-```yaml
-dependencies:
-  odbc_fast: ^0.1.6
-```
-
-Run: `dart pub get`
-
-## Supported Platforms
-
-* Windows x86_64
-* Linux x86_64
-
-## System Requirements
-
-* Windows: ODBC Driver Manager (pre-installed)
-* Linux: unixODBC (`sudo apt-get install unixodbc`)
-
-## Highlights
-
-- Added `streamQueryBatched` for efficient large result sets
-- `executeQuery` now prefers batched streaming with safe fallback
-- Fixed publish packaging so `dart analyze` / `dartdoc` work on pub.dev
-
+- Only if you need to replace auto-generated GitHub Release notes.
+- Always align with:
+  - `pubspec.yaml` (version)
+  - `CHANGELOG.md`
+  - `doc/RELEASE_AUTOMATION.md`

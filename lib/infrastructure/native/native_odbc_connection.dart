@@ -408,13 +408,19 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// Returns [OdbcMetrics] containing query counts, error counts,
   /// uptime, and latency information, or null on failure.
-  OdbcMetrics? getMetrics() => domain.OdbcMetrics(
-        queryCount: _native.getMetrics()?.queryCount ?? 0,
-        errorCount: _native.getMetrics()?.errorCount ?? 0,
-        uptimeSecs: _native.getMetrics()?.uptimeSecs ?? 0,
-        totalLatencyMillis: _native.getMetrics()?.totalLatencyMillis ?? 0,
-        avgLatencyMillis: _native.getMetrics()?.avgLatencyMillis ?? 0,
-      );
+  OdbcMetrics? getMetrics() {
+    final metrics = _native.getMetrics();
+    if (metrics == null) {
+      return null;
+    }
+    return domain.OdbcMetrics(
+      queryCount: metrics.queryCount,
+      errorCount: metrics.errorCount,
+      uptimeSecs: metrics.uptimeSecs,
+      totalLatencyMillis: metrics.totalLatencyMillis,
+      avgLatencyMillis: metrics.avgLatencyMillis,
+    );
+  }
 
   ///
   /// Clears the prepared statement cache.

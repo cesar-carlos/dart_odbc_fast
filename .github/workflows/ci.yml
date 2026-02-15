@@ -10,7 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
+      CI: "true"
       ENABLE_E2E_TESTS: "0"
+      RUN_SKIPPED_TESTS: "0"
+      ODBC_TEST_DSN: ""
+      ODBC_DSN: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -56,12 +60,16 @@ jobs:
       - name: Install dependencies
         run: dart pub get
 
-      - name: Run unit tests
+      - name: Dart analyze
+        run: dart analyze
+
+      - name: Run Dart tests (unit-only, no integration/e2e/stress)
         run: >
           dart test
+          test/application
           test/domain
-          test/infrastructure/native/protocol/
-          test/infrastructure/native/errors/
+          test/infrastructure
+          test/helpers/database_detection_test.dart
 
       - name: Rust coverage (lib)
         run: |

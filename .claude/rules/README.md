@@ -1,10 +1,10 @@
-﻿#Claude Rules - Usage Guide
+# Claude Rules - Usage Guide
 
-This directory contains the rules used by Claude Code to maintain consistency and quality in the project.
+This directory contains the rules used by Claude Code to maintain consistency and engineering quality in the project.
 
-## Estrutura
+## Structure
 
-```
+```text
 .claude/rules/
 ├── README.md
 ├── rules_index.md
@@ -20,11 +20,11 @@ This directory contains the rules used by Claude Code to maintain consistency an
 └── error_handling.md
 ```
 
-## default Claude
+## Claude Defaults
 
-- Regras ficam em `.claude/rules/*.md`
-- Escopo por arquivo via frontmatter `paths`
-- Without `paths`, the rule applies to the entire project
+- Rules live in `.claude/rules/*.md`
+- Scope is controlled by frontmatter `paths`
+- Without `paths`, the rule applies to the full project
 
 Example:
 
@@ -36,12 +36,12 @@ paths:
 ---
 ```
 
-## Origin of rules
+## Rule Origin
 
-- These rules were derived from `./.cursor/rules` and converted to Claude scope format (`paths`).
-- The technical content (Clean Architecture, SOLID, style, null safety, testing, UI/UX, Rust native and error handling) was maintained.
+- These rules were derived from `./.cursor/rules` and adapted to Claude frontmatter (`paths`).
+- Core technical guidance was preserved: Clean Architecture, SOLID, style, null safety, testing, UI/UX, Rust native, and error handling.
 
-## Referências
+## References
 
 - https://docs.anthropic.com/en/docs/claude-code/memory
 - https://docs.anthropic.com/en/docs/claude-code/settings
@@ -50,4 +50,3 @@ paths:
 - https://doc.rust-lang.org/clippy/
 - https://dart.dev/language/error-handling
 - https://doc.rust-lang.org/std/error/
-

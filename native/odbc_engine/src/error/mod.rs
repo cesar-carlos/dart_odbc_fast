@@ -1,16 +1,11 @@
 use odbc_api::handles::Record as OdbcRecord;
 use thiserror::Error;
 
-/// Error category for decision-making (retry, abort, reconnect, etc.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCategory {
-    /// Transient error - retry may resolve
     Transient,
-    /// Fatal error - should abort operation
     Fatal,
-    /// Validation error - invalid user input
     Validation,
-    /// Connection lost - should reconnect
     ConnectionLost,
 }
 
@@ -111,23 +106,15 @@ impl OdbcError {
         }
     }
 
-    /// Returns true if the error is transient and may be retried
     pub fn is_retryable(&self) -> bool {
         match self {
-            OdbcError::Structured { sqlstate, .. } => {
-                // Connection errors (08xxx) are often retryable
-                sqlstate[0] == b'0' && sqlstate[1] == b'8'
-            }
+            OdbcError::Structured { sqlstate, .. } => sqlstate[0] == b'0' && sqlstate[1] == b'8',
             OdbcError::PoolError(_) => true,
-            OdbcError::InternalError(msg) => {
-                // Some internal errors like timeouts are retryable
-                msg.contains("timeout") || msg.contains("Timeout")
-            }
+            OdbcError::InternalError(msg) => msg.contains("timeout") || msg.contains("Timeout"),
             _ => false,
         }
     }
 
-    /// Returns true if this is a connection-related error
     pub fn is_connection_error(&self) -> bool {
         match self {
             OdbcError::EmptyConnectionString | OdbcError::EnvironmentNotInitialized => true,
@@ -136,7 +123,6 @@ impl OdbcError {
         }
     }
 
-    /// Returns the error category for decision-making
     pub fn error_category(&self) -> ErrorCategory {
         if matches!(self, OdbcError::ValidationError(_)) {
             return ErrorCategory::Validation;
@@ -291,7 +277,6 @@ mod tests {
 
         let serialized = error.serialize();
 
-        // Verify format: [sqlstate: 5][native_code: 4][msg_len: 4][message: N]
         assert_eq!(&serialized[0..5], b"23000");
         assert_eq!(
             i32::from_le_bytes([serialized[5], serialized[6], serialized[7], serialized[8]]),
@@ -325,13 +310,11 @@ mod tests {
 
     #[test]
     fn test_structured_error_deserialize_invalid_data() {
-        // Too short
         let data = vec![1, 2, 3];
         assert!(StructuredError::deserialize(&data).is_none());
 
-        // Header only, no message
         let mut data = vec![0u8; 13];
-        data[9..13].copy_from_slice(&10u32.to_le_bytes()); // msg_len = 10, but no data
+        data[9..13].copy_from_slice(&10u32.to_le_bytes());
         assert!(StructuredError::deserialize(&data).is_none());
     }
 
@@ -370,7 +353,7 @@ mod tests {
         let error = StructuredError {
             sqlstate: [b'2', b'3', b'0', b'0', b'0'],
             native_code: 42,
-            message: "Erro em português: €$¥".to_string(),
+            message: "Unicode error message: €$¥".to_string(),
         };
 
         let serialized = error.serialize();
@@ -381,7 +364,6 @@ mod tests {
 
     #[test]
     fn test_is_retryable() {
-        // Connection errors with SQLSTATE '08xxx' should be retryable
         let conn_error = OdbcError::Structured {
             sqlstate: [b'0', b'8', b'0', b'0', b'1'],
             native_code: 0,
@@ -392,11 +374,9 @@ mod tests {
             "Connection errors should be retryable"
         );
 
-        // Pool errors should be retryable
         let pool_error = OdbcError::PoolError("Pool exhausted".to_string());
         assert!(pool_error.is_retryable(), "Pool errors should be retryable");
 
-        // Internal errors with timeout should be retryable
         let timeout_error = OdbcError::InternalError("Query timeout".to_string());
         assert!(
             timeout_error.is_retryable(),
@@ -409,7 +389,6 @@ mod tests {
             "Timeout errors should be retryable"
         );
 
-        // Non-retryable errors
         let validation_error = OdbcError::ValidationError("Invalid input".to_string());
         assert!(
             !validation_error.is_retryable(),
@@ -429,21 +408,18 @@ mod tests {
 
     #[test]
     fn test_is_connection_error() {
-        // EmptyConnectionString should be connection error
         let empty_conn = OdbcError::EmptyConnectionString;
         assert!(
             empty_conn.is_connection_error(),
             "EmptyConnectionString should be connection error"
         );
 
-        // EnvironmentNotInitialized should be connection error
         let env_not_init = OdbcError::EnvironmentNotInitialized;
         assert!(
             env_not_init.is_connection_error(),
             "EnvironmentNotInitialized should be connection error"
         );
 
-        // SQLSTATE '08xxx' should be connection error
         let conn_sqlstate = OdbcError::Structured {
             sqlstate: [b'0', b'8', b'0', b'0', b'1'],
             native_code: 0,
@@ -454,7 +430,6 @@ mod tests {
             "SQLSTATE '08xxx' should be connection error"
         );
 
-        // Non-connection errors
         let validation_error = OdbcError::ValidationError("Invalid input".to_string());
         assert!(
             !validation_error.is_connection_error(),
@@ -474,7 +449,6 @@ mod tests {
 
     #[test]
     fn test_error_category() {
-        // ValidationError → Validation
         let validation_error = OdbcError::ValidationError("Invalid input".to_string());
         assert_eq!(
             validation_error.error_category(),
@@ -482,7 +456,6 @@ mod tests {
             "ValidationError should map to Validation category"
         );
 
-        // Connection errors → ConnectionLost
         let conn_error = OdbcError::EmptyConnectionString;
         assert_eq!(
             conn_error.error_category(),
@@ -501,7 +474,6 @@ mod tests {
             "SQLSTATE '08xxx' should map to ConnectionLost category"
         );
 
-        // Retryable errors → Transient
         let pool_error = OdbcError::PoolError("Pool exhausted".to_string());
         assert_eq!(
             pool_error.error_category(),
@@ -516,7 +488,6 @@ mod tests {
             "Timeout errors should map to Transient category"
         );
 
-        // Other errors → Fatal
         let fatal_error = OdbcError::Structured {
             sqlstate: [b'2', b'3', b'0', b'0', b'0'],
             native_code: 0,

@@ -5,12 +5,119 @@ name: Release
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g.: v0.3.2)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_version: ${{ steps.meta.outputs.release_version }}
+    env:
+      CI: "true"
+      ENABLE_E2E_TESTS: "0"
+      RUN_SKIPPED_TESTS: "0"
+      ODBC_TEST_DSN: ""
+      ODBC_DSN: ""
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Validate release metadata (tag/pubspec/changelog)
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "Invalid tag: ${TAG}. Use format vX.Y.Z (or suffix -rc.N/-beta.N/-dev.N)."
+            exit 1
+          fi
+
+          VERSION="$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}')"
+          if [[ -z "${VERSION}" ]]; then
+            echo "Could not read version from pubspec.yaml"
+            exit 1
+          fi
+
+          if [[ "v${VERSION}" != "${TAG}" ]]; then
+            echo "Inconsistency: pubspec.yaml=${VERSION}, tag=${TAG}"
+            exit 1
+          fi
+
+          if ! grep -q "^## \\[${VERSION}\\]" CHANGELOG.md; then
+            echo "CHANGELOG.md missing section for [${VERSION}]"
+            exit 1
+          fi
+
+          echo "release_tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "release_version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install ODBC (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Build Rust library (host)
+        run: |
+          cd native
+          cargo build --release --verbose
+
+      - name: Rust format check
+        run: |
+          cd native
+          cargo fmt --all -- --check
+
+      - name: Dart analyze
+        run: dart analyze
+
+      - name: Dart tests (unit-only, no integration/e2e/stress)
+        run: >
+          dart test
+          test/application
+          test/domain
+          test/infrastructure
+          test/helpers/database_detection_test.dart
+
+      - name: Rust lint (clippy)
+        run: |
+          cd native
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests (lib only)
+        run: |
+          cd native
+          cargo test -p odbc_engine --lib
+
   build-binaries:
+    needs: verify
     timeout-minutes: 60
     strategy:
       matrix:
@@ -26,6 +133,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.verify.outputs.release_tag }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -69,11 +179,14 @@ jobs:
           retention-days: 1
 
   create-release:
-    needs: build-binaries
+    needs: [verify, build-binaries]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.verify.outputs.release_tag }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -82,9 +195,20 @@ jobs:
           pattern: '*'
           merge-multiple: true
 
+      - name: Validate downloaded artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f uploads/odbc_engine.dll
+          test -f uploads/libodbc_engine.so
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ needs.verify.outputs.release_tag }}
+          name: Release ${{ needs.verify.outputs.release_tag }}
           files: uploads/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
+          prerelease: ${{ contains(needs.verify.outputs.release_tag, '-rc.') || contains(needs.verify.outputs.release_tag, '-beta.') || contains(needs.verify.outputs.release_tag, '-dev.') }}
           draft: false

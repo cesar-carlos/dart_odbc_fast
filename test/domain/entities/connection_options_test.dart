@@ -42,8 +42,7 @@ void main() {
       expect(defaultReconnectBackoff, const Duration(seconds: 1));
     });
 
-    test(
-        'loginTimeoutMs should prefer loginTimeout over connectionTimeout',
+    test('loginTimeoutMs should prefer loginTimeout over connectionTimeout',
         () {
       const opts = ConnectionOptions(
         connectionTimeout: Duration(seconds: 10),
@@ -63,6 +62,22 @@ void main() {
     test('loginTimeoutMs should return 0 when both null', () {
       const opts = ConnectionOptions();
       expect(opts.loginTimeoutMs, 0);
+    });
+
+    test('validate should reject negative queryTimeout', () {
+      const opts = ConnectionOptions(queryTimeout: Duration(seconds: -1));
+      expect(opts.validate(), 'queryTimeout cannot be negative');
+    });
+
+    test('validate should reject initial buffer greater than max buffer', () {
+      const opts = ConnectionOptions(
+        maxResultBufferBytes: 1024,
+        initialResultBufferBytes: 2048,
+      );
+      expect(
+        opts.validate(),
+        'initialResultBufferBytes cannot be greater than maxResultBufferBytes',
+      );
     });
   });
 }

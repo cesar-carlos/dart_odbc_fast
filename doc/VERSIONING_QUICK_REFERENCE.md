@@ -1,60 +1,66 @@
-# VERSIONING_QUICK_REFERENCE.md - Referencia rapida
+﻿# VERSIONING_QUICK_REFERENCE.md - Quick Reference
 
-## Decisao em 10 segundos
+## 10-second decision
 
-Se esta em `0.x.y`:
+If version is `0.x.y`:
 
-- Breaking de API publica -> `0.(x+1).0`
-- Nao-breaking (feature/fix/docs/perf) -> `0.x.(y+1)`
+- Public API breaking change -> `0.(x+1).0`
+- Non-breaking change (feature/fix/docs/perf) -> `0.x.(y+1)`
 
-Se esta em `>=1.0.0`:
+If version is `>=1.0.0`:
 
 - Breaking -> `MAJOR`
-- Feature compativel -> `MINOR`
+- Backward-compatible feature -> `MINOR`
 - Fix/perf/docs -> `PATCH`
 
-## Tabela rapida (pre-1.0.0)
+## Quick table (pre-1.0.0)
 
-| Tipo de mudanca                 | Bump  |
-| ------------------------------- | ----- |
-| Renomear/remover API publica    | MINOR |
-| Alterar retorno publico         | MINOR |
-| Adicionar parametro obrigatorio | MINOR |
-| Adicionar metodo novo           | PATCH |
-| Adicionar parametro opcional    | PATCH |
-| Bug fix                         | PATCH |
-| Performance                     | PATCH |
-| Documentacao                    | PATCH |
+| Change type                      | Bump  |
+| -------------------------------- | ----- |
+| Rename/remove public API         | MINOR |
+| Change public return type        | MINOR |
+| Add required parameter           | MINOR |
+| Add new method                   | PATCH |
+| Add optional parameter           | PATCH |
+| Bug fix                          | PATCH |
+| Performance                      | PATCH |
+| Documentation                    | PATCH |
 
-## Checklist de breaking
+## Breaking checklist
 
-Marque como breaking se qualquer item for verdadeiro:
+Mark as breaking if any item is true:
 
-- [ ] Remove API publica
-- [ ] Renomeia API publica
-- [ ] Altera assinatura/retorno de API publica
-- [ ] Remove compatibilidade sem periodo de migracao
+- [ ] Removes public API
+- [ ] Renames public API
+- [ ] Changes public API signature/return
+- [ ] Removes compatibility without migration window
 
-## Exemplos
+## Examples
 
 1. `execute(String sql)` -> `execute(String sql, {Duration? timeout})`
-   Resultado: PATCH.
+   Result: PATCH.
 
 2. `execute(String sql)` -> `executeQuery(String sql)`
-   Resultado: MINOR (pre-1.0.0) / MAJOR (pos-1.0.0).
+   Result: MINOR (pre-1.0.0) / MAJOR (post-1.0.0).
 
-## Comandos uteis
+## Useful commands
 
 ```bash
-# ver versao atual
+# current version
 rg "^version:" pubspec.yaml
 
-# criar tag estavel
+# create stable tag
 git tag -a v0.3.2 -m "Release v0.3.2"
 git push origin v0.3.2
 ```
 
-## Referencias
+PowerShell helper (validates pubspec/changelog before tagging):
+
+```powershell
+.\scripts\create_release.ps1 0.3.2
+```
+
+## References
 
 - [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md)
 - [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md)

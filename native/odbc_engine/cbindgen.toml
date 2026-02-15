@@ -10,13 +10,19 @@ pragma_once = true
 include = [
     "odbc_init",
     "odbc_connect",
+    "odbc_connect_with_timeout",
     "odbc_disconnect",
     "odbc_transaction_begin",
     "odbc_transaction_commit",
     "odbc_transaction_rollback",
+    "odbc_savepoint_create",
+    "odbc_savepoint_rollback",
+    "odbc_savepoint_release",
     "odbc_get_error",
     "odbc_get_structured_error",
     "odbc_get_metrics",
+    "odbc_get_cache_metrics",
+    "odbc_clear_statement_cache",
     "odbc_exec_query",
     "odbc_exec_query_params",
     "odbc_exec_query_multi",
@@ -24,6 +30,7 @@ include = [
     "odbc_execute",
     "odbc_cancel",
     "odbc_close_statement",
+    "odbc_clear_all_statements",
     "odbc_stream_start",
     "odbc_stream_start_batched",
     "odbc_stream_fetch",
@@ -31,6 +38,7 @@ include = [
     "odbc_catalog_tables",
     "odbc_catalog_columns",
     "odbc_catalog_type_info",
+    "odbc_detect_driver",
     "odbc_pool_create",
     "odbc_pool_get_connection",
     "odbc_pool_release_connection",
@@ -38,7 +46,13 @@ include = [
     "odbc_pool_get_state",
     "odbc_pool_close",
     "odbc_bulk_insert_array",
-    "odbc_bulk_insert_parallel"
+    "odbc_bulk_insert_parallel",
+    "otel_init",
+    "otel_export_trace",
+    "otel_export_trace_to_string",
+    "otel_get_last_error",
+    "otel_cleanup_strings",
+    "otel_shutdown"
 ]
 exclude = ["test_*", ".*"]
 

@@ -67,11 +67,11 @@ DynamicLibrary loadOdbcLibrary() {
     if (fromRoot != null) return fromRoot;
   }
 
-  // 3. Native Assets (produção) - package:odbc_fast/
+  // 3. Native Assets (production) - package:odbc_fast/
   try {
     return DynamicLibrary.open('package:odbc_fast/$name');
   } on Object catch (_) {
-    // Native Assets não disponível, continua para próxima opção
+    // Native Assets not available, continue to next option
   }
 
   // 4. Sistema - PATH/LD_LIBRARY_PATH

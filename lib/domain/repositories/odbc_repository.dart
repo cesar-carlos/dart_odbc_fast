@@ -55,6 +55,18 @@ abstract class IOdbcRepository {
     String sql,
   );
 
+  /// Executes a SQL query as an incremental stream of chunks.
+  ///
+  /// Each emitted [Result] item contains a [QueryResult] chunk (subset of
+  /// rows). This avoids materializing the full result set in memory.
+  ///
+  /// On runtime failure, emits a single `Failure<QueryResult, OdbcError>`
+  /// item and closes the stream.
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  );
+
   /// Begins a new transaction with the specified isolation level.
   ///
   /// The [connectionId] must be a valid active connection.

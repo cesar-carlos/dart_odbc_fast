@@ -2,25 +2,31 @@ use crate::error::OdbcError;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::runtime::Runtime;
 
-static RUNTIME: OnceLock<Arc<Mutex<Runtime>>> = OnceLock::new();
+static RUNTIME: OnceLock<std::result::Result<Arc<Mutex<Runtime>>, String>> = OnceLock::new();
 
-fn get_runtime() -> Arc<Mutex<Runtime>> {
-    RUNTIME
-        .get_or_init(|| {
-            let rt = Runtime::new().expect("Failed to create tokio runtime");
-            Arc::new(Mutex::new(rt))
-        })
-        .clone()
+fn get_runtime() -> Result<Arc<Mutex<Runtime>>, OdbcError> {
+    let runtime = RUNTIME.get_or_init(|| {
+        Runtime::new()
+            .map(|rt| Arc::new(Mutex::new(rt)))
+            .map_err(|e| format!("Failed to create tokio runtime: {}", e))
+    });
+
+    match runtime {
+        Ok(rt) => Ok(rt.clone()),
+        Err(msg) => Err(OdbcError::InternalError(msg.clone())),
+    }
 }
 
 #[cfg(test)]
-fn get_runtime_for_test() -> Arc<Mutex<Runtime>> {
+fn get_runtime_for_test() -> Result<Arc<Mutex<Runtime>>, OdbcError> {
     get_runtime()
 }
 
 #[allow(dead_code)]
 pub fn init_runtime() {
-    let _ = get_runtime();
+    if let Err(e) = get_runtime() {
+        eprintln!("init_runtime failed: {}", e);
+    }
 }
 
 #[allow(dead_code)]
@@ -29,8 +35,10 @@ where
     F: std::future::Future<Output = Result<R, OdbcError>> + Send + 'static,
     R: Send + 'static,
 {
-    let runtime = get_runtime();
-    let rt = runtime.lock().unwrap();
+    let runtime = get_runtime()?;
+    let rt = runtime
+        .lock()
+        .map_err(|_| OdbcError::InternalError("Async runtime lock poisoned".to_string()))?;
     rt.block_on(f)
 }
 
@@ -49,9 +57,9 @@ mod tests {
     #[test]
     fn test_init_runtime_multiple_calls() {
         init_runtime();
-        let runtime1 = get_runtime_for_test();
+        let runtime1 = get_runtime_for_test().expect("runtime should initialize");
         init_runtime();
-        let runtime2 = get_runtime_for_test();
+        let runtime2 = get_runtime_for_test().expect("runtime should initialize");
 
         assert!(Arc::ptr_eq(&runtime1, &runtime2));
     }
@@ -59,8 +67,8 @@ mod tests {
     #[test]
     fn test_get_runtime_singleton() {
         init_runtime();
-        let runtime1 = get_runtime_for_test();
-        let runtime2 = get_runtime_for_test();
+        let runtime1 = get_runtime_for_test().expect("runtime should initialize");
+        let runtime2 = get_runtime_for_test().expect("runtime should initialize");
 
         assert!(Arc::ptr_eq(&runtime1, &runtime2));
     }
@@ -68,7 +76,7 @@ mod tests {
     #[test]
     fn test_get_runtime_creates_runtime() {
         init_runtime();
-        let runtime = get_runtime_for_test();
+        let runtime = get_runtime_for_test().expect("runtime should initialize");
 
         let future = async { Ok::<i32, OdbcError>(42) };
 

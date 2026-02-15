@@ -148,6 +148,97 @@ void _fakeWorkerStreamingSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: start streaming always fails with streamId=0.
+void _fakeWorkerStreamStartFailure(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((Object? message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is StreamStartRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+    if (message is StreamStartBatchedRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+    if (message is GetErrorRequest) {
+      mainSendPort.send(
+        GetErrorResponse(message.requestId, 'stream start failed'),
+      );
+      return;
+    }
+    if (message is StreamCloseRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: fetch fails and next start depends on prior close.
+void _fakeWorkerFetchFailureRequiresClose(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+
+  var streamOpen = false;
+
+  receivePort.listen((Object? message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is StreamStartRequest) {
+      if (streamOpen) {
+        mainSendPort.send(IntResponse(message.requestId, 0));
+      } else {
+        streamOpen = true;
+        mainSendPort.send(IntResponse(message.requestId, 777));
+      }
+      return;
+    }
+    if (message is StreamStartBatchedRequest) {
+      if (streamOpen) {
+        mainSendPort.send(IntResponse(message.requestId, 0));
+      } else {
+        streamOpen = true;
+        mainSendPort.send(IntResponse(message.requestId, 777));
+      }
+      return;
+    }
+    if (message is StreamFetchRequest) {
+      mainSendPort.send(
+        StreamFetchResponse(
+          message.requestId,
+          success: false,
+          error: 'fetch failed',
+        ),
+      );
+      return;
+    }
+    if (message is StreamCloseRequest) {
+      streamOpen = false;
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is GetErrorRequest) {
+      final msg = streamOpen ? 'stream still open' : 'No error';
+      mainSendPort.send(GetErrorResponse(message.requestId, msg));
+      return;
+    }
+  });
+}
+
 /// Fake worker: supports bulk insert requests.
 void _fakeWorkerBulkSupport(SendPort mainSendPort) {
   final receivePort = ReceivePort();
@@ -752,6 +843,92 @@ void main() {
       expect(chunks.first.columnCount, equals(1));
       expect(chunks.first.columns.first.name, equals('id'));
       expect(chunks.first.rows.first.first, equals(1));
+    });
+  });
+
+  group('AsyncNativeOdbcConnection streaming failures', () {
+    test('streamQuery should throw AsyncError when stream start fails',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerStreamStartFailure,
+      );
+      await async.initialize();
+
+      await expectLater(
+        () => async.streamQuery(1, 'SELECT 1').toList(),
+        throwsA(
+          isA<AsyncError>()
+              .having((e) => e.code, 'code', AsyncErrorCode.queryFailed)
+              .having(
+                (e) => e.message,
+                'message',
+                contains('stream start failed'),
+              ),
+        ),
+      );
+      async.dispose();
+    });
+
+    test(
+      'streamQuery should close failed stream before next start attempt',
+      () async {
+        final async = AsyncNativeOdbcConnection(
+          isolateEntry: _fakeWorkerFetchFailureRequiresClose,
+        );
+        await async.initialize();
+
+        Future<void> runAndExpectFetchFailure() async {
+          await expectLater(
+            () => async.streamQuery(1, 'SELECT 1').toList(),
+            throwsA(
+              isA<AsyncError>()
+                  .having((e) => e.code, 'code', AsyncErrorCode.queryFailed)
+                  .having(
+                    (e) => e.message,
+                    'message',
+                    contains('fetch failed'),
+                  ),
+            ),
+          );
+        }
+
+        await runAndExpectFetchFailure();
+        await runAndExpectFetchFailure();
+        async.dispose();
+      },
+    );
+  });
+
+  group('AsyncNativeOdbcConnection recovery guards', () {
+    test('dispose should not trigger auto-recovery', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerStreamingSupport,
+        autoRecoverOnWorkerCrash: true,
+      );
+      await async.initialize();
+
+      async.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(async.isInitialized, isFalse);
+    });
+
+    test('recoverWorker should be safe when called concurrently', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerStreamingSupport,
+      );
+      await async.initialize();
+
+      await Future.wait([
+        async.recoverWorker(),
+        async.recoverWorker(),
+        async.recoverWorker(),
+      ]);
+
+      expect(async.isInitialized, isTrue);
+      final chunks = await async.streamQuery(1, 'SELECT 1').toList();
+      expect(chunks, isNotEmpty);
+      async.dispose();
     });
   });
 

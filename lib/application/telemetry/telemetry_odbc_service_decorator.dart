@@ -78,6 +78,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  ) {
+    return _service.streamQuery(connectionId, sql);
+  }
+
+  @override
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
