@@ -1,63 +1,33 @@
-﻿# Documentation - ODBC Fast
+# Documentacao do projeto
 
-Index of all project documentation.
+Este diretorio contem apenas os documentos canonicos para uso diario de contribuidores e mantenedores.
 
-## Build & mustlopment
+## Guia rapido
 
-| Document             | Description                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------- |
-| [BUILD.md](BUILD.md) | Complete guide for building and mustloping (Rust + Dart, prerequisites, FFI, troubleshooting) |
+| Documento | Objetivo |
+| --- | --- |
+| [BUILD.md](BUILD.md) | Setup local, build Rust, geracao opcional de bindings e execucao de testes |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Diagnostico e correcoes para erros frequentes de build, runtime e CI |
+| [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | Processo de release com tags + GitHub Actions + publicacao no pub.dev |
+| [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md) | Politica oficial de versionamento e deprecation |
+| [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md) | Referencia curta para decidir bump de versao |
+| [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md) | Modelo padrao para atualizar `CHANGELOG.md` |
+| [OBSERVABILITY.md](OBSERVABILITY.md) | Telemetria, metricas operacionais e fallback de exportacao |
+| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Backlog tecnico consolidado e priorizado |
 
-## Release & Deployment
+## Documentacao gerada
 
-| Document                                       | Description                                                                |
-| ---------------------------------------------- | -------------------------------------------------------------------------- |
-| [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | Automated release pipeline, GitHub Actions workflow, publishing to pub.dev |
+- `doc/api/` contem artefatos gerados por `dart doc`.
+- Nao editar manualmente arquivos dentro de `doc/api/`.
 
-## Troubleshooting
+## Notas tecnicas
 
-| Document                                 | Description                                                            |
-| ---------------------------------------- | ---------------------------------------------------------------------- |
-| [OBSERVABILITY.md](OBSERVABILITY.md)     | OTLP telemetry, fallback to ConsoleExporter, ODBC metrics              |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions for mustlopment, build, runtime, and CI/CD |
+- `doc/notes/` guarda notas de apoio e investigacoes pontuais.
+- Arquivos em `doc/notes/` nao substituem os documentos canonicos.
 
-## Governance
+## Regras de manutencao
 
-| Document                               | Description                                                         |
-| -------------------------------------- | ------------------------------------------------------------------- |
-| [api_governance.md](api_governance.md) | Versioning (API, Protocol, ABI), compatibility policy, LTS strategy |
-
-## Future Implementations
-
-| Document                                               | Description                                                                                                              |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) | Items documented and left for future implementation: parallel bulk insert, Schema PK/FK/Indexes, global queryTimeout |
-
-## Additional Resources
-
-- **Rust engine architecture**: `native/odbc_engine/ARCHITECTURE.md`
-- **FFI overview**: `native/doc/` (when available)
-- **Main README**: `../README.md`
-- **Examples index**: [example/README.md](../example/README.md)
-
-## Quick Links
-
-### For Users
-
-- [Installation Guide](../README.md#installation)
-- [Quick Start](../README.md#quick-start)
-- [API Documentation](https://pub.dev/documentation/odbc_fast/latest/)
-
-### For Contributors
-
-- [BUILD.md](BUILD.md) - Set up mustlopment environment
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Solve common issues
-- [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Understand the release process
-
-### For Maintainers
-
-- [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) - Create a new release
-- [api_governance.md](api_governance.md) - Versioning and compatibility policies
-
-
-
+1. Evite criar documentos paralelos sobre o mesmo tema. Atualize o documento canonico.
+2. Quando um documento ficar historico, remova-o do indice e delete o arquivo.
+3. Sempre valide links internos apos alteracoes maiores.
+4. Para mudancas de release/versionamento, mantenha `pubspec.yaml`, `CHANGELOG.md` e docs sincronizados.

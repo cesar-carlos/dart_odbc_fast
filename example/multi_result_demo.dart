@@ -1,51 +1,21 @@
-// Multi-result demo - queries returning multiple result sets
-// of results
-//
-// Prerequisites: Set ODBC_TEST_DSN in environment variable or .env.
-// Execute: dart run example/multi_result_demo.dart
+// Multi-result demo using executeQueryMulti + MultiResultParser.
+// Run: dart run example/multi_result_demo.dart
 
-import 'dart:io';
-
-import 'package:dotenv/dotenv.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
-const _envPath = '.env';
-
-String _exampleEnvPath() =>
-    '${Directory.current.path}${Platform.pathSeparator}$_envPath';
-
-String? _getExampleDsn() {
-  final path = _exampleEnvPath();
-  final file = File(path);
-  if (file.existsSync()) {
-    final env = DotEnv(includePlatformEnvironment: true)..load([path]);
-    final v = env['ODBC_TEST_DSN'];
-    if (v != null && v.isNotEmpty) return v;
-  }
-  return Platform.environment['ODBC_TEST_DSN'] ??
-      Platform.environment['ODBC_DSN'];
-}
+import 'common.dart';
 
 void main() async {
   AppLogger.initialize();
 
-  final dsn = _getExampleDsn();
-  final skipDb = dsn == null || dsn.isEmpty;
-
-  if (skipDb) {
-    AppLogger.warning(
-      'ODBC_TEST_DSN (or ODBC_DSN) not set. '
-      'Create .env with ODBC_TEST_DSN=... or set the environment variable. '
-      'Skipping DB-dependent examples.',
-    );
+  final dsn = requireExampleDsn();
+  if (dsn == null) {
     return;
   }
 
   final native = NativeOdbcConnection();
-
-  final initResult = native.initialize();
-  if (!initResult) {
+  if (!native.initialize()) {
     AppLogger.severe('ODBC environment initialization failed');
     return;
   }
@@ -56,174 +26,91 @@ void main() async {
     return;
   }
 
-  AppLogger.info('Connected: $connId');
-
-  // Create test tables and stored procedure
-  await _createMultiResultSetup(native, connId);
-
-  // Demonstrate multi-result query with batch
-  await _demoMultiResultBatch(native, connId);
-
-  // Demonstrate multi-result parsing
-  await _demoMultiResultParser(native, connId);
-
-  native.disconnect(connId);
-  AppLogger.info('Disconnected');
-  AppLogger.info('All examples completed.');
+  try {
+    await _createSetup(native, connId);
+    await _runMultiResultBatch(native, connId);
+  } finally {
+    native.disconnect(connId);
+    AppLogger.info('Disconnected');
+  }
 }
 
-Future<void> _createMultiResultSetup(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  const createTable1Sql = '''
-    IF OBJECT_ID('multi_result_users', 'U') IS NOT NULL
-      DROP TABLE multi_result_users;
+Future<void> _createSetup(NativeOdbcConnection native, int connId) async {
+  const ddl = '''
+    IF OBJECT_ID('multi_result_users', 'U') IS NOT NULL DROP TABLE multi_result_users;
+    IF OBJECT_ID('multi_result_orders', 'U') IS NOT NULL DROP TABLE multi_result_orders;
 
     CREATE TABLE multi_result_users (
       id INT IDENTITY(1,1) PRIMARY KEY,
-      name NVARCHAR(100) NOT NULL,
-      email NVARCHAR(255)
-    )
-  ''';
-
-  const createTable2Sql = '''
-    IF OBJECT_ID('multi_result_orders', 'U') IS NOT NULL
-      DROP TABLE multi_result_orders;
+      name NVARCHAR(100) NOT NULL
+    );
 
     CREATE TABLE multi_result_orders (
       id INT IDENTITY(1,1) PRIMARY KEY,
       user_id INT NOT NULL,
       product NVARCHAR(100) NOT NULL,
-      amount DECIMAL(10,2) NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES multi_result_users(id)
-    )
+      amount DECIMAL(10,2) NOT NULL
+    );
+
+    INSERT INTO multi_result_users (name) VALUES ('Alice'), ('Bob');
+    INSERT INTO multi_result_orders (user_id, product, amount)
+    VALUES (1, 'Book', 10.00), (2, 'Pen', 5.00);
   ''';
 
-  AppLogger.fine('Creating multi-result test tables');
+  final stmt = native.prepare(connId, ddl);
+  if (stmt == 0) {
+    AppLogger.severe('Setup prepare failed: ${native.getError()}');
+    return;
+  }
 
-  for (final sql in [createTable1Sql, createTable2Sql]) {
-    final stmt = native.prepare(connId, sql);
-    if (stmt == 0) {
-      AppLogger.warning('Prepare failed: ${native.getError()}');
+  try {
+    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+    if (result == null) {
+      AppLogger.severe('Setup execution failed: ${native.getError()}');
+      return;
+    }
+    AppLogger.info('Setup ready for multi-result demo');
+  } finally {
+    native.closeStatement(stmt);
+  }
+}
+
+Future<void> _runMultiResultBatch(
+  NativeOdbcConnection native,
+  int connId,
+) async {
+  const sql = '''
+    SELECT id, name FROM multi_result_users ORDER BY id;
+    SELECT COUNT(*) AS orders_count FROM multi_result_orders;
+    UPDATE multi_result_orders SET amount = amount + 1 WHERE user_id = 1;
+    SELECT @@ROWCOUNT AS updated_rows;
+  ''';
+
+  final payload = native.executeQueryMulti(connId, sql);
+  if (payload == null) {
+    AppLogger.severe('Multi-result query failed: ${native.getError()}');
+    return;
+  }
+
+  final items = MultiResultParser.parse(payload);
+  AppLogger.info('Multi-result items: ${items.length}');
+
+  for (var i = 0; i < items.length; i++) {
+    final item = items[i];
+
+    if (item.resultSet != null) {
+      final rs = item.resultSet!;
+      AppLogger.info('Item $i => result-set '
+          '(rows=${rs.rowCount}, columns=${rs.columnCount})');
+      for (final row in rs.rows) {
+        AppLogger.fine('  Row: $row');
+      }
       continue;
     }
 
-    native
-      ..executePrepared(stmt, const <ParamValue>[], 0, 1000)
-      ..closeStatement(stmt);
+    AppLogger.info('Item $i => row-count (${item.rowCount})');
   }
 
-  AppLogger.fine('Tables created');
-
-  // Insert test data
-  AppLogger.info('Inserting test data...');
-  const insertUserSql =
-      'INSERT INTO multi_result_users (name, email) VALUES (?, ?)';
-
-  for (var i = 1; i <= 3; i++) {
-    final stmt = native.prepare(connId, insertUserSql);
-    if (stmt != 0) {
-      native
-        ..executePrepared(
-          stmt,
-          [
-            ParamValueString('User_$i'),
-            ParamValueString('user$i@example.com'),
-          ],
-          0,
-          1000,
-        )
-        ..closeStatement(stmt);
-    }
-  }
-
-  AppLogger.info('Test data inserted');
-}
-
-Future<void> _demoMultiResultBatch(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  AppLogger.info('=== Example: Multi-result batch query ===');
-
-  // SQL Server batch query that returns multiple result sets
-  const batchSql = '''
-    SELECT * FROM multi_result_users WHERE id <= 2;
-    SELECT COUNT(*) as order_count FROM multi_result_orders;
-    INSERT INTO multi_result_orders (user_id, product, amount)
-      VALUES (1, 'Product A', 100.50);
-    SELECT @@ROWCOUNT as affected_rows;
-  ''';
-
-  AppLogger.info('Executing multi-result batch query...');
-
-  final result = native.executeQueryMulti(connId, batchSql);
-  if (result == null) {
-    AppLogger.warning('Multi-result query failed: ${native.getError()}');
-    return;
-  }
-
-  AppLogger.info('Multi-result payload received: ${result.length} bytes');
-
-  // Parse multi-result
-  final items = MultiResultParser.parse(result);
-  AppLogger.info('Multi-result items: ${items.length}');
-
-  // Process each item
-  for (var i = 0; i < items.length; i++) {
-    final item = items[i];
-    if (item.resultSet != null) {
-      AppLogger.info('Item $i: RowCount = ${item.rowCount}');
-    } else {
-      final resultSet = item.resultSet!;
-      AppLogger.info('Item $i: ResultSet');
-      AppLogger.info('  Column count: ${resultSet.columnCount}');
-      AppLogger.info('  Row count: ${resultSet.rowCount}');
-      AppLogger.info('  Columns: ${resultSet.columns}');
-    }
-  }
-}
-
-Future<void> _demoMultiResultParser(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  AppLogger.info('=== Example: Multi-result parser ===');
-
-  // Simple SELECT that returns one result set
-  const simpleSql = 'SELECT id, name FROM multi_result_users';
-
-  AppLogger.info('Running simple query...');
-  final result = native.executeQueryMulti(connId, simpleSql);
-  if (result == null) {
-    AppLogger.warning('Query failed: ${native.getError()}');
-    return;
-  }
-
-  // Parse multi-result
-  final items = MultiResultParser.parse(result);
-  AppLogger.info('${items.length} items processed');
-
-  // Get first result set (most common use case)
-  final firstResultSet = MultiResultParser.getFirstResultSet(items);
-  AppLogger.info('First result set:');
-  AppLogger.info('  Row count: ${firstResultSet.rowCount}');
-  AppLogger.info('  Column count: ${firstResultSet.columnCount}');
-  AppLogger.info('  Column names: ${firstResultSet.columnNames}');
-
-  // Display first few rows
-  for (var i = 0; i < firstResultSet.rows.length && i < 3; i++) {
-    final row = firstResultSet.rows[i];
-    AppLogger.fine('  Row $i: $row');
-  }
-
-  // Demonstrate accessing all result sets
-  AppLogger.info('All result sets:');
-  for (var i = 0; i < items.length; i++) {
-    final item = items[i];
-    if (item.resultSet != null) {
-      AppLogger.info('  Item $i: Row count ${item.rowCount}');
-    }
-  }
+  final first = MultiResultParser.getFirstResultSet(items);
+  AppLogger.info('First result-set rowCount: ${first.rowCount}');
 }

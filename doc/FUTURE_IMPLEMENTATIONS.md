@@ -1,70 +1,57 @@
-﻿# Implementações Futuras
+# FUTURE_IMPLEMENTATIONS.md - Backlog tecnico
 
-Itens documentados e deixados para implementação futura. not bloqueiam o uso atual do pacote.
+Backlog consolidado de itens que ainda nao fazem parte do escopo implementado.
 
----
+## Resumo
 
-## 1. Bulk Insert Paralelo (`odbc_bulk_insert_parallel`)
+| Item | Status | Prioridade |
+| --- | --- | --- |
+| Schema reflection (PK/FK/Indexes) | Aberto | Alta |
+| Bulk insert paralelo via FFI | Aberto | Media |
+| Output parameters por driver/plugin | Fora de escopo atual | Media |
 
-### Estado atual
-
-| Camada            | Situação                                                                                                                                                                                                                                                        |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Rust FFI**      | `odbc_bulk_insert_parallel` existe como **stub**: sempre returns -1 e grava erro "use engine ParallelBulkInsert API". Em `native/odbc_engine/src/ffi/mod.rs`.                                                                                                   |
-| **Rust engine**   | `ParallelBulkInsert` em `native/odbc_engine/src/engine/core/parallel_insert.rs`: usa pool + rayon, divide dados em chunks e insere em paralelo. Hoje expõe `insert_i32_parallel(table, columns, data)` (tipado para i32). not consome o payload binário do FFI. |
-| **Dart bindings** | `odbc_bulk_insert_parallel` é feito lookup em `lib/infrastructure/native/bindings/odbc_bindings.dart`.                                                                                                                                                          |
-| **Dart API**      | Nenhum método em OdbcNative, repositório ou service chama essa função. Só existe `bulkInsertArray` → `odbc_bulk_insert_array`.                                                                                                                                  |
-
-### Uso atual de bulk insert
-
-O fluxo em produção é uma única connection:
-
-- `OdbcService.bulkInsert(connectionId, table, columns, data, rowCount)` → repositório → `bulkInsertArray` → `odbc_bulk_insert_array`.
-- Atende cargas típicas (dezenas/centenas de milhares de linhas).
-
-### Quando faria sentido implementar
-
-- Cargas muito grandes (milhões de linhas).
-- Pool já utilizado; ganho seria throughput (tempo total), not nova capacidade.
-- Prioridade **baixa** frente a Schema PK/FK/Indexes e queryTimeout global.
-
-### Para implementação futura
-
-1. **Rust:** Expor pool por `pool_id` no estado global do FFI; adaptar ou create caminho que use o payload binário (como em `odbc_bulk_insert_array`) e chame a lógica de `ParallelBulkInsert` (ou equivalente genérico).
-2. **Dart:** add algo como `bulkInsertParallel(poolId, table, columns, data, parallelism)` em OdbcNative e, se desejado, em repositório/serviço.
-3. Manter compatibilidade com a API atual de bulk insert por connection.
-
-**Referências de código:** `native/odbc_engine/src/ffi/mod.rs` (stub), `native/odbc_engine/src/engine/core/parallel_insert.rs`, `native/odbc_engine/tests/e2e_bulk_operations_test.rs`.
-
----
-
-## 2. Schema Reflection PK/FK/Indexes
+## 1. Schema reflection (PK/FK/Indexes)
 
 ### Estado atual
 
-- Entidades Dart: `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo` em `lib/domain/entities/schema_info.dart`.
-- Catálogo básico já existe: `catalogTables`, `catalogColumns`, `catalogTypeInfo` (Rust + FFI + Dart).
+- Existe suporte de catalogo basico (tabelas/colunas/tipos).
+- Entidades de dominio para PK/FK/Indexes ja existem.
 
-### pending para implementação futura
+### Falta implementar
 
-- Rust: `list_primary_keys`, `list_foreign_keys`, `list_indexes`.
-- FFI: `odbc_catalog_primary_keys`, etc.
-- Dart: métodos no repositório/serviço e testes.
+1. Funcoes Rust para listar PK/FK/Indexes.
+2. Exposicao FFI correspondente.
+3. Metodos no repositorio/servico Dart.
+4. Testes de integracao com banco real.
 
----
-
-## 3. queryTimeout global
+## 2. Bulk insert paralelo via FFI
 
 ### Estado atual
 
-- **Implementado.** `ConnectionOptions.queryTimeout` é aplicado em `executeQuery`, `executeQueryParams` e `executeQueryMulti` em [lib/infrastructure/repositories/odbc_repository_impl.dart](lib/infrastructure/repositories/odbc_repository_impl.dart). Quando definido, o fluxo completo da operação é envolvido em `Future.timeout`; ao estourar, returns `Failure(QueryError(message: 'Query timed out'))`. `null` ou `Duration.zero` mantém o comportamento sem limite.
+- O engine Rust possui base para parallel insert.
+- O caminho exposto para Dart usa bulk insert tradicional por conexao.
 
----
+### Falta implementar
 
-## Prioridade sugerida
+1. Surface FFI estavel para caminho paralelo.
+2. API Dart para selecionar estrategia paralela.
+3. Validacao de throughput (benchmarks e stress).
 
-1. Schema PK/FK/Indexes (alto valor para muitos cenários).
-2. Bulk insert paralelo (somente se houver demanda por cargas massivas).
+## 3. Output parameters por driver/plugin
 
+### Estado atual
 
+- Nao existe API publica para output parameters.
+- Existem pontos de extensao no engine/plugins, mas sem contrato estavel para Dart.
 
+### Decisao atual
+
+- Fora do escopo imediato.
+- Retornar ao tema quando houver requisito de driver especifico (ex.: SQL Server OUTPUT, Oracle REF CURSOR).
+
+## Criterios para mover item de aberto para implementado
+
+1. API publica definida e documentada.
+2. Testes unitarios e de integracao cobrindo fluxo principal.
+3. Exemplo funcional em `example/` (quando aplicavel).
+4. Entrada no `CHANGELOG.md`.

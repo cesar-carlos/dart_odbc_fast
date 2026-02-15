@@ -283,11 +283,17 @@ Configure `ODBC_TEST_DSN` in project root `.env` (see `.env` example comments) o
 
 ## Examples
 
-You can run the bundled example:
+You can run the bundled examples:
 
 ```bash
 dart run example/main.dart
+dart run example/simple_demo.dart
+dart run example/async_demo.dart
 dart run example/named_parameters_demo.dart
+dart run example/multi_result_demo.dart
+dart run example/streaming_demo.dart
+dart run example/pool_demo.dart
+dart run example/savepoint_demo.dart
 ```
 
 It reads `ODBC_TEST_DSN` (or `ODBC_DSN`) from:

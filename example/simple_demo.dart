@@ -1,51 +1,23 @@
-// Simple demo - basic table creation and data insertion
-//
-// Prerequisites: Set ODBC_TEST_DSN in environment variable or .env.
-// Execute: dart run example/simple_demo.dart
+// Low-level native API demo using NativeOdbcConnection.
+// Run: dart run example/simple_demo.dart
 
-import 'dart:io';
-
-import 'package:dotenv/dotenv.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser;
 import 'package:odbc_fast/odbc_fast.dart';
 
-const _envPath = '.env';
-
-String _exampleEnvPath() =>
-    '${Directory.current.path}${Platform.pathSeparator}$_envPath';
-
-String? _getExampleDsn() {
-  final path = _exampleEnvPath();
-  final file = File(path);
-  if (file.existsSync()) {
-    final env = DotEnv(includePlatformEnvironment: true)..load([path]);
-    final v = env['ODBC_TEST_DSN'];
-    if (v != null && v.isNotEmpty) return v;
-  }
-  return Platform.environment['ODBC_TEST_DSN'] ??
-      Platform.environment['ODBC_DSN'];
-}
+import 'common.dart';
 
 void main() async {
   AppLogger.initialize();
 
-  final dsn = _getExampleDsn();
-  final skipDb = dsn == null || dsn.isEmpty;
-
-  if (skipDb) {
-    AppLogger.warning(
-      'ODBC_TEST_DSN (or ODBC_DSN) not set. '
-      'Create .env with ODBC_TEST_DSN=... or set the environment variable. '
-      'Skipping DB-dependent examples.',
-    );
+  final dsn = requireExampleDsn();
+  if (dsn == null) {
     return;
   }
 
   final native = NativeOdbcConnection();
 
-  final initResult = native.initialize();
-  if (!initResult) {
+  if (!native.initialize()) {
     AppLogger.severe('ODBC environment initialization failed');
     return;
   }
@@ -58,76 +30,41 @@ void main() async {
 
   AppLogger.info('Connected: $connId');
 
-  // Create test table
-  await _createTestTable(native, connId);
+  try {
+    await _createTestTable(native, connId);
 
-  // Prepare insert statement
-  AppLogger.info('Preparing insert statement...');
-  final stmt = native.prepare(
-    connId,
-    'INSERT INTO simple_test_table (name) VALUES (?)',
-  );
+    const insertSql = 'INSERT INTO simple_test_table (name, age) VALUES (?, ?)';
+    final stmt = native.prepare(connId, insertSql);
+    if (stmt == 0) {
+      AppLogger.severe('Prepare failed: ${native.getError()}');
+      return;
+    }
 
-  if (stmt == 0) {
-    AppLogger.warning('Prepare failed: ${native.getError()}');
-    return;
+    try {
+      final inserts = <List<ParamValue>>[
+        [const ParamValueString('Alice'), const ParamValueInt32(30)],
+        [const ParamValueString('Bob'), const ParamValueInt32(25)],
+        [const ParamValueString('Charlie'), const ParamValueNull()],
+      ];
+
+      for (var i = 0; i < inserts.length; i++) {
+        final result = native.executePrepared(stmt, inserts[i], 0, 1000);
+        if (result == null) {
+          AppLogger.severe('Insert ${i + 1} failed: ${native.getError()}');
+          return;
+        }
+      }
+
+      AppLogger.info('Inserted ${inserts.length} rows');
+    } finally {
+      native.closeStatement(stmt);
+    }
+
+    await _verifyInsertedData(native, connId, 3);
+  } finally {
+    native.disconnect(connId);
+    AppLogger.info('Disconnected');
   }
-
-  // Insert first record
-  AppLogger.info('Inserting first record...');
-  final result1 = native.executePrepared(
-    stmt,
-    [const ParamValueString('Alice')],
-    0,
-    1000,
-  );
-
-  if (result1 == null) {
-    AppLogger.severe('First insert failed: ${native.getError()}');
-  } else {
-    AppLogger.info('First record inserted');
-  }
-
-  // Insert second record
-  AppLogger.info('Inserting second record...');
-  final result2 = native.executePrepared(
-    stmt,
-    [const ParamValueString('Bob')],
-    0,
-    1000,
-  );
-
-  if (result2 == null) {
-    AppLogger.severe('Second insert failed: ${native.getError()}');
-  } else {
-    AppLogger.info('Second record inserted');
-  }
-
-  // Insert third record with explicit NULL
-  AppLogger.info('Inserting third record (with NULL)...');
-  final result3 = native.executePrepared(
-    stmt,
-    [const ParamValueString('Charlie'), const ParamValueNull()],
-    0,
-    1000,
-  );
-
-  if (result3 == null) {
-    AppLogger.severe('Third insert failed: ${native.getError()}');
-  } else {
-    AppLogger.info('Third record inserted (with NULL)');
-  }
-
-  // Verify all records
-  await _verifyInsertedData(native, connId, 3);
-
-  // Close statement
-  native.closeStatement(stmt);
-  AppLogger.info('Statement closed');
-
-  native.disconnect(connId);
-  AppLogger.info('Disconnected');
-  AppLogger.info('All examples completed.');
 }
 
 Future<void> _createTestTable(
@@ -141,29 +78,27 @@ Future<void> _createTestTable(
     CREATE TABLE simple_test_table (
       id INT IDENTITY(1,1) PRIMARY KEY,
       name NVARCHAR(100) NOT NULL,
-      age INT
+      age INT,
       created_at DATETIME DEFAULT GETDATE()
     )
   ''';
 
-  AppLogger.fine('Creating test table');
-
   final stmt = native.prepare(connId, createTableSql);
-
   if (stmt == 0) {
     AppLogger.warning('Prepare failed: ${native.getError()}');
     return;
   }
 
-  final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-
-  if (result == null) {
-    AppLogger.warning('Table creation failed: ${native.getError()}');
-    return;
+  try {
+    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+    if (result == null) {
+      AppLogger.warning('Table creation failed: ${native.getError()}');
+      return;
+    }
+    AppLogger.info('Table ready: simple_test_table');
+  } finally {
+    native.closeStatement(stmt);
   }
-
-  native.closeStatement(stmt);
-  AppLogger.fine('Table created');
 }
 
 Future<void> _verifyInsertedData(
@@ -171,46 +106,33 @@ Future<void> _verifyInsertedData(
   int connId,
   int expectedCount,
 ) async {
-  AppLogger.info('Verifying $expectedCount inserted records...');
-
-  const selectSql = 'SELECT id, name, age FROM simple_test_table';
+  const selectSql = 'SELECT id, name, age FROM simple_test_table ORDER BY id';
   final stmt = native.prepare(connId, selectSql);
-
   if (stmt == 0) {
-    AppLogger.warning('Prepare failed select: ${native.getError()}');
-    native.closeStatement(stmt);
+    AppLogger.warning('Select prepare failed: ${native.getError()}');
     return;
   }
 
-  final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+  try {
+    final raw = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+    if (raw == null) {
+      AppLogger.warning('Select failed: ${native.getError()}');
+      return;
+    }
 
-  if (result == null) {
-    AppLogger.warning('Select failed: ${native.getError()}');
+    final parsed = BinaryProtocolParser.parse(raw);
+    AppLogger.info('Rows found: ${parsed.rowCount}');
+
+    if (parsed.rowCount != expectedCount) {
+      AppLogger.warning(
+        'Expected $expectedCount rows, found ${parsed.rowCount}',
+      );
+    }
+
+    for (final row in parsed.rows) {
+      AppLogger.fine('Row: $row');
+    }
+  } finally {
     native.closeStatement(stmt);
-    return;
   }
-
-  final selectData =
-      native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-
-  if (selectData == null) {
-    AppLogger.warning('Select failed count: ${native.getError()}');
-    native.closeStatement(stmt);
-    return;
-  }
-
-  final selectResult = BinaryProtocolParser.parse(selectData);
-
-  AppLogger.info('records found: ${selectResult.rowCount}');
-
-  if (selectResult.rowCount != expectedCount) {
-    AppLogger.warning(
-      'Expected $expectedCount records, '
-      'found ${selectResult.rowCount}',
-    );
-  } else {
-    AppLogger.info('All $expectedCount records verified');
-  }
-
-  native.closeStatement(stmt);
 }

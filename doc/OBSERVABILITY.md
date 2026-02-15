@@ -1,10 +1,15 @@
-﻿# Observability
+# OBSERVABILITY.md
 
-Configuration and usage of OTLP telemetry and ODBC operational metrics.
+Guia de telemetria e metricas operacionais do `odbc_fast`.
 
-## OTLP Configuration
+## Componentes
 
-Configure telemetry with `TelemetryRepositoryImpl` and an OpenTelemetry FFI backend. The OTLP endpoint defaults to `http://localhost:4318` (HTTP/protobuf).
+- `TelemetryRepositoryImpl`: integra com backend OTLP via FFI
+- `SimpleTelemetryService`: camada de servico para eventos/metricas
+- `OdbcService.getMetrics()`: metricas operacionais de execucao
+- `OdbcService.getPreparedStatementsMetrics()`: metricas de cache de prepared statements
+
+## Inicializacao OTLP
 
 ```dart
 import 'package:odbc_fast/infrastructure/native/bindings/opentelemetry_ffi.dart';
@@ -20,80 +25,50 @@ final repository = TelemetryRepositoryImpl(
 await repository.initialize(otlpEndpoint: 'http://localhost:4318');
 ```
 
-## Fallback to ConsoleExporter
+## Fallback para console
 
-When OTLP export fails repeatedly, the repository can switch to `ConsoleExporter` to write telemetry to stdout. Set a fallback before initialization:
+Quando houver falhas consecutivas na exportacao OTLP, o repositorio pode usar fallback.
 
 ```dart
 import 'package:odbc_fast/infrastructure/native/telemetry/console.dart';
 
-final repository = TelemetryRepositoryImpl(ffi);
 repository.setFallbackExporter(ConsoleExporter());
-
-await repository.initialize(otlpEndpoint: 'http://localhost:4318');
 ```
 
-Fallback triggers when failures exceed `consecutiveFailureThreshold` (default: 3) within `failureCheckInterval` (default: 30s).
+## Metricas de ODBC
 
-## ODBC Metrics
+### `getMetrics()`
 
-The ODBC service exposes operational metrics via `getMetrics()` and `getPreparedStatementsMetrics()`.
+Campos principais:
 
-### OdbcMetrics
+- `queryCount`
+- `errorCount`
+- `uptimeSecs`
+- `totalLatencyMillis`
+- `avgLatencyMillis`
 
-- `queryCount` – total queries executed
-- `errorCount` – total errors
-- `uptimeSecs` – engine uptime
-- `totalLatencyMillis` – cumulative latency
-- `avgLatencyMillis` – average query latency
+### `getPreparedStatementsMetrics()`
+
+Campos principais:
+
+- `cacheSize`, `cacheMaxSize`
+- `cacheHits`, `cacheMisses`
+- `cacheHitRate`
+- `totalPrepares`, `totalExecutions`
+- `avgExecutionsPerStmt`
+
+## Exemplo minimo
 
 ```dart
-final metrics = await service.getMetrics();
-metrics.fold(
-  (m) => print('Queries: ${m.queryCount}, Avg: ${m.avgLatencyMillis}ms'),
-  (e) => print('Error: $e'),
+final metricsResult = await service.getMetrics();
+metricsResult.fold(
+  (m) => print('queries=${m.queryCount} avg=${m.avgLatencyMillis}ms'),
+  (e) => print('erro: $e'),
 );
 ```
 
-### PreparedStatementMetrics
+## Recomendacoes
 
-- `cacheSize` / `cacheMaxSize` – cache usage
-- `cacheHits` / `cacheMisses` – hit/miss counts
-- `totalPrepares` / `totalExecutions` – prepare/execute counts
-- `cacheHitRate` – percentage (0–100)
-- `avgExecutionsPerStmt` – average executions per statement
-
-```dart
-final stmtMetrics = await service.getPreparedStatementsMetrics();
-stmtMetrics.fold(
-  (m) => print('Cache hit rate: ${m.cacheHitRate}%'),
-  (e) => print('Error: $e'),
-);
-```
-
-## Minimal Example
-
-```dart
-import 'package:odbc_fast/core/di/service_locator.dart';
-
-void main() async {
-  final locator = ServiceLocator()..initialize(useAsync: true);
-  await locator.syncService.initialize();
-
-  final connResult = await locator.syncService.connect('DSN=YourDSN');
-  connResult.fold(
-    (conn) async {
-      final metrics = await locator.syncService.getMetrics();
-      metrics.fold(
-        (m) => print('Query count: ${m.queryCount}'),
-        (_) {},
-      );
-      await locator.syncService.disconnect(conn.id);
-    },
-    (_) {},
-  );
-}
-```
-
-
-
+1. Em producao, usar endpoint OTLP com TLS e autenticacao.
+2. Ativar fallback apenas como contingencia, nao como caminho principal.
+3. Monitorar `errorCount` e `cacheHitRate` para identificar regressao.

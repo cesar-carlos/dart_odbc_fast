@@ -1,49 +1,22 @@
-// Named Parameters Demo: demonstrates @name and :name syntax support.
-//
-// Prerequisites: Set ODBC_TEST_DSN in environment or .env.
+// Named parameters demo: @name and :name syntax.
 // Run: dart run example/named_parameters_demo.dart
 
-import 'dart:io';
-
-import 'package:dotenv/dotenv.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
+    show BinaryProtocolParser;
 import 'package:odbc_fast/odbc_fast.dart';
 
-const _envPath = '.env';
-
-String _exampleEnvPath() =>
-    '${Directory.current.path}${Platform.pathSeparator}$_envPath';
-
-String? _getExampleDsn() {
-  final path = _exampleEnvPath();
-  final file = File(path);
-  if (file.existsSync()) {
-    final env = DotEnv(includePlatformEnvironment: true)..load([path]);
-    final v = env['ODBC_TEST_DSN'];
-    if (v != null && v.isNotEmpty) return v;
-  }
-  return Platform.environment['ODBC_TEST_DSN'] ??
-      Platform.environment['ODBC_DSN'];
-}
+import 'common.dart';
 
 void main() async {
   AppLogger.initialize();
 
-  final dsn = _getExampleDsn();
-  final skipDb = dsn == null || dsn.isEmpty;
-
-  if (skipDb) {
-    AppLogger.warning(
-      'ODBC_TEST_DSN (or ODBC_DSN) not set. '
-      'Create .env with ODBC_TEST_DSN=... or set env var. '
-      'Skipping DB-dependent examples.',
-    );
+  final dsn = requireExampleDsn();
+  if (dsn == null) {
     return;
   }
 
   final native = NativeOdbcConnection();
-
-  final initResult = native.initialize();
-  if (!initResult) {
+  if (!native.initialize()) {
     AppLogger.severe('ODBC environment initialization failed');
     return;
   }
@@ -54,162 +27,123 @@ void main() async {
     return;
   }
 
-  AppLogger.info('Connected: $connId');
-
-  await _createExampleTable(native, connId);
-  await runExampleAtSignSyntax(native, connId);
-  await runExampleColonSyntax(native, connId);
-  await runExamplePreparedStatementNamed(native, connId);
-
-  native.disconnect(connId);
-  AppLogger.info('Disconnected');
-  AppLogger.info('All examples completed.');
+  try {
+    await _createExampleTable(native, connId);
+    await _runInsertWithAtSyntax(native, connId);
+    await _runInsertWithColonSyntax(native, connId);
+    await _runPreparedReuse(native, connId);
+    await _printAllRows(native, connId);
+  } finally {
+    native.disconnect(connId);
+    AppLogger.info('Disconnected');
+  }
 }
 
-Future<void> runExampleAtSignSyntax(
+Future<void> _runInsertWithAtSyntax(
   NativeOdbcConnection native,
   int connId,
 ) async {
-  AppLogger.info('=== Example: Named parameters with @name syntax ===');
-
-  // Use @name syntax for named parameters
   const sql = '''
     INSERT INTO named_params_example (name, age, active)
     VALUES (@name, @age, @active)
   ''';
 
-  final namedParams = <String, Object?>{
-    'name': 'Alice',
-    'age': 30,
-    'active': true,
-  };
-
-  AppLogger.info('Executing query with @name syntax');
-  AppLogger.info('  SQL: $sql');
-  AppLogger.info('  Parameters: $namedParams');
-
   final stmt = native.prepareStatementNamed(connId, sql);
   if (stmt == null) {
-    AppLogger.severe('Prepare failed: ${native.getError()}');
+    AppLogger.severe('Prepare (@) failed: ${native.getError()}');
     return;
   }
 
-  final result = stmt.executeNamed(namedParams: namedParams);
-
-  if (result == null) {
-    AppLogger.severe('Execute failed: ${native.getError()}');
-  } else {
-    AppLogger.info('Inserted row successfully');
-
-    // Select and verify
-    await _selectAndVerify(native, connId, 'Alice');
+  try {
+    final result = stmt.executeNamed(
+      namedParams: <String, Object?>{
+        'name': 'Alice',
+        'age': 30,
+        'active': true,
+      },
+    );
+    if (result == null) {
+      AppLogger.severe('Execute (@) failed: ${native.getError()}');
+      return;
+    }
+    AppLogger.info('Inserted row with @name syntax');
+  } finally {
+    stmt.close();
   }
-
-  stmt.close();
 }
 
-Future<void> runExampleColonSyntax(
+Future<void> _runInsertWithColonSyntax(
   NativeOdbcConnection native,
   int connId,
 ) async {
-  AppLogger.info('=== Example: Named parameters with :name syntax ===');
-
-  // Use :name syntax for named parameters
   const sql = '''
     INSERT INTO named_params_example (name, age, active)
     VALUES (:name, :age, :active)
   ''';
 
-  final namedParams = <String, Object?>{
-    'name': 'Bob',
-    'age': 25,
-    'active': false,
-  };
-
-  AppLogger.info('Executing query with :name syntax');
-  AppLogger.info('  SQL: $sql');
-  AppLogger.info('  Parameters: $namedParams');
-
   final stmt = native.prepareStatementNamed(connId, sql);
   if (stmt == null) {
-    AppLogger.severe('Prepare failed: ${native.getError()}');
+    AppLogger.severe('Prepare (:) failed: ${native.getError()}');
     return;
   }
 
-  final result = stmt.executeNamed(namedParams: namedParams);
-
-  if (result == null) {
-    AppLogger.severe('Execute failed: ${native.getError()}');
-  } else {
-    AppLogger.info('Inserted row successfully');
-
-    // Select and verify
-    await _selectAndVerify(native, connId, 'Bob');
+  try {
+    final result = stmt.executeNamed(
+      namedParams: <String, Object?>{
+        'name': 'Bob',
+        'age': 25,
+        'active': false,
+      },
+    );
+    if (result == null) {
+      AppLogger.severe('Execute (:) failed: ${native.getError()}');
+      return;
+    }
+    AppLogger.info('Inserted row with :name syntax');
+  } finally {
+    stmt.close();
   }
-
-  stmt.close();
 }
 
-Future<void> runExamplePreparedStatementNamed(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  AppLogger.info('=== Example: Prepared statement with named parameters ===');
-
-  // Prepare statement with named parameters
+Future<void> _runPreparedReuse(NativeOdbcConnection native, int connId) async {
   const sql = '''
     INSERT INTO named_params_example (name, age, active)
     VALUES (@name, @age, @active)
   ''';
 
-  AppLogger.info('Preparing statement');
-  AppLogger.info('  SQL: $sql');
-
   final stmt = native.prepareStatementNamed(connId, sql);
   if (stmt == null) {
-    AppLogger.severe('Prepare failed: ${native.getError()}');
+    AppLogger.severe('Prepare (reuse) failed: ${native.getError()}');
     return;
   }
 
-  AppLogger.info('Prepared statement: ${stmt.stmtId}');
-
-  // Execute multiple times with different parameters
-  final rows = [
+  final rows = <Map<String, Object?>>[
     <String, Object?>{'name': 'Charlie', 'age': 35, 'active': true},
     <String, Object?>{'name': 'Diana', 'age': 28, 'active': true},
     <String, Object?>{'name': 'Eve', 'age': 42, 'active': false},
   ];
 
-  for (var i = 0; i < rows.length; i++) {
-    final params = rows[i];
-    AppLogger.info(
-      'Executing ${i + 1}/${rows.length} with params: $params',
-    );
-
-    final result = stmt.executeNamed(namedParams: params);
-
-    if (result == null) {
-      AppLogger.severe('Execute failed: ${native.getError()}');
-    } else {
-      AppLogger.info('Inserted row');
+  try {
+    for (final params in rows) {
+      final result = stmt.executeNamed(namedParams: params);
+      if (result == null) {
+        AppLogger.severe('Execute (reuse) failed: ${native.getError()}');
+        return;
+      }
     }
+    AppLogger.info(
+      'Inserted ${rows.length} rows with reused prepared statement',
+    );
+  } finally {
+    stmt.close();
   }
-
-  // Select and verify
-  const selectSql = '''
-    SELECT name, age, active FROM named_params_example
-    WHERE name IN ('Charlie', 'Diana', 'Eve')
-  ''';
-  await _selectAndVerifyRaw(native, connId, selectSql);
-
-  stmt.close();
 }
 
 Future<void> _createExampleTable(
   NativeOdbcConnection native,
   int connId,
 ) async {
-  const createTableSql = '''
+  const sql = '''
     IF OBJECT_ID('named_params_example', 'U') IS NOT NULL
       DROP TABLE named_params_example;
 
@@ -221,72 +155,50 @@ Future<void> _createExampleTable(
     )
   ''';
 
-  AppLogger.fine('Creating example table');
-  final stmt = native.prepare(connId, createTableSql);
-  if (stmt == 0) {
-    AppLogger.warning('Prepare failed: ${native.getError()}');
-    return;
-  }
-
-  final executeResult = native.executePrepared(
-    stmt,
-    const <ParamValue>[],
-    0,
-    1000,
-  );
-
-  if (executeResult == null) {
-    AppLogger.fine('Table created successfully');
-  } else {
-    AppLogger.warning('Create table failed (may already exist)');
-  }
-
-  native.closeStatement(stmt);
-}
-
-Future<void> _selectAndVerify(
-  NativeOdbcConnection native,
-  int connId,
-  String name,
-) async {
-  final selectSql = '''
-    SELECT name, age, active FROM named_params_example
-    WHERE name = '$name'
-  ''';
-
-  final stmt = native.prepare(connId, selectSql);
-  if (stmt == 0) {
-    AppLogger.severe('Select prepare failed: ${native.getError()}');
-    return;
-  }
-
-  final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-
-  if (result != null) {
-    AppLogger.info('Selected data:');
-    // Parse result from binary protocol (simplified)
-    AppLogger.info('  Result bytes: ${result.length} bytes');
-  }
-
-  native.closeStatement(stmt);
-}
-
-Future<void> _selectAndVerifyRaw(
-  NativeOdbcConnection native,
-  int connId,
-  String sql,
-) async {
   final stmt = native.prepare(connId, sql);
   if (stmt == 0) {
-    AppLogger.severe('Select prepare failed: ${native.getError()}');
+    AppLogger.severe('Create table prepare failed: ${native.getError()}');
     return;
   }
 
-  final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+  try {
+    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+    if (result == null) {
+      AppLogger.severe('Create table failed: ${native.getError()}');
+      return;
+    }
+    AppLogger.info('Table ready: named_params_example');
+  } finally {
+    native.closeStatement(stmt);
+  }
+}
 
-  if (result != null) {
-    AppLogger.info('Selected data (${result.length} bytes)');
+Future<void> _printAllRows(NativeOdbcConnection native, int connId) async {
+  const select = '''
+    SELECT name, age, active
+    FROM named_params_example
+    ORDER BY id
+  ''';
+
+  final stmt = native.prepare(connId, select);
+  if (stmt == 0) {
+    AppLogger.warning('Select prepare failed: ${native.getError()}');
+    return;
   }
 
-  native.closeStatement(stmt);
+  try {
+    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
+    if (result == null) {
+      AppLogger.warning('Select failed: ${native.getError()}');
+      return;
+    }
+
+    final parsed = BinaryProtocolParser.parse(result);
+    AppLogger.info('Final rows: ${parsed.rowCount}');
+    for (final row in parsed.rows) {
+      AppLogger.fine('Row: $row');
+    }
+  } finally {
+    native.closeStatement(stmt);
+  }
 }
