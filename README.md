@@ -188,7 +188,7 @@ Connection-string override takes precedence over environment value.
 
 ## Examples
 
-Run examples from project root:
+All examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment variable or `.env` in project root.
 
 ```bash
 dart run example/main.dart
@@ -202,6 +202,132 @@ dart run example/savepoint_demo.dart
 ```
 
 More details: [example/README.md](example/README.md)
+
+### Example Overview
+
+#### High-Level API (`OdbcService`)
+
+**[main.dart](example/main.dart)** - Complete API walkthrough
+- ✅ Sync and async service modes
+- ✅ Connection options with timeouts
+- ✅ Driver detection
+- ✅ Named parameters (@name, :name)
+- ✅ Multi-result queries (executeQueryMultiFull)
+- ✅ Catalog queries (tables, columns, types)
+- ✅ Prepared statement reuse
+- ✅ Statement cache management
+- ✅ Runtime metrics and observability
+
+**Advantages**:
+- 🎯 High-level abstraction for common use cases
+- 📊 Built-in metrics and telemetry hooks
+- 🔄 Automatic connection lifecycle management
+- ⚡ Optimized with prepared statement cache
+
+#### Low-Level API (`NativeOdbcConnection`)
+
+**[simple_demo.dart](example/simple_demo.dart)** - Native connection demo
+- ✅ Connection with timeout (`connectWithTimeout`)
+- ✅ Structured error handling (SQLSTATE + native codes)
+- ✅ Transaction handles for safe operations
+- ✅ Catalog queries for metadata introspection
+- ✅ Prepared statements with result parsing
+- ✅ Binary protocol parser for raw result handling
+
+**Advantages**:
+- 🔧 Direct control over ODBC driver manager
+- ⚡ Zero-allocation result parsing
+- 🛡️ Fine-grained error diagnostics
+- 📦 Type-safe parameter handling
+
+#### Async API
+
+**[async_demo.dart](example/async_demo.dart)** - Async worker isolate demo
+- ✅ Non-blocking operations (perfect for Flutter/UI)
+- ✅ Configurable request timeout
+- ✅ Automatic worker recovery on crash
+- ✅ Worker isolate lifecycle management
+
+**Advantages**:
+- 🚀 Non-blocking UI thread
+- 🔒 Configurable timeouts per request
+- 🔄 Automatic recovery from failures
+- 💪 Isolated worker for CPU-intensive tasks
+
+#### Named Parameters
+
+**[named_parameters_demo.dart](example/named_parameters_demo.dart)** - @name and :name syntax
+- ✅ Standard SQL named parameter syntax
+- ✅ Prepared statement reuse for performance
+- ✅ Mixed @name and :name in same example
+- ✅ Type-safe parameter binding
+
+**Advantages**:
+- 🛡 SQL injection protection (type-safe binding)
+- ⚡ Reuse prepared statements for multiple executions
+- 📝 Clean code with named parameters
+- 🔌 Database-agnostic syntax (@name works on most DBs)
+
+#### Multi-Result Queries
+
+**[multi_result_demo.dart](example/multi_result_demo.dart)** - Multiple result sets
+- ✅ Single query with multiple SELECT statements
+- ✅ `executeQueryMulti` + `MultiResultParser`
+- ✅ Parse multiple result sets from single payload
+- ✅ Access to each result set independently
+
+**Advantages**:
+- 📦 Fewer round trips to database
+- ⚡ Batch multiple operations in single request
+- 🎯 Perfect for stored procedures with multiple results
+- 📊 Automatic result set parsing
+
+#### Connection Pooling
+
+**[pool_demo.dart](example/pool_demo.dart)** - Connection pool management
+- ✅ Pool creation with configurable size
+- ✅ Connection reuse (get/release pattern)
+- ✅ Parallel bulk insert via pool
+- ✅ Health checks and pool state monitoring
+- ✅ Concurrent connection testing
+
+**Advantages**:
+- 🚀 Reduced connection overhead (reuse established connections)
+- 🔄 Automatic connection recovery and validation
+- ⚡ Parallel bulk insert for high-throughput scenarios
+- 📊 Pool state monitoring and metrics
+- 🎯 Built-in health check on checkout
+
+#### Streaming Queries
+
+**[streaming_demo.dart](example/streaming_demo.dart)** - Incremental data streaming
+- ✅ Batched streaming (`streamQueryBatched`) with configurable fetch size
+- ✅ Custom chunk streaming (`streamQuery`) with flexible chunk sizes
+- ✅ Process large datasets without loading all into memory
+- ✅ Low-memory footprint for big tables
+
+**Advantages**:
+- 💾 Process millions of rows without OOM errors
+- ⚡ Incremental processing reduces first-byte latency
+- 🎯 Perfect for UI lists and infinite scrolling
+- 🔒 Configurable chunk sizes for optimal performance
+- 📊 Memory-efficient for large datasets
+
+#### Transactions & Savepoints
+
+**[savepoint_demo.dart](example/savepoint_demo.dart)** - Advanced transaction control
+- ✅ Transaction begin/commit/rollback
+- ✅ Savepoint creation (`createSavepoint`)
+- ✅ Rollback to savepoint (`rollbackToSavepoint`)
+- ✅ Nested savepoints for complex operations
+- ✅ Release savepoint (`releaseSavepoint`)
+
+**Advantages**:
+- 🔒 Partial rollback support (undo specific changes)
+- 🎯 Complex operation support with nested savepoints
+- 🛡 Safe error recovery points
+- 📝 Clean transaction management patterns
+- 🔄 Granular control over transaction boundaries
 
 ## Build from source
 
@@ -279,6 +405,44 @@ dart_odbc_fast/
   - runs `cargo fmt`, `cargo clippy`, Rust build, `dart analyze`, and unit-only Dart tests (excluding `test/integration`, `test/e2e`, `test/stress`, `test/my_test`)
   - forces `ENABLE_E2E_TESTS=0` and `RUN_SKIPPED_TESTS=0`
 - Release workflow: `.github/workflows/release.yml`
+  - Validates release metadata (tag/pubspec/changelog)
+  - Builds native binaries for Linux/Windows
+  - Creates GitHub Release with assets
+- **Publish workflow: `.github/workflows/publish.yml`**
+  - Uses official Dart team reusable workflow with **OIDC authentication** (no secrets required)
+  - Automatically publishes to pub.dev when tags matching `v{{version}}` are pushed
+  - Requires automated publishing to be enabled on pub.dev admin panel
+
+### Automated Release Flow
+
+To publish a new version, follow these steps:
+
+1. **Update `pubspec.yaml`: Set the new version (e.g., `version: 1.0.2`)
+2. **Update `CHANGELOG.md`: Add a new section `## [1.0.2] - YYYY-MM-DD` with changes
+3. **Commit and push main branch**:
+   ```bash
+   git add .
+   git commit -m "Release v1.0.2"
+   git push origin main
+   ```
+4. **Create and push tag** (triggers automated release):
+   ```bash
+   git tag -a v1.0.2 -m "Release v1.0.2"
+   git push origin v1.0.2
+   ```
+
+The GitHub Actions will automatically:
+- Verify tag format and consistency with pubspec/changelog
+- Build native binaries for Linux and Windows
+- Create GitHub Release with binaries
+- **Publish to pub.dev** via OIDC (no manual intervention needed)
+
+### Security
+
+This project uses **OIDC (OpenID Connect)** for pub.dev authentication:
+- No long-lived secrets required
+- Temporary tokens are automatically managed by GitHub Actions
+- See [Automated publishing documentation](https://dart.dev/tools/pub/automated-publishing) for details
 
 ## Support
 
