@@ -3,8 +3,8 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -126,6 +126,19 @@ abstract class IOdbcRepository {
     int timeoutMs = 0,
   });
 
+  /// Prepares a SQL statement with named parameters.
+  ///
+  /// Supports `@name` and `:name` syntax. Named placeholders are converted
+  /// to positional `?` placeholders before prepare.
+  ///
+  /// The returned statement ID must be executed with [executePreparedNamed]
+  /// or [executePrepared].
+  Future<Result<int>> prepareNamed(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  });
+
   /// Executes a prepared statement with optional parameters.
   ///
   /// The [connectionId] and [stmtId] must be valid and correspond to
@@ -139,6 +152,17 @@ abstract class IOdbcRepository {
     String connectionId,
     int stmtId,
     List<dynamic>? params,
+    StatementOptions? options,
+  );
+
+  /// Executes a prepared statement using named parameters.
+  ///
+  /// The [stmtId] should come from [prepareNamed] so parameter order metadata
+  /// is available.
+  Future<Result<QueryResult>> executePreparedNamed(
+    String connectionId,
+    int stmtId,
+    Map<String, Object?> namedParams,
     StatementOptions? options,
   );
 
@@ -158,11 +182,29 @@ abstract class IOdbcRepository {
     List<dynamic> params,
   );
 
+  /// Executes a SQL query with named parameters.
+  ///
+  /// Supports `@name` and `:name` syntax. Named placeholders are converted
+  /// to positional `?` placeholders before execution.
+  Future<Result<QueryResult>> executeQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  );
+
   /// Executes a SQL query that returns multiple result sets.
   ///
   /// Some databases support queries that return multiple result sets.
   /// This method handles such queries and returns the first result set.
   Future<Result<QueryResult>> executeQueryMulti(
+    String connectionId,
+    String sql,
+  );
+
+  /// Executes a SQL query and returns all multi-result items.
+  ///
+  /// Preserves full response order (result sets and row counts).
+  Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
   );

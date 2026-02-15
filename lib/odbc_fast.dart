@@ -58,8 +58,8 @@ export 'domain/entities/isolation_level.dart';
 export 'domain/entities/odbc_metrics.dart';
 export 'domain/entities/pool_state.dart';
 export 'domain/entities/prepared_statement_config.dart';
-export 'domain/entities/prepared_statement_metrics.dart';
 export 'domain/entities/query_result.dart';
+export 'domain/entities/query_result_multi.dart';
 export 'domain/entities/retry_options.dart';
 export 'domain/entities/schema_info.dart';
 export 'domain/entities/statement_options.dart';
@@ -72,12 +72,13 @@ export 'domain/services/itelemetry_service.dart';
 export 'domain/services/simple_telemetry_service.dart';
 export 'domain/telemetry/entities.dart';
 export 'infrastructure/native/async_native_odbc_connection.dart';
+export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/errors/async_error.dart';
 export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
+export 'infrastructure/native/protocol/named_parameter_parser.dart';
 export 'infrastructure/native/protocol/param_value.dart';
-export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/telemetry/telemetry_buffer.dart';
 export 'infrastructure/native/wrappers/catalog_query.dart';
 export 'infrastructure/native/wrappers/connection_pool.dart';
@@ -85,6 +86,5 @@ export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
 // export 'infrastructure/repositories/odbc_repository_impl.dart'; // TODO: Fix compilation errors
 // export 'infrastructure/repositories/telemetry_repository.dart'; // TODO: Fix compilation errors
-
 
 // Async support - async_native_odbc_connection and async_error exported above

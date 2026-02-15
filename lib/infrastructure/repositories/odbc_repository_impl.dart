@@ -6,8 +6,8 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -15,6 +15,10 @@ import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dar
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
+import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
+    show MultiResultItem, MultiResultParser;
+import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
+    show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -61,6 +65,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   final dynamic _native;
   final Map<String, int> _connectionIds = {};
   final Map<String, ConnectionOptions?> _connectionOptions = {};
+  final Map<String, String> _connectionStrings = {};
+  final Map<int, List<String>> _namedParamOrderByStmtId = {};
+
+  /// Message used when a query times out (ConnectionOptions.queryTimeout).
+  static const String _queryTimedOutMessage = 'Query timed out';
 
   /// Whether this repository uses async backend (non-blocking operations).
   bool get _isAsync => _native is AsyncNativeOdbcConnection;
@@ -101,6 +110,105 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     return Failure<T, OdbcError>(
       errorFactory(message: finalMessage),
     );
+  }
+
+  /// Reconnects using [connectionString] and reassigns the same [connectionId].
+  /// Call after disconnect when auto-reconnecting on connectionLost.
+  Future<Result<Unit>> _reconnect(
+    String connectionId,
+    String connectionString,
+    ConnectionOptions? options,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId != null) {
+      if (_isAsync) {
+        await (_native as AsyncNativeOdbcConnection).disconnect(nativeId);
+      } else {
+        (_native as NativeOdbcConnection).disconnect(nativeId);
+      }
+      _connectionIds.remove(connectionId);
+      _connectionOptions.remove(connectionId);
+      _connectionStrings.remove(connectionId);
+    }
+
+    final timeoutMs = options?.loginTimeoutMs ?? 0;
+    final connId = _isAsync
+        ? await (_native as AsyncNativeOdbcConnection)
+            .connect(connectionString, timeoutMs: timeoutMs)
+        : (timeoutMs > 0
+            ? (_native as NativeOdbcConnection)
+                .connectWithTimeout(connectionString, timeoutMs)
+            : (_native as NativeOdbcConnection).connect(connectionString));
+
+    if (connId == 0) {
+      return _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            ConnectionError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Reconnect failed',
+      );
+    }
+
+    _connectionIds[connectionId] = connId;
+    _connectionOptions[connectionId] = options;
+    _connectionStrings[connectionId] = connectionString;
+    return const Success(unit);
+  }
+
+  /// Runs [operation]; on Failure with connection-lost error and
+  /// [ConnectionOptions.autoReconnectOnConnectionLost], attempts reconnect
+  /// and re-runs once per attempt up to
+  /// [ConnectionOptions.effectiveMaxReconnectAttempts].
+  Future<Result<T>> _withReconnect<T extends Object>(
+    String connectionId,
+    Future<Result<T>> Function() operation,
+  ) async {
+    var result = await operation();
+    if (result.isSuccess()) return result;
+
+    final err = result.fold<OdbcError?>((_) => null, (e) => e as OdbcError);
+    if (err == null || err.category != ErrorCategory.connectionLost) {
+      return result;
+    }
+
+    final opts = _connectionOptions[connectionId];
+    if (opts == null || !opts.autoReconnectOnConnectionLost) return result;
+
+    final connectionString = _connectionStrings[connectionId];
+    if (connectionString == null || connectionString.isEmpty) return result;
+
+    final maxAttempts = opts.effectiveMaxReconnectAttempts;
+    final backoff = opts.effectiveReconnectBackoff;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await Future<void>.delayed(backoff);
+      }
+      final reconnected = await _reconnect(
+        connectionId,
+        connectionString,
+        opts,
+      );
+      if (reconnected.isError()) {
+        return reconnected as Failure<T, OdbcError>;
+      }
+      result = await operation();
+      if (result.isSuccess()) return result;
+      final retryErr =
+          result.fold<OdbcError?>((_) => null, (e) => e as OdbcError);
+      if (retryErr == null ||
+          retryErr.category != ErrorCategory.connectionLost) {
+        return result;
+      }
+    }
+    return result;
   }
 
   @override
@@ -170,6 +278,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
       _connectionIds[connection.id] = connId;
       _connectionOptions[connection.id] = options;
+      _connectionStrings[connection.id] = connectionString;
 
       return Success(connection);
     } on Exception catch (e) {
@@ -196,6 +305,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       if (success) {
         _connectionIds.remove(connectionId);
         _connectionOptions.remove(connectionId);
+        _connectionStrings.remove(connectionId);
         return const Success(unit);
       } else {
         return await _convertNativeErrorToFailure<Unit>(
@@ -231,54 +341,71 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
 
-    try {
-      final allRows = <List<dynamic>>[];
-      final columns = <String>[];
-      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
-
-      Stream<ParsedRowBuffer> stream;
+    Future<Result<QueryResult>> run() async {
       try {
-        stream = _isAsync
-            ? (_native as AsyncNativeOdbcConnection)
-                .streamQueryBatched(nativeId, sql, maxBufferBytes: maxBytes)
-            : (_native as NativeOdbcConnection)
-                .streamQueryBatched(nativeId, sql);
-      } on Exception {
-        stream = _isAsync
-            ? (_native as AsyncNativeOdbcConnection)
-                .streamQuery(nativeId, sql, maxBufferBytes: maxBytes)
-            : (_native as NativeOdbcConnection).streamQuery(nativeId, sql);
-      }
+        final allRows = <List<dynamic>>[];
+        final columns = <String>[];
+        final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
 
-      await for (final chunk in stream) {
-        if (columns.isEmpty && chunk.columns.isNotEmpty) {
-          columns.addAll(chunk.columns.map((c) => c.name));
+        Stream<ParsedRowBuffer> stream;
+        try {
+          stream = _isAsync
+              ? (_native as AsyncNativeOdbcConnection)
+                  .streamQueryBatched(nativeId, sql, maxBufferBytes: maxBytes)
+              : (_native as NativeOdbcConnection)
+                  .streamQueryBatched(nativeId, sql);
+        } on Exception {
+          stream = _isAsync
+              ? (_native as AsyncNativeOdbcConnection)
+                  .streamQuery(nativeId, sql, maxBufferBytes: maxBytes)
+              : (_native as NativeOdbcConnection).streamQuery(nativeId, sql);
         }
-        allRows.addAll(chunk.rows);
+
+        await for (final chunk in stream) {
+          if (columns.isEmpty && chunk.columns.isNotEmpty) {
+            columns.addAll(chunk.columns.map((c) => c.name));
+          }
+          allRows.addAll(chunk.rows);
+        }
+
+        final result = QueryResult(
+          columns: columns,
+          rows: allRows,
+          rowCount: allRows.length,
+        );
+
+        return Success(result);
+      } on Exception catch (e) {
+        return _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: e.toString(),
+        );
       }
-
-      final result = QueryResult(
-        columns: columns,
-        rows: allRows,
-        rowCount: allRows.length,
-      );
-
-      return Success(result);
-    } on Exception catch (e) {
-      return _convertNativeErrorToFailure<QueryResult>(
-        errorFactory: ({
-          required message,
-          sqlState,
-          nativeCode,
-        }) =>
-            QueryError(
-          message: message,
-          sqlState: sqlState,
-          nativeCode: nativeCode,
-        ),
-        fallbackMessage: e.toString(),
-      );
     }
+
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+    Future<Result<QueryResult>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<QueryResult, OdbcError>(
+            QueryError(message: _queryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return _withReconnect(connectionId, runWithTimeout);
   }
 
   @override
@@ -305,6 +432,26 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     } on Exception catch (_) {
       return null;
     }
+  }
+
+  QueryResult _toQueryResult(ParsedRowBuffer buffer) {
+    return QueryResult(
+      columns: buffer.columnNames,
+      rows: buffer.rows,
+      rowCount: buffer.rowCount,
+    );
+  }
+
+  QueryResultMulti _toQueryResultMulti(List<MultiResultItem> items) {
+    final mapped = items.map((item) {
+      final resultSet = item.resultSet;
+      if (resultSet != null) {
+        return QueryResultMultiItem.resultSet(_toQueryResult(resultSet));
+      }
+      return QueryResultMultiItem.rowCount(item.rowCount ?? 0);
+    }).toList(growable: false);
+
+    return QueryResultMulti(items: mapped);
   }
 
   List<ParamValue> _toParamValues(List<dynamic> params) {
@@ -558,6 +705,29 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
+  Future<Result<int>> prepareNamed(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  }) async {
+    try {
+      final extract = NamedParameterParser.extract(sql);
+      final prepared = await prepare(
+        connectionId,
+        extract.cleanedSql,
+        timeoutMs: timeoutMs,
+      );
+      final stmtId = prepared.getOrElse((_) => 0);
+      if (stmtId > 0) {
+        _namedParamOrderByStmtId[stmtId] = extract.paramNames;
+      }
+      return prepared;
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
   Future<Result<QueryResult>> executePrepared(
     String connectionId,
     int stmtId, [
@@ -567,10 +737,24 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     try {
       final list = params ?? [];
       final pv = list.isEmpty ? null : _toParamValues(list);
+      final timeoutMs = options?.timeout?.inMilliseconds ?? 0;
+      final fetchSizeVal = options?.fetchSize ?? 1000;
+      final maxBuf = options?.maxBufferSize;
       final buf = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection)
-              .executePrepared(stmtId, pv)
-          : (_native as NativeOdbcConnection).executePrepared(stmtId, pv);
+          ? await (_native as AsyncNativeOdbcConnection).executePrepared(
+              stmtId,
+              pv,
+              timeoutMs,
+              fetchSizeVal,
+              maxBufferBytes: maxBuf,
+            )
+          : (_native as NativeOdbcConnection).executePrepared(
+              stmtId,
+              pv,
+              timeoutMs,
+              fetchSizeVal,
+              maxBufferBytes: maxBuf,
+            );
 
       final qr = _parseBufferToQueryResult(buf);
       if (qr == null) {
@@ -607,6 +791,39 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
+  Future<Result<QueryResult>> executePreparedNamed(
+    String connectionId,
+    int stmtId,
+    Map<String, Object?> namedParams,
+    StatementOptions? options,
+  ) async {
+    final paramOrder = _namedParamOrderByStmtId[stmtId];
+    if (paramOrder == null) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(
+          message: 'Statement was not prepared with prepareNamed',
+        ),
+      );
+    }
+
+    try {
+      final positional = NamedParameterParser.toPositionalParams(
+        namedParams: namedParams,
+        paramNames: paramOrder,
+      );
+      return executePrepared(connectionId, stmtId, positional, options);
+    } on ParameterMissingException catch (e) {
+      return Failure<QueryResult, OdbcError>(
+        ValidationError(message: e.message),
+      );
+    } on Exception catch (e) {
+      return Failure<QueryResult, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
   Future<Result<Unit>> closeStatement(String connectionId, int stmtId) async {
     try {
       final ok = _isAsync
@@ -629,6 +846,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
+    } finally {
+      _namedParamOrderByStmtId.remove(stmtId);
     }
   }
 
@@ -644,18 +863,44 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ValidationError(message: 'Invalid connection ID'),
       );
     }
-    try {
-      final pv = _toParamValues(params);
-      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
-      final buf = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection)
-              .executeQueryParams(nativeId, sql, pv, maxBufferBytes: maxBytes)
-          : (_native as NativeOdbcConnection)
-              .executeQueryParams(nativeId, sql, pv, maxBufferBytes: maxBytes);
 
-      final qr = _parseBufferToQueryResult(buf);
-      if (qr == null) {
-        return await _convertNativeErrorToFailure<QueryResult>(
+    Future<Result<QueryResult>> run() async {
+      try {
+        final pv = _toParamValues(params);
+        final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final buf = _isAsync
+            ? await (_native as AsyncNativeOdbcConnection).executeQueryParams(
+                nativeId,
+                sql,
+                pv,
+                maxBufferBytes: maxBytes,
+              )
+            : (_native as NativeOdbcConnection).executeQueryParams(
+                nativeId,
+                sql,
+                pv,
+                maxBufferBytes: maxBytes,
+              );
+
+        final qr = _parseBufferToQueryResult(buf);
+        if (qr == null) {
+          return await _convertNativeErrorToFailure<QueryResult>(
+            errorFactory: ({
+              required message,
+              sqlState,
+              nativeCode,
+            }) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to execute parameterized query',
+          );
+        }
+        return Success(qr);
+      } on Exception catch (e) {
+        return _convertNativeErrorToFailure<QueryResult>(
           errorFactory: ({
             required message,
             sqlState,
@@ -666,23 +911,47 @@ class OdbcRepositoryImpl implements IOdbcRepository {
             sqlState: sqlState,
             nativeCode: nativeCode,
           ),
-          fallbackMessage: 'Failed to execute parameterized query',
+          fallbackMessage: e.toString(),
         );
       }
-      return Success(qr);
+    }
+
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+    Future<Result<QueryResult>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<QueryResult, OdbcError>(
+            QueryError(message: _queryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return _withReconnect(connectionId, runWithTimeout);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  ) async {
+    try {
+      final extract = NamedParameterParser.extract(sql);
+      final positional = NamedParameterParser.toPositionalParams(
+        namedParams: namedParams,
+        paramNames: extract.paramNames,
+      );
+      return executeQueryParams(connectionId, extract.cleanedSql, positional);
+    } on ParameterMissingException catch (e) {
+      return Failure<QueryResult, OdbcError>(
+        ValidationError(message: e.message),
+      );
     } on Exception catch (e) {
-      return _convertNativeErrorToFailure<QueryResult>(
-        errorFactory: ({
-          required message,
-          sqlState,
-          nativeCode,
-        }) =>
-            QueryError(
-          message: message,
-          sqlState: sqlState,
-          nativeCode: nativeCode,
-        ),
-        fallbackMessage: e.toString(),
+      return Failure<QueryResult, OdbcError>(
+        QueryError(message: e.toString()),
       );
     }
   }
@@ -692,23 +961,46 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     String sql,
   ) async {
+    final full = await executeQueryMultiFull(connectionId, sql);
+    return full.fold(
+      (success) => Success(success.firstResultSet),
+      (error) => Failure<QueryResult, OdbcError>(
+        error is OdbcError ? error : QueryError(message: error.toString()),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiFull(
+    String connectionId,
+    String sql,
+  ) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
-      return const Failure<QueryResult, OdbcError>(
+      return const Failure<QueryResultMulti, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
-    try {
-      final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
-      final buf = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection)
-              .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes)
-          : (_native as NativeOdbcConnection)
-              .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes);
 
-      final qr = _parseBufferToQueryResult(buf);
-      if (qr == null) {
-        return await _convertNativeErrorToFailure<QueryResult>(
+    Future<Result<QueryResultMulti>> run() async {
+      try {
+        final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final buf = _isAsync
+            ? await (_native as AsyncNativeOdbcConnection)
+                .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes)
+            : (_native as NativeOdbcConnection)
+                .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes);
+
+        if (buf == null || buf.isEmpty) {
+          return const Success(
+            QueryResultMulti(items: []),
+          );
+        }
+
+        final items = MultiResultParser.parse(buf);
+        return Success(_toQueryResultMulti(items));
+      } on Exception catch (e) {
+        return _convertNativeErrorToFailure<QueryResultMulti>(
           errorFactory: ({
             required message,
             sqlState,
@@ -719,25 +1011,25 @@ class OdbcRepositoryImpl implements IOdbcRepository {
             sqlState: sqlState,
             nativeCode: nativeCode,
           ),
-          fallbackMessage: 'Failed to execute multi-result query',
+          fallbackMessage: e.toString(),
         );
       }
-      return Success(qr);
-    } on Exception catch (e) {
-      return _convertNativeErrorToFailure<QueryResult>(
-        errorFactory: ({
-          required message,
-          sqlState,
-          nativeCode,
-        }) =>
-            QueryError(
-          message: message,
-          sqlState: sqlState,
-          nativeCode: nativeCode,
-        ),
-        fallbackMessage: e.toString(),
-      );
     }
+
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+    Future<Result<QueryResultMulti>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<QueryResultMulti, OdbcError>(
+            QueryError(message: _queryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return _withReconnect(connectionId, runWithTimeout);
   }
 
   @override
@@ -1194,10 +1486,10 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<Unit>> clearStatementCache() async {
     try {
       final cleared = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection).clearAllStatements()
-          : (_native as NativeOdbcConnection).clearAllStatements();
+          ? await (_native as AsyncNativeOdbcConnection).clearStatementCache()
+          : (_native as NativeOdbcConnection).clearStatementCache();
 
-      if (cleared != 0) {
+      if (!cleared) {
         return await _convertNativeErrorToFailure<Unit>(
           errorFactory: ({required message, sqlState, nativeCode}) =>
               QueryError(
@@ -1221,8 +1513,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       getPreparedStatementsMetrics() async {
     try {
       final metrics = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection).getStatementsMetrics()
-          : (_native as NativeOdbcConnection).getStatementsMetrics();
+          ? await (_native as AsyncNativeOdbcConnection).getCacheMetrics()
+          : (_native as NativeOdbcConnection).getCacheMetrics();
 
       if (metrics == null) {
         return await _convertNativeErrorToFailure<PreparedStatementMetrics>(
@@ -1237,10 +1529,14 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       }
       return Success(
         PreparedStatementMetrics(
-          totalStatements: metrics.totalStatements,
-          totalExecutions: metrics.totalExecutions,
+          cacheSize: metrics.cacheSize,
+          cacheMaxSize: metrics.cacheMaxSize,
           cacheHits: metrics.cacheHits,
+          cacheMisses: metrics.cacheMisses,
           totalPrepares: metrics.totalPrepares,
+          totalExecutions: metrics.totalExecutions,
+          memoryUsageBytes: metrics.memoryUsageBytes,
+          avgExecutionsPerStmt: metrics.avgExecutionsPerStmt,
         ),
       );
     } on Exception catch (e) {

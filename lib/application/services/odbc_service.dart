@@ -3,156 +3,493 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/entities/prepared_statement_config.dart';
-import 'package:odbc_fast/domain/entities/prepared_statement_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
-import 'package:odbc_fast/domain/entities/retry_options.dart';
-import 'package:odbc_fast/domain/entities/schema_info.dart';
+import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/domain/helpers/retry_helper.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
-import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:result_dart/result_dart.dart';
 
-/// High-level service for ODBC database operations.
+/// Interface for ODBC service operations.
 ///
-/// Provides a clean API for connecting to databases, executing queries,
-/// managing transactions, using prepared statements, connection pooling,
-/// and catalog queries. Includes input validation and automatic error handling.
-///
-/// Uses [SimpleTelemetryService] for distributed tracing.
-class OdbcService {
-  final SimpleTelemetryService _telemetry;
+/// Allows decorators and alternative implementations to be used
+/// interchangeably via dependency injection.
+abstract class IOdbcService {
+  Future<Result<void>> initialize();
 
+  Future<Result<Connection>> connect(
+    String connectionString, {
+    ConnectionOptions? options,
+  });
+
+  Future<Result<void>> disconnect(String connectionId);
+
+  Future<Result<QueryResult>> executeQueryParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  );
+
+  Future<Result<int>> beginTransaction(
+    String connectionId, {
+    IsolationLevel? isolationLevel,
+  });
+
+  Future<Result<void>> commitTransaction(
+    String connectionId,
+    int txnId,
+  );
+
+  Future<Result<void>> rollbackTransaction(
+    String connectionId,
+    int txnId,
+  );
+
+  Future<Result<void>> createSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  );
+
+  Future<Result<void>> rollbackToSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  );
+
+  Future<Result<void>> releaseSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  );
+
+  Future<Result<int>> prepare(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  });
+
+  Future<Result<int>> prepareNamed(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  });
+
+  Future<Result<QueryResult>> executePrepared(
+    String connectionId,
+    int stmtId,
+    List<dynamic>? params,
+    StatementOptions? options,
+  );
+
+  Future<Result<QueryResult>> executePreparedNamed(
+    String connectionId,
+    int stmtId,
+    Map<String, Object?> namedParams,
+    StatementOptions? options,
+  );
+
+  Future<Result<void>> closeStatement(
+    String connectionId,
+    int stmtId,
+  );
+
+  Future<Result<QueryResult>> executeQueryMulti(
+    String connectionId,
+    String sql,
+  );
+
+  Future<Result<QueryResultMulti>> executeQueryMultiFull(
+    String connectionId,
+    String sql,
+  );
+
+  Future<Result<QueryResult>> executeQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  );
+
+  Future<Result<QueryResult>> catalogTables({
+    required String connectionId,
+    String catalog = '',
+    String schema = '',
+  });
+
+  Future<Result<QueryResult>> catalogColumns(
+    String connectionId,
+    String table,
+  );
+
+  Future<Result<QueryResult>> catalogTypeInfo(String connectionId);
+
+  Future<Result<int>> poolCreate(
+    String connectionString,
+    int maxSize,
+  );
+
+  Future<Result<Connection>> poolGetConnection(int poolId);
+
+  Future<Result<void>> poolReleaseConnection(String connectionId);
+
+  Future<Result<bool>> poolHealthCheck(int poolId);
+
+  Future<Result<PoolState>> poolGetState(int poolId);
+
+  Future<Result<void>> poolClose(int poolId);
+
+  Future<Result<int>> bulkInsert(
+    String connectionId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount,
+  );
+
+  Future<Result<OdbcMetrics>> getMetrics();
+
+  bool isInitialized();
+
+  Future<Result<void>> clearStatementCache();
+
+  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
+
+  Future<String?> detectDriver(String connectionString);
+
+  Future<Result<QueryResult>> executeQuery(
+    String sql, {
+    List<dynamic>? params,
+    String? connectionId,
+  });
+
+  void dispose();
+}
+
+/// High-level ODBC service that provides simplified API for database
+/// operations.
+///
+/// This service wraps [IOdbcRepository] to provide a more convenient
+/// interface for common database operations.
+///
+/// ## Usage
+/// ```dart
+/// final service = OdbcService(repository);
+/// await service.initialize();
+/// final result = await service.executeQuery(
+///   'SELECT * FROM users',
+///   connectionId: connection.id,
+/// );
+/// ```
+class OdbcService implements IOdbcService {
   /// Creates a new [OdbcService] instance.
   ///
-  /// The [repository] parameter provides the ODBC repository implementation.
-  /// The [telemetry] parameter provides the telemetry service for distributed tracing.
-  OdbcService({
-    required IOdbcRepository repository,
-    required SimpleTelemetryService telemetry,
-  }) : _telemetry = telemetry {
-    _repository = repository;
+  /// The `repository` parameter provides the ODBC repository implementation.
+  OdbcService(this._repository);
+  final IOdbcRepository _repository;
+
+  @override
+  Future<Result<void>> initialize() async {
+    return _repository.initialize();
   }
 
-  /// Initializes the ODBC environment.
-  ///
-  /// Must be called before any other operations.
-  Future<Result<Connection, OdbcError>> initialize({
-    String? connectionString,
-    Duration? timeout,
-  Map<String, String>? connectionOptions,
+  @override
+  Future<Result<Connection>> connect(
+    String connectionString, {
+    ConnectionOptions? options,
   }) async {
-    return await _repository.initialize(
-      connectionString: connectionString ?? 'DSN=MyDatabase;UID=sa;PWD=123abc;',
-      timeout: timeout,
+    return _repository.connect(connectionString, options: options);
+  }
+
+  @override
+  Future<Result<void>> disconnect(String connectionId) async {
+    return _repository.disconnect(connectionId);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  ) async {
+    return _repository.executeQueryParams(
+      connectionId,
+      sql,
+      params,
     );
   }
 
-  /// Executes an SQL query with parameters.
-  ///
-  /// Returns [QueryResult] with rows of data.
-  /// Use prepared statements for better performance and security.
-  Future<QueryResult> execute({
-    required String sql,
-    List<Object?>? parameters = const [],
-    Connection? connection,
+  @override
+  Future<Result<int>> beginTransaction(
+    String connectionId, {
+    IsolationLevel? isolationLevel,
   }) async {
-    // Implementation continues in repository layer
+    return _repository.beginTransaction(
+      connectionId,
+      isolationLevel ?? IsolationLevel.readCommitted,
+    );
   }
 
-  /// Executes a prepared statement with parameters.
-  ///
-  /// Returns [PreparedResult] with execution status.
-  /// Use for INSERT, UPDATE, DELETE operations.
-  Future<PreparedResult> executePrepared({
-    required String sql,
-    List<Object?>? parameters = const [],
-    Connection? connection,
+  @override
+  Future<Result<void>> commitTransaction(
+    String connectionId,
+    int txnId,
+  ) async {
+    return _repository.commitTransaction(connectionId, txnId);
+  }
+
+  @override
+  Future<Result<void>> rollbackTransaction(
+    String connectionId,
+    int txnId,
+  ) async {
+    return _repository.rollbackTransaction(connectionId, txnId);
+  }
+
+  @override
+  Future<Result<void>> createSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    return _repository.createSavepoint(connectionId, txnId, name);
+  }
+
+  @override
+  Future<Result<void>> rollbackToSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    return _repository.rollbackToSavepoint(
+      connectionId,
+      txnId,
+      name,
+    );
+  }
+
+  @override
+  Future<Result<void>> releaseSavepoint(
+    String connectionId,
+    int txnId,
+    String name,
+  ) async {
+    return _repository.releaseSavepoint(connectionId, txnId, name);
+  }
+
+  @override
+  Future<Result<int>> prepare(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
   }) async {
-    // Implementation continues in repository layer
+    return _repository.prepare(
+      connectionId,
+      sql,
+      timeoutMs: timeoutMs,
+    );
   }
 
-  /// Establishes a new connection to the database.
-  ///
-  /// Returns [Connection] object on success or [OdbcError] on failure.
-  /// Supports both DSN and connection string connections.
-  Future<Result<Connection, OdbcError>> connect({
-    required String dsn,
-    String? connectionString,
-    Duration? timeout,
-  Map<String, String>? connectionOptions,
+  @override
+  Future<Result<int>> prepareNamed(
+    String connectionId,
+    String sql, {
+    int timeoutMs = 0,
   }) async {
-    // Implementation continues in repository layer
+    return _repository.prepareNamed(
+      connectionId,
+      sql,
+      timeoutMs: timeoutMs,
+    );
   }
 
-  /// Begins a new transaction.
-  ///
-  /// Returns [Transaction] object for managing operations.
-  /// All operations after begin() are part of the transaction.
-  Future<Result<Transaction, OdbcError>> begin({
-    Connection? connection,
-    IsolationLevel? isolationLevel = IsolationLevel.readCommitted,
+  @override
+  Future<Result<QueryResult>> executePrepared(
+    String connectionId,
+    int stmtId,
+    List<dynamic>? params,
+    StatementOptions? options,
+  ) async {
+    return _repository.executePrepared(
+      connectionId,
+      stmtId,
+      params,
+      options,
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executePreparedNamed(
+    String connectionId,
+    int stmtId,
+    Map<String, Object?> namedParams,
+    StatementOptions? options,
+  ) async {
+    return _repository.executePreparedNamed(
+      connectionId,
+      stmtId,
+      namedParams,
+      options,
+    );
+  }
+
+  @override
+  Future<Result<void>> closeStatement(
+    String connectionId,
+    int stmtId,
+  ) async {
+    return _repository.closeStatement(connectionId, stmtId);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryMulti(
+    String connectionId,
+    String sql,
+  ) async {
+    return _repository.executeQueryMulti(connectionId, sql);
+  }
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiFull(
+    String connectionId,
+    String sql,
+  ) async {
+    return _repository.executeQueryMultiFull(connectionId, sql);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  ) async {
+    return _repository.executeQueryNamed(connectionId, sql, namedParams);
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogTables({
+    required String connectionId,
+    String catalog = '',
+    String schema = '',
   }) async {
-    // Implementation continues in repository layer
+    return _repository.catalogTables(
+      connectionId,
+      catalog: catalog,
+      schema: schema,
+    );
   }
 
-  /// Commits the current transaction.
-  ///
-  /// All changes are persisted to database.
-  /// Returns success result.
-  Future<Result<void, OdbcError>> commit({
-    required Transaction transaction,
+  @override
+  Future<Result<QueryResult>> catalogColumns(
+    String connectionId,
+    String table,
+  ) async {
+    return _repository.catalogColumns(connectionId, table);
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogTypeInfo(
+    String connectionId,
+  ) async {
+    return _repository.catalogTypeInfo(connectionId);
+  }
+
+  @override
+  Future<Result<int>> poolCreate(
+    String connectionString,
+    int maxSize,
+  ) async {
+    return _repository.poolCreate(connectionString, maxSize);
+  }
+
+  @override
+  Future<Result<Connection>> poolGetConnection(int poolId) async {
+    return _repository.poolGetConnection(poolId);
+  }
+
+  @override
+  Future<Result<void>> poolReleaseConnection(
+    String connectionId,
+  ) async {
+    return _repository.poolReleaseConnection(connectionId);
+  }
+
+  @override
+  Future<Result<bool>> poolHealthCheck(int poolId) async {
+    return _repository.poolHealthCheck(poolId);
+  }
+
+  @override
+  Future<Result<PoolState>> poolGetState(int poolId) async {
+    return _repository.poolGetState(poolId);
+  }
+
+  @override
+  Future<Result<void>> poolClose(int poolId) async {
+    return _repository.poolClose(poolId);
+  }
+
+  @override
+  Future<Result<int>> bulkInsert(
+    String connectionId,
+    String table,
+    List<String> columns,
+    List<int> dataBuffer,
+    int rowCount,
+  ) async {
+    return _repository.bulkInsert(
+      connectionId,
+      table,
+      columns,
+      dataBuffer,
+      rowCount,
+    );
+  }
+
+  @override
+  Future<Result<OdbcMetrics>> getMetrics() async {
+    return _repository.getMetrics();
+  }
+
+  @override
+  bool isInitialized() {
+    return _repository.isInitialized();
+  }
+
+  @override
+  Future<Result<void>> clearStatementCache() async {
+    return _repository.clearStatementCache();
+  }
+
+  @override
+  Future<Result<PreparedStatementMetrics>>
+      getPreparedStatementsMetrics() async {
+    return _repository.getPreparedStatementsMetrics();
+  }
+
+  @override
+  Future<String?> detectDriver(String connectionString) async {
+    return _repository.detectDriver(connectionString);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQuery(
+    String sql, {
+    List<dynamic>? params,
+    String? connectionId,
   }) async {
-    // Implementation continues in repository layer
+    if (connectionId == null || connectionId.isEmpty) {
+      throw const ConnectionError(
+        message: 'No active connection. Call connect() first.',
+      );
+    }
+
+    if (params == null || params.isEmpty) {
+      return executeQueryParams(connectionId, sql, []);
+    }
+
+    return executeQueryParams(connectionId, sql, params);
   }
 
-  /// Rollbacks the current transaction.
-  ///
-  /// All changes since last commit are undone.
-  /// Returns success result.
-  Future<Result<void, OdbcError>> rollback({
-    required Transaction transaction,
-  }) async {
-    // Implementation continues in repository layer
-  }
-
-  /// Ends the current transaction.
-  ///
-  /// All operations after end() are finalized.
-  /// Returns success result.
-  Future<Result<void, OdbcError>> end({
-    required Transaction transaction,
-  }) async {
-    // Implementation continues in repository layer
-  }
-
-  /// Gets the ODBC driver's native connection string.
-  ///
-  /// Returns the connection string or null if not connected.
-  String? getNativeConnectionString();
-
-  /// Gets the current ODBC connection.
-  ///
-  /// Returns [Connection] object or null if not connected.
-  Connection? getconnection();
-
-  /// Prepares a statement for execution.
-  ///
-  /// Returns a [PreparedResult] object with statement handle.
-  Future<PreparedResult> prepare({
-    required String sql,
-    List<Object?>? parameters = const [],
-    Connection? connection,
-  }) async {
-    // Implementation continues in repository layer
-  }
-
-  /// Releases all statement handles and closes connection.
-  ///
-  /// Should be called when done with all operations.
-  void dispose() {
-    _repository.dispose();
-  }
+  @override
+  void dispose() {}
 }

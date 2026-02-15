@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_isolate.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
+    show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 /// Non-blocking wrapper around ODBC using a long-lived worker isolate.
@@ -31,24 +34,49 @@ import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 /// - Parallel queries: N queries complete in the time of the longest (not
 ///   the sum).
 ///
+/// ## Request timeout
+///
+/// Use `requestTimeout` to avoid UI hangs when the worker does not respond
+/// (default 30s). Pass `Duration.zero` or `null` to disable.
+///
 /// ## Example
 ///
 /// ```dart
-/// final async = AsyncNativeOdbcConnection();
+/// final async = AsyncNativeOdbcConnection(
+///   requestTimeout: Duration(seconds: 30),
+/// );
 /// await async.initialize();
 ///
 /// final connId = await async.connect(dsn);
 /// final data = await async.executeQueryParams(connId, 'SELECT 1', []);
 /// await async.disconnect(connId);
 ///
-/// async.dispose();
+/// async.dispose(); // Pending requests complete with error
 /// ```
 ///
 /// See also:
 /// - `worker_isolate.dart` for the worker entry and request handling.
 /// - [WorkerRequest] and [WorkerResponse] for the message protocol.
 class AsyncNativeOdbcConnection {
-  AsyncNativeOdbcConnection();
+  AsyncNativeOdbcConnection({
+    Duration? requestTimeout,
+    void Function(SendPort)? isolateEntry,
+    this.autoRecoverOnWorkerCrash = false,
+  })  : _requestTimeout = requestTimeout,
+        _isolateEntry = isolateEntry;
+
+  static const _defaultRequestTimeout = Duration(seconds: 30);
+
+  final Duration? _requestTimeout;
+
+  /// Test hook: custom isolate entry. When set, used instead of [workerEntry].
+  final void Function(SendPort)? _isolateEntry;
+
+  /// When true, on worker isolate error/done
+  /// `WorkerCrashRecovery.handleWorkerCrash` is invoked after failing pending
+  /// requests. All previous connection IDs are invalid after recovery; callers
+  /// must reconnect.
+  final bool autoRecoverOnWorkerCrash;
 
   SendPort? _workerSendPort;
   ReceivePort? _receivePort;
@@ -56,6 +84,7 @@ class AsyncNativeOdbcConnection {
   bool _isInitialized = false;
   int _requestIdCounter = 0;
   final Map<int, Completer<WorkerResponse>> _pendingRequests = {};
+  final Map<int, List<String>> _namedParamOrderByStmtId = {};
 
   /// Initializes the worker isolate and ODBC environment.
   ///
@@ -73,16 +102,44 @@ class AsyncNativeOdbcConnection {
 
     final handshake = Completer<SendPort>();
     _receivePort = ReceivePort();
-    _receivePort!.listen((Object? message) {
-      if (message is SendPort) {
-        if (!handshake.isCompleted) handshake.complete(message);
-      } else if (message is WorkerResponse) {
-        _handleResponse(message);
-      }
-    });
+    _receivePort!.listen(
+      (Object? message) {
+        if (message is SendPort) {
+          if (!handshake.isCompleted) handshake.complete(message);
+        } else if (message is WorkerResponse) {
+          _handleResponse(message);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) async {
+        _failAllPending(
+          AsyncError(
+            code: AsyncErrorCode.workerTerminated,
+            message: 'Worker isolate error: $error',
+          ),
+        );
+        if (autoRecoverOnWorkerCrash) {
+          AppLogger.severe('Worker isolate crashed: $error', error, stackTrace);
+          await recoverWorker();
+        }
+      },
+      onDone: () async {
+        if (_pendingRequests.isNotEmpty) {
+          _failAllPending(
+            const AsyncError(
+              code: AsyncErrorCode.workerTerminated,
+              message: 'Worker isolate terminated',
+            ),
+          );
+        }
+        if (autoRecoverOnWorkerCrash) {
+          AppLogger.severe('Worker isolate terminated');
+          await recoverWorker();
+        }
+      },
+    );
 
     _workerIsolate = await Isolate.spawn(
-      workerEntry,
+      _isolateEntry ?? workerEntry,
       _receivePort!.sendPort,
     );
     _workerSendPort = await handshake.future;
@@ -102,7 +159,33 @@ class AsyncNativeOdbcConnection {
     final completer = Completer<WorkerResponse>();
     _pendingRequests[request.requestId] = completer;
     _workerSendPort!.send(request);
-    return await completer.future as T;
+
+    final effectiveTimeout = _requestTimeout ?? _defaultRequestTimeout;
+    if (effectiveTimeout == Duration.zero) {
+      return await completer.future as T;
+    }
+
+    return await completer.future.timeout(
+      effectiveTimeout,
+      onTimeout: () {
+        _pendingRequests.remove(request.requestId);
+        throw AsyncError(
+          code: AsyncErrorCode.requestTimeout,
+          message:
+              'Worker did not respond within ${effectiveTimeout.inSeconds}s',
+        );
+      },
+    ) as T;
+  }
+
+  void _failAllPending(AsyncError error) {
+    final pending = Map<int, Completer<WorkerResponse>>.from(_pendingRequests);
+    _pendingRequests.clear();
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
   }
 
   void _handleResponse(WorkerResponse response) {
@@ -114,6 +197,9 @@ class AsyncNativeOdbcConnection {
 
   /// Whether the worker isolate and ODBC environment are initialized.
   bool get isInitialized => _isInitialized;
+
+  /// Worker isolate, exposed for testing (e.g., to simulate crash).
+  Isolate? get workerIsolateForTesting => _workerIsolate;
 
   /// Opens a connection in the worker using [connectionString].
   ///
@@ -247,12 +333,37 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  /// Prepares [sql] with named parameters on [connectionId] in the worker.
+  ///
+  /// Supports `@name` and `:name` syntax. Named placeholders are converted
+  /// to positional placeholders before prepare. On success, internal metadata
+  /// is stored so [executePreparedNamed] can bind values by name.
+  Future<int> prepareNamed(
+    int connectionId,
+    String sql, {
+    int timeoutMs = 0,
+  }) async {
+    final extract = NamedParameterParser.extract(sql);
+    final stmtId = await prepare(
+      connectionId,
+      extract.cleanedSql,
+      timeoutMs: timeoutMs,
+    );
+    if (stmtId > 0) {
+      _namedParamOrderByStmtId[stmtId] = extract.paramNames;
+    }
+    return stmtId;
+  }
+
   /// Executes a prepared statement [stmtId] in the worker with optional
   /// [params]. Returns the binary result, or `null` on error.
   Future<Uint8List?> executePrepared(
     int stmtId,
     List<ParamValue>? params,
-  ) async {
+    int timeoutOverrideMs,
+    int fetchSize, {
+    int? maxBufferBytes,
+  }) async {
     final bytes =
         params == null || params.isEmpty ? null : serializeParams(params);
     final r = await _sendRequest<QueryResponse>(
@@ -260,10 +371,54 @@ class AsyncNativeOdbcConnection {
         _nextRequestId(),
         stmtId,
         bytes ?? Uint8List(0),
+        timeoutOverrideMs: timeoutOverrideMs,
+        fetchSize: fetchSize,
+        maxResultBufferBytes: maxBufferBytes,
       ),
     );
     if (r.error != null) return null;
     return r.data;
+  }
+
+  /// Executes a prepared statement [stmtId] using named parameters.
+  ///
+  /// The [stmtId] must come from [prepareNamed]. Throws [AsyncError] with
+  /// [AsyncErrorCode.invalidParameter] when named parameter metadata is
+  /// missing or required parameters are not provided.
+  Future<Uint8List?> executePreparedNamed(
+    int stmtId,
+    Map<String, Object?> namedParams,
+    int timeoutOverrideMs,
+    int fetchSize, {
+    int? maxBufferBytes,
+  }) async {
+    final paramOrder = _namedParamOrderByStmtId[stmtId];
+    if (paramOrder == null) {
+      throw const AsyncError(
+        code: AsyncErrorCode.invalidParameter,
+        message: 'Statement was not prepared with prepareNamed',
+      );
+    }
+
+    try {
+      final positional = NamedParameterParser.toPositionalParams(
+        namedParams: namedParams,
+        paramNames: paramOrder,
+      );
+      final paramValues = paramValuesFromObjects(positional);
+      return executePrepared(
+        stmtId,
+        paramValues,
+        timeoutOverrideMs,
+        fetchSize,
+        maxBufferBytes: maxBufferBytes,
+      );
+    } on ParameterMissingException catch (e) {
+      throw AsyncError(
+        code: AsyncErrorCode.invalidParameter,
+        message: e.message,
+      );
+    }
   }
 
   /// Executes [sql] on [connectionId] with [params] in the worker.
@@ -290,6 +445,40 @@ class AsyncNativeOdbcConnection {
     return r.data;
   }
 
+  /// Executes [sql] on [connectionId] using named parameters.
+  ///
+  /// Supports `@name` and `:name` syntax, converting placeholders to
+  /// positional order before sending the query to the worker.
+  ///
+  /// Throws [AsyncError] with [AsyncErrorCode.invalidParameter] when any
+  /// required named parameter is missing.
+  Future<Uint8List?> executeQueryNamed(
+    int connectionId,
+    String sql,
+    Map<String, Object?> namedParams, {
+    int? maxBufferBytes,
+  }) async {
+    try {
+      final extract = NamedParameterParser.extract(sql);
+      final positional = NamedParameterParser.toPositionalParams(
+        namedParams: namedParams,
+        paramNames: extract.paramNames,
+      );
+      final paramValues = paramValuesFromObjects(positional);
+      return executeQueryParams(
+        connectionId,
+        extract.cleanedSql,
+        paramValues,
+        maxBufferBytes: maxBufferBytes,
+      );
+    } on ParameterMissingException catch (e) {
+      throw AsyncError(
+        code: AsyncErrorCode.invalidParameter,
+        message: e.message,
+      );
+    }
+  }
+
   /// Executes [sql] on [connectionId] for multi-result sets in the worker.
   /// When [maxBufferBytes] is set, caps the result buffer size.
   /// Returns the binary result, or `null` on error.
@@ -312,31 +501,19 @@ class AsyncNativeOdbcConnection {
 
   /// Closes the prepared statement [stmtId] in the worker.
   Future<bool> closeStatement(int stmtId) async {
-    final r = await _sendRequest<BoolResponse>(
-      CloseStatementRequest(_nextRequestId(), stmtId),
-    );
-    return r.value;
+    try {
+      final r = await _sendRequest<BoolResponse>(
+        CloseStatementRequest(_nextRequestId(), stmtId),
+      );
+      return r.value;
+    } finally {
+      _namedParamOrderByStmtId.remove(stmtId);
+    }
   }
 
   Future<int> clearAllStatements() async {
     // Stub implementation - returns success until native is updated
     return 0;
-  }
-
-  Future<
-      ({
-        int totalStatements,
-        int totalExecutions,
-        int cacheHits,
-        int totalPrepares
-      })?> getStatementsMetrics() async {
-    // Stub implementation - returns zeros until native is updated
-    return (
-      totalStatements: 0,
-      totalExecutions: 0,
-      cacheHits: 0,
-      totalPrepares: 0,
-    );
   }
 
   /// Returns catalog tables for [connectionId] (optional [catalog] and
@@ -464,6 +641,32 @@ class AsyncNativeOdbcConnection {
     );
   }
 
+  /// Returns prepared statement cache metrics from the worker.
+  Future<PreparedStatementMetrics?> getCacheMetrics() async {
+    final r = await _sendRequest<CacheMetricsResponse>(
+      GetCacheMetricsRequest(_nextRequestId()),
+    );
+    if (r.error != null) return null;
+    return PreparedStatementMetrics(
+      cacheSize: r.cacheSize,
+      cacheMaxSize: r.cacheMaxSize,
+      cacheHits: r.cacheHits,
+      cacheMisses: r.cacheMisses,
+      totalPrepares: r.totalPrepares,
+      totalExecutions: r.totalExecutions,
+      memoryUsageBytes: r.memoryUsageBytes,
+      avgExecutionsPerStmt: r.avgExecutionsPerStmt,
+    );
+  }
+
+  /// Clears the prepared statement cache in the worker.
+  Future<bool> clearStatementCache() async {
+    final r = await _sendRequest<ClearCacheResponse>(
+      ClearCacheRequest(_nextRequestId()),
+    );
+    return r.error == null;
+  }
+
   /// Runs [sql] in the worker and yields one [ParsedRowBuffer].
   ///
   /// Fetches the full result in one shot, then parses it. For very large
@@ -508,18 +711,37 @@ class AsyncNativeOdbcConnection {
     yield BinaryProtocolParser.parse(data);
   }
 
+  /// Disposes the current worker and re-initializes a fresh one.
+  ///
+  /// All previous connection IDs are invalid after this. Callers must
+  /// reconnect. Use when [autoRecoverOnWorkerCrash] is true and the worker
+  /// has crashed.
+  Future<void> recoverWorker() async {
+    dispose();
+    await initialize();
+  }
+
   /// Shuts down the worker isolate and releases resources.
   ///
-  /// Sends shutdown to the worker, kills the isolate, and closes the receive
-  /// port. Call when the async connection is no longer needed. After [dispose],
-  /// [isInitialized] is false and [initialize] can be called again.
+  /// Completes any pending requests with error before shutting down. Sends
+  /// shutdown to the worker, kills the isolate, and closes the receive port.
+  /// Call when the async connection is no longer needed. After [dispose],
+  /// [isInitialized] is false and [initialize] can be called again. In-flight
+  /// requests will complete with [AsyncError] (workerTerminated).
   void dispose() {
+    _failAllPending(
+      const AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'Connection disposed; worker shutting down',
+      ),
+    );
+    _isInitialized = false;
     _workerSendPort?.send('shutdown');
     _workerIsolate?.kill();
     _receivePort?.close();
+    _namedParamOrderByStmtId.clear();
     _workerSendPort = null;
     _workerIsolate = null;
     _receivePort = null;
-    _isInitialized = false;
   }
 }
