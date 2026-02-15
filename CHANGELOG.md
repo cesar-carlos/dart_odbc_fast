@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Automated pub.dev publishing**: Configured OIDC-based automated publishing via GitHub Actions (no manual secrets required)
+
+### Changed
+- _None_
+
+### Fixed
+- _None_
+
+## [1.0.1] - 2026-02-15
+
+### Added
+- _Test release for automated publishing_
+
+### Changed
+- _None_
+
+### Fixed
+- _None_
+
+### Added
 
 - _None_
 

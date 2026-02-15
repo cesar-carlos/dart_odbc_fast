@@ -1,0 +1,13 @@
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+    # tag-pattern on pub.dev: 'v{{version}}'
+    - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish:
+    permissions:
+      id-token: write # Required for OIDC authentication
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
