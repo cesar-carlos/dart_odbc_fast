@@ -1,11 +1,12 @@
-import 'package:test/test.dart';
-import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
+import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
+import 'package:test/test.dart';
 
 /// Mock repository for performance testing.
 ///
-/// This mock provides minimal overhead to accurately measure service performance.
+/// This mock provides minimal overhead to accurately measure service
+/// performance.
 class PerfMockRepository implements ITelemetryRepository {
   int totalCalls = 0;
 
@@ -83,7 +84,7 @@ void main() {
         final stopwatch = Stopwatch()..start();
         final ids = <String>{};
 
-        for (int i = 0; i < 10000; i++) {
+        for (var i = 0; i < 10000; i++) {
           final trace = service.startTrace('operation-$i');
           ids.add(trace.traceId);
         }
@@ -94,7 +95,9 @@ void main() {
         expect(ids.length, equals(10000));
 
         // Performance assertion - should complete in reasonable time
-        print('Generated 10,000 trace IDs in ${stopwatch.elapsedMilliseconds}ms');
+        print(
+          'Generated 10,000 trace IDs in ${stopwatch.elapsedMilliseconds}ms',
+        );
         print('Average: ${stopwatch.elapsedMilliseconds / 10000}ms per ID');
 
         // Should be fast - less than 1 second total
@@ -109,7 +112,7 @@ void main() {
         final stopwatch = Stopwatch()..start();
         final ids = <String>{};
 
-        for (int i = 0; i < 10000; i++) {
+        for (var i = 0; i < 10000; i++) {
           final span = service.startSpan(
             parentId: trace.traceId,
             spanName: 'span-$i',
@@ -123,7 +126,9 @@ void main() {
         expect(ids.length, equals(10000));
 
         // Performance assertion
-        print('Generated 10,000 span IDs in ${stopwatch.elapsedMilliseconds}ms');
+        print(
+          'Generated 10,000 span IDs in ${stopwatch.elapsedMilliseconds}ms',
+        );
         print('Average: ${stopwatch.elapsedMilliseconds / 10000}ms per ID');
 
         expect(stopwatch.elapsedMilliseconds, lessThan(1000));
@@ -135,7 +140,7 @@ void main() {
         // Act
         final stopwatch = Stopwatch()..start();
 
-        for (int i = 0; i < 10000; i++) {
+        for (var i = 0; i < 10000; i++) {
           await service.recordMetric(
             name: 'metric-$i',
             metricType: 'counter',
@@ -160,7 +165,7 @@ void main() {
         // Act
         final stopwatch = Stopwatch()..start();
 
-        for (int i = 0; i < 10000; i++) {
+        for (var i = 0; i < 10000; i++) {
           await service.recordGauge(
             name: 'gauge-$i',
             value: i.toDouble(),
@@ -184,9 +189,9 @@ void main() {
       test('should handle 1k trace lifecycle operations/second', () async {
         // Act
         final stopwatch = Stopwatch()..start();
-        int operations = 0;
+        var operations = 0;
 
-        for (int i = 0; i < 5000; i++) {
+        for (var i = 0; i < 5000; i++) {
           final trace = service.startTrace('op-$i');
           await service.endTrace(traceId: trace.traceId);
           operations += 2; // start + end
@@ -198,11 +203,18 @@ void main() {
         expect(operations, equals(10000)); // 5000 * 2
 
         // Performance assertion - 10k operations
-        print('Completed 10,000 trace operations in ${stopwatch.elapsedMilliseconds}ms');
-        print('Throughput: ${operations / (stopwatch.elapsedMilliseconds / 1000)} ops/sec');
+        print(
+          'Completed 10,000 trace operations in '
+          '${stopwatch.elapsedMilliseconds}ms',
+        );
+        print(
+          'Throughput: ${operations / (stopwatch.elapsedMilliseconds / 1000)} '
+          'ops/sec',
+        );
 
         // Should handle at least 1000 ops/sec
-        final opsPerSecond = operations / (stopwatch.elapsedMilliseconds / 1000);
+        final opsPerSecond =
+            operations / (stopwatch.elapsedMilliseconds / 1000);
         expect(opsPerSecond, greaterThan(1000));
       });
 
@@ -212,9 +224,9 @@ void main() {
 
         // Act
         final stopwatch = Stopwatch()..start();
-        int operations = 0;
+        var operations = 0;
 
-        for (int i = 0; i < 5000; i++) {
+        for (var i = 0; i < 5000; i++) {
           final span = service.startSpan(
             parentId: trace.traceId,
             spanName: 'span-$i',
@@ -229,11 +241,18 @@ void main() {
         expect(operations, equals(10000)); // 5000 * 2
 
         // Performance assertion
-        print('Completed 10,000 span operations in ${stopwatch.elapsedMilliseconds}ms');
-        print('Throughput: ${operations / (stopwatch.elapsedMilliseconds / 1000)} ops/sec');
+        print(
+          'Completed 10,000 span operations in '
+          '${stopwatch.elapsedMilliseconds}ms',
+        );
+        print(
+          'Throughput: ${operations / (stopwatch.elapsedMilliseconds / 1000)} '
+          'ops/sec',
+        );
 
         // Should handle at least 1000 ops/sec
-        final opsPerSecond = operations / (stopwatch.elapsedMilliseconds / 1000);
+        final opsPerSecond =
+            operations / (stopwatch.elapsedMilliseconds / 1000);
         expect(opsPerSecond, greaterThan(1000));
       });
     });
@@ -242,7 +261,7 @@ void main() {
       test('should clean up completed traces from memory', () async {
         // Arrange - Start 1000 traces
         final traceIds = <String>[];
-        for (int i = 0; i < 1000; i++) {
+        for (var i = 0; i < 1000; i++) {
           final trace = service.startTrace('trace-$i');
           traceIds.add(trace.traceId);
         }
@@ -257,7 +276,9 @@ void main() {
 
         // Performance assertion
         print('Ended 1,000 traces in ${stopwatch.elapsedMilliseconds}ms');
-        print('Average: ${stopwatch.elapsedMilliseconds / 1000}ms per trace end');
+        print(
+          'Average: ${stopwatch.elapsedMilliseconds / 1000}ms per trace end',
+        );
 
         // Should be fast - less than 500ms for 1000 operations
         expect(stopwatch.elapsedMilliseconds, lessThan(500));
@@ -270,12 +291,14 @@ void main() {
         final stopwatch = Stopwatch()..start();
         final futures = <Future<void>>[];
 
-        for (int i = 0; i < 100; i++) {
-          futures.add(service.recordMetric(
-            name: 'metric-$i',
-            metricType: 'counter',
-            value: i.toDouble(),
-          ));
+        for (var i = 0; i < 100; i++) {
+          futures.add(
+            service.recordMetric(
+              name: 'metric-$i',
+              metricType: 'counter',
+              value: i.toDouble(),
+            ),
+          );
         }
 
         // Wait for all to complete
@@ -286,7 +309,10 @@ void main() {
         expect(mockRepository.totalCalls, equals(100));
 
         // Performance assertion - 100 concurrent operations
-        print('Completed 100 concurrent metric recordings in ${stopwatch.elapsedMilliseconds}ms');
+        print(
+          'Completed 100 concurrent metric recordings in '
+          '${stopwatch.elapsedMilliseconds}ms',
+        );
         print('Average: ${stopwatch.elapsedMilliseconds / 100}ms per metric');
 
         // Should complete reasonably fast
@@ -298,9 +324,9 @@ void main() {
       test('should handle rapid metric burst', () async {
         // Act - Burst of metrics
         final stopwatch = Stopwatch()..start();
-        final burstSize = 50000;
+        const burstSize = 50000;
 
-        for (int i = 0; i < burstSize; i++) {
+        for (var i = 0; i < burstSize; i++) {
           await service.recordMetric(
             name: 'burst-metric-$i',
             metricType: 'counter',
@@ -314,8 +340,12 @@ void main() {
         expect(mockRepository.totalCalls, equals(burstSize));
 
         // Performance assertion - 50k operations
-        print('Recorded $burstSize metrics in ${stopwatch.elapsedMilliseconds}ms');
-        print('Throughput: ${burstSize / (stopwatch.elapsedMilliseconds / 1000)}k ops/sec');
+        print(
+          'Recorded $burstSize metrics in ${stopwatch.elapsedMilliseconds}ms',
+        );
+        print(
+          'Throughput: ${burstSize / (stopwatch.elapsedMilliseconds / 1000)}k ops/sec',
+        );
 
         // Should maintain reasonable throughput
         final opsPerSecond = burstSize / (stopwatch.elapsedMilliseconds / 1000);

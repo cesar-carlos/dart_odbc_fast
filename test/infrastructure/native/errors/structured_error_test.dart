@@ -29,11 +29,11 @@ void main() {
       final buf = _buildStructuredErrorBuffer(
         sqlState: '08S01',
         nativeCode: -1,
-        message: 'Conexão perdida: erro de comunicação',
+        message: 'Connection lost: communication error',
       );
       final e = StructuredError.deserialize(buf);
       expect(e, isNotNull);
-      expect(e!.message, equals('Conexão perdida: erro de comunicação'));
+      expect(e!.message, equals('Connection lost: communication error'));
       expect(e.nativeCode, equals(-1));
       expect(e.sqlStateString, equals('08S01'));
     });

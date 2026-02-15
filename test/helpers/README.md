@@ -1,4 +1,4 @@
-# Test Helpers
+﻿# Test Helpers
 
 Utility functions for writing database-agnostic tests.
 
@@ -165,3 +165,4 @@ Returns true if end-to-end tests are enabled (`ENABLE_E2E_TESTS=1`).
 ### `kInvalidConnectionId`
 
 Constant for an invalid connection ID (999) used in tests.
+

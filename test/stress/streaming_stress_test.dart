@@ -1,5 +1,5 @@
+import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
-import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
 import '../helpers/load_env.dart';
@@ -12,10 +12,7 @@ void main() {
     late String? connectionString;
 
     setUpAll(() async {
-      locator = ServiceLocator();
-      // initialize() returns void, so cascade cannot be used in assignment.
-      // ignore: cascade_invocations
-      locator.initialize();
+      locator = ServiceLocator()..initialize();
       await locator.service.initialize();
       connectionString = getTestEnv('ODBC_TEST_DSN');
     });

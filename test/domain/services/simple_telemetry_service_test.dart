@@ -1,9 +1,7 @@
-import 'dart:math';
-
-import 'package:test/test.dart';
-import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
+import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
+import 'package:test/test.dart';
 
 /// Mock implementation of ITelemetryRepository for unit testing.
 ///
@@ -157,7 +155,8 @@ void main() {
         );
       });
 
-      test('should throw ArgumentError when trace ID is empty on end', () async {
+      test('should throw ArgumentError when trace ID is empty on end',
+          () async {
         // Act & Assert
         expect(
           () => service.endTrace(traceId: ''),
@@ -246,14 +245,12 @@ void main() {
       });
 
       test('should throw ArgumentError when span ID is empty on end', () async {
-        // Arrange
         final trace = service.startTrace('test-operation');
-        final span = service.startSpan(
+        service.startSpan(
           parentId: trace.traceId,
           spanName: 'test-span',
         );
 
-        // Act & Assert
         expect(
           () => service.endSpan(spanId: ''),
           throwsArgumentError,
@@ -280,11 +277,14 @@ void main() {
         expect(mockRepository.lastExportedMetric?.name, equals('test-metric'));
         expect(mockRepository.lastExportedMetric?.value, equals(42.5));
         expect(mockRepository.lastExportedMetric?.unit, equals('items'));
-        expect(mockRepository.lastExportedMetric?.attributes, equals({'key': 'value'}));
+        expect(
+          mockRepository.lastExportedMetric?.attributes,
+          equals({'key': 'value'}),
+        );
 
         // Verify timestamp is recent (within 1 second)
         final timestampDiff =
-            now.difference(mockRepository.lastExportedMetric!.timestamp!);
+            now.difference(mockRepository.lastExportedMetric!.timestamp);
         expect(timestampDiff.inSeconds, lessThan(1));
       });
 
@@ -297,9 +297,15 @@ void main() {
 
         // Assert
         expect(mockRepository.exportMetricCallCount, equals(1));
-        expect(mockRepository.lastExportedMetric?.name, equals('active-connections'));
+        expect(
+          mockRepository.lastExportedMetric?.name,
+          equals('active-connections'),
+        );
         expect(mockRepository.lastExportedMetric?.value, equals(5.0));
-        expect(mockRepository.lastExportedMetric?.unit, equals('count')); // default
+        expect(
+          mockRepository.lastExportedMetric?.unit,
+          equals('count'),
+        ); // default
       });
 
       test('should export timing with milliseconds', () async {
@@ -311,7 +317,10 @@ void main() {
 
         // Assert
         expect(mockRepository.exportMetricCallCount, equals(1));
-        expect(mockRepository.lastExportedMetric?.name, equals('query-latency'));
+        expect(
+          mockRepository.lastExportedMetric?.name,
+          equals('query-latency'),
+        );
         expect(mockRepository.lastExportedMetric?.value, equals(150.0));
         expect(mockRepository.lastExportedMetric?.unit, equals('ms'));
       });
@@ -340,7 +349,8 @@ void main() {
         );
       });
 
-      test('should throw ArgumentError when metric value is infinite', () async {
+      test('should throw ArgumentError when metric value is infinite',
+          () async {
         // Act & Assert
         expect(
           () => service.recordMetric(
@@ -395,7 +405,8 @@ void main() {
         );
       });
 
-      test('should throw ArgumentError when timing duration is negative', () async {
+      test('should throw ArgumentError when timing duration is negative',
+          () async {
         // Act & Assert
         expect(
           () => service.recordTiming(
@@ -423,13 +434,22 @@ void main() {
         // Assert
         expect(mockRepository.exportEventCallCount, equals(1));
         expect(mockRepository.lastExportedEvent?.name, equals('test-event'));
-        expect(mockRepository.lastExportedEvent?.severity, equals(TelemetrySeverity.warn));
-        expect(mockRepository.lastExportedEvent?.message, equals('Test event message'));
-        expect(mockRepository.lastExportedEvent?.context, equals({'key': 'value', 'count': 42}));
+        expect(
+          mockRepository.lastExportedEvent?.severity,
+          equals(TelemetrySeverity.warn),
+        );
+        expect(
+          mockRepository.lastExportedEvent?.message,
+          equals('Test event message'),
+        );
+        expect(
+          mockRepository.lastExportedEvent?.context,
+          equals({'key': 'value', 'count': 42}),
+        );
 
         // Verify timestamp is recent
         final timestampDiff =
-            now.difference(mockRepository.lastExportedEvent!.timestamp!);
+            now.difference(mockRepository.lastExportedEvent!.timestamp);
         expect(timestampDiff.inSeconds, lessThan(1));
       });
 
@@ -476,9 +496,12 @@ void main() {
       });
 
       test('should handle multiple sequential operations', () async {
-        // Act - Execute multiple operations
-        final trace = service.startTrace('test-operation');
-        await service.recordMetric(name: 'metric1', metricType: 'counter', value: 1);
+        service.startTrace('test-operation');
+        await service.recordMetric(
+          name: 'metric1',
+          metricType: 'counter',
+          value: 1,
+        );
         await service.recordEvent(
           name: 'event1',
           severity: TelemetrySeverity.info,
@@ -512,7 +535,7 @@ void main() {
         // Act
         final ids = List.generate(
           100,
-          (i) => service.startTrace('test-\$i').traceId,
+          (i) => service.startTrace(r'test-$i').traceId,
         );
 
         // Assert - All 100 IDs should be unique
@@ -527,8 +550,9 @@ void main() {
         // Act
         final ids = List.generate(
           100,
-          (i) =>
-              service.startSpan(parentId: trace.traceId, spanName: 'test-\$i').spanId,
+          (i) => service
+              .startSpan(parentId: trace.traceId, spanName: r'test-$i')
+              .spanId,
         );
 
         // Assert - All 100 IDs should be unique
