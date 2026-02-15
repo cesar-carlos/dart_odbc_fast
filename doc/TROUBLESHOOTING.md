@@ -182,3 +182,28 @@ DSN=MyDsn;PoolTestOnCheckout=false;
 
 Accepted values: `true/false`, `1/0`, `yes/no`, `on/off`.
 When both are defined, connection string takes precedence.
+
+## 13. Linux link error: `undefined symbol: SQLCompleteAsync`
+
+Symptoms in CI/local Linux:
+
+- `linking with 'cc' failed`
+- `rust-lld: error: undefined symbol: SQLCompleteAsync`
+
+Root cause:
+
+- `odbc-api` default feature set may require ODBC 3.80 async symbols not exported by all installed `libodbc` variants.
+
+Resolution:
+
+Use `odbc-api` with explicit ODBC 3.5 feature in `native/odbc_engine/Cargo.toml`:
+
+```toml
+odbc-api = { version = "20.1.1", default-features = false, features = ["odbc_version_3_5"] }
+```
+
+Then rebuild:
+
+```bash
+cargo test --manifest-path native/Cargo.toml --workspace --all-targets
+```
