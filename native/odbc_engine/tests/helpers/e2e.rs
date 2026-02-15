@@ -2,73 +2,7 @@
 /// Provides utilities to check if E2E tests can run (connection available)
 use super::env::get_sqlserver_test_dsn;
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-/// Carrega variáveis de ambiente do arquivo .env (apenas uma vez)
-/// Prioriza o .env sobre variáveis de ambiente do sistema
-fn load_dotenv() {
-    INIT.call_once(|| {
-        // Procura o .env na raiz do projeto (onde está o .env)
-        let mut current = std::env::current_dir().ok();
-        let mut found_env = None;
-
-        // Procura subindo os diretórios até encontrar o .env
-        while let Some(dir) = current {
-            let dotenv_path = dir.join(".env");
-            if dotenv_path.exists() {
-                found_env = Some(dotenv_path);
-                break;
-            }
-
-            // Tenta também 2 níveis acima (raiz do projeto)
-            if let Some(parent) = dir.parent() {
-                let root_dotenv = parent.join(".env");
-                if root_dotenv.exists() {
-                    found_env = Some(root_dotenv);
-                    break;
-                }
-            }
-
-            current = dir.parent().map(|p| p.to_path_buf());
-
-            // Limite: não subir mais que 5 níveis
-            if dir.components().count() < 3 {
-                break;
-            }
-        }
-
-        // Se encontrou o .env, carrega manualmente para garantir que sobrescreva variáveis existentes
-        if let Some(env_path) = found_env {
-            if let Ok(contents) = std::fs::read_to_string(&env_path) {
-                for line in contents.lines() {
-                    let line = line.trim();
-                    // Ignora comentários e linhas vazias
-                    if line.is_empty() || line.starts_with('#') {
-                        continue;
-                    }
-                    // Processa linhas no formato KEY=VALUE
-                    if let Some(equal_pos) = line.find('=') {
-                        let key = line[..equal_pos].trim();
-                        let value = line[equal_pos + 1..].trim();
-                        // Remove aspas se houver
-                        let value = value.trim_matches('"').trim_matches('\'');
-                        // Define a variável, sobrescrevendo qualquer valor existente
-                        std::env::set_var(key, value);
-                    }
-                }
-                eprintln!(
-                    "📁 Loaded .env from: {} (overriding system env vars)",
-                    env_path.display()
-                );
-            }
-        } else {
-            // Fallback: tenta carregar .env do diretório atual ou do workspace
-            let _ = dotenvy::dotenv();
-        }
-    });
-}
+use odbc_engine::test_helpers::load_dotenv;
 
 /// Tipo de banco de dados detectado
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +80,7 @@ pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
 
 /// Verifica se é possível conectar ao banco de dados para testes E2E
 /// Retorna `true` se a conexão está disponível e funcional
+#[allow(dead_code)] // Test helper API; used by e2e tests when ODBC is configured
 pub fn can_connect_to_sqlserver() -> bool {
     // Carregar variáveis do .env
     load_dotenv();
@@ -208,6 +143,7 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
 
 /// Verifica se testes E2E devem ser executados
 /// Só executa quando ENABLE_E2E_TESTS estiver explicitamente habilitado
+#[allow(dead_code)] // Test helper API; used by e2e tests when ENABLE_E2E_TESTS is set
 pub fn should_run_e2e_tests() -> bool {
     // Carregar variáveis do .env
     load_dotenv();

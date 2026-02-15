@@ -114,6 +114,17 @@ mod tests {
     }
 
     #[test]
+    fn test_odbc_connection_connect_with_timeout_empty_string() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let result = OdbcConnection::connect_with_timeout(handles, "", 5);
+        assert!(result.is_err());
+        if let Err(OdbcError::EmptyConnectionString) = result {
+        } else {
+            panic!("Expected EmptyConnectionString error");
+        }
+    }
+
+    #[test]
     fn test_begin_transaction_invalid_conn_id_returns_error() {
         use crate::engine::transaction::IsolationLevel;
 

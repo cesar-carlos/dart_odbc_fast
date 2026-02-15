@@ -1,10 +1,28 @@
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Metrics for prepared statement cache.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedStatementMetrics {
+    pub cache_size: usize,
+    pub cache_max_size: usize,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub total_prepares: u64,
+    pub total_executions: u64,
+    pub avg_executions_per_stmt: f64,
+    pub memory_usage_bytes: usize,
+}
 
 pub struct PreparedStatementCache {
     cache: Arc<Mutex<LruCache<String, ()>>>,
     max_size: usize,
+    cache_hits: Arc<AtomicU64>,
+    cache_misses: Arc<AtomicU64>,
+    total_prepares: Arc<AtomicU64>,
+    total_executions: Arc<AtomicU64>,
 }
 
 impl PreparedStatementCache {
@@ -16,6 +34,10 @@ impl PreparedStatementCache {
         Self {
             cache: Arc::new(Mutex::new(LruCache::new(capacity))),
             max_size,
+            cache_hits: Arc::new(AtomicU64::new(0)),
+            cache_misses: Arc::new(AtomicU64::new(0)),
+            total_prepares: Arc::new(AtomicU64::new(0)),
+            total_executions: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -25,10 +47,55 @@ impl PreparedStatementCache {
             return false;
         };
         if cache.contains(sql) {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
             true
         } else {
+            self.cache_misses.fetch_add(1, Ordering::Relaxed);
+            self.total_prepares.fetch_add(1, Ordering::Relaxed);
             cache.put(sql.to_string(), ());
             false
+        }
+    }
+
+    pub fn record_execution(&self) {
+        self.total_executions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn cache_hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn cache_misses(&self) -> u64 {
+        self.cache_misses.load(Ordering::Relaxed)
+    }
+
+    pub fn total_prepares(&self) -> u64 {
+        self.total_prepares.load(Ordering::Relaxed)
+    }
+
+    pub fn total_executions(&self) -> u64 {
+        self.total_executions.load(Ordering::Relaxed)
+    }
+
+    pub fn avg_executions_per_stmt(&self) -> f64 {
+        let prepares = self.total_prepares();
+        if prepares == 0 {
+            0.0
+        } else {
+            self.total_executions() as f64 / prepares as f64
+        }
+    }
+
+    pub fn get_metrics(&self) -> PreparedStatementMetrics {
+        PreparedStatementMetrics {
+            cache_size: self.len(),
+            cache_max_size: self.max_size,
+            cache_hits: self.cache_hits(),
+            cache_misses: self.cache_misses(),
+            total_prepares: self.total_prepares(),
+            total_executions: self.total_executions(),
+            avg_executions_per_stmt: self.avg_executions_per_stmt(),
+            memory_usage_bytes: self.len() * 64, // Approximation
         }
     }
 

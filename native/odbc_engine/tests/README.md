@@ -48,13 +48,12 @@ Tests for the binary protocol implementation:
 - Null value handling
 - Multi-column/row support
 
-### Security Tests (`security::secure_buffer::tests`)
-Tests for secure memory management:
+### Security Tests (`security::*::tests`)
+Tests for security-related modules:
 
-- Buffer creation and manipulation
-- Zeroization on drop (ZeroizeOnDrop)
-- Unicode and binary data handling
-- Memory safety validation
+- **secure_buffer**: Buffer creation and manipulation, zeroization on drop (ZeroizeOnDrop), Unicode and binary data, memory safety
+- **audit**: AuditLogger enabled/disabled, log_connection/log_query/log_error, event cap (10000), get_events
+- **secret_manager**: Secret and SecretManager store/retrieve/remove/clear, missing-key error
 
 ### Version Tests (`versioning::protocol_version::tests`)
 Tests for protocol version management:
@@ -88,6 +87,20 @@ cargo test --lib ffi::tests
 cargo test --all-targets -- --nocapture
 ```
 
+### Lib unit tests that require ODBC (when DSN is set)
+
+Some unit tests inside `src/` are marked `#[ignore]` because they need a real ODBC connection (e.g. `handles::tests::test_handle_manager_create_connection`, `engine::cell_reader::tests::*`). To run them when `ODBC_TEST_DSN` is available (in env or in `.env` at project root):
+
+```powershell
+# From native/ (workspace root)
+cargo test -p odbc_engine --lib -- --ignored
+
+# From native/odbc_engine
+cargo test --lib -- --ignored
+```
+
+These tests call `test_helpers::load_dotenv()` (or a local `get_test_dsn()`) so `.env` is loaded before reading `ODBC_TEST_DSN`. Without DSN they are skipped by default (not run unless `--ignored` is used).
+
 ## Integration Tests (files in this folder)
 
 Integration tests in `.rs` files here test higher-level scenarios:
@@ -96,6 +109,7 @@ Integration tests in `.rs` files here test higher-level scenarios:
 - `phase1X_test.rs`: Phase-specific feature tests
 - `integration_test.rs`: End-to-end connection tests (requires real ODBC DSN)
 - `e2e_*.rs`: End-to-end tests for specific features (connection, execution, streaming, pooling)
+- `e2e_bulk_transaction_stress_test.rs`: E2E stress with massive insert/update/delete under explicit transaction control (commit and rollback)
 
 **Note:** Tests that require a real database **self-skip** when a DSN is not
 configured or when E2E is disabled (so local runs/CI can stay green without DB).
@@ -108,17 +122,17 @@ The test suite supports running E2E tests against multiple database systems (SQL
 - **Automatic database detection** from connection string
 - **Conditional test skipping** for database-specific tests
 - **SQL compatibility** prioritizing ANSI SQL standards
-- **Simple configuration** via `.env` file in project root
+- **yesple configuration** via `.env` file in project root
 
 **Database type validation (helpers in `helpers::e2e`):**
 
 | Helper | Uso |
 |--------|-----|
-| `detect_database_type(conn_str)` | Infere `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) pela string de conexão. |
-| `is_database_type(expected: DatabaseType)` | Retorna `true` só se o banco conectado (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) for o esperado. Caso contrário imprime "⚠️ Skipping test: requires X, but connected to Y" e retorna `false`. Use no início de testes específicos de um banco (ex.: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
-| `get_connection_and_db_type()` | Retorna `Option<(String, DatabaseType)>` (connection string + tipo detectado). Útil para adaptar DDL/SQL por banco (ex.: `e2e_bulk_operations_test`). |
+| `detect_database_type(conn_str)` | Infere `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) pela string de connection. |
+| `is_database_type(expected: DatabaseType)` | returns `true` só se o banco conectado (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) for o esperado. Caso contrário imprime "⚠️ Skipping test: requires X, but connected to Y" e returns `false`. Use no início de testes específicos de um banco (ex.: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
+| `get_connection_and_db_type()` | returns `Option<(String, DatabaseType)>` (connection string + tipo detectado). Útil para adaptar DDL/SQL por banco (ex.: `e2e_bulk_operations_test`). |
 
-Exemplo em teste específico de SQL Server:
+example em teste específico de SQL Server:
 
 ```rust
 use helpers::{is_database_type, should_run_e2e_tests, DatabaseType};
@@ -226,3 +240,6 @@ To run with logging:
 ```bash
 RUST_LOG=debug cargo test --lib ffi::tests
 ```
+
+
+

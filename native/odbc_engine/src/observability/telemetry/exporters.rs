@@ -4,10 +4,10 @@
 // Console: Prints traces to stdout (for debugging)
 // OTLP: Sends traces to OTLP collector (http://localhost:4318)
 
+use serde_json::json;
 use std::fmt;
 use std::time::Duration;
 use ureq::{Agent, AgentBuilder};
-use serde_json::json;
 
 /// Exporter trait for telemetry data.
 pub trait TelemetryExporter: Send {
@@ -79,6 +79,7 @@ impl OtlpExporter {
     ///
     /// # Example
     /// ```
+    /// use odbc_engine::observability::telemetry::OtlpExporter;
     /// let exporter = OtlpExporter::new("http://localhost:4318/v1/traces");
     /// ```
     pub fn new(endpoint: &str) -> Self {
@@ -180,13 +181,17 @@ impl OtlpExporter {
     }
 
     /// Send HTTP POST request to OTLP endpoint.
-    fn send_http_post(&self, payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send>> {
+    fn send_http_post(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error + Send>> {
         let payload_str = serde_json::to_string(payload)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
         log::debug!("Sending OTLP payload to {}: {}", self.endpoint, payload_str);
 
-        let response = self.agent
+        let response = self
+            .agent
             .post(&self.endpoint)
             .set("Content-Type", "application/json")
             .send_string(&payload_str)
@@ -195,9 +200,10 @@ impl OtlpExporter {
         if response.status() >= 200 && response.status() < 300 {
             Ok(())
         } else {
-            Err(Box::new(std::io::Error::other(
-                format!("HTTP status: {}", response.status())
-            )))
+            Err(Box::new(std::io::Error::other(format!(
+                "HTTP status: {}",
+                response.status()
+            ))))
         }
     }
 }

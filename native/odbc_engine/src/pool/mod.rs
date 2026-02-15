@@ -184,4 +184,25 @@ mod tests {
         let id = ConnectionPool::extract_pool_components(s);
         assert_eq!(id, "DSN=MyDSN");
     }
+
+    #[test]
+    fn test_extract_pool_components_hostname_key() {
+        let s = "Hostname=myserver;Port=5432;Username=myuser;";
+        let id = ConnectionPool::extract_pool_components(s);
+        assert_eq!(id, "myserver:5432:myuser");
+    }
+
+    #[test]
+    fn test_extract_pool_components_user_key() {
+        let s = "Server=srv;UID=admin;";
+        let id = ConnectionPool::extract_pool_components(s);
+        assert_eq!(id, "srv::admin");
+    }
+
+    #[test]
+    fn test_pool_state_struct() {
+        let state = PoolState { size: 2, idle: 1 };
+        assert_eq!(state.size, 2);
+        assert_eq!(state.idle, 1);
+    }
 }

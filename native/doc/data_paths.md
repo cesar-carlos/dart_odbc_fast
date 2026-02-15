@@ -1,4 +1,4 @@
-# Data paths (performance-oriented)
+﻿# Data paths (performance-oriented)
 
 This document summarizes the main “data paths” implemented in the Rust engine for
 handling larger datasets: streaming, batching, pooling, transactions, and array binding.
@@ -58,7 +58,7 @@ Use when: you want **bounded memory on the Rust side too**, and can process resu
 `engine::StreamingExecutor::execute_streaming_batched` implements **cursor-based batching**:
 
 - Fetches up to `fetch_size` rows at a time
-- Encodes *each* batch to a `Vec<u8>`
+- Encodes _each_ batch to a `Vec<u8>`
 - Calls `on_batch(Vec<u8>)` for each batch
 - Memory footprint is bounded to one batch
 
@@ -141,8 +141,9 @@ These are implemented in Rust and used by the engine/FFI:
 - **FFI pooled connections**:
   - Pooled connections are tracked separately from `odbc_connect` connections; the FFI query API
     is designed around `conn_id` from `odbc_connect`.
- - **E2E / coverage**:
-   - E2E tests may self-skip when no DSN is configured. See:
-     - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
-     - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
+- **E2E / coverage**:
+  - E2E tests may self-skip when no DSN is configured. See:
+    - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
+    - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
+
 

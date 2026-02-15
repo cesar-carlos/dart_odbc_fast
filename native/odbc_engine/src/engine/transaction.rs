@@ -178,6 +178,21 @@ impl Transaction {
     pub fn handles(&self) -> SharedHandleManager {
         self.handles.clone()
     }
+
+    #[cfg(test)]
+    pub fn for_test(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        state: TransactionState,
+        isolation_level: IsolationLevel,
+    ) -> Self {
+        Self {
+            handles,
+            conn_id,
+            state: Arc::new(Mutex::new(state)),
+            isolation_level,
+        }
+    }
 }
 
 impl Drop for Transaction {
@@ -227,7 +242,10 @@ impl<'t> Savepoint<'t> {
 
 #[cfg(test)]
 mod tests {
-    use super::IsolationLevel;
+    use super::{IsolationLevel, Transaction, TransactionState};
+    use crate::error::OdbcError;
+    use crate::handles::{HandleManager, SharedHandleManager};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn isolation_level_from_u32_maps_odbc_values() {
@@ -275,5 +293,45 @@ mod tests {
         let level = IsolationLevel::ReadCommitted;
         let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", level.to_sql_keyword());
         assert_eq!(sql, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+    }
+
+    #[test]
+    fn transaction_commit_when_already_committed_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Committed,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.commit();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot commit")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn transaction_rollback_when_already_rolled_back_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::RolledBack,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.rollback();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot rollback")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn transaction_state_variants() {
+        let _ = TransactionState::None;
+        let _ = TransactionState::Active;
+        let _ = TransactionState::Committed;
+        let _ = TransactionState::RolledBack;
     }
 }

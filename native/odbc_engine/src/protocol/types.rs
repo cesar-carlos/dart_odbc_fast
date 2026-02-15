@@ -11,6 +11,20 @@ pub enum OdbcType {
 }
 
 impl OdbcType {
+    /// Decode from protocol binary format (enum discriminant).
+    pub fn from_protocol_discriminant(code: u16) -> Self {
+        match code {
+            1 => Self::Varchar,
+            2 => Self::Integer,
+            3 => Self::BigInt,
+            4 => Self::Decimal,
+            5 => Self::Date,
+            6 => Self::Timestamp,
+            7 => Self::Binary,
+            _ => Self::Varchar,
+        }
+    }
+
     pub fn from_odbc_sql_type(sql_type: i16) -> Self {
         match sql_type {
             1 => Self::Varchar,

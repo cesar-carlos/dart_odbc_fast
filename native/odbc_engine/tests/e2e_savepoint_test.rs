@@ -7,7 +7,6 @@ use odbc_engine::engine::{
     execute_query_with_connection, IsolationLevel, OdbcConnection, OdbcEnvironment, Savepoint,
 };
 use odbc_engine::protocol::BinaryProtocolDecoder;
-use std::ffi::CString;
 
 mod helpers;
 use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
@@ -123,17 +122,18 @@ fn test_savepoint_release() {
 }
 
 #[test]
+#[cfg(feature = "ffi-tests")]
 fn test_ffi_savepoint_invalid_txn_id() {
-    let _ = odbc_engine::ffi::odbc_init();
+    let _ = odbc_engine::odbc_init();
     const TEST_INVALID_ID: u32 = 0xDEAD_BEEF;
     let name = CString::new("sp1").unwrap();
 
-    let r = odbc_engine::ffi::odbc_savepoint_create(TEST_INVALID_ID, name.as_ptr());
+    let r = odbc_engine::odbc_savepoint_create(TEST_INVALID_ID, name.as_ptr());
     assert!(r != 0, "savepoint_create on invalid txn_id should fail");
 
-    let r = odbc_engine::ffi::odbc_savepoint_rollback(TEST_INVALID_ID, name.as_ptr());
+    let r = odbc_engine::odbc_savepoint_rollback(TEST_INVALID_ID, name.as_ptr());
     assert!(r != 0, "savepoint_rollback on invalid txn_id should fail");
 
-    let r = odbc_engine::ffi::odbc_savepoint_release(TEST_INVALID_ID, name.as_ptr());
+    let r = odbc_engine::odbc_savepoint_release(TEST_INVALID_ID, name.as_ptr());
     assert!(r != 0, "savepoint_release on invalid txn_id should fail");
 }

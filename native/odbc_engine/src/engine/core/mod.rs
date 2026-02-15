@@ -24,6 +24,6 @@ pub use memory_engine::MemoryEngine;
 pub use metadata_cache::{ColumnMetadata, MetadataCache, TableSchema};
 pub use parallel_insert::ParallelBulkInsert;
 pub use pipeline::{QueryPipeline, QueryPlan};
-pub use prepared_cache::PreparedStatementCache;
+pub use prepared_cache::{PreparedStatementCache, PreparedStatementMetrics};
 pub use protocol_engine::{ProtocolEngine, ProtocolVersion};
 pub use security_layer::{SecureBuffer, SecurityLayer};

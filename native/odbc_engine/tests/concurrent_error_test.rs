@@ -1,4 +1,6 @@
-use odbc_engine::ffi::{odbc_connect, odbc_disconnect, odbc_exec_query, odbc_get_error, odbc_init};
+#![cfg(feature = "ffi-tests")]
+
+use odbc_engine::{odbc_connect, odbc_disconnect, odbc_exec_query, odbc_get_error, odbc_init};
 use std::ffi::CString;
 use std::sync::Arc;
 use std::thread;
@@ -168,7 +170,10 @@ fn test_concurrent_error_same_connection() {
     }
 
     // Wait for all threads
-    let results: Vec<(i32, u64)> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let results: Vec<(i32, u64)> = handles
+        .into_iter()
+        .map(|h: std::thread::JoinHandle<(i32, u64)>| h.join().unwrap())
+        .collect();
 
     // All should have failed
     for (result, thread_id) in &results {

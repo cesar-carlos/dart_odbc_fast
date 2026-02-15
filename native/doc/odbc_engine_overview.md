@@ -1,4 +1,4 @@
-# ODBC Engine (Rust) — overview
+﻿# ODBC Engine (Rust) — overview
 
 ## What it is
 
@@ -68,4 +68,5 @@ This is also the primary format used across the FFI boundary.
   the curated doc: `native/doc/ffi_api.md`.
 - For throughput-oriented APIs (streaming/pool/array binding/transactions), see:
   `native/doc/data_paths.md`.
+
 

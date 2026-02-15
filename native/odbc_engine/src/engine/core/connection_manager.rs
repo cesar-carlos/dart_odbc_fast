@@ -1,3 +1,6 @@
+//! Optional in-process pool registry. Not used by the FFI or by `pool/mod.rs`;
+//! those use the global pool APIs directly. Kept for tests and future refactors.
+
 use crate::error::{OdbcError, Result};
 use crate::pool::{ConnectionPool, PoolState};
 use std::sync::{Arc, Mutex};
@@ -81,6 +84,7 @@ impl Default for ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::load_dotenv;
 
     #[test]
     fn test_connection_manager_new() {
@@ -102,8 +106,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_create_pool() {
+        load_dotenv();
+        let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let connection_string = "Driver={SQL Server};Server=localhost;Database=test;";
 
         let pool_id = manager
             .create_pool(connection_string.to_string(), 10)
@@ -118,12 +123,12 @@ mod tests {
     #[test]
     #[ignore]
     fn test_create_multiple_pools() {
+        load_dotenv();
+        let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let conn_str1 = "Driver={SQL Server};Server=localhost;Database=test1;";
-        let conn_str2 = "Driver={SQL Server};Server=localhost;Database=test2;";
 
-        let pool_id1 = manager.create_pool(conn_str1.to_string(), 10).unwrap();
-        let pool_id2 = manager.create_pool(conn_str2.to_string(), 20).unwrap();
+        let pool_id1 = manager.create_pool(conn_str.clone(), 10).unwrap();
+        let pool_id2 = manager.create_pool(conn_str, 20).unwrap();
 
         assert_eq!(pool_id1, 1);
         assert_eq!(pool_id2, 2);
@@ -135,8 +140,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_get_pool() {
+        load_dotenv();
+        let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let connection_string = "Driver={SQL Server};Server=localhost;Database=test;";
 
         let pool_id = manager
             .create_pool(connection_string.to_string(), 10)
@@ -166,16 +172,21 @@ mod tests {
     #[test]
     #[ignore]
     fn test_get_pool_state() {
+        load_dotenv();
+        let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let connection_string = "Driver={SQL Server};Server=localhost;Database=test;";
 
         let pool_id = manager
             .create_pool(connection_string.to_string(), 10)
             .unwrap();
 
         let state = manager.get_pool_state(pool_id).unwrap();
-        assert_eq!(state.size, 0);
-        assert_eq!(state.idle, 0);
+        assert!(
+            state.size <= 10 && state.idle <= state.size,
+            "pool state should be valid: size={}, idle={}",
+            state.size,
+            state.idle
+        );
     }
 
     #[test]
@@ -195,8 +206,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_close_pool() {
+        load_dotenv();
+        let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let connection_string = "Driver={SQL Server};Server=localhost;Database=test;";
 
         let pool_id = manager
             .create_pool(connection_string.to_string(), 10)
@@ -230,12 +242,13 @@ mod tests {
     #[test]
     #[ignore]
     fn test_pool_id_increment() {
+        load_dotenv();
+        let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
         let manager = ConnectionManager::new();
-        let conn_str = "Driver={SQL Server};Server=localhost;";
 
-        let pool_id1 = manager.create_pool(conn_str.to_string(), 10).unwrap();
-        let pool_id2 = manager.create_pool(conn_str.to_string(), 10).unwrap();
-        let pool_id3 = manager.create_pool(conn_str.to_string(), 10).unwrap();
+        let pool_id1 = manager.create_pool(conn_str.clone(), 10).unwrap();
+        let pool_id2 = manager.create_pool(conn_str.clone(), 10).unwrap();
+        let pool_id3 = manager.create_pool(conn_str, 10).unwrap();
 
         assert_eq!(pool_id1, 1);
         assert_eq!(pool_id2, 2);

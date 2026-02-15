@@ -1,4 +1,4 @@
-# ODBC Engine – Architecture
+﻿# ODBC Engine – Architecture
 
 ## Overview
 
@@ -135,3 +135,5 @@ Structured errors include SQLSTATE, native error code, and message:
 - **Unsafe**: All `unsafe` blocks documented with `# Safety` or `// Safety` and preconditions.
 - **Locks**: Prefer `try_lock`/`lock().ok()` in FFI and caches; avoid `unwrap()` on mutexes in hot paths.
 - **Error handling**: Always use connection-specific error storage when `conn_id` is available; fall back to global error state only for functions without connection context.
+
+

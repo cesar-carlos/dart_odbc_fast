@@ -90,6 +90,7 @@ pub type SharedHandleManager = Arc<Mutex<HandleManager>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::load_dotenv;
 
     #[test]
     fn test_handle_manager_new() {
@@ -119,6 +120,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_handle_manager_create_connection() {
+        load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")
             .ok()
             .filter(|s| !s.is_empty())
@@ -143,6 +145,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_handle_manager_create_multiple_connections() {
+        load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")
             .ok()
             .filter(|s| !s.is_empty())
@@ -187,6 +190,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_handle_manager_remove_connection() {
+        load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")
             .ok()
             .filter(|s| !s.is_empty())
@@ -229,6 +233,18 @@ mod tests {
     fn test_handle_manager_create_connection_without_environment() {
         let mut manager = HandleManager::new();
         let result = manager.create_connection("Driver={SQL Server};Server=localhost;");
+        assert!(result.is_err());
+        match result {
+            Err(OdbcError::EnvironmentNotInitialized) => (),
+            _ => panic!("Expected EnvironmentNotInitialized error"),
+        }
+    }
+
+    #[test]
+    fn test_handle_manager_create_connection_with_timeout_without_environment() {
+        let mut manager = HandleManager::new();
+        let result =
+            manager.create_connection_with_timeout("Driver={SQL Server};Server=localhost;", 5);
         assert!(result.is_err());
         match result {
             Err(OdbcError::EnvironmentNotInitialized) => (),

@@ -89,9 +89,9 @@ impl BinaryProtocolDecoder {
                 ));
             }
 
-            // Read ODBC type
+            // Read ODBC type (protocol uses enum discriminant, not ODBC SQL type)
             let odbc_type_code = u16::from_le_bytes([buffer[offset], buffer[offset + 1]]);
-            let odbc_type = OdbcType::from_odbc_sql_type(odbc_type_code as i16);
+            let odbc_type = OdbcType::from_protocol_discriminant(odbc_type_code);
             offset += 2;
 
             // Read name length
@@ -189,7 +189,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix type mismatch (Varchar vs Integer)
     fn test_decode_single_column_single_row() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("value".to_string(), OdbcType::Integer);
@@ -286,5 +285,135 @@ mod tests {
         assert_eq!(decoded.rows[0][1], Some(b"hello".to_vec()));
         assert_eq!(decoded.rows[1][0], None);
         assert_eq!(decoded.rows[1][1], Some(b"world".to_vec()));
+    }
+
+    #[test]
+    fn test_decode_invalid_version() {
+        let mut buffer = vec![0u8; 16];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&999u16.to_le_bytes());
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid version"));
+    }
+
+    #[test]
+    fn test_decode_buffer_too_small_for_column_metadata() {
+        let mut buffer = vec![0u8; 17];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&0u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&0u32.to_le_bytes());
+        buffer[16] = 0;
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("column metadata"));
+    }
+
+    #[test]
+    fn test_decode_buffer_too_small_for_column_name() {
+        let mut buffer = vec![0u8; 21];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&10u32.to_le_bytes());
+        buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
+        buffer[18..20].copy_from_slice(&10u16.to_le_bytes());
+        buffer[20] = b'a';
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("column name"));
+    }
+
+    #[test]
+    fn test_decode_invalid_utf8_in_column_name() {
+        let mut buffer = vec![0u8; 23];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&2u32.to_le_bytes());
+        buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
+        buffer[18..20].copy_from_slice(&2u16.to_le_bytes());
+        buffer[20] = 0xFF;
+        buffer[21] = 0xFE;
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UTF-8"));
+    }
+
+    #[test]
+    fn test_decode_buffer_too_small_for_data_length() {
+        let mut buffer = vec![0u8; 22];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&100u32.to_le_bytes());
+        buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
+        buffer[18..20].copy_from_slice(&1u16.to_le_bytes());
+        buffer[20] = b'a';
+        buffer[21] = 0;
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("data length"));
+    }
+
+    #[test]
+    fn test_decode_buffer_too_small_for_cell_data() {
+        let mut buffer = vec![0u8; 26];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&10u32.to_le_bytes());
+        buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
+        buffer[18..20].copy_from_slice(&1u16.to_le_bytes());
+        buffer[20] = b'a';
+        buffer[21] = 0;
+        buffer[22..26].copy_from_slice(&2u32.to_le_bytes());
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cell data"));
+    }
+
+    #[test]
+    fn test_decode_buffer_too_small_for_row_data() {
+        let mut buffer = vec![0u8; 21];
+        buffer[0..4].copy_from_slice(&0x4F444243u32.to_le_bytes());
+        buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&1u32.to_le_bytes());
+        buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
+        buffer[18..20].copy_from_slice(&1u16.to_le_bytes());
+        buffer[20] = b'a';
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("row data"));
     }
 }

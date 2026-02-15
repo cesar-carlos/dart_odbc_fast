@@ -66,7 +66,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix type mapping assertion (left: 2, right: 1)
     fn test_type_mapping() {
         let sqlserver = sqlserver::SqlServerPlugin::new();
         let oracle = oracle::OraclePlugin::new();

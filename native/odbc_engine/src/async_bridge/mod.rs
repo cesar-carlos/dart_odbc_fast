@@ -18,6 +18,7 @@ fn get_runtime_for_test() -> Arc<Mutex<Runtime>> {
     get_runtime()
 }
 
+#[allow(dead_code)]
 pub fn init_runtime() {
     let _ = get_runtime();
 }

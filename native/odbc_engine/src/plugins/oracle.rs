@@ -35,7 +35,7 @@ impl DriverPlugin for OraclePlugin {
     fn map_type(&self, odbc_type: i16) -> OdbcType {
         match odbc_type {
             1 => OdbcType::Varchar,
-            2 => OdbcType::Integer,
+            2 | 4 => OdbcType::Integer, // 2 = Oracle, 4 = ODBC SQL_INTEGER
             -5 => OdbcType::BigInt,
             3 => OdbcType::Decimal,
             9 => OdbcType::Date,
@@ -114,6 +114,7 @@ mod tests {
 
         assert_eq!(plugin.map_type(1), OdbcType::Varchar);
         assert_eq!(plugin.map_type(2), OdbcType::Integer);
+        assert_eq!(plugin.map_type(4), OdbcType::Integer); // ODBC SQL_INTEGER
         assert_eq!(plugin.map_type(-5), OdbcType::BigInt);
         assert_eq!(plugin.map_type(3), OdbcType::Decimal);
         assert_eq!(plugin.map_type(9), OdbcType::Date);

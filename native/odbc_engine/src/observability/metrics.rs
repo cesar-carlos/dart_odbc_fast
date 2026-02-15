@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::engine::PreparedStatementCache;
+
 #[derive(Debug, Clone)]
 pub struct QueryMetrics {
     pub query_count: u64,
@@ -111,6 +113,7 @@ pub struct Metrics {
     pool_metrics: Arc<Mutex<std::collections::HashMap<u32, PoolMetrics>>>,
     error_count: Arc<Mutex<u64>>,
     start_time: Instant,
+    prepared_cache: Arc<Mutex<Option<Arc<PreparedStatementCache>>>>,
 }
 
 impl Metrics {
@@ -120,6 +123,13 @@ impl Metrics {
             pool_metrics: Arc::new(Mutex::new(std::collections::HashMap::new())),
             error_count: Arc::new(Mutex::new(0)),
             start_time: Instant::now(),
+            prepared_cache: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn set_prepared_cache(&self, cache: Arc<PreparedStatementCache>) {
+        if let Ok(mut pc) = self.prepared_cache.lock() {
+            *pc = Some(cache);
         }
     }
 
@@ -161,6 +171,21 @@ impl Metrics {
 
     pub fn uptime(&self) -> Duration {
         self.start_time.elapsed()
+    }
+
+    pub fn get_prepared_cache_metrics(&self) -> Option<crate::engine::PreparedStatementMetrics> {
+        self.prepared_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.as_ref().map(|c| c.get_metrics()))
+    }
+
+    pub fn clear_prepared_cache(&self) {
+        if let Ok(cache) = self.prepared_cache.lock() {
+            if let Some(c) = cache.as_ref() {
+                c.clear();
+            }
+        }
     }
 }
 

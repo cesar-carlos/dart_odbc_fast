@@ -14,7 +14,7 @@ pub use core::*;
 pub use environment::OdbcEnvironment;
 pub use query::{
     execute_multi_result, execute_query_with_connection, execute_query_with_params,
-    execute_query_with_params_and_timeout,
+    execute_query_with_params_and_timeout, get_global_metrics,
 };
 pub use statement::StatementHandle;
 pub use streaming::{BatchedStreamingState, StreamingExecutor, StreamingState};

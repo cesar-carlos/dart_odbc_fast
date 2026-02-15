@@ -1,5 +1,5 @@
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{detect_database_type, should_run_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::{
     engine::{IsolationLevel, Savepoint},
@@ -36,11 +36,19 @@ fn test_transaction_commit() {
     let conn = OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
     let conn_id = conn.get_connection_id();
 
+    const TBL: &str = "txn_test_commit";
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE txn_test (id INT, value VARCHAR(50))")
-            .unwrap();
+        let _ = execute_query_with_connection(
+            c,
+            &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
+        );
+        execute_query_with_connection(
+            c,
+            &format!("CREATE TABLE {TBL} (id INT, value VARCHAR(50))"),
+        )
+        .unwrap();
     }
 
     let txn = conn
@@ -49,14 +57,14 @@ fn test_transaction_commit() {
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "INSERT INTO txn_test VALUES (1, 'test')").unwrap();
+        execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (1, 'test')")).unwrap();
     }
     txn.commit().expect("Commit failed");
 
     let buf = {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT COUNT(*) AS cnt FROM txn_test").unwrap()
+        execute_query_with_connection(c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -65,7 +73,7 @@ fn test_transaction_commit() {
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "DROP TABLE txn_test").unwrap();
+        execute_query_with_connection(c, &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -85,10 +93,15 @@ fn test_transaction_rollback() {
     let conn = OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
     let conn_id = conn.get_connection_id();
 
+    const TBL: &str = "txn_test_rollback";
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE txn_test (id INT)").unwrap();
+        let _ = execute_query_with_connection(
+            c,
+            &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
+        );
+        execute_query_with_connection(c, &format!("CREATE TABLE {TBL} (id INT)")).unwrap();
     }
 
     {
@@ -98,7 +111,7 @@ fn test_transaction_rollback() {
         {
             let h = handles.lock().unwrap();
             let c = h.get_connection(conn_id).unwrap();
-            execute_query_with_connection(c, "INSERT INTO txn_test VALUES (1)").unwrap();
+            execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (1)")).unwrap();
         }
         txn.rollback().expect("Rollback failed");
     }
@@ -106,7 +119,7 @@ fn test_transaction_rollback() {
     let buf = {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT COUNT(*) AS cnt FROM txn_test").unwrap()
+        execute_query_with_connection(c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -115,7 +128,7 @@ fn test_transaction_rollback() {
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "DROP TABLE txn_test").unwrap();
+        execute_query_with_connection(c, &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -135,17 +148,23 @@ fn test_transaction_auto_rollback_on_error() {
     let conn = OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
     let conn_id = conn.get_connection_id();
 
+    const TBL: &str = "txn_test_auto_rollback";
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE txn_test (id INT PRIMARY KEY)").unwrap();
+        let _ = execute_query_with_connection(
+            c,
+            &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
+        );
+        execute_query_with_connection(c, &format!("CREATE TABLE {TBL} (id INT PRIMARY KEY)"))
+            .unwrap();
     }
 
     let result = conn.with_transaction(IsolationLevel::ReadCommitted, |_txn| {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "INSERT INTO txn_test VALUES (1)")?;
-        execute_query_with_connection(c, "INSERT INTO txn_test VALUES (1)")?;
+        execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
+        execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
         Ok::<(), odbc_engine::OdbcError>(())
     });
     assert!(result.is_err());
@@ -153,7 +172,7 @@ fn test_transaction_auto_rollback_on_error() {
     let buf = {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT COUNT(*) AS cnt FROM txn_test").unwrap()
+        execute_query_with_connection(c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -162,14 +181,13 @@ fn test_transaction_auto_rollback_on_error() {
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "DROP TABLE txn_test").unwrap();
+        execute_query_with_connection(c, &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
 
-/// Savepoints for nested transactions. Requires a DB that supports SAVEPOINT
-/// (e.g. PostgreSQL). SQL Server uses SAVE TRANSACTION / ROLLBACK TRANSACTION
-/// instead, so this test is ignored when using SQL Server.
+/// Savepoints for nested transactions. Uses SAVE TRANSACTION / ROLLBACK TRANSACTION
+/// on SQL Server and SAVEPOINT / ROLLBACK TO SAVEPOINT on PostgreSQL-style DBs.
 #[test]
 #[ignore]
 fn test_savepoint() {
@@ -178,6 +196,8 @@ fn test_savepoint() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build connection string");
+    let db_type = detect_database_type(&conn_str);
+    let use_save_transaction_syntax = db_type == DatabaseType::SqlServer;
 
     let env = OdbcEnvironment::new();
     env.init().expect("Init failed");
@@ -185,31 +205,46 @@ fn test_savepoint() {
     let conn = OdbcConnection::connect(handles.clone(), &conn_str).expect("Connect failed");
     let conn_id = conn.get_connection_id();
 
+    const TBL: &str = "txn_test_savepoint";
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE txn_test (id INT)").unwrap();
+        let _ = execute_query_with_connection(
+            c,
+            &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
+        );
+        execute_query_with_connection(c, &format!("CREATE TABLE {TBL} (id INT)")).unwrap();
     }
 
     conn.with_transaction(IsolationLevel::ReadCommitted, |txn| {
         {
             let h = handles.lock().unwrap();
             let c = h.get_connection(conn_id).unwrap();
-            execute_query_with_connection(c, "INSERT INTO txn_test VALUES (1)")?;
+            execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
         }
 
-        let sp = Savepoint::create(txn, "sp1")?;
+        if use_save_transaction_syntax {
+            txn.execute_sql("SAVE TRANSACTION sp1")?;
+            {
+                let h = handles.lock().unwrap();
+                let c = h.get_connection(conn_id).unwrap();
+                execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (2)"))?;
+            }
+            txn.execute_sql("ROLLBACK TRANSACTION sp1")?;
+        } else {
+            let sp = Savepoint::create(txn, "sp1")?;
+            {
+                let h = handles.lock().unwrap();
+                let c = h.get_connection(conn_id).unwrap();
+                execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (2)"))?;
+            }
+            sp.rollback_to()?;
+        }
+
         {
             let h = handles.lock().unwrap();
             let c = h.get_connection(conn_id).unwrap();
-            execute_query_with_connection(c, "INSERT INTO txn_test VALUES (2)")?;
-        }
-        sp.rollback_to()?;
-
-        {
-            let h = handles.lock().unwrap();
-            let c = h.get_connection(conn_id).unwrap();
-            execute_query_with_connection(c, "INSERT INTO txn_test VALUES (3)")?;
+            execute_query_with_connection(c, &format!("INSERT INTO {TBL} VALUES (3)"))?;
         }
         Ok::<(), odbc_engine::OdbcError>(())
     })
@@ -218,7 +253,7 @@ fn test_savepoint() {
     let buf = {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT id FROM txn_test ORDER BY id").unwrap()
+        execute_query_with_connection(c, &format!("SELECT id FROM {TBL} ORDER BY id")).unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     assert_eq!(decoded.row_count, 2, "expected rows 1 and 3, not 2");
@@ -228,7 +263,7 @@ fn test_savepoint() {
     {
         let h = handles.lock().unwrap();
         let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "DROP TABLE txn_test").unwrap();
+        execute_query_with_connection(c, &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }

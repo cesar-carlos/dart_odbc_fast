@@ -20,6 +20,67 @@ pub use protocol::{
     ColumnInfo, DecodedResult, MultiResultItem, ParamValue,
 };
 
+#[cfg(feature = "ffi-tests")]
+pub use ffi::{
+    odbc_connect, odbc_disconnect, odbc_exec_query, odbc_get_error, odbc_init,
+    odbc_savepoint_create, odbc_savepoint_release, odbc_savepoint_rollback,
+};
+
+#[cfg(feature = "test-helpers")]
+pub mod test_helpers {
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    /// Loads env vars from a `.env` file (once). Overrides existing vars.
+    /// Used by lib unit tests and by `tests/helpers/e2e.rs`.
+    pub fn load_dotenv() {
+        INIT.call_once(|| {
+            let mut current = std::env::current_dir().ok();
+            let mut found_env = None;
+
+            while let Some(dir) = current {
+                let dotenv_path = dir.join(".env");
+                if dotenv_path.exists() {
+                    found_env = Some(dotenv_path);
+                    break;
+                }
+                if let Some(parent) = dir.parent() {
+                    let root_dotenv = parent.join(".env");
+                    if root_dotenv.exists() {
+                        found_env = Some(root_dotenv);
+                        break;
+                    }
+                }
+                current = dir.parent().map(|p| p.to_path_buf());
+                if dir.components().count() < 3 {
+                    break;
+                }
+            }
+
+            if let Some(env_path) = found_env {
+                if let Ok(contents) = std::fs::read_to_string(&env_path) {
+                    for line in contents.lines() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        if let Some(equal_pos) = line.find('=') {
+                            let key = line[..equal_pos].trim();
+                            let value = line[equal_pos + 1..].trim();
+                            let value = value.trim_matches('"').trim_matches('\'');
+                            std::env::set_var(key, value);
+                        }
+                    }
+                    eprintln!("Loaded .env from: {}", env_path.display());
+                }
+            } else {
+                let _ = dotenvy::dotenv();
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,4 @@
-# Native (Rust) documentation
+﻿# Native (Rust) documentation
 
 This folder contains curated documentation for the Rust native layer in `native/`,
 focused on **what is implemented today** (and how to use it).
@@ -29,4 +29,5 @@ Some additional docs live next to the crate:
 - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
 - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
 - `native/odbc_engine/TARPAULIN_COVERAGE_REPORT.md`
+
 

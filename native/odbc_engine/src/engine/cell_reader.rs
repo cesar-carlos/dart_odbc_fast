@@ -72,8 +72,10 @@ fn read_i64_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<O
 #[cfg(test)]
 mod tests {
     use crate::engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
+    use crate::test_helpers::load_dotenv;
 
     fn get_test_dsn() -> Option<String> {
+        load_dotenv();
         std::env::var("ODBC_TEST_DSN")
             .ok()
             .filter(|s| !s.is_empty())

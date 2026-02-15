@@ -141,19 +141,19 @@ pub fn serialize_params(params: &[ParamValue]) -> Vec<u8> {
     out
 }
 
-pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<String>> {
+pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<String>>> {
     let mut out = Vec::with_capacity(params.len());
     for p in params {
         match p {
-            ParamValue::Null => {
-                out.push(String::new());
-            }
-            ParamValue::String(s) => out.push(s.clone()),
-            ParamValue::Integer(n) => out.push(n.to_string()),
-            ParamValue::BigInt(n) => out.push(n.to_string()),
-            ParamValue::Decimal(s) => out.push(s.clone()),
+            ParamValue::Null => out.push(None),
+            ParamValue::String(s) => out.push(Some(s.clone())),
+            ParamValue::Integer(n) => out.push(Some(n.to_string())),
+            ParamValue::BigInt(n) => out.push(Some(n.to_string())),
+            ParamValue::Decimal(s) => out.push(Some(s.clone())),
             ParamValue::Binary(b) => {
-                out.push(b.iter().map(|x| format!("{:02x}", x)).collect::<String>());
+                out.push(Some(
+                    b.iter().map(|x| format!("{:02x}", x)).collect::<String>(),
+                ));
             }
         }
     }
@@ -297,6 +297,28 @@ mod tests {
     }
 
     #[test]
+    fn test_param_count_exceeds_limit_true() {
+        let params = vec![
+            ParamValue::Integer(1),
+            ParamValue::Integer(2),
+            ParamValue::Integer(3),
+        ];
+        assert!(param_count_exceeds_limit(&params, 2));
+    }
+
+    #[test]
+    fn test_param_count_exceeds_limit_false() {
+        let params = vec![ParamValue::Integer(1), ParamValue::Integer(2)];
+        assert!(!param_count_exceeds_limit(&params, 10));
+    }
+
+    #[test]
+    fn test_param_count_exceeds_limit_equal() {
+        let params = vec![ParamValue::Null, ParamValue::Null];
+        assert!(!param_count_exceeds_limit(&params, 2));
+    }
+
+    #[test]
     fn test_max_param_string_len_empty() {
         let params = vec![];
         assert_eq!(max_param_string_len(&params), 1);
@@ -349,8 +371,69 @@ mod tests {
         ];
         let result = param_values_to_strings(&params).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], "test");
-        assert_eq!(result[1], "");
-        assert_eq!(result[2], "42");
+        assert_eq!(result[0], Some("test".to_string()));
+        assert_eq!(result[1], None);
+        assert_eq!(result[2], Some("42".to_string()));
+    }
+
+    #[test]
+    fn test_param_values_to_strings_decimal_and_binary() {
+        let params = vec![
+            ParamValue::Decimal("3.14".to_string()),
+            ParamValue::Binary(vec![0xab, 0xcd]),
+        ];
+        let result = param_values_to_strings(&params).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Some("3.14".to_string()));
+        assert_eq!(result[1], Some("abcd".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_buffer_truncated() {
+        let enc = ParamValue::String("hello".to_string()).serialize();
+        let truncated = &enc[0..enc.len() - 2];
+        let result = ParamValue::deserialize(truncated);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn test_deserialize_invalid_utf8_string() {
+        let mut data = vec![TAG_STRING, 0, 0, 0, 2];
+        data.extend_from_slice(&[0xFF, 0xFE]);
+        let result = ParamValue::deserialize(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_integer_wrong_length() {
+        let mut data = vec![TAG_INTEGER, 0, 0, 0, 2];
+        data.extend_from_slice(&[1, 2]);
+        let result = ParamValue::deserialize(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_bigint_wrong_length() {
+        let mut data = vec![TAG_BIGINT, 0, 0, 0, 4];
+        data.extend_from_slice(&[1, 2, 3, 4]);
+        let result = ParamValue::deserialize(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_invalid_utf8_decimal() {
+        let mut data = vec![TAG_DECIMAL, 0, 0, 0, 2];
+        data.extend_from_slice(&[0x80, 0xFF]);
+        let result = ParamValue::deserialize(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_unknown_tag() {
+        let data = vec![0xFF, 0, 0, 0, 0];
+        let result = ParamValue::deserialize(&data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unknown ParamValue tag"));
     }
 }

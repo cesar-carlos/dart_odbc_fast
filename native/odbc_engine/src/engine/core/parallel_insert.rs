@@ -94,6 +94,7 @@ impl ParallelBulkInsert {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::load_dotenv;
 
     #[test]
     fn test_default_batch_size() {
@@ -103,13 +104,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_parallel_bulk_insert_new() {
-        let pool = Arc::new(
-            ConnectionPool::new(
-                "Driver={ODBC Driver 18 for SQL Server};Server=localhost;",
-                4,
-            )
-            .unwrap(),
-        );
+        load_dotenv();
+        let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
+        let pool = Arc::new(ConnectionPool::new(&conn_str, 4).unwrap());
         let pbi = ParallelBulkInsert::new(pool, 4);
         assert_eq!(pbi.parallelism(), 4);
         assert_eq!(pbi.batch_size(), DEFAULT_BATCH_SIZE);
@@ -118,13 +115,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_parallel_bulk_insert_with_batch_size() {
-        let pool = Arc::new(
-            ConnectionPool::new(
-                "Driver={ODBC Driver 18 for SQL Server};Server=localhost;",
-                2,
-            )
-            .unwrap(),
-        );
+        load_dotenv();
+        let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
+        let pool = Arc::new(ConnectionPool::new(&conn_str, 2).unwrap());
         let pbi = ParallelBulkInsert::new(pool, 2).with_batch_size(5_000);
         assert_eq!(pbi.batch_size(), 5_000);
     }

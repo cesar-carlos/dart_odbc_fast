@@ -1,5 +1,6 @@
 use super::execution_engine::ExecutionEngine;
 use crate::error::{OdbcError, Result};
+use crate::observability::Metrics;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
 use std::sync::Arc;
@@ -78,15 +79,25 @@ impl QueryPipeline {
         sql: &str,
         params: &[ParamValue],
         timeout_sec: Option<usize>,
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         self.parse_sql(sql)?;
-        self.execution_engine
-            .execute_query_with_params_and_timeout(conn, sql, params, timeout_sec)
+        self.execution_engine.execute_query_with_params_and_timeout(
+            conn,
+            sql,
+            params,
+            timeout_sec,
+            fetch_size,
+        )
     }
 
     pub fn execute_multi(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         self.parse_sql(sql)?;
         self.execution_engine.execute_multi_result(conn, sql)
+    }
+
+    pub fn get_metrics(&self) -> Arc<Metrics> {
+        self.execution_engine.get_metrics()
     }
 }
 
@@ -118,6 +129,13 @@ mod tests {
         let pipeline = QueryPipeline::new(100);
         let plan = pipeline.parse_sql("SELECT 1").unwrap();
         assert_eq!(plan.sql(), "SELECT 1");
+    }
+
+    #[test]
+    fn test_query_pipeline_get_metrics() {
+        let pipeline = QueryPipeline::new(50);
+        let metrics = pipeline.get_metrics();
+        assert!(std::sync::Arc::strong_count(&metrics) >= 1);
     }
 
     #[test]

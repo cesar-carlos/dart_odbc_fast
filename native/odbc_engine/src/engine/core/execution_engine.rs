@@ -27,13 +27,16 @@ pub struct ExecutionEngine {
 
 impl ExecutionEngine {
     pub fn new(cache_size: usize) -> Self {
+        let prepared_cache = Arc::new(PreparedStatementCache::new(cache_size));
+        let metrics = Arc::new(Metrics::new());
+        metrics.set_prepared_cache(Arc::clone(&prepared_cache));
         Self {
-            prepared_cache: Arc::new(PreparedStatementCache::new(cache_size)),
+            prepared_cache,
             use_columnar: false,
             use_compression: false,
             plugin_registry: Some(Arc::new(PluginRegistry::default())),
             active_plugin: Arc::new(Mutex::new(None)),
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
             audit_logger: Arc::new(AuditLogger::default()),
@@ -41,13 +44,16 @@ impl ExecutionEngine {
     }
 
     pub fn with_columnar(cache_size: usize, use_compression: bool) -> Self {
+        let prepared_cache = Arc::new(PreparedStatementCache::new(cache_size));
+        let metrics = Arc::new(Metrics::new());
+        metrics.set_prepared_cache(Arc::clone(&prepared_cache));
         Self {
-            prepared_cache: Arc::new(PreparedStatementCache::new(cache_size)),
+            prepared_cache,
             use_columnar: true,
             use_compression,
             plugin_registry: Some(Arc::new(PluginRegistry::default())),
             active_plugin: Arc::new(Mutex::new(None)),
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
             audit_logger: Arc::new(AuditLogger::default()),
@@ -55,13 +61,16 @@ impl ExecutionEngine {
     }
 
     pub fn with_plugin_registry(cache_size: usize, registry: Arc<PluginRegistry>) -> Self {
+        let prepared_cache = Arc::new(PreparedStatementCache::new(cache_size));
+        let metrics = Arc::new(Metrics::new());
+        metrics.set_prepared_cache(Arc::clone(&prepared_cache));
         Self {
-            prepared_cache: Arc::new(PreparedStatementCache::new(cache_size)),
+            prepared_cache,
             use_columnar: false,
             use_compression: false,
             plugin_registry: Some(registry),
             active_plugin: Arc::new(Mutex::new(None)),
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
             audit_logger: Arc::new(AuditLogger::default()),
@@ -179,7 +188,7 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
-        self.execute_query_with_params_and_timeout(conn, sql, params, None)
+        self.execute_query_with_params_and_timeout(conn, sql, params, None, None)
     }
 
     pub fn execute_query_with_params_and_timeout(
@@ -188,6 +197,7 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
         timeout_sec: Option<usize>,
+        _fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         use std::time::Instant;
 
@@ -197,44 +207,44 @@ impl ExecutionEngine {
         metadata.insert("span_id".to_string(), span_id.to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
-        let strings = crate::protocol::param_values_to_strings(params)?;
+        let optional_strings = crate::protocol::param_values_to_strings(params)?;
 
-        let cursor = match strings.len() {
+        let cursor = match optional_strings.len() {
             0 => conn
                 .execute(sql, (), timeout_sec)
                 .map_err(OdbcError::from)?,
             1 => {
-                let p0 = strings[0].as_str().into_parameter();
+                let p0 = optional_strings[0].as_deref().into_parameter();
                 conn.execute(sql, (&p0,), timeout_sec)
                     .map_err(OdbcError::from)?
             }
             2 => {
-                let p0 = strings[0].as_str().into_parameter();
-                let p1 = strings[1].as_str().into_parameter();
+                let p0 = optional_strings[0].as_deref().into_parameter();
+                let p1 = optional_strings[1].as_deref().into_parameter();
                 conn.execute(sql, (&p0, &p1), timeout_sec)
                     .map_err(OdbcError::from)?
             }
             3 => {
-                let p0 = strings[0].as_str().into_parameter();
-                let p1 = strings[1].as_str().into_parameter();
-                let p2 = strings[2].as_str().into_parameter();
+                let p0 = optional_strings[0].as_deref().into_parameter();
+                let p1 = optional_strings[1].as_deref().into_parameter();
+                let p2 = optional_strings[2].as_deref().into_parameter();
                 conn.execute(sql, (&p0, &p1, &p2), timeout_sec)
                     .map_err(OdbcError::from)?
             }
             4 => {
-                let p0 = strings[0].as_str().into_parameter();
-                let p1 = strings[1].as_str().into_parameter();
-                let p2 = strings[2].as_str().into_parameter();
-                let p3 = strings[3].as_str().into_parameter();
+                let p0 = optional_strings[0].as_deref().into_parameter();
+                let p1 = optional_strings[1].as_deref().into_parameter();
+                let p2 = optional_strings[2].as_deref().into_parameter();
+                let p3 = optional_strings[3].as_deref().into_parameter();
                 conn.execute(sql, (&p0, &p1, &p2, &p3), timeout_sec)
                     .map_err(OdbcError::from)?
             }
             5 => {
-                let p0 = strings[0].as_str().into_parameter();
-                let p1 = strings[1].as_str().into_parameter();
-                let p2 = strings[2].as_str().into_parameter();
-                let p3 = strings[3].as_str().into_parameter();
-                let p4 = strings[4].as_str().into_parameter();
+                let p0 = optional_strings[0].as_deref().into_parameter();
+                let p1 = optional_strings[1].as_deref().into_parameter();
+                let p2 = optional_strings[2].as_deref().into_parameter();
+                let p3 = optional_strings[3].as_deref().into_parameter();
+                let p4 = optional_strings[4].as_deref().into_parameter();
                 conn.execute(sql, (&p0, &p1, &p2, &p3, &p4), timeout_sec)
                     .map_err(OdbcError::from)?
             }

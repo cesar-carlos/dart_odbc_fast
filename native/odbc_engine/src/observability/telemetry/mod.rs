@@ -9,7 +9,6 @@ pub use console::export_trace;
 pub use exporters::{ConsoleExporter, OtlpExporter, TelemetryExporter};
 
 use std::ffi::CString;
-use std::ptr;
 use std::sync::Mutex;
 
 /// Global telemetry state
@@ -164,10 +163,7 @@ pub extern "C" fn otel_export_trace_to_string(trace_out: *mut u8, _trace_len: us
 /// # Safety
 /// Caller must ensure `error_buffer` and `error_len` point to valid writable memory.
 #[no_mangle]
-pub unsafe extern "C" fn otel_get_last_error(
-    error_buffer: *mut u8,
-    error_len: *mut usize,
-) -> i32 {
+pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *mut usize) -> i32 {
     if error_buffer.is_null() || error_len.is_null() {
         return 1;
     }
@@ -223,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_otel_init_console() {
-        let result = unsafe { otel_init(ptr::null(), ptr::null(), ptr::null()) };
+        let result = unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         assert_eq!(result, 0);
 
         // Clean up
@@ -233,7 +229,7 @@ mod tests {
     #[test]
     fn test_otel_init_otlp() {
         let endpoint = std::ffi::CString::new("http://localhost:4318/v1/traces").unwrap();
-        let result = unsafe { otel_init(endpoint.as_ptr(), ptr::null(), ptr::null()) };
+        let result = unsafe { otel_init(endpoint.as_ptr(), std::ptr::null(), std::ptr::null()) };
         assert_eq!(result, 0);
 
         // Clean up
@@ -242,21 +238,22 @@ mod tests {
 
     #[test]
     fn test_otel_shutdown() {
-        unsafe { otel_init(ptr::null(), ptr::null(), ptr::null()) };
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         otel_shutdown();
 
         // After shutdown, export should fail
-        let result = unsafe { otel_export_trace(ptr::null(), 0) };
+        let result = unsafe { otel_export_trace(std::ptr::null(), 0) };
         assert_ne!(result, 0);
     }
 
     #[test]
     fn test_otel_get_last_error() {
         // Initialize with null endpoint (console exporter)
-        unsafe { otel_init(ptr::null(), ptr::null(), ptr::null()) };
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
 
         // Export a valid trace
-        let trace_json = r#"{"trace_id": "test", "name": "test.op", "start_time": "2024-01-01T00:00:00Z"}"#;
+        let trace_json =
+            r#"{"trace_id": "test", "name": "test.op", "start_time": "2024-01-01T00:00:00Z"}"#;
         let trace_bytes = trace_json.as_bytes();
         let result = unsafe { otel_export_trace(trace_bytes.as_ptr(), trace_bytes.len()) };
         assert_eq!(result, 0);

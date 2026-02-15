@@ -1,4 +1,4 @@
-# FFI API (C ABI) — `odbc_*`
+﻿# FFI API (C ABI) — `odbc_*`
 
 This document describes the public C ABI entrypoints implemented in
 `native/odbc_engine/src/ffi/mod.rs`.
@@ -185,9 +185,11 @@ Isolation levels (ODBC mapping):
 Returns `txn_id > 0` on success; `0` on failure.
 
 ### `odbc_transaction_commit(txn_id) -> int`
+
 Commits and ends the transaction.
 
 ### `odbc_transaction_rollback(txn_id) -> int`
+
 Rolls back and ends the transaction.
 
 ## Connection pool (r2d2)
@@ -283,4 +285,5 @@ if (rc != 0) { /* read odbc_get_error (rc == -2 if buffer too small) */ }
   - prefer `odbc_stream_*` (chunked copy-out) or a larger buffer for `odbc_exec_query`.
 - Errors are stored in global state; after any non-zero return / `0` id, call:
   - `odbc_get_error(...)` or `odbc_get_structured_error(...)`.
+
 

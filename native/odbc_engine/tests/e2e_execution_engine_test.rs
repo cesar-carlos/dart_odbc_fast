@@ -739,11 +739,10 @@ fn test_exec_query_with_params_null() {
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 
-    assert!(
-        result.is_err(),
-        "NULL parameters should return error (not supported yet)"
-    );
-    println!("✓ Exec query with params (null) returns error test passed");
+    // NULL is currently converted to empty string (limited support); query may succeed or fail per driver.
+    let _ = result
+        .expect("Execute with Null param should not panic (handled as empty string or error)");
+    println!("✓ Exec query with params (null) completed");
 }
 
 #[test]

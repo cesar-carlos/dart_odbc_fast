@@ -217,6 +217,18 @@ mod tests {
 
         let err4 = OdbcError::ValidationError("Test validation".to_string());
         assert_eq!(err4.to_string(), "Validation error: Test validation");
+
+        let err5 = OdbcError::OdbcApi("Driver error".to_string());
+        assert!(err5.to_string().contains("Driver error"));
+
+        let err6 = OdbcError::PoolError("Pool exhausted".to_string());
+        assert!(err6.to_string().contains("Pool exhausted"));
+
+        let err7 = OdbcError::InternalError("Lock poisoned".to_string());
+        assert!(err7.to_string().contains("Lock poisoned"));
+
+        let err8 = OdbcError::UnsupportedFeature("Feature X".to_string());
+        assert!(err8.to_string().contains("Feature X"));
     }
 
     #[test]
@@ -237,6 +249,26 @@ mod tests {
         let err = OdbcError::EmptyConnectionString;
         assert_eq!(err.sqlstate(), [0u8; 5]);
         assert_eq!(err.native_code(), 0);
+    }
+
+    #[test]
+    fn test_non_structured_error_message_returns_display() {
+        let err = OdbcError::ValidationError("Bad input".to_string());
+        assert_eq!(err.message(), "Validation error: Bad input");
+    }
+
+    #[test]
+    fn test_error_category_unsupported_feature_is_fatal() {
+        let err = OdbcError::UnsupportedFeature("Savepoints".to_string());
+        assert_eq!(err.error_category(), ErrorCategory::Fatal);
+    }
+
+    #[test]
+    fn test_error_category_variants() {
+        let _ = ErrorCategory::Transient;
+        let _ = ErrorCategory::Fatal;
+        let _ = ErrorCategory::Validation;
+        let _ = ErrorCategory::ConnectionLost;
     }
 
     #[test]
