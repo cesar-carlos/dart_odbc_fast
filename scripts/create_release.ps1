@@ -1,8 +1,8 @@
 ﻿# Helper script to create release tag and trigger release.yml
 # Usage:
-#   .\scripts\create_release.ps1 0.3.2
-#   .\scripts\create_release.ps1 v0.3.2
-#   .\scripts\create_release.ps1 0.3.2 -NoPush
+#   .\scripts\create_release.ps1 1.0.0
+#   .\scripts\create_release.ps1 v1.0.0
+#   .\scripts\create_release.ps1 1.0.0 -NoPush
 
 param(
     [Parameter(Mandatory = $true)]
@@ -58,7 +58,8 @@ if (-not $git) {
     Fail "Git not found in PATH."
 }
 
-$existingTag = (git tag --list $tag).Trim()
+$existingTagRaw = git tag --list $tag
+$existingTag = if ($null -ne $existingTagRaw) { "$existingTagRaw".Trim() } else { "" }
 if ($existingTag -eq $tag) {
     Fail "Tag '$tag' already exists locally."
 }

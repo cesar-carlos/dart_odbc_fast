@@ -56,7 +56,7 @@
 
 ```yaml
 dependencies:
-  odbc_fast: ^0.3.1
+  odbc_fast: ^1.0.0
 ```
 
 Then:

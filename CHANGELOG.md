@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- _None_
+
+### Changed
+
+- _None_
+
+### Fixed
+
+- _None_
+
+## [1.0.0] - 2026-02-15
+
+### Added
+
 - **Async API request timeout**: `AsyncNativeOdbcConnection(requestTimeout: Duration?)` — optional timeout per request; default 30s; `Duration.zero` or `null` disables
 - **AsyncError** new codes: `requestTimeout` (worker did not respond in time), `workerTerminated` (disposed or crashed)
 - **Parallel bulk insert (pool-based) end-to-end**: Rust FFI `odbc_bulk_insert_parallel` now implemented and exposed in Dart sync/async service/repository stack
@@ -178,6 +192,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk insert operations
 - Metrics and observability
 
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.1...v1.0.0
+[0.3.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.9...v0.3.0
+[0.2.9]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.8...v0.2.9
+[0.2.8]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.3...v0.2.4
