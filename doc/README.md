@@ -13,6 +13,7 @@ This directory contains only the canonical documents for day-to-day use by contr
 | [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md) | Short reference for version bump decisions                                |
 | [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md)                 | Standard template for updating `CHANGELOG.md`                             |
 | [OBSERVABILITY.md](OBSERVABILITY.md)                           | Telemetry, operational metrics, and exporter fallback                     |
+| [TYPE_MAPPING.md](TYPE_MAPPING.md)                             | Canonical data type mapping contract, limits, and implementation roadmap  |
 | [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md)         | Consolidated and prioritized technical backlog                            |
 
 ## Generated Documentation

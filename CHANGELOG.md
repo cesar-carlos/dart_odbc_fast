@@ -11,11 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _None_
 
 ### Changed
-- Updated README with comprehensive examples documentation
-- Fixed API coverage section (removed incorrect `executeQueryParams`)
+- _None_
 
 ### Fixed
 - _None_
+
+## [1.0.3] - 2026-02-16
+
+### Added
+- New canonical type mapping documentation: `doc/TYPE_MAPPING.md`
+- New implementation checklists:
+  - `doc/notes/TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md`
+  - `doc/notes/STATEMENT_CANCELLATION_IMPLEMENTATION_CHECKLIST.md`
+  - `doc/notes/NULL_HANDLING_RELIABILITY_PERFORMANCE_PLAN.md`
+- New/updated example coverage docs and demo files for advanced/service/telemetry scenarios
+
+### Changed
+- Root and docs indexes now reference canonical type-mapping documentation
+- Master gaps plan now tracks open execution checklists for remaining gaps
+
+### Fixed
+- Documentation consistency across root README, `doc/README.md`, and notes references
 
 ## [1.0.2] - 2026-02-15
 
@@ -37,18 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _None_
 
 ### Fixed
-- _None_
-
-### Added
-
-- _None_
-
-### Changed
-
-- _None_
-
-### Fixed
-
 - _None_
 
 ## [1.0.0] - 2026-02-15
@@ -224,7 +228,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.1...v1.0.0
 [0.3.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.9...v0.3.0

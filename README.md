@@ -27,7 +27,8 @@
 
 ### High-level service (`OdbcService`)
 
-- Query execution: `executeQuery`, `executeQueryNamed`
+- Query execution: `executeQuery`, `executeQueryParams`, `executeQueryNamed`
+- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`, `executePreparedNamed`, `closeStatement`
 - Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
@@ -44,6 +45,14 @@
 - Wrapper helpers: `PreparedStatement`, `PreparedStatement.executeNamed`, `TransactionHandle`, `ConnectionPool`, `CatalogQuery`
 - Streaming: `streamQueryBatched` (preferred), `streamQuery`
 - Bulk insert: `bulkInsertArray`, `bulkInsertParallel`
+
+### Advanced exported APIs
+
+- Retry utilities: `RetryHelper`, `RetryOptions` (see `example/advanced_entities_demo.dart`)
+- Statement/cache config: `StatementOptions`, `PreparedStatementConfig`
+- Schema metadata entities: `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`
+- Telemetry services/entities: `ITelemetryService`, `SimpleTelemetryService`, `ITelemetryRepository`, `Trace`, `Span`, `Metric`, `TelemetryEvent`
+- Telemetry infrastructure: `OpenTelemetryFFI`, `TelemetryRepositoryImpl`, `TelemetryBuffer`
 
 ## Requirements
 
@@ -125,6 +134,25 @@ If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 - `requestTimeout` for worker response timeout
 - `autoRecoverOnWorkerCrash` for automatic worker re-initialization
 
+Direct async example (worker isolate, non-blocking):
+
+```dart
+final async = AsyncNativeOdbcConnection();
+await async.initialize();
+
+final connId = await async.connect('DSN=MyDsn');
+final future = async.executeQueryParams(
+  connId,
+  'SELECT * FROM huge_table',
+  const [],
+);
+
+// UI/event loop stays responsive while the worker executes the query.
+final data = await future;
+await async.disconnect(connId);
+async.dispose();
+```
+
 Async streaming (`streamQuery` / `streamQueryBatched`) uses the native
 stream protocol through the worker isolate (`stream_start/fetch/close`),
 instead of fetching full result sets in a single call.
@@ -171,6 +199,21 @@ Validation rules:
 - `maxResultBufferBytes` and `initialResultBufferBytes` must be `> 0`
 - `initialResultBufferBytes` cannot be greater than `maxResultBufferBytes`
 
+## Connection String Builder
+
+Fluent API for building ODBC connection strings:
+
+```dart
+final connStr = SqlServerBuilder()
+  .server('localhost')
+  .port(1433)
+  .database('MyDB')
+  .credentials('user', 'pass')
+  .build();
+```
+
+Runnable demo: `dart run example/connection_string_builder_demo.dart`
+
 ## Pool checkout validation tuning
 
 By default, the Rust pool validates a connection on checkout (`SELECT 1`),
@@ -192,14 +235,31 @@ All examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment 
 
 ```bash
 dart run example/main.dart
+dart run example/service_api_coverage_demo.dart
+dart run example/advanced_entities_demo.dart
+dart run example/connection_string_builder_demo.dart
 dart run example/simple_demo.dart
 dart run example/async_demo.dart
+dart run example/async_service_locator_demo.dart
 dart run example/named_parameters_demo.dart
 dart run example/multi_result_demo.dart
 dart run example/streaming_demo.dart
 dart run example/pool_demo.dart
 dart run example/savepoint_demo.dart
+dart run example/telemetry_demo.dart
+dart run example/otel_repository_demo.dart
 ```
+
+Coverage-oriented examples:
+
+- `example/service_api_coverage_demo.dart`: exercises service methods that are
+  less visible in quick-start docs (`executeQueryParams`, `prepare`,
+  `executePrepared`, `closeStatement`, pool APIs, `bulkInsert`).
+- `example/advanced_entities_demo.dart`: demonstrates exported advanced types
+  and helpers (`RetryHelper`, `RetryOptions`, `PreparedStatementConfig`,
+  `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).
+- `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
+  telemetry service/buffer usage plus OTLP repository initialization.
 
 More details: [example/README.md](example/README.md)
 
@@ -208,6 +268,7 @@ More details: [example/README.md](example/README.md)
 #### High-Level API (`OdbcService`)
 
 **[main.dart](example/main.dart)** - Complete API walkthrough
+
 - ✅ Sync and async service modes
 - ✅ Connection options with timeouts
 - ✅ Driver detection
@@ -219,6 +280,7 @@ More details: [example/README.md](example/README.md)
 - ✅ Runtime metrics and observability
 
 **Advantages**:
+
 - 🎯 High-level abstraction for common use cases
 - 📊 Built-in metrics and telemetry hooks
 - 🔄 Automatic connection lifecycle management
@@ -227,6 +289,7 @@ More details: [example/README.md](example/README.md)
 #### Low-Level API (`NativeOdbcConnection`)
 
 **[simple_demo.dart](example/simple_demo.dart)** - Native connection demo
+
 - ✅ Connection with timeout (`connectWithTimeout`)
 - ✅ Structured error handling (SQLSTATE + native codes)
 - ✅ Transaction handles for safe operations
@@ -235,6 +298,7 @@ More details: [example/README.md](example/README.md)
 - ✅ Binary protocol parser for raw result handling
 
 **Advantages**:
+
 - 🔧 Direct control over ODBC driver manager
 - ⚡ Zero-allocation result parsing
 - 🛡️ Fine-grained error diagnostics
@@ -243,12 +307,14 @@ More details: [example/README.md](example/README.md)
 #### Async API
 
 **[async_demo.dart](example/async_demo.dart)** - Async worker isolate demo
+
 - ✅ Non-blocking operations (perfect for Flutter/UI)
 - ✅ Configurable request timeout
 - ✅ Automatic worker recovery on crash
 - ✅ Worker isolate lifecycle management
 
 **Advantages**:
+
 - 🚀 Non-blocking UI thread
 - 🔒 Configurable timeouts per request
 - 🔄 Automatic recovery from failures
@@ -257,12 +323,14 @@ More details: [example/README.md](example/README.md)
 #### Named Parameters
 
 **[named_parameters_demo.dart](example/named_parameters_demo.dart)** - @name and :name syntax
+
 - ✅ Standard SQL named parameter syntax
 - ✅ Prepared statement reuse for performance
 - ✅ Mixed @name and :name in same example
 - ✅ Type-safe parameter binding
 
 **Advantages**:
+
 - 🛡 SQL injection protection (type-safe binding)
 - ⚡ Reuse prepared statements for multiple executions
 - 📝 Clean code with named parameters
@@ -271,12 +339,14 @@ More details: [example/README.md](example/README.md)
 #### Multi-Result Queries
 
 **[multi_result_demo.dart](example/multi_result_demo.dart)** - Multiple result sets
+
 - ✅ Single query with multiple SELECT statements
 - ✅ `executeQueryMulti` + `MultiResultParser`
 - ✅ Parse multiple result sets from single payload
 - ✅ Access to each result set independently
 
 **Advantages**:
+
 - 📦 Fewer round trips to database
 - ⚡ Batch multiple operations in single request
 - 🎯 Perfect for stored procedures with multiple results
@@ -285,6 +355,7 @@ More details: [example/README.md](example/README.md)
 #### Connection Pooling
 
 **[pool_demo.dart](example/pool_demo.dart)** - Connection pool management
+
 - ✅ Pool creation with configurable size
 - ✅ Connection reuse (get/release pattern)
 - ✅ Parallel bulk insert via pool
@@ -292,6 +363,7 @@ More details: [example/README.md](example/README.md)
 - ✅ Concurrent connection testing
 
 **Advantages**:
+
 - 🚀 Reduced connection overhead (reuse established connections)
 - 🔄 Automatic connection recovery and validation
 - ⚡ Parallel bulk insert for high-throughput scenarios
@@ -301,12 +373,14 @@ More details: [example/README.md](example/README.md)
 #### Streaming Queries
 
 **[streaming_demo.dart](example/streaming_demo.dart)** - Incremental data streaming
+
 - ✅ Batched streaming (`streamQueryBatched`) with configurable fetch size
 - ✅ Custom chunk streaming (`streamQuery`) with flexible chunk sizes
 - ✅ Process large datasets without loading all into memory
 - ✅ Low-memory footprint for big tables
 
 **Advantages**:
+
 - 💾 Process millions of rows without OOM errors
 - ⚡ Incremental processing reduces first-byte latency
 - 🎯 Perfect for UI lists and infinite scrolling
@@ -316,6 +390,7 @@ More details: [example/README.md](example/README.md)
 #### Transactions & Savepoints
 
 **[savepoint_demo.dart](example/savepoint_demo.dart)** - Advanced transaction control
+
 - ✅ Transaction begin/commit/rollback
 - ✅ Savepoint creation (`createSavepoint`)
 - ✅ Rollback to savepoint (`rollbackToSavepoint`)
@@ -323,6 +398,7 @@ More details: [example/README.md](example/README.md)
 - ✅ Release savepoint (`releaseSavepoint`)
 
 **Advantages**:
+
 - 🔒 Partial rollback support (undo specific changes)
 - 🎯 Complex operation support with nested savepoints
 - 🛡 Safe error recovery points
@@ -397,6 +473,7 @@ dart_odbc_fast/
 - [doc/VERSIONING_STRATEGY.md](doc/VERSIONING_STRATEGY.md)
 - [doc/VERSIONING_QUICK_REFERENCE.md](doc/VERSIONING_QUICK_REFERENCE.md)
 - [doc/OBSERVABILITY.md](doc/OBSERVABILITY.md)
+- [doc/TYPE_MAPPING.md](doc/TYPE_MAPPING.md)
 - [doc/FUTURE_IMPLEMENTATIONS.md](doc/FUTURE_IMPLEMENTATIONS.md)
 
 ## CI/CD
@@ -417,8 +494,8 @@ dart_odbc_fast/
 
 To publish a new version, follow these steps:
 
-1. **Update `pubspec.yaml`: Set the new version (e.g., `version: 1.0.2`)
-2. **Update `CHANGELOG.md`: Add a new section `## [1.0.2] - YYYY-MM-DD` with changes
+1. \*\*Update `pubspec.yaml`: Set the new version (e.g., `version: 1.0.2`)
+2. \*\*Update `CHANGELOG.md`: Add a new section `## [1.0.2] - YYYY-MM-DD` with changes
 3. **Commit and push main branch**:
    ```bash
    git add .
@@ -432,6 +509,7 @@ To publish a new version, follow these steps:
    ```
 
 The GitHub Actions will automatically:
+
 - Verify tag format and consistency with pubspec/changelog
 - Build native binaries for Linux and Windows
 - Create GitHub Release with binaries
@@ -440,6 +518,7 @@ The GitHub Actions will automatically:
 ### Security
 
 This project uses **OIDC (OpenID Connect)** for pub.dev authentication:
+
 - No long-lived secrets required
 - Temporary tokens are automatically managed by GitHub Actions
 - See [Automated publishing documentation](https://dart.dev/tools/pub/automated-publishing) for details

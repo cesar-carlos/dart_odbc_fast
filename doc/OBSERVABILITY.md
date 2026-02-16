@@ -4,6 +4,7 @@ Telemetry and operational metrics guide for `odbc_fast`.
 
 ## Components
 
+- `ITelemetryService` / `ITelemetryRepository`: domain contracts
 - `TelemetryRepositoryImpl`: integrates with OTLP backend via FFI
 - `SimpleTelemetryService`: service layer for events/metrics
 - `OdbcService.getMetrics()`: runtime operational metrics
@@ -82,6 +83,13 @@ metricsResult.fold(
   (e) => print('error: $e'),
 );
 ```
+
+## Runnable examples
+
+- `dart run example/telemetry_demo.dart`:
+  `SimpleTelemetryService`, `ITelemetryRepository`, and `TelemetryBuffer`
+- `dart run example/otel_repository_demo.dart`:
+  `OpenTelemetryFFI` + `TelemetryRepositoryImpl` with optional OTLP endpoint
 
 ## Recommendations
 

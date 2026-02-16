@@ -19,7 +19,15 @@
       "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run:*)",
       "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run watch 22045216847 --repo cesar-carlos/dart_odbc_fast)",
       "Bash(curl:*)",
-      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run list --repo cesar-carlos/dart_odbc_fast --limit 5)"
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run list --repo cesar-carlos/dart_odbc_fast --limit 5)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" run watch 22045358353 --repo cesar-carlos/dart_odbc_fast)",
+      "Bash(grep:*)",
+      "Bash(dart run test_pub_client:*)",
+      "Bash(find:*)",
+      "Bash(gh release view:*)",
+      "Bash(dart pub add:*)",
+      "Bash(powershell -Command \"[Environment]::GetFolderPath\\(''LocalApplicationData''\\)\")",
+      "Bash(powershell:*)"
     ]
   }
 }

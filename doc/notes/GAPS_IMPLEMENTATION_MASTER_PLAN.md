@@ -18,6 +18,12 @@ Eliminate inconsistencies between Rust backend (FFI/exports) and Dart layer (bin
 6. Comparative benchmark published:
    - `native/odbc_engine/tests/e2e_bulk_compare_benchmark_test.rs`
    - run command: `cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture`
+7. New identified gap (2026-02-16):
+   - Public Data Type mapping contract is not explicit in canonical Dart docs/API.
+   - Rust has internal type mapping, but Dart public layer does not expose an equivalent map/contract.
+8. Remaining open gaps (implementation pending):
+   - GAP 5 (statement cancellation contract)
+   - GAP 6 (data type mapping parity and canonical contract)
 
 ## Gap scope
 
@@ -26,6 +32,7 @@ Eliminate inconsistencies between Rust backend (FFI/exports) and Dart layer (bin
 3. `clearAllStatements`: Dart API existed but was stubbed/no-op.
 4. `bulk_insert_parallel`: symbol existed in bindings but was not fully exposed at high-level Dart and Rust path was incomplete.
 5. Cancellation: `cancelStatement` exposed in Dart while Rust marked as unsupported.
+6. Data type mapping parity and documentation: Rust internal `DataType -> SQL code -> OdbcType` exists, but Dart/public docs do not provide a canonical mapping contract.
 
 ## Priority and sequence
 
@@ -36,12 +43,14 @@ Recommended implementation order:
 3. GAP 2 (real async streaming)
 4. GAP 4 (`bulk_insert_parallel`)
 5. GAP 5 (statement cancellation)
+6. GAP 6 (data type mapping parity and canonical contract)
 
 Rationale:
 
 - Items 1 and 3 remove obvious divergence with controlled risk.
 - Items 2 and 4 are structural and should follow after initial stabilization.
 - Item 5 depends on product contract decision (supported capability vs explicit unsupported behavior).
+- Item 6 closes a documentation/API clarity gap and prevents drift between Rust and Dart behavior.
 
 ## Detailed plan by gap
 
@@ -167,11 +176,58 @@ Rationale:
 1. Align Dart API contract with Rust capability.
 2. Add explicit error classification for unsupported mode.
 3. Document behavior in README and troubleshooting.
+4. Track execution tasks in `doc/notes/STATEMENT_CANCELLATION_IMPLEMENTATION_CHECKLIST.md`.
 
 ### Acceptance criteria
 
 - No ambiguity in cancellation support.
 - Consistent behavior across sync/async paths.
+
+## GAP 6 - Data type mapping parity and canonical contract
+
+### Current state
+
+- Rust has internal mapping:
+  - `odbc_api::DataType -> SQL type code` and `SQL type code -> OdbcType` in `native/odbc_engine/src/protocol/types.rs`.
+  - Driver-specific remapping via plugins (`sqlserver`, `postgres`, `oracle`, `sybase`).
+- Dart has parameter typing via `ParamValue` (6 types), but no canonical public `SqlType` map/API.
+- Dart main parser in use (`binary_protocol.dart`) converts only a subset directly (string/int32/int64), while richer parser artifact exists separately, creating ambiguity.
+- Legacy generated docs in `doc/api/` mention `SqlType`/`request.output` concepts inspired by npm `mssql`, but these are not current implemented public contracts.
+
+### Implementation
+
+1. Define a canonical public mapping contract for Dart (document-first, then code exposure if needed):
+   - `ParamValue` types and intended SQL category mapping.
+   - Result decoding behavior by ODBC type code.
+2. Align parser strategy:
+   - Choose one canonical parser implementation.
+   - Remove or deprecate orphan parser path to avoid behavior drift.
+3. Add explicit non-goals in canonical docs:
+   - No public `SqlType` (30+ types) contract yet.
+   - No `request.output` API yet (tracked in backlog).
+4. Add optional forward-compatible API plan (if approved):
+   - Introduce `SqlDataType` enum/table in Dart without breaking existing `ParamValue` APIs.
+
+### Tests
+
+1. Add/expand Dart protocol tests for all currently supported result type families:
+   - varchar/text, int32, int64, decimal/text-decimal, date/timestamp representation, binary.
+2. Add compatibility tests ensuring parser behavior is stable across sync/async/repository paths.
+3. Add regression test that verifies documented map and runtime decode behavior remain consistent.
+
+### Documentation
+
+1. Update `README.md` with explicit "implemented today vs planned" type mapping scope.
+2. Add/update canonical doc `doc/TYPE_MAPPING.md` and link it from `doc/README.md`.
+3. Keep `doc/api/` treated as generated only; avoid using it as source of truth for roadmap commitments.
+4. Track execution tasks in `doc/notes/TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md`.
+
+### Acceptance criteria
+
+- One canonical and explicit type mapping contract exists in code/docs.
+- No conflicting parser behavior or orphan parser path remains.
+- No ambiguity between implemented `ParamValue` scope and legacy `SqlType` ideas.
+- Tests validate decoding/mapping behavior for supported types.
 
 ## Validation matrix
 

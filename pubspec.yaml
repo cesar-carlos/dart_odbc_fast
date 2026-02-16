@@ -4,7 +4,7 @@ name: odbc_fast
 # New features: MINOR bumps (1.1.0, 1.2.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
 # See doc/VERSIONING_STRATEGY.md for versioning guidelines
-version: 1.0.2
+version: 1.0.3
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast
