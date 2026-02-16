@@ -3,7 +3,129 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/protocol/bulk_insert_builder.dart';
 import 'package:test/test.dart';
 
+/// Baseline tests for bulk insert nullability behavior.
+///
+/// These tests capture current behavior before refactoring:
+/// - Non-nullable columns currently accept null and serialize default values
+/// - No validation error is thrown for null in non-nullable columns
 void main() {
+  group('Phase 2: Non-nullable null validation', () {
+    test('non-nullable i32 column throws for null value', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.i32)
+          .addRow([null]);
+      expect(
+        b.build,
+        throwsA(
+          isA<StateError>()
+              .having(
+                (e) => e.message,
+                'message',
+                contains('is non-nullable but contains null'),
+              )
+              .having(
+                (e) => e.message,
+                'message',
+                contains('Column "a"'),
+              ),
+        ),
+      );
+    });
+
+    test('non-nullable text column throws for null value', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.text, maxLen: 10)
+          .addRow([null]);
+      expect(
+        b.build,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('at row 1'),
+          ),
+        ),
+      );
+    });
+
+    test('non-nullable i64 column throws for null value', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.i64)
+          .addRow([null]);
+      expect(
+        b.build,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('is non-nullable but contains null'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'non-nullable decimal column throws for null value',
+      () {
+        final b = BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.decimal, maxLen: 20)
+            .addRow([null]);
+        expect(
+          b.build,
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('is non-nullable but contains null'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'non-nullable timestamp column throws for null value',
+      () {
+        final b = BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.timestamp)
+            .addRow([null]);
+        expect(
+          b.build,
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('is non-nullable but contains null'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'nullable column with null sets null bitmap correctly',
+      () {
+        final b = BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32, nullable: true)
+            .addRow([null]).addRow([1]);
+        final enc = b.build();
+
+        // For nullable columns, there should be a null bitmap
+        // Offset calculation: table(5) + col(15) + rowCount(4) = 24
+        // Bitmap starts at offset 24
+        expect(enc.length, greaterThan(24));
+        // Bitmap byte: bit 0 should be set (first row is null)
+        expect(enc[24] & 1, equals(1));
+      },
+    );
+  });
+
   group('BulkInsertBuilder', () {
     test('I32 single column non-nullable roundtrip structure', () {
       final b = BulkInsertBuilder()

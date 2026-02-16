@@ -238,7 +238,7 @@ class BulkInsertBuilder {
   /// Returns a [Uint8List] containing the serialized bulk insert data.
   ///
   /// Throws [StateError] if table name is empty, no columns are defined,
-  /// or no rows have been added.
+  /// no rows have been added, or a non-nullable column contains null.
   Uint8List build() {
     if (_table.isEmpty) {
       throw StateError('Table name required');
@@ -248,6 +248,23 @@ class BulkInsertBuilder {
     }
     if (_rows.isEmpty) {
       throw StateError('At least one row required');
+    }
+
+    // Validate nullability: non-nullable columns must not have null values
+    for (var c = 0; c < _columns.length; c++) {
+      final spec = _columns[c];
+      if (!spec.nullable) {
+        for (var r = 0; r < _rows.length; r++) {
+          final value = _rows[r][c];
+          if (value == null) {
+            throw StateError(
+              'Column "${spec.name}" is non-nullable but contains null '
+              'at row ${r + 1}. '
+              'Use nullable: true for columns that should accept null.',
+            );
+          }
+        }
+      }
     }
 
     final out = <int>[];

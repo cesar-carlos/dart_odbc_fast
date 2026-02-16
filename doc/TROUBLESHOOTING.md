@@ -1,123 +1,144 @@
-﻿# TROUBLESHOOTING.md - Common Issues
+
+# TROUBLESHOOTING.md - Common Issues
 
 ## 1. Native library not found
 
 Symptoms:
-
 - `StateError: ODBC engine library not found`
-- `Failed to lookup symbol 'odbc_init'`
 
 Resolution:
+- Build and test native library
+- Ensure native binary is deployed correctly
 
-```bash
-cd native
-cargo build --release
-```
-
-Verify the file exists:
-
+Check:
 - Windows: `native/target/release/odbc_engine.dll`
 - Linux: `native/target/release/libodbc_engine.so`
 
-If the build output is in `native/odbc_engine/target/release`, copy it to `native/target/release`.
+If build output is in `native/odbc_engine/target/release`, copy it to
+`native/target/release`.
 
-## 2. `dart pub get` did not download binary
+## 2. `Failed to lookup symbol 'odbc_init'`
 
-The hook may skip download in CI/pub.dev environments.
+Symptoms:
+- Native FFI symbol not found
 
-Check:
-
-1. The matching tag/release exists on GitHub (`vX.Y.Z`).
-2. Release assets are at release root (`odbc_engine.dll`, `libodbc_engine.so`).
-3. `pubspec.yaml` version matches the tag.
-
-## 3. Rust build fails due to missing dependencies
-
-Linux:
-
-```bash
-sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
-```
-
-Windows:
-
-- Ensure the MSVC toolchain is active (`rustup default stable-msvc`).
-
-## 4. `ffigen` fails to generate bindings
+Resolution:
+- Run `dart run ffigen -v info` and verify bindings are generated correctly
+- Verify `cbindgen` is installed
+- Ensure `Cargo.toml` has correct configuration
 
 Checklist:
-
 1. Header exists: `native/odbc_engine/include/odbc_engine.h`
 2. `cbindgen` installed: `cargo install cbindgen`
 3. Correct command: `dart run ffigen -v info`
 
-## 5. Async API hangs or times out
+## 3. Async API hangs or times out
 
-Use explicit timeout and always dispose async connection correctly:
+Symptoms:
+- Query execution seems to hang indefinitely
 
+Resolution:
+- Use explicit timeout and always dispose async connection correctly
+
+Example:
 ```dart
 final conn = AsyncNativeOdbcConnection(
   requestTimeout: Duration(seconds: 30),
 );
-
 // ...
 await conn.dispose();
 ```
 
 Expected async error codes: `requestTimeout` and `workerTerminated`.
 
-For async streaming (`streamQuery` / `streamQueryBatched`):
+## 4. Unsupported parameter type
 
-1. `stream_start` and `stream_fetch` failures now return `AsyncErrorCode.queryFailed`
-2. Stream no longer closes silently on failure
-3. With `autoRecoverOnWorkerCrash=true`, recovery is serialized (avoids `onError`/`onDone` race)
-4. Repository/service stream errors are classified as:
-   - `Streaming protocol error: ...` (framing/protocol)
-   - `Query timed out` (from `ConnectionOptions.queryTimeout`)
-   - `Streaming interrupted: ...` (worker/dispose during stream)
-   - `Streaming SQL error: ...` (with SQLSTATE/nativeCode when available)
+Symptoms:
+- Error: "Unsupported parameter type: X"
+
+Cause:
+- Passing an unsupported type to `executeQueryParams` or bulk insert
+
+Resolution:
+- Convert to supported type before passing:
+- `bool` -> `ParamValueInt32(1|0)`
+- `double` -> `ParamValueDecimal(value.toString())`
+- `DateTime` -> `ParamValueString(value.toUtc().toIso8601String())`
+- Or use explicit `ParamValue` wrapper
+
+Migration Guide:
+1. Identify where unsupported types are used
+2. Convert to canonical type or use explicit `ParamValue` wrapper
+3. Run `dart analyze` to verify changes
+
+## 5. Bulk insert nullability error
+
+Symptoms:
+- Error: 'Column "name" is non-nullable but contains null at row X. 
+  Use nullable: true for columns that should accept null.'
+
+Cause:
+- Trying to insert `null` into a column defined as non-nullable
+
+Resolution:
+- Set `nullable: true` for columns that should accept null values
+- Or provide actual values for non-nullable columns
+
+Example:
+```dart
+// Don't do this:
+builder.addColumn('id', BulkColumnType.i32)
+  .addRow([null]);
+
+// Do this instead:
+builder.addColumn('id', BulkColumnType.i32, nullable: true)
+  .addRow([null]);
+```
 
 ## 6. ODBC IM002 (driver/DSN) error
 
-Typical message:
+Symptoms:
+- Error message contains SQLSTATE code starting with "IM002"
 
-- `Data source name not found`
+Typical message:
+- "Data source name not found"
+
+Resolution:
+- Verify data source configuration
+- Check system DSN settings
+- Ensure ODBC driver is installed
 
 Check:
+1. Driver name in connection string
+2. System DSN configuration
+3. ODBC driver installation (Windows: `Get-OdbcDriver`, Linux: `odbcinst -q -d`)
 
-- Driver name in connection string
-- System DSN configuration
-- Driver installation (Windows: `Get-OdbcDriver`, Linux: `odbcinst -q -d`)
+## 7. Buffer too small on large result sets
 
-## 7. `Buffer too small` on large result sets
+Symptoms:
+- Truncated query results on large datasets
 
-Increase per-connection buffer:
+Resolution:
+- Increase per-connection buffer size
 
+Example:
 ```dart
-ConnectionOptions(maxResultBufferBytes: 32 * 1024 * 1024)
+ConnectionOptions(
+  maxResultBufferBytes: 32 * 1024 * 1024,
+);
 ```
 
-Or page SQL query (TOP/OFFSET-FETCH).
-
-If `connect` fails with options validation error, verify:
-
-- `queryTimeout`, `loginTimeout`, `connectionTimeout`, `reconnectBackoff` >= 0
-- `maxResultBufferBytes` and `initialResultBufferBytes` > 0
-- `initialResultBufferBytes` <= `maxResultBufferBytes` (when both set)
+Or use page SQL query (TOP/OFFSET-FETCH).
 
 ## 8. Release workflow fails
 
 Common errors:
-
 - `cp: cannot stat ...`
-- `Pattern 'uploads/*' does not match any files`
+- Pattern 'uploads/*' does not match any files
 - `403` while creating release
 - `failed to find tool "x86_64-linux-gnu-gcc"` on Windows host (Linux cross-build)
 
-See: [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)
-
 For Linux cross-build error on Windows:
-
 1. Run Linux build in official workflow (`ubuntu-latest`) in `.github/workflows/release.yml`
 2. Or install local cross toolchain for `x86_64-unknown-linux-gnu`
 
@@ -130,14 +151,12 @@ cargo --version
 ```
 
 Linux:
-
 ```bash
 odbcinst -q -d
 odbcinst --version
 ```
 
 Windows:
-
 ```powershell
 Get-OdbcDriver
 ```
@@ -160,12 +179,12 @@ If `cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture` 
 3. Confirm local ODBC connectivity (driver + DSN)
 
 Optional:
-
 - Tune volume with `BULK_BENCH_SMALL_ROWS` and `BULK_BENCH_MEDIUM_ROWS`
 
 ## 12. High pool checkout latency
 
 By default, pool validates connection on checkout (`SELECT 1`).
+
 This reduces broken-connection risk but adds acquisition cost.
 
 For controlled workloads (low invalid-connection probability), disable validation:
@@ -175,23 +194,21 @@ ODBC_POOL_TEST_ON_CHECKOUT=false
 ```
 
 Or per pool in connection string:
-
 ```text
 DSN=MyDsn;PoolTestOnCheckout=false;
 ```
 
 Accepted values: `true/false`, `1/0`, `yes/no`, `on/off`.
+
 When both are defined, connection string takes precedence.
 
 ## 13. Linux link error: `undefined symbol: SQLCompleteAsync`
 
-Symptoms in CI/local Linux:
-
-- `linking with 'cc' failed`
+Symptoms:
+- Linking with 'cc' failed
 - `rust-lld: error: undefined symbol: SQLCompleteAsync`
 
 Root cause:
-
 - `odbc-api` default feature set may require ODBC 3.80 async symbols not exported by all installed `libodbc` variants.
 
 Resolution:
@@ -199,7 +216,7 @@ Resolution:
 Use `odbc-api` with explicit ODBC 3.5 feature in `native/odbc_engine/Cargo.toml`:
 
 ```toml
-odbc-api = { version = "20.1.1", default-features = false, features = ["odbc_version_3_5"] }
+odbc-api = { version = "3.51", default-features = false, features = ["odbc_version_3_5"] }
 ```
 
 Then rebuild:
@@ -207,3 +224,31 @@ Then rebuild:
 ```bash
 cargo test --manifest-path native/Cargo.toml --workspace --all-targets
 ```
+
+## 14. Bulk insert nullability validation
+
+Symptoms:
+- Error: 'Column "name" is non-nullable but contains null at row X. 
+  Use nullable: true for columns that should accept null.'
+
+Cause:
+- Trying to insert `null` into a column defined as non-nullable
+
+Resolution:
+- Set `nullable: true` for columns that should accept null values
+- Or provide actual values for non-nullable columns
+
+Example:
+```dart
+// Don't do this:
+builder.addColumn('id', BulkColumnType.i32)
+  .addRow([null]);
+
+// Do this instead:
+builder.addColumn('id', BulkColumnType.i32, nullable: true)
+  .addRow([null]);
+```
+
+This is a new validation added in Phase 1-2 of the 
+NULL_HANDLING_RELIABILITY_PERFORMANCE_PLAN.
+

@@ -136,22 +136,119 @@ Uint8List serializeParams(List<ParamValue> params) {
   return Uint8List.fromList(out);
 }
 
+/// Converts a single object to a `ParamValue` instance.
+///
+/// Supported implicit input types:
+/// - `null` → `ParamValueNull`
+/// - `ParamValue` → returned as-is
+/// - `int` → `ParamValueInt32` or `ParamValueInt64` (based on range)
+/// - `String` → `ParamValueString`
+/// - `List<int>` or `Uint8List` → `ParamValueBinary`
+/// - `bool` → `ParamValueInt32(1|0)` (canonical mapping)
+/// - `double` → `ParamValueDecimal(value.toString())` (canonical mapping)
+/// - `DateTime` → `ParamValueString(value.toUtc().toIso8601String())`
+///   (canonical mapping)
+///
+/// Throws [ArgumentError] for unsupported types with actionable message.
+///
+/// Example:
+/// ```dart
+/// final pv = toParamValue(42); // ParamValueInt32(42)
+/// final pvNull = toParamValue(null); // ParamValueNull
+/// final pvBool = toParamValue(true); // ParamValueInt32(1)
+/// ```
+ParamValue toParamValue(Object? value) {
+  if (value == null) return const ParamValueNull();
+  if (value is ParamValue) return value;
+
+  // Fast path for int - most common case
+  if (value is int) {
+    if (value >= -0x80000000 && value <= 0x7FFFFFFF) {
+      return ParamValueInt32(value);
+    }
+    return ParamValueInt64(value);
+  }
+
+  // String - common case
+  if (value is String) return ParamValueString(value);
+
+  // Binary data
+  if (value is List<int>) return ParamValueBinary(value);
+
+  // Canonical mappings - explicit conversions with clear semantics
+  if (value is bool) {
+    return ParamValueInt32(value ? 1 : 0);
+  }
+  if (value is double) {
+    return ParamValueDecimal(value.toString());
+  }
+  if (value is DateTime) {
+    return ParamValueString(value.toUtc().toIso8601String());
+  }
+
+  // Unsupported type - explicit error instead of silent toString() fallback
+  throw ArgumentError(
+    'Unsupported parameter type: ${value.runtimeType}. '
+    'Expected one of: null, int, String, List<int>, bool, double, DateTime, '
+    'or ParamValue. '
+    'Use explicit ParamValue wrapper if needed, e.g., '
+    'ParamValueString(value) for custom string conversion.',
+  );
+}
+
 /// Converts a list of objects to `ParamValue` instances.
 ///
-/// Supports null, int, String, `List<int>`, and `ParamValue`.
-/// Other types are converted to string.
+/// Fast path: if all items are already `ParamValue` or `null`,
+/// converts and returns efficiently.
+///
+/// Supported implicit input types:
+/// - `null` → `ParamValueNull`
+/// - `ParamValue` → returned as-is (fast path)
+/// - `int` → `ParamValueInt32` or `ParamValueInt64` (based on range)
+/// - `String` → `ParamValueString`
+/// - `List<int>` → `ParamValueBinary`
+/// - `bool` → `ParamValueInt32(1|0)` (canonical mapping)
+/// - `double` → `ParamValueDecimal(value.toString())` (canonical mapping)
+/// - `DateTime` → `ParamValueString(value.toUtc().toIso8601String())`
+///   (canonical mapping)
+///
+/// Throws [ArgumentError] for unsupported types with actionable message.
+///
+/// Example:
+/// ```dart
+/// final params = paramValuesFromObjects([1, 'hello', null]);
+/// // Returns: [ParamValueInt32(1), ParamValueString('hello'), ParamValueNull()]
+/// ```
 List<ParamValue> paramValuesFromObjects(List<Object?> params) {
-  return params.map((Object? o) {
-    if (o == null) return const ParamValueNull();
-    if (o is ParamValue) return o;
-    if (o is int) {
-      if (o >= -0x80000000 && o <= 0x7FFFFFFF) {
-        return ParamValueInt32(o);
+  // Fast path: check if all items are already ParamValue or null
+  if (params.isNotEmpty) {
+    var allParamValueOrNull = true;
+    for (final item in params) {
+      if (item != null && item is! ParamValue) {
+        allParamValueOrNull = false;
+        break;
       }
-      return ParamValueInt64(o);
     }
-    if (o is String) return ParamValueString(o);
-    if (o is List<int>) return ParamValueBinary(o);
-    return ParamValueString(o.toString());
-  }).toList();
+    if (allParamValueOrNull) {
+      // Fast path: convert nulls to ParamValueNull, skip other items
+      final result =
+          List<ParamValue>.filled(params.length, const ParamValueNull());
+      for (var i = 0; i < params.length; i++) {
+        final item = params[i];
+        if (item is ParamValue) {
+          result[i] = item;
+        }
+      }
+      return result;
+    }
+  }
+
+  // Pre-size output list for better performance
+  final result = List<ParamValue>.filled(params.length, const ParamValueNull());
+
+  for (var i = 0; i < params.length; i++) {
+    result[i] = toParamValue(params[i]);
+  }
+
+  return result;
 }
