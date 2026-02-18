@@ -76,7 +76,10 @@
       "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File update_wrapper.ps1)",
       "Bash(dart clean)",
       "Bash(dir \"D:\\\\Developer\\\\dart_odbc_fast\\\\native\\\\target\\\\release\" /b)",
-      "Bash(iconv:*)"
+      "Bash(iconv:*)",
+      "Bash(\"d:\\\\Developer\\\\dart_odbc_fast\\\\doc\\\\TYPE_MAPPING.md\":*)",
+      "Bash(\"d:\\\\Developer\\\\dart_odbc_fast\\\\doc\\\\TROUBLESHOOTING.md\":*)",
+      "Bash(\"d:\\\\Developer\\\\dart_odbc_fast\\\\doc\\\\README.md\":*)"
     ]
   }
 }
