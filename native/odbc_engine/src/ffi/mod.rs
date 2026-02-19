@@ -1713,10 +1713,11 @@ pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
             StructuredError {
                 sqlstate: *b"0A000",
                 native_code: CANCEL_UNSUPPORTED_NATIVE_CODE,
-                message: "Unsupported feature: Statement cancellation requires background execution. \
+                message:
+                    "Unsupported feature: Statement cancellation requires background execution. \
                 Use query timeout (login_timeout or statement timeout) instead. \
                 See project tracker for implementation status."
-                    .to_string(),
+                        .to_string(),
             },
         );
         1
@@ -2585,7 +2586,10 @@ mod tests {
             let Some(state) = try_lock_global_state() else {
                 panic!("Failed to lock global state");
             };
-            (state.last_error.clone(), state.last_structured_error.clone())
+            (
+                state.last_error.clone(),
+                state.last_structured_error.clone(),
+            )
         };
 
         let result = f();
