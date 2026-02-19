@@ -263,6 +263,26 @@ void _fakeWorkerBulkSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: supports cancel statement request.
+void _fakeWorkerCancelSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((Object? message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is CancelStatementRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: false));
+      return;
+    }
+  });
+}
+
 Uint8List _createStreamTestBuffer() {
   final bytes = <int>[];
 
@@ -773,6 +793,18 @@ void main() {
         expect(e.code, equals(AsyncErrorCode.invalidParameter));
         expect(e.message, contains('Missing required parameters'));
       }
+    });
+  });
+
+  group('AsyncNativeOdbcConnection cancellation', () {
+    test('cancelStatement should return worker bool response', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerCancelSupport,
+      );
+      await async.initialize();
+      final ok = await async.cancelStatement(42);
+      expect(ok, isFalse);
+      async.dispose();
     });
   });
 

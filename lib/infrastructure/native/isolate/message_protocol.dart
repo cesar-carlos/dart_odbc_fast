@@ -17,6 +17,7 @@ enum RequestType {
   savepointRelease,
   prepare,
   executePrepared,
+  cancelStatement,
   closeStatement,
   streamStart,
   streamStartBatched,
@@ -178,6 +179,13 @@ class ExecutePreparedRequest extends WorkerRequest {
   final int timeoutOverrideMs;
   final int fetchSize;
   final int? maxResultBufferBytes;
+}
+
+/// Cancel prepared statement execution.
+class CancelStatementRequest extends WorkerRequest {
+  const CancelStatementRequest(int requestId, this.stmtId)
+      : super(requestId, RequestType.cancelStatement);
+  final int stmtId;
 }
 
 /// Close prepared statement.

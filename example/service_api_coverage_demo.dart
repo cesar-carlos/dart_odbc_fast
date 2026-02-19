@@ -104,6 +104,14 @@ Future<void> _demoPrepareExecuteClose(
     (e) => AppLogger.warning('executePrepared failed: $e'),
   );
 
+  final cancel = await service.cancelStatement(connectionId, stmtId);
+  cancel.fold(
+    (_) => AppLogger.info('cancelStatement OK'),
+    (e) => AppLogger.info(
+      'cancelStatement not available in current runtime (expected): $e',
+    ),
+  );
+
   final close = await service.closeStatement(connectionId, stmtId);
   close.fold(
     (_) => AppLogger.info('closeStatement OK'),

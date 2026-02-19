@@ -79,6 +79,7 @@ struct GlobalState {
 }
 
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
+const CANCEL_UNSUPPORTED_NATIVE_CODE: i32 = 5001;
 
 fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
     GLOBAL_STATE.get_or_init(|| {
@@ -637,17 +638,16 @@ pub extern "C" fn odbc_get_structured_error(
         return -1;
     };
 
-    let error_data = match get_connection_structured_error(&state, None) {
-        Some(err) => err.serialize(),
-        None => {
-            let simple_error = StructuredError {
-                sqlstate: [0u8; 5],
-                native_code: 0,
-                message: get_connection_error(&state, None),
-            };
-            simple_error.serialize()
+    let Some(structured_error) = get_connection_structured_error(&state, None) else {
+        // No structured error available.
+        // Keep explicit contract: caller can fallback to odbc_get_error().
+        unsafe {
+            *out_written = 0;
         }
+        return 1;
     };
+
+    let error_data = structured_error.serialize();
 
     if error_data.len() > buffer_len as usize {
         return -2;
@@ -1708,12 +1708,16 @@ pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
     };
 
     if state.statements.contains_key(&stmt_id) {
-        set_error(
+        set_structured_error(
             &mut state,
-            "Unsupported feature: Statement cancellation requires background execution. \
-            Use query timeout (login_timeout or statement timeout) instead. \
-            See: https://github.com/odbc-fast/dart_odbc_fast/issues/X for tracking."
-                .to_string(),
+            StructuredError {
+                sqlstate: *b"0A000",
+                native_code: CANCEL_UNSUPPORTED_NATIVE_CODE,
+                message: "Unsupported feature: Statement cancellation requires background execution. \
+                Use query timeout (login_timeout or statement timeout) instead. \
+                See project tracker for implementation status."
+                    .to_string(),
+            },
         );
         1
     } else {
@@ -2524,6 +2528,7 @@ mod tests {
     };
     use std::ffi::CString;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Mutex, OnceLock};
 
     /// Base value for invalid IDs; real IDs are typically 1, 2, 3, ...
     const TEST_INVALID_ID_BASE: u32 = 0xDEAD_BEEF;
@@ -2548,6 +2553,50 @@ mod tests {
 
         let len = result as usize;
         String::from_utf8_lossy(&buffer[..len]).to_string()
+    }
+
+    fn trigger_structured_cancel_unsupported_error() {
+        let stmt_id = next_test_invalid_id();
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state
+            .statements
+            .insert(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
+        drop(state);
+        let _ = odbc_cancel(stmt_id);
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state.statements.remove(&stmt_id);
+    }
+
+    fn structured_error_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_structured_error_test_isolation<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = structured_error_test_lock()
+            .lock()
+            .expect("structured error test lock poisoned");
+
+        let (prev_last_error, prev_last_structured_error) = {
+            let Some(state) = try_lock_global_state() else {
+                panic!("Failed to lock global state");
+            };
+            (state.last_error.clone(), state.last_structured_error.clone())
+        };
+
+        let result = f();
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state.last_error = prev_last_error;
+        state.last_structured_error = prev_last_structured_error;
+
+        result
     }
 
     #[test]
@@ -2855,26 +2904,35 @@ mod tests {
 
     #[test]
     fn test_ffi_get_structured_error() {
-        odbc_init();
+        with_structured_error_test_isolation(|| {
+            odbc_init();
 
-        // Trigger an error
-        let _ = odbc_disconnect(TEST_INVALID_ID);
+            // Trigger a structured unsupported-feature error.
+            trigger_structured_cancel_unsupported_error();
 
-        let mut buffer = vec![0u8; 1024];
-        let mut written: c_uint = 0;
+            let mut buffer = vec![0u8; 1024];
+            let mut written: c_uint = 0;
 
-        let result =
-            odbc_get_structured_error(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+            let result = odbc_get_structured_error(
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
 
-        assert_eq!(result, 0, "Should succeed");
-        assert!(written > 0, "Should write data");
+            assert_eq!(result, 0, "Should succeed");
+            assert!(written > 0, "Should write data");
 
-        // Verify the buffer contains structured error data
-        // Format: [sqlstate: 5 bytes][native_code: 4 bytes][message_len: 4 bytes][message: N bytes]
-        assert!(
-            written >= 13,
-            "Should have at least header + message length"
-        );
+            // Verify the buffer contains structured error data
+            // Format: [sqlstate: 5 bytes][native_code: 4 bytes][message_len: 4 bytes][message: N bytes]
+            assert!(
+                written >= 13,
+                "Should have at least header + message length"
+            );
+            let structured =
+                crate::error::StructuredError::deserialize(&buffer[..written as usize]).unwrap();
+            assert_eq!(structured.sqlstate, *b"0A000");
+            assert_eq!(structured.native_code, CANCEL_UNSUPPORTED_NATIVE_CODE);
+        });
     }
 
     #[test]
@@ -2965,19 +3023,24 @@ mod tests {
 
     #[test]
     fn test_ffi_get_structured_error_small_buffer() {
-        odbc_init();
+        with_structured_error_test_isolation(|| {
+            odbc_init();
 
-        // Trigger an error
-        let _ = odbc_disconnect(TEST_INVALID_ID);
+            // Trigger a structured unsupported-feature error.
+            trigger_structured_cancel_unsupported_error();
 
-        // Test with buffer too small for error data
-        let mut buffer = vec![0u8; 5];
-        let mut written: c_uint = 0;
+            // Test with buffer too small for error data
+            let mut buffer = vec![0u8; 5];
+            let mut written: c_uint = 0;
 
-        let result =
-            odbc_get_structured_error(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+            let result = odbc_get_structured_error(
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
 
-        assert_eq!(result, -2, "Buffer too small should return -2");
+            assert_eq!(result, -2, "Buffer too small should return -2");
+        });
     }
 
     #[test]
@@ -3186,20 +3249,28 @@ mod tests {
 
     #[test]
     fn test_ffi_get_structured_error_no_error() {
-        odbc_init();
+        with_structured_error_test_isolation(|| {
+            odbc_init();
 
-        // No error should have been set
-        let mut buffer = vec![0u8; 1024];
-        let mut written: c_uint = 0;
+            // Clear only global structured error for this test scope.
+            let Some(mut state) = try_lock_global_state() else {
+                panic!("Failed to lock global state");
+            };
+            state.last_structured_error = None;
+            drop(state);
 
-        let result =
-            odbc_get_structured_error(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+            let mut buffer = vec![0u8; 1024];
+            let mut written: c_uint = 0;
 
-        assert_eq!(result, 0, "Should succeed even with no error");
-        assert!(
-            written > 0,
-            "Should write data (simple error from 'No error' message)"
-        );
+            let result = odbc_get_structured_error(
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
+
+            assert_eq!(result, 1, "Should indicate missing structured error");
+            assert_eq!(written, 0, "No bytes should be written");
+        });
     }
 
     #[test]
@@ -3654,6 +3725,49 @@ mod tests {
             "Error should mention invalid statement: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_ffi_cancel_supported_path_returns_structured_unsupported_feature() {
+        odbc_init();
+
+        let stmt_id = 1100;
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state
+            .statements
+            .insert(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
+        drop(state);
+
+        let r = odbc_cancel(stmt_id);
+        assert_ne!(r, 0, "Cancel should fail because feature is unsupported");
+
+        let mut buffer = vec![0u8; 1024];
+        let mut written: c_uint = 0;
+        let result =
+            odbc_get_structured_error(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+        assert_eq!(
+            result, 0,
+            "Structured error should be available for unsupported cancel"
+        );
+        assert!(written > 0, "Structured error payload should be non-empty");
+
+        let structured =
+            crate::error::StructuredError::deserialize(&buffer[..written as usize]).unwrap();
+        assert_eq!(structured.sqlstate, *b"0A000");
+        assert_eq!(structured.native_code, CANCEL_UNSUPPORTED_NATIVE_CODE);
+        assert!(
+            structured.message.contains("Unsupported feature")
+                && structured.message.contains("Statement cancellation"),
+            "Unexpected structured error message: {}",
+            structured.message
+        );
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state.statements.remove(&stmt_id);
     }
 
     #[test]

@@ -51,7 +51,23 @@ await conn.dispose();
 
 Expected async error codes: `requestTimeout` and `workerTerminated`.
 
-## 4. Unsupported parameter type
+## 4. Statement cancellation unsupported
+
+Symptoms:
+- `cancelStatement(...)` returns failure
+- Error contains "Unsupported feature" and SQLSTATE `0A000`
+
+Cause:
+- Native runtime exposes cancellation entrypoint but full background execution
+  cancellation is not implemented end-to-end yet.
+
+Resolution:
+- Use timeout-based control instead:
+  - `ConnectionOptions.queryTimeout`
+  - statement timeout at prepare/execution options
+- Keep application flow idempotent for timeout/retry handling.
+
+## 5. Unsupported parameter type
 
 Symptoms:
 - Error: "Unsupported parameter type: X"
@@ -71,7 +87,7 @@ Migration Guide:
 2. Convert to canonical type or use explicit `ParamValue` wrapper
 3. Run `dart analyze` to verify changes
 
-## 5. Bulk insert nullability error
+## 6. Bulk insert nullability error
 
 Symptoms:
 - Error: 'Column "name" is non-nullable but contains null at row X. 
@@ -95,7 +111,7 @@ builder.addColumn('id', BulkColumnType.i32, nullable: true)
   .addRow([null]);
 ```
 
-## 6. ODBC IM002 (driver/DSN) error
+## 7. ODBC IM002 (driver/DSN) error
 
 Symptoms:
 - Error message contains SQLSTATE code starting with "IM002"
@@ -113,7 +129,7 @@ Check:
 2. System DSN configuration
 3. ODBC driver installation (Windows: `Get-OdbcDriver`, Linux: `odbcinst -q -d`)
 
-## 7. Buffer too small on large result sets
+## 8. Buffer too small on large result sets
 
 Symptoms:
 - Truncated query results on large datasets
@@ -130,7 +146,7 @@ ConnectionOptions(
 
 Or use page SQL query (TOP/OFFSET-FETCH).
 
-## 8. Release workflow fails
+## 9. Release workflow fails
 
 Common errors:
 - `cp: cannot stat ...`
@@ -142,7 +158,7 @@ For Linux cross-build error on Windows:
 1. Run Linux build in official workflow (`ubuntu-latest`) in `.github/workflows/release.yml`
 2. Or install local cross toolchain for `x86_64-unknown-linux-gnu`
 
-## 9. Quick diagnostics
+## 10. Quick diagnostics
 
 ```bash
 dart --version
@@ -161,7 +177,7 @@ Windows:
 Get-OdbcDriver
 ```
 
-## 10. When to open an issue
+## 11. When to open an issue
 
 Open an issue at https://github.com/cesar-carlos/dart_odbc_fast/issues with:
 
@@ -170,7 +186,7 @@ Open an issue at https://github.com/cesar-carlos/dart_odbc_fast/issues with:
 3. Reproduction steps
 4. Minimal code snippet
 
-## 11. Rust benchmark (bulk array vs parallel) was skipped
+## 12. Rust benchmark (bulk array vs parallel) was skipped
 
 If `cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture` does not execute:
 
@@ -181,7 +197,7 @@ If `cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture` 
 Optional:
 - Tune volume with `BULK_BENCH_SMALL_ROWS` and `BULK_BENCH_MEDIUM_ROWS`
 
-## 12. High pool checkout latency
+## 13. High pool checkout latency
 
 By default, pool validates connection on checkout (`SELECT 1`).
 
@@ -202,7 +218,7 @@ Accepted values: `true/false`, `1/0`, `yes/no`, `on/off`.
 
 When both are defined, connection string takes precedence.
 
-## 13. Linux link error: `undefined symbol: SQLCompleteAsync`
+## 14. Linux link error: `undefined symbol: SQLCompleteAsync`
 
 Symptoms:
 - Linking with 'cc' failed
@@ -225,7 +241,7 @@ Then rebuild:
 cargo test --manifest-path native/Cargo.toml --workspace --all-targets
 ```
 
-## 14. Bulk insert nullability validation
+## 15. Bulk insert nullability validation
 
 Symptoms:
 - Error: 'Column "name" is non-nullable but contains null at row X. 
@@ -251,4 +267,3 @@ builder.addColumn('id', BulkColumnType.i32, nullable: true)
 
 This is a new validation added in Phase 1-2 of the 
 NULL_HANDLING_RELIABILITY_PERFORMANCE_PLAN.
-

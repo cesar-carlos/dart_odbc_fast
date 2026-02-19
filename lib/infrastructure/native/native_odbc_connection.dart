@@ -231,6 +231,11 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
         maxBufferBytes,
       );
 
+  /// Requests cancellation of a prepared statement execution.
+  ///
+  /// Returns true on success, false when cancellation fails or is unsupported.
+  bool cancelStatement(int stmtId) => _native.cancelStatement(stmtId);
+
   @override
   bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
 

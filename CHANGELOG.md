@@ -8,13 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _None_
+- Statement cancellation API exposed at high-level service/repository layers:
+  `cancelStatement(connectionId, stmtId)`
+- `UnsupportedFeatureError` in Dart domain errors for explicit unsupported capability reporting
 
 ### Changed
-- _None_
+- Statement cancellation contract standardized as explicit unsupported at runtime
+  (Option B path), with structured native error SQLSTATE `0A000`
+- Sync and async cancellation paths now aligned with equivalent behavior and
+  consistent unsupported semantics
+- Canonical docs aligned for cancellation status and workaround guidance:
+  `README.md`, `doc/TROUBLESHOOTING.md`, `example/README.md`
 
 ### Fixed
-- _None_
+- Removed ambiguity between exposed cancellation entrypoints and current runtime
+  capability by returning explicit unsupported contract instead of implicit behavior
 
 ## [1.0.3] - 2026-02-16
 

@@ -28,7 +28,7 @@
 ### High-level service (`OdbcService`)
 
 - Query execution: `executeQuery`, `executeQueryParams`, `executeQueryNamed`
-- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`, `executePreparedNamed`, `closeStatement`
+- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`, `executePreparedNamed`, `cancelStatement`, `closeStatement`
 - Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
@@ -38,6 +38,15 @@
 - Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolClose`
 - Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with fallback when `parallelism <= 1`)
 - Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`
+
+### Statement cancellation status
+
+- `cancelStatement` is exposed in low-level and high-level APIs.
+- Current runtime contract returns unsupported feature for statement cancellation
+  (SQLSTATE `0A000`) because active background cancellation is not yet wired
+  end-to-end.
+- Use query timeout as workaround (`ConnectionOptions.queryTimeout`,
+  prepare/statement timeout options).
 
 ### Low-level wrappers (`NativeOdbcConnection`)
 
@@ -254,7 +263,8 @@ Coverage-oriented examples:
 
 - `example/service_api_coverage_demo.dart`: exercises service methods that are
   less visible in quick-start docs (`executeQueryParams`, `prepare`,
-  `executePrepared`, `closeStatement`, pool APIs, `bulkInsert`).
+  `executePrepared`, `cancelStatement`, `closeStatement`, pool APIs,
+  `bulkInsert`).
 - `example/advanced_entities_demo.dart`: demonstrates exported advanced types
   and helpers (`RetryHelper`, `RetryOptions`, `PreparedStatementConfig`,
   `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).

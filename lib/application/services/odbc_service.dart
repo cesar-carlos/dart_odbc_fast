@@ -99,6 +99,11 @@ abstract class IOdbcService {
     int stmtId,
   );
 
+  Future<Result<void>> cancelStatement(
+    String connectionId,
+    int stmtId,
+  );
+
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
@@ -360,6 +365,14 @@ class OdbcService implements IOdbcService {
     int stmtId,
   ) async {
     return _repository.closeStatement(connectionId, stmtId);
+  }
+
+  @override
+  Future<Result<void>> cancelStatement(
+    String connectionId,
+    int stmtId,
+  ) async {
+    return _repository.cancelStatement(connectionId, stmtId);
   }
 
   @override

@@ -184,6 +184,13 @@ abstract class IOdbcRepository {
   /// a statement prepared with [prepare].
   Future<Result<Unit>> closeStatement(String connectionId, int stmtId);
 
+  /// Attempts to cancel an executing prepared statement.
+  ///
+  /// The [connectionId] and [stmtId] must be valid.
+  /// Implementations may return unsupported feature errors when runtime
+  /// cancellation is not available.
+  Future<Result<Unit>> cancelStatement(String connectionId, int stmtId);
+
   /// Executes a SQL query with parameters.
   ///
   /// Convenience method that combines prepare and execute in a single call.

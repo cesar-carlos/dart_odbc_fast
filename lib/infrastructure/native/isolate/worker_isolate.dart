@@ -166,6 +166,10 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
+      case CancelStatementRequest():
+        final ok = conn.cancelStatement(request.stmtId);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
       case CloseStatementRequest():
         final ok = conn.closeStatement(request.stmtId);
         sendPort.send(BoolResponse(request.requestId, value: ok));
@@ -407,6 +411,7 @@ void _sendErrorResponse(
     case ConnectRequest():
       sendPort.send(ConnectResponse(id, 0, error: error));
     case DisconnectRequest():
+    case CancelStatementRequest():
     case CloseStatementRequest():
     case PoolReleaseConnectionRequest():
     case PoolHealthCheckRequest():

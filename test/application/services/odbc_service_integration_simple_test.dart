@@ -344,6 +344,103 @@ void main() {
           await locator!.syncService.disconnect(connection.id);
         },
       );
+
+      test(
+        'should return unsupported when cancelling prepared statement '
+        '(Option B)',
+        () async {
+          if (skipReason != null ||
+              dsn == null ||
+              dsn!.isEmpty ||
+              locator == null) {
+            return;
+          }
+
+          final connResult = await locator!.syncService.connect(dsn!);
+          final connection =
+              connResult.getOrElse((_) => throw Exception('Failed to connect'));
+
+          final prepared = await locator!.syncService.prepare(
+            connection.id,
+            'SELECT 1',
+          );
+          final stmtId =
+              prepared.getOrElse((_) => throw Exception('Failed to prepare'));
+
+          final cancelResult =
+              await locator!.syncService.cancelStatement(connection.id, stmtId);
+
+          expect(cancelResult.isSuccess(), isFalse);
+          cancelResult.fold(
+            (_) => fail('Expected unsupported cancellation error'),
+            (e) {
+              expect(e, isA<UnsupportedFeatureError>());
+              final unsupported = e as UnsupportedFeatureError;
+              expect(
+                unsupported.message.toLowerCase(),
+                allOf(contains('unsupported'), contains('cancellation')),
+              );
+              final sqlState = unsupported.sqlState;
+              expect(
+                sqlState == '0A000' || sqlState == '\x00\x00\x00\x00\x00',
+                isTrue,
+              );
+            },
+          );
+
+          await locator!.syncService.closeStatement(connection.id, stmtId);
+          await locator!.syncService.disconnect(connection.id);
+        },
+      );
+
+      test(
+        'should reject cancelStatement when statement belongs '
+        'to other connection',
+        () async {
+          if (skipReason != null ||
+              dsn == null ||
+              dsn!.isEmpty ||
+              locator == null) {
+            return;
+          }
+
+          final connResultA = await locator!.syncService.connect(dsn!);
+          final connA =
+              connResultA.getOrElse(
+            (_) => throw Exception('Failed to connect A'),
+          );
+          final connResultB = await locator!.syncService.connect(dsn!);
+          final connB =
+              connResultB.getOrElse(
+            (_) => throw Exception('Failed to connect B'),
+          );
+
+          final prepared = await locator!.syncService.prepare(
+            connA.id,
+            'SELECT 1',
+          );
+          final stmtId =
+              prepared.getOrElse((_) => throw Exception('Failed to prepare'));
+
+          final cancelResult =
+              await locator!.syncService.cancelStatement(connB.id, stmtId);
+          expect(cancelResult.isSuccess(), isFalse);
+          cancelResult.fold(
+            (_) => fail('Expected validation failure'),
+            (e) {
+              expect(e, isA<ValidationError>());
+              expect(
+                (e as ValidationError).message,
+                contains('does not belong to connection ID'),
+              );
+            },
+          );
+
+          await locator!.syncService.closeStatement(connA.id, stmtId);
+          await locator!.syncService.disconnect(connA.id);
+          await locator!.syncService.disconnect(connB.id);
+        },
+      );
     },
     skip: runningOnCi ? 'Disabled in CI workflow (integration/e2e)' : null,
   );
@@ -541,6 +638,15 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Future<Result<Unit>> closeStatement(String connectionId, int stmtId) async {
     return const Success(unit);
+  }
+
+  @override
+  Future<Result<Unit>> cancelStatement(String connectionId, int stmtId) async {
+    return const Failure(
+      UnsupportedFeatureError(
+        message: 'Statement cancellation is not supported',
+      ),
+    );
   }
 
   @override

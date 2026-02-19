@@ -675,6 +675,10 @@ class OdbcNative {
   /// Cancels a prepared statement execution.
   ///
   /// The [stmtId] must be a valid prepared statement identifier.
+  ///
+  /// Current native contract may return unsupported feature errors depending
+  /// on runtime capabilities.
+  ///
   /// Returns true on success, false on failure.
   bool cancelStatement(int stmtId) {
     return _bindings.odbc_cancel(stmtId) == 0;

@@ -224,6 +224,17 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<void>> cancelStatement(
+    String connectionId,
+    int stmtId,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.cancelStatement',
+      () => _service.cancelStatement(connectionId, stmtId),
+    );
+  }
+
+  @override
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,

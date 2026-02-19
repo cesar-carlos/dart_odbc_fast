@@ -560,6 +560,16 @@ class AsyncNativeOdbcConnection {
     return r.data;
   }
 
+  /// Requests cancellation of prepared statement [stmtId] in the worker.
+  ///
+  /// Returns `true` if cancellation request succeeded, `false` otherwise.
+  Future<bool> cancelStatement(int stmtId) async {
+    final r = await _sendRequest<BoolResponse>(
+      CancelStatementRequest(_nextRequestId(), stmtId),
+    );
+    return r.value;
+  }
+
   /// Closes the prepared statement [stmtId] in the worker.
   Future<bool> closeStatement(int stmtId) async {
     try {

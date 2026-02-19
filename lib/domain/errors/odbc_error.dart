@@ -127,6 +127,20 @@ final class QueryError extends OdbcError {
   });
 }
 
+/// Error indicating requested capability is not supported by current runtime.
+///
+/// Typical examples:
+/// - Statement cancellation when native runtime exposes no active cancel path
+/// - Driver/runtime combinations that do not implement a specific API
+final class UnsupportedFeatureError extends OdbcError {
+  /// Creates a new [UnsupportedFeatureError] instance.
+  const UnsupportedFeatureError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+  });
+}
+
 /// Error indicating invalid input or parameters.
 ///
 /// This error is thrown when user-provided data fails validation

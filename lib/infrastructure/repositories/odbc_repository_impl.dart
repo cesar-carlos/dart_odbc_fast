@@ -68,14 +68,65 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   final Map<String, ConnectionOptions?> _connectionOptions = {};
   final Map<String, String> _connectionStrings = {};
   final Map<int, List<String>> _namedParamOrderByStmtId = {};
+  final Map<int, String> _statementConnectionByStmtId = {};
 
   /// Message used when a query times out (ConnectionOptions.queryTimeout).
   static const String _queryTimedOutMessage = 'Query timed out';
   static const String _streamProtocolErrorPrefix = 'Streaming protocol error';
   static const String _streamInterruptedPrefix = 'Streaming interrupted';
+  static const String _unsupportedCancelSqlState = '0A000';
+  static const int _unsupportedCancelNativeCode = 5001;
 
   /// Whether this repository uses async backend (non-blocking operations).
   bool get _isAsync => _native is AsyncNativeOdbcConnection;
+
+  bool _isUnsupportedCancellation({
+    required String message,
+    required String? sqlState,
+    required int? nativeCode,
+  }) {
+    final normalizedSqlState = (sqlState ?? '').replaceAll('\x00', '').trim();
+    if (sqlState == _unsupportedCancelSqlState ||
+        normalizedSqlState == _unsupportedCancelSqlState ||
+        nativeCode == _unsupportedCancelNativeCode) {
+      return true;
+    }
+
+    // Compatibility fallback for older native binaries that only expose text.
+    final lower = message.toLowerCase();
+    return lower.contains('unsupported feature') &&
+        lower.contains('statement cancellation');
+  }
+
+  Failure<T, OdbcError>? _validateStatementOwnership<T extends Object>({
+    required String connectionId,
+    required int stmtId,
+    required String operationName,
+  }) {
+    if (!_connectionIds.containsKey(connectionId)) {
+      return Failure<T, OdbcError>(
+        const ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+    final ownerConnectionId = _statementConnectionByStmtId[stmtId];
+    if (ownerConnectionId == null) {
+      return Failure<T, OdbcError>(
+        ValidationError(
+          message: 'Unknown statement ID for $operationName. '
+              'Prepare statement first.',
+        ),
+      );
+    }
+    if (ownerConnectionId != connectionId) {
+      return Failure<T, OdbcError>(
+        ValidationError(
+          message: 'Statement ID $stmtId does not belong '
+              'to connection ID $connectionId',
+        ),
+      );
+    }
+    return null;
+  }
 
   /// Converts native error to Failure with proper error type.
   ///
@@ -312,6 +363,14 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           : (_native as NativeOdbcConnection).disconnect(nativeId);
 
       if (success) {
+        final stmtIdsToRemove = _statementConnectionByStmtId.entries
+            .where((entry) => entry.value == connectionId)
+            .map((entry) => entry.key)
+            .toList(growable: false);
+        for (final stmtId in stmtIdsToRemove) {
+          _statementConnectionByStmtId.remove(stmtId);
+          _namedParamOrderByStmtId.remove(stmtId);
+        }
         _connectionIds.remove(connectionId);
         _connectionOptions.remove(connectionId);
         _connectionStrings.remove(connectionId);
@@ -837,6 +896,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           fallbackMessage: 'Failed to prepare statement',
         );
       }
+      _statementConnectionByStmtId[stmtId] = connectionId;
       return Success(stmtId);
     } on Exception catch (e) {
       return Failure<int, OdbcError>(QueryError(message: e.toString()));
@@ -873,6 +933,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     List<dynamic>? params,
     StatementOptions? options,
   ]) async {
+    final ownership = _validateStatementOwnership<QueryResult>(
+      connectionId: connectionId,
+      stmtId: stmtId,
+      operationName: 'executePrepared',
+    );
+    if (ownership != null) return ownership;
+
     try {
       final list = params ?? [];
       final pv = list.isEmpty ? null : _toParamValues(list);
@@ -964,6 +1031,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   @override
   Future<Result<Unit>> closeStatement(String connectionId, int stmtId) async {
+    final ownership = _validateStatementOwnership<Unit>(
+      connectionId: connectionId,
+      stmtId: stmtId,
+      operationName: 'closeStatement',
+    );
+    if (ownership != null) return ownership;
+
     try {
       final ok = _isAsync
           ? await (_native as AsyncNativeOdbcConnection).closeStatement(stmtId)
@@ -987,6 +1061,68 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     } finally {
       _namedParamOrderByStmtId.remove(stmtId);
+      _statementConnectionByStmtId.remove(stmtId);
+    }
+  }
+
+  @override
+  Future<Result<Unit>> cancelStatement(String connectionId, int stmtId) async {
+    final ownership = _validateStatementOwnership<Unit>(
+      connectionId: connectionId,
+      stmtId: stmtId,
+      operationName: 'cancelStatement',
+    );
+    if (ownership != null) return ownership;
+
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).cancelStatement(stmtId)
+          : (_native as NativeOdbcConnection).cancelStatement(stmtId);
+      if (ok) return const Success(unit);
+
+      final structuredError = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getStructuredError()
+          : (_native as NativeOdbcConnection).getStructuredError();
+      final errorMsg = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getError()
+          : (_native as NativeOdbcConnection).getError();
+      final message = (errorMsg.isNotEmpty && errorMsg != 'No error')
+          ? errorMsg
+          : (structuredError?.message.isNotEmpty ?? false)
+              ? structuredError!.message
+              : 'Failed to cancel statement';
+      final sqlState = structuredError?.sqlStateString;
+      final nativeCode = structuredError?.nativeCode;
+
+      if (_isUnsupportedCancellation(
+        message: message,
+        sqlState: sqlState,
+        nativeCode: nativeCode,
+      )) {
+        return Failure<Unit, OdbcError>(
+          UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+        );
+      }
+
+      if (message.contains('Invalid statement ID')) {
+        return Failure<Unit, OdbcError>(
+          ValidationError(message: message),
+        );
+      }
+
+      return Failure<Unit, OdbcError>(
+        QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     }
   }
 
