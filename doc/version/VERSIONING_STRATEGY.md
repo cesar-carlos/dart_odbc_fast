@@ -1,21 +1,21 @@
-﻿# VERSIONING_STRATEGY.md - Versioning Strategy
+# VERSIONING_STRATEGY.md - Versioning Strategy
 
 ## Objective
 
-Define a single policy for package versions, tags, and breaking-change communication.
+Define the canonical policy for package versions, tags, and breaking-change communication.
 
-## Current state
+## Current phase
 
-- Current package version: `1.1.0`
-- Phase: post-1.0.0 (stable SemVer)
+- This project is post-`1.0.0` and follows stable SemVer.
+- Current package version must be read from `pubspec.yaml`.
 
-## Main rule (post-1.0.0)
+## Canonical SemVer rule (post-1.0.0)
 
 For `x.y.z`:
 
 - Public API breaking change: bump **MAJOR** (`1.1.0` -> `2.0.0`)
 - Backward-compatible feature: bump **MINOR** (`1.1.0` -> `1.2.0`)
-- Bug fix/performance/docs: bump **PATCH** (`1.1.0` -> `1.1.1`)
+- Bug fix/performance/docs/internal refactor: bump **PATCH** (`1.1.0` -> `1.1.1`)
 
 ## Legacy rule (pre-1.0.0)
 
@@ -32,7 +32,7 @@ For `0.x.y`:
 3. Changing public return type
 4. Adding required parameter
 5. Removing existing parameter
-6. Contract behavior change without fallback
+6. Contract behavior change without fallback/migration path
 
 ## What does not count as breaking
 
@@ -56,13 +56,13 @@ Format:
 - Beta: `vX.Y.Z-beta.N`
 - Dev: `vX.Y.Z-dev.N`
 
-## Bump checklist
+## Release bump checklist
 
-1. Define change type (breaking or not)
+1. Define change type (breaking, feature, patch)
 2. Update `pubspec.yaml`
-3. Update `CHANGELOG.md` with correct sections
+3. Update `CHANGELOG.md` with `## [X.Y.Z] - YYYY-MM-DD`
 4. Validate tests/build
-5. Create tag
+5. Create and push tag
 
 Operational note:
 
@@ -71,29 +71,9 @@ Operational note:
   - tag consistency with `pubspec.yaml`
   - matching section in `CHANGELOG.md`
 
-## Decision examples
-
-### Example A - new optional parameter
-
-Change:
-
-```dart
-Future<QueryResult> execute(String sql, {Duration? timeout});
-```
-
-Decision at `1.1.0`: `1.2.0` (MINOR).
-
-### Example B - rename public method
-
-Change:
-
-- `execute` -> `executeQuery`
-
-Decision at `1.1.0`: `2.0.0` (MAJOR).
-
 ## Related documents
 
 - [VERSIONING_QUICK_REFERENCE.md](VERSIONING_QUICK_REFERENCE.md)
 - [CHANGELOG_TEMPLATE.md](CHANGELOG_TEMPLATE.md)
 - [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)
-- [CHANGELOG.md](../CHANGELOG.md)
+- [CHANGELOG.md](../../CHANGELOG.md)

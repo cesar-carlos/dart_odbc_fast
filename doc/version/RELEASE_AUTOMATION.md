@@ -1,20 +1,18 @@
-﻿# RELEASE_AUTOMATION.md - Release Process
+# RELEASE_AUTOMATION.md - Release Process
 
-This project uses `release.yml` to generate native binaries when a `v*` tag is pushed.
+This project uses `.github/workflows/release.yml` to generate native binaries when a `v*` tag is pushed.
 
-## Official Flow
+Version-bump policy is canonical in `VERSIONING_STRATEGY.md`. This document focuses on release execution.
 
-1. Update `pubspec.yaml` (version) and `CHANGELOG.md`.
+## Official flow
+
+1. Update `pubspec.yaml` and `CHANGELOG.md`.
 2. Run local validation.
 3. Create and push tag `vX.Y.Z`.
 4. Release workflow builds Linux/Windows binaries and creates GitHub Release.
 5. Publish package to pub.dev.
 
-## Workflow File
-
-- `.github/workflows/release.yml`
-
-Triggers:
+## Workflow triggers
 
 - `push` on tags `v*`
 - `workflow_dispatch` with required `tag` input (example: `v1.1.0`)
@@ -30,18 +28,17 @@ Notes:
 
 - Checks out the release ref (tag) with full history
 - Validates release metadata before build:
-  - tag format (`vX.Y.Z` with optional `-rc.N/-beta.N/-dev.N` suffixes)
+  - tag format (`vX.Y.Z` with optional `-rc.N/-beta.N/-dev.N`)
   - consistency `tag == v<pubspec.yaml version>`
   - existence of `## [X.Y.Z]` section in `CHANGELOG.md`
 - Runs non-integration quality gate:
-  - `cargo build --release` (host, needed for Dart tests with native binding)
+  - `cargo build --release`
   - `cargo fmt --all -- --check`
   - `dart analyze`
   - unit-only Dart tests (`test/application`, `test/domain`, `test/infrastructure`, `test/helpers/database_detection_test.dart`)
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test -p odbc_engine --lib`
 - Forces `ENABLE_E2E_TESTS=0` and `RUN_SKIPPED_TESTS=0`
-- Does not run `test/integration`, `test/e2e`, `test/stress`, or `test/my_test`
 
 ### Job `build-binaries`
 
@@ -58,17 +55,13 @@ Notes:
 - Downloads artifacts
 - Validates both required files (`odbc_engine.dll`, `libodbc_engine.so`)
 - Publishes release via `softprops/action-gh-release`
-- Uses explicit `tag_name` and `name`
 - Marks prerelease automatically for tags containing `-rc.`, `-beta.`, or `-dev.`
-- Expected release assets:
-  - `odbc_engine.dll`
-  - `libodbc_engine.so`
 
-## Release Checklist
+## Release checklist
 
 1. Define target version and update `pubspec.yaml`.
 2. Update `CHANGELOG.md` with section `## [X.Y.Z] - YYYY-MM-DD`.
-3. Run local pre-release smoke checks.
+3. Run local smoke checks.
 4. `dart pub publish --dry-run`.
 5. Commit release changes.
 6. Create and push tag `vX.Y.Z`.
@@ -76,9 +69,7 @@ Notes:
 8. Verify GitHub Release contains both artifacts.
 9. Publish to pub.dev.
 
-## Pre-release smoke (Windows + Linux)
-
-To reduce risk before tagging:
+## Pre-release smoke
 
 1. `dart analyze`
 2. `dart test`
@@ -91,7 +82,7 @@ To reduce risk before tagging:
 Linux note on Windows host:
 
 - `cargo build/check --target x86_64-unknown-linux-gnu` requires cross toolchain (example: `x86_64-linux-gnu-gcc`).
-- If unavailable locally, use official workflow Linux job (`ubuntu-latest`) as mandatory Linux validation.
+- If unavailable locally, use the official workflow Linux job as mandatory Linux validation.
 
 ## Commands
 
@@ -109,29 +100,13 @@ git push origin vX.Y.Z
 dart pub publish
 ```
 
-Optional PowerShell helper (repo root):
+PowerShell helper (repo root):
 
 ```powershell
 .\scripts\create_release.ps1 1.1.0
 ```
 
-This helper:
-
-1. validates tag format
-2. validates `pubspec.yaml` vs tag
-3. validates `CHANGELOG.md` section
-4. creates and pushes the tag to trigger release workflow
-
-## Post-release verification
-
-1. GitHub Release contains both binaries at release root.
-2. pub.dev published version matches tag.
-3. `dart pub add odbc_fast` + `dart pub get` works in a clean environment.
-
-Note:
-
-- `artifacts/RELEASE_NOTES.md` is a legacy/manual template only.
-- The standard flow uses GitHub automatic notes (`generate_release_notes`).
+This helper validates tag format, validates `pubspec.yaml` and `CHANGELOG.md`, then creates and pushes the tag.
 
 ## Common failures
 

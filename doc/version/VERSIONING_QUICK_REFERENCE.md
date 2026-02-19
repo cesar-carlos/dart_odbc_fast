@@ -1,32 +1,30 @@
-﻿# VERSIONING_QUICK_REFERENCE.md - Quick Reference
+# VERSIONING_QUICK_REFERENCE.md - Quick Reference
 
 ## 10-second decision
 
-If version is `0.x.y`:
+Current project phase: `>=1.0.0` (stable SemVer).
 
-- Public API breaking change -> `0.(x+1).0`
-- Non-breaking change (feature/fix/docs/perf) -> `0.x.(y+1)`
-
-If version is `>=1.0.0`:
-
-- Breaking -> `MAJOR`
+- Breaking public API change -> `MAJOR`
 - Backward-compatible feature -> `MINOR`
-- Fix/perf/docs -> `PATCH`
+- Fix/performance/docs/internal cleanup -> `PATCH`
 
-Current project phase: `>=1.0.0`.
+Legacy (`0.x.y`) rule:
 
-## Quick table (pre-1.0.0)
+- Breaking -> `0.(x+1).0`
+- Non-breaking (feature/fix/docs/perf) -> `0.x.(y+1)`
+
+## Quick table (stable SemVer)
 
 | Change type               | Bump  |
 | ------------------------- | ----- |
-| Rename/remove public API  | MINOR |
-| Change public return type | MINOR |
-| Add required parameter    | MINOR |
-| Add new method            | PATCH |
-| Add optional parameter    | PATCH |
+| Rename/remove public API  | MAJOR |
+| Change public return type | MAJOR |
+| Add required parameter    | MAJOR |
+| Add new public method     | MINOR |
+| Add optional parameter    | MINOR |
 | Bug fix                   | PATCH |
 | Performance               | PATCH |
-| Documentation             | PATCH |
+| Documentation only        | PATCH |
 
 ## Breaking checklist
 
@@ -40,10 +38,10 @@ Mark as breaking if any item is true:
 ## Examples
 
 1. `execute(String sql)` -> `execute(String sql, {Duration? timeout})`
-   Result: PATCH.
+   Result: MINOR (post-1.0.0).
 
 2. `execute(String sql)` -> `executeQuery(String sql)`
-   Result: MINOR (pre-1.0.0) / MAJOR (post-1.0.0).
+   Result: MAJOR (post-1.0.0).
 
 ## Useful commands
 

@@ -102,8 +102,10 @@ RUN_SKIPPED_TESTS=1 dart test
 
 In PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Accepted values: `1`, `true`, `yes`.
 
-## Related Troubleshooting
+## Related Documentation
 
-- Library not found issues: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- Release/tag/workflow issues: [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md)
-- Versioning policy: [VERSIONING_STRATEGY.md](VERSIONING_STRATEGY.md)
+- Release/tag/workflow issues: [RELEASE_AUTOMATION.md](version/RELEASE_AUTOMATION.md)
+- Versioning policy: [VERSIONING_STRATEGY.md](version/VERSIONING_STRATEGY.md)
+- Quick version bump decisions: [VERSIONING_QUICK_REFERENCE.md](version/VERSIONING_QUICK_REFERENCE.md)
+- Changelog entry template: [CHANGELOG_TEMPLATE.md](version/CHANGELOG_TEMPLATE.md)
+- Data type mapping contract: [TYPE_MAPPING.md](notes/TYPE_MAPPING.md)
