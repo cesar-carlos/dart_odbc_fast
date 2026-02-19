@@ -9,6 +9,7 @@ name: CI
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CI: "true"
       ENABLE_E2E_TESTS: "0"
@@ -23,19 +24,17 @@ jobs:
         with:
           sdk: stable
 
-      - name: Setup Rust
+      - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ${{ format('{0}-cargo-{1}', runner.os, hashFiles('native/**/Cargo.toml', 'native/**/Cargo.lock')) }}
+          workspaces: |
+            native -> target
 
       - name: Install ODBC (Linux)
         run: |
@@ -71,10 +70,40 @@ jobs:
           test/infrastructure
           test/helpers/database_detection_test.dart
 
+  coverage:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      ENABLE_E2E_TESTS: "0"
+      RUN_SKIPPED_TESTS: "0"
+      ODBC_TEST_DSN: ""
+      ODBC_DSN: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (pinned toolchain)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+
+      - name: Install ODBC (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+
       - name: Rust coverage (lib)
         run: |
           cd native
-          cargo install cargo-tarpaulin
+          cargo install --locked cargo-tarpaulin
           cargo tarpaulin -p odbc_engine --lib --out Html --out Lcov --output-dir coverage
 
       - name: Upload coverage report

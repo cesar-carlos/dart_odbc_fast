@@ -221,13 +221,13 @@ To generate coverage (HTML + LCOV) with [cargo-tarpaulin](https://github.com/xd0
 .\scripts\run_coverage.ps1
 ```
 
-Requires `cargo install cargo-tarpaulin`. Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.
-
-The heuristic/estimator (no DB, fast) is available as:
+If `cargo-tarpaulin` is not installed, run:
 
 ```powershell
-.\scripts\analyze_coverage.ps1
+.\scripts\run_coverage.ps1 -InstallTools
 ```
+
+Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.
 
 ## Debugging
 

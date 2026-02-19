@@ -1,6 +1,10 @@
 # Runs cargo-tarpaulin to generate Rust code coverage (HTML + LCOV).
-# Requires: cargo install cargo-tarpaulin
+# Requires: cargo-tarpaulin (install manually or use -InstallTools)
 # Output: native/coverage/tarpaulin-report.html and native/coverage/lcov.info
+
+param(
+    [switch]$InstallTools
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -19,10 +23,14 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Error "cargo not found. Install Rust from https://rustup.rs"
 }
 
-$tarpaulin = cargo tarpaulin --version 2>&1
+$null = cargo tarpaulin --version 2>&1
 if ($LASTEXITCODE -ne 0) {
+    if (-not $InstallTools) {
+        Write-Error "cargo-tarpaulin not found. Install with: cargo install --locked cargo-tarpaulin (or run with -InstallTools)."
+        exit 1
+    }
     Write-Host "Installing cargo-tarpaulin..." -ForegroundColor Yellow
-    cargo install cargo-tarpaulin
+    cargo install --locked cargo-tarpaulin
 }
 
 Push-Location $workspaceRoot

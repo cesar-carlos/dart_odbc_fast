@@ -1,8 +1,11 @@
 # Build Rust, then run all Dart tests
-# Usage: .\scripts\test_all.ps1 (from project root)
+# Usage: .\scripts\test_all.ps1 [-SkipRust] [-Concurrency N] (from project root)
+# Example: .\scripts\test_all.ps1 -Concurrency 4
 
 param(
-    [switch]$SkipRust
+    [switch]$SkipRust,
+    [ValidateRange(1, 64)]
+    [int]$Concurrency = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,8 +52,8 @@ try {
     }
 
     Write-Host "[2/2] Running dart test..." -ForegroundColor Yellow
-    # Run tests sequentially to avoid resource contention (ServiceLocator singleton, worker isolates)
-    dart test --concurrency=1
+    # Keep default at 1 for max stability, but allow higher values for faster local feedback.
+    dart test --concurrency=$Concurrency
     $exitCode = $LASTEXITCODE
 }
 finally {

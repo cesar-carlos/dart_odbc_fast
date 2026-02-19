@@ -1,103 +1,180 @@
-# Complete validation script for Rust + Dart
+# Full validation script for Rust + Dart + artifacts.
+# Use -ArtifactsOnly for a quick artifact check (replacement for old check_build.ps1).
+#
+# Usage:
+#   .\scripts\validate_all.ps1
+#   .\scripts\validate_all.ps1 -ArtifactsOnly
+
+param(
+    [switch]$ArtifactsOnly
+)
+
+$ErrorActionPreference = "Stop"
 $env:Path += ";$env:USERPROFILE\.cargo\bin"
 
-Write-Host "=== ODBC Dart Fast - Complete Validation ===" -ForegroundColor Cyan
-Write-Host ""
-
-$allPassed = $true
-
-# ============================================
-# RUST VALIDATION
-# ============================================
-Write-Host "[1/5] Rust: cargo check..." -ForegroundColor Yellow
-Push-Location native\odbc_engine
-$result = cargo check --all-targets 2>&1 | Out-String
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  ✅ OK" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ FAILED" -ForegroundColor Red
-    $allPassed = $false
+$root = if ($PSScriptRoot) {
+    Split-Path -Parent $PSScriptRoot
 }
-Pop-Location
-
-Write-Host "[2/5] Rust: cargo test..." -ForegroundColor Yellow
-Push-Location native\odbc_engine
-$testOutput = cargo test --lib 2>&1 | Out-String
-if ($LASTEXITCODE -eq 0) {
-    $testLine = $testOutput | Select-String "test result:"
-    Write-Host "  ✅ $testLine" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ FAILED" -ForegroundColor Red
-    $allPassed = $false
-}
-Pop-Location
-
-Write-Host "[3/5] Rust: cargo clippy..." -ForegroundColor Yellow
-Push-Location native\odbc_engine
-$clippy = cargo clippy --all-targets 2>&1 | Out-String
-$errors = $clippy | Select-String "^error" | Measure-Object
-if ($errors.Count -eq 0) {
-    Write-Host "  ✅ OK (no errors)" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ FAILED ($($errors.Count) errors)" -ForegroundColor Red
-    $allPassed = $false
-}
-Pop-Location
-
-# ============================================
-# DART VALIDATION
-# ============================================
-Write-Host "[4/5] Dart: dart analyze..." -ForegroundColor Yellow
-$analyze = dart analyze --fatal-infos 2>&1 | Out-String
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  ✅ OK (no issues)" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ FAILED" -ForegroundColor Red
-    $allPassed = $false
+else {
+    (Get-Location).Path
 }
 
-# ============================================
-# BUILD ARTIFACTS CHECK
-# ============================================
-Write-Host "[5/5] Build artifacts..." -ForegroundColor Yellow
-$dllOk = Test-Path "native\target\release\odbc_engine.dll"
-$headerOk = Test-Path "native\odbc_engine\include\odbc_engine.h"
-$bindingsOk = Test-Path "lib\infrastructure\native\bindings\odbc_bindings.dart"
-
-if ($dllOk) {
-    $size = (Get-Item "native\target\release\odbc_engine.dll").Length / 1MB
-    Write-Host "  ✅ DLL: $([math]::Round($size, 2)) MB" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ DLL missing" -ForegroundColor Red
-    $allPassed = $false
-}
-
-if ($headerOk) {
-    Write-Host "  ✅ Header: odbc_engine.h" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ Header missing" -ForegroundColor Red
-    $allPassed = $false
-}
-
-if ($bindingsOk) {
-    Write-Host "  ✅ Bindings: odbc_bindings.dart" -ForegroundColor Green
-} else {
-    Write-Host "  ❌ Bindings missing" -ForegroundColor Red
-    $allPassed = $false
-}
-
-Write-Host ""
-Write-Host "=== SUMMARY ===" -ForegroundColor Cyan
-
-if ($allPassed) {
-    Write-Host "✅ ALL CHECKS PASSED" -ForegroundColor Green
+Push-Location $root
+try {
+    Write-Host "=== ODBC Fast Validation ===" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Project is ready!" -ForegroundColor Green
-    Write-Host "  - Rust engine: compiled and tested" -ForegroundColor Gray
-    Write-Host "  - Dart API: analyzed, no issues" -ForegroundColor Gray
-    Write-Host "  - FFI artifacts: complete" -ForegroundColor Gray
-} else {
-    Write-Host "❌ SOME CHECKS FAILED" -ForegroundColor Red
+
+    $allPassed = $true
+    $step = 1
+    $totalSteps = if ($ArtifactsOnly) { 1 } else { 7 }
+
+    if (-not $ArtifactsOnly) {
+        if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+            Write-Host "ERROR: cargo not found in PATH." -ForegroundColor Red
+            exit 1
+        }
+        if (-not (Get-Command dart -ErrorAction SilentlyContinue)) {
+            Write-Host "ERROR: dart not found in PATH." -ForegroundColor Red
+            exit 1
+        }
+
+        Write-Host "[$step/$totalSteps] Rust: cargo fmt --all -- --check" -ForegroundColor Yellow
+        Push-Location "native"
+        try {
+            cargo fmt --all -- --check | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  OK" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  FAILED" -ForegroundColor Red
+                $allPassed = $false
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        $step++
+
+        Write-Host "[$step/$totalSteps] Rust: cargo check --all-targets" -ForegroundColor Yellow
+        Push-Location "native\odbc_engine"
+        try {
+            cargo check --all-targets | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  OK" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  FAILED" -ForegroundColor Red
+                $allPassed = $false
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        $step++
+
+        Write-Host "[$step/$totalSteps] Rust: cargo test --lib" -ForegroundColor Yellow
+        Push-Location "native\odbc_engine"
+        try {
+            cargo test --lib | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  OK" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  FAILED" -ForegroundColor Red
+                $allPassed = $false
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        $step++
+
+        Write-Host "[$step/$totalSteps] Rust: cargo clippy --all-targets -- -D warnings" -ForegroundColor Yellow
+        Push-Location "native\odbc_engine"
+        try {
+            cargo clippy --all-targets -- -D warnings | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  OK" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  FAILED" -ForegroundColor Red
+                $allPassed = $false
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        $step++
+
+        Write-Host "[$step/$totalSteps] Dart: dart analyze --fatal-infos" -ForegroundColor Yellow
+        dart analyze --fatal-infos | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  OK" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  FAILED" -ForegroundColor Red
+            $allPassed = $false
+        }
+        $step++
+
+        Write-Host "[$step/$totalSteps] Dart: unit-only test scope" -ForegroundColor Yellow
+        dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  OK" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  FAILED" -ForegroundColor Red
+            $allPassed = $false
+        }
+        $step++
+    }
+
+    Write-Host "[$step/$totalSteps] Build artifacts" -ForegroundColor Yellow
+
+    $dllCandidates = @(
+        "native\target\release\odbc_engine.dll",
+        "native\odbc_engine\target\release\odbc_engine.dll"
+    )
+
+    $dllPath = $dllCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $headerPath = "native\odbc_engine\include\odbc_engine.h"
+    $bindingsPath = "lib\infrastructure\native\bindings\odbc_bindings.dart"
+
+    if ($dllPath) {
+        $size = (Get-Item $dllPath).Length / 1MB
+        Write-Host "  OK DLL: $dllPath ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  FAILED DLL missing (checked native\\target and native\\odbc_engine\\target)" -ForegroundColor Red
+        $allPassed = $false
+    }
+
+    if (Test-Path $headerPath) {
+        Write-Host "  OK Header: $headerPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  FAILED Header missing: $headerPath" -ForegroundColor Red
+        $allPassed = $false
+    }
+
+    if (Test-Path $bindingsPath) {
+        Write-Host "  OK Bindings: $bindingsPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  FAILED Bindings missing: $bindingsPath" -ForegroundColor Red
+        $allPassed = $false
+    }
+
     Write-Host ""
-    Write-Host "Please review errors above." -ForegroundColor Yellow
+    Write-Host "=== Summary ===" -ForegroundColor Cyan
+    if ($allPassed) {
+        Write-Host "ALL CHECKS PASSED" -ForegroundColor Green
+        exit 0
+    }
+
+    Write-Host "SOME CHECKS FAILED" -ForegroundColor Red
+    exit 1
+}
+finally {
+    Pop-Location
 }

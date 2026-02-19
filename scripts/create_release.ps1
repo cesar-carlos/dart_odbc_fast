@@ -1,8 +1,8 @@
 ﻿# Helper script to create release tag and trigger release.yml
 # Usage:
-#   .\scripts\create_release.ps1 1.0.0
-#   .\scripts\create_release.ps1 v1.0.0
-#   .\scripts\create_release.ps1 1.0.0 -NoPush
+#   .\scripts\create_release.ps1 1.1.0
+#   .\scripts\create_release.ps1 v1.1.0
+#   .\scripts\create_release.ps1 1.1.0 -NoPush
 
 param(
     [Parameter(Mandatory = $true)]

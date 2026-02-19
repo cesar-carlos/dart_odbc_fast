@@ -7,7 +7,7 @@ name: Release
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g.: v1.0.0)"
+        description: "Release tag (e.g.: v1.1.0)"
         required: true
         type: string
 
@@ -18,6 +18,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       release_version: ${{ steps.meta.outputs.release_version }}
@@ -75,8 +76,17 @@ jobs:
         with:
           sdk: stable
 
-      - name: Setup Rust
+      - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
 
       - name: Install ODBC (Linux)
         run: |
@@ -138,19 +148,17 @@ jobs:
           fetch-depth: 0
           ref: refs/tags/${{ needs.verify.outputs.release_tag }}
 
-      - name: Setup Rust
+      - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ${{ format('{0}-cargo-{1}', runner.os, hashFiles('native/**/Cargo.toml', 'native/**/Cargo.lock')) }}
+          workspaces: |
+            native -> target
 
       - name: Install ODBC (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -182,6 +190,7 @@ jobs:
   create-release:
     needs: [verify, build-binaries]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4

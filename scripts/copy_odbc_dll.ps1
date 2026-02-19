@@ -1,6 +1,6 @@
 # Copy odbc_engine.dll from odbc_fast package (pub cache or repo) to the consumer project.
 # Run from your project root, or pass -ProjectRoot.
-# Example (from your project): & "$env:LOCALAPPDATA\Pub\Cache\hosted\pub.dev\odbc_fast-0.2.7\scripts\copy_odbc_dll.ps1"
+# Example (from your project): & "$env:LOCALAPPDATA\Pub\Cache\hosted\pub.dev\odbc_fast-1.1.0\scripts\copy_odbc_dll.ps1"
 
 param(
     [string]$ProjectRoot = (Get-Location).Path

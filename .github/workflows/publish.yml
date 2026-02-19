@@ -3,11 +3,83 @@ name: Publish to pub.dev
 on:
   push:
     tags:
-    # tag-pattern on pub.dev: 'v{{version}}'
-    - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write # Required for OIDC authentication
 
 jobs:
+  validate-metadata:
+    # Publish only stable tags (vX.Y.Z). Pre-release tags are intentionally skipped.
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag/pubspec/changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid stable publish tag: ${TAG}. Use vX.Y.Z."
+            exit 1
+          fi
+
+          VERSION="$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}')"
+          if [[ -z "${VERSION}" ]]; then
+            echo "Could not read version from pubspec.yaml"
+            exit 1
+          fi
+
+          if [[ "v${VERSION}" != "${TAG}" ]]; then
+            echo "Inconsistency: pubspec.yaml=${VERSION}, tag=${TAG}"
+            exit 1
+          fi
+
+          if ! grep -q "^## \\[${VERSION}\\]" CHANGELOG.md; then
+            echo "CHANGELOG.md missing section for [${VERSION}]"
+            exit 1
+          fi
+
+  wait-for-release-assets:
+    if: ${{ !contains(github.ref_name, '-') }}
+    needs: validate-metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for GitHub Release assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+
+          for attempt in $(seq 1 30); do
+            status="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -o release.json -w "%{http_code}" "${URL}" || true)"
+
+            if [[ "${status}" == "200" ]]; then
+              if python3 -c "import json,sys; data=json.load(open('release.json', encoding='utf-8')); assets={a.get('name') for a in data.get('assets', [])}; required={'odbc_engine.dll','libodbc_engine.so'}; missing=required-assets; print('Release assets are ready.' if not missing else 'Release exists but missing assets: ' + ', '.join(sorted(missing))); sys.exit(0 if not missing else 1)"; then
+                exit 0
+              fi
+            fi
+
+            echo "Release assets not ready yet (attempt ${attempt}/30). Waiting 20s..."
+            sleep 20
+          done
+
+          echo "Timed out waiting for release assets for tag ${TAG}."
+          exit 1
+
   publish:
+    if: ${{ !contains(github.ref_name, '-') }}
+    needs: wait-for-release-assets
     permissions:
       id-token: write # Required for OIDC authentication
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    secrets: inherit
