@@ -16,7 +16,7 @@ This directory contains only canonical documents for day-to-day use by contribut
 | [OBSERVABILITY.md](OBSERVABILITY.md)                           | Telemetry, operational metrics, and exporter fallback                     |
 | [TYPE_MAPPING.md](TYPE_MAPPING.md)                             | Canonical data type mapping contract, limits, and implementation roadmap  |
 | [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md)         | Consolidated and prioritized technical backlog                            |
-| [CHANGELOG.md](CHANGELOG.md)                                   | Version history, deprecations, and migration guide                             |
+| [CHANGELOG.md](../CHANGELOG.md)                                | Version history, deprecations, and migration guide                         |
 
 ## Generated Documentation
 
@@ -78,4 +78,3 @@ Use nullable: true for columns that should accept null.
 \`\`\`
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for more troubleshooting guidance.
-

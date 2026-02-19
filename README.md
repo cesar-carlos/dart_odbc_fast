@@ -504,18 +504,18 @@ dart_odbc_fast/
 
 To publish a new version, follow these steps:
 
-1. \*\*Update `pubspec.yaml`: Set the new version (e.g., `version: 1.0.2`)
-2. \*\*Update `CHANGELOG.md`: Add a new section `## [1.0.2] - YYYY-MM-DD` with changes
+1. \*\*Update `pubspec.yaml`: Set the new version (e.g., `version: 1.1.0`)
+2. \*\*Update `CHANGELOG.md`: Add a new section `## [1.1.0] - YYYY-MM-DD` with changes
 3. **Commit and push main branch**:
    ```bash
    git add .
-   git commit -m "Release v1.0.2"
+   git commit -m "Release v1.1.0"
    git push origin main
    ```
 4. **Create and push tag** (triggers automated release):
    ```bash
-   git tag -a v1.0.2 -m "Release v1.0.2"
-   git push origin v1.0.2
+   git tag -a v1.1.0 -m "Release v1.1.0"
+   git push origin v1.1.0
    ```
 
 The GitHub Actions will automatically:

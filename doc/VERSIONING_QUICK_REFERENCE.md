@@ -13,6 +13,8 @@ If version is `>=1.0.0`:
 - Backward-compatible feature -> `MINOR`
 - Fix/perf/docs -> `PATCH`
 
+Current project phase: `>=1.0.0`.
+
 ## Quick table (pre-1.0.0)
 
 | Change type               | Bump  |
@@ -50,14 +52,14 @@ Mark as breaking if any item is true:
 rg "^version:" pubspec.yaml
 
 # create stable tag
-git tag -a v0.3.2 -m "Release v0.3.2"
-git push origin v0.3.2
+git tag -a v1.1.0 -m "Release v1.1.0"
+git push origin v1.1.0
 ```
 
 PowerShell helper (validates pubspec/changelog before tagging):
 
 ```powershell
-.\scripts\create_release.ps1 0.3.2
+.\scripts\create_release.ps1 1.1.0
 ```
 
 ## References

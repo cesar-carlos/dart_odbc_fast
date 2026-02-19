@@ -6,23 +6,23 @@ Define a single policy for package versions, tags, and breaking-change communica
 
 ## Current state
 
-- Current package version: `0.3.1`
-- Phase: pre-1.0.0 (API still evolving)
+- Current package version: `1.1.0`
+- Phase: post-1.0.0 (stable SemVer)
 
-## Main rule (pre-1.0.0)
-
-For `0.x.y`:
-
-- Public API breaking change: bump **MINOR** (`0.3.1` -> `0.4.0`)
-- Backward-compatible feature: bump **PATCH** (`0.3.1` -> `0.3.2`)
-- Bug fix/performance/docs: bump **PATCH**
-
-## Rule after 1.0.0
+## Main rule (post-1.0.0)
 
 For `x.y.z`:
 
-- Breaking change: **MAJOR**
-- Backward-compatible feature: **MINOR**
+- Public API breaking change: bump **MAJOR** (`1.1.0` -> `2.0.0`)
+- Backward-compatible feature: bump **MINOR** (`1.1.0` -> `1.2.0`)
+- Bug fix/performance/docs: bump **PATCH** (`1.1.0` -> `1.1.1`)
+
+## Legacy rule (pre-1.0.0)
+
+For `0.x.y`:
+
+- Breaking change: **MINOR**
+- Backward-compatible feature: **PATCH**
 - Bug fix/performance/docs: **PATCH**
 
 ## What counts as breaking
@@ -44,7 +44,7 @@ For `x.y.z`:
 ## Deprecation policy
 
 1. First release: mark as `@Deprecated` and document alternative
-2. Keep for at least 2 pre-1.0.0 releases (or 2 MINOR releases after 1.0.0)
+2. Keep for at least 2 MINOR releases
 3. Remove only in a breaking release
 
 ## Tags
@@ -81,7 +81,7 @@ Change:
 Future<QueryResult> execute(String sql, {Duration? timeout});
 ```
 
-Decision at `0.3.1`: `0.3.2` (PATCH).
+Decision at `1.1.0`: `1.2.0` (MINOR).
 
 ### Example B - rename public method
 
@@ -89,7 +89,7 @@ Change:
 
 - `execute` -> `executeQuery`
 
-Decision at `0.3.2`: `0.4.0` (MINOR).
+Decision at `1.1.0`: `2.0.0` (MAJOR).
 
 ## Related documents
 

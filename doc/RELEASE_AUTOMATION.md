@@ -17,7 +17,7 @@ This project uses `release.yml` to generate native binaries when a `v*` tag is p
 Triggers:
 
 - `push` on tags `v*`
-- `workflow_dispatch` with required `tag` input (example: `v0.3.2`)
+- `workflow_dispatch` with required `tag` input (example: `v1.1.0`)
 
 Notes:
 
@@ -112,7 +112,7 @@ dart pub publish
 Optional PowerShell helper (repo root):
 
 ```powershell
-.\scripts\create_release.ps1 0.3.2
+.\scripts\create_release.ps1 1.1.0
 ```
 
 This helper:

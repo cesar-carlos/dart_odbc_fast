@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- _None_
+
+### Changed
+- _None_
+
+### Fixed
+- _None_
+
+## [1.1.0] - 2026-02-19
+
+### Added
 - Statement cancellation API exposed at high-level service/repository layers:
   `cancelStatement(connectionId, stmtId)`
 - `UnsupportedFeatureError` in Dart domain errors for explicit unsupported capability reporting
@@ -236,7 +247,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.0...v1.0.1
