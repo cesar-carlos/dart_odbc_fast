@@ -2,6 +2,9 @@
 
 Canonical reference for data type mapping in `odbc_fast`.
 
+> Note: `doc/notes/` contains working documents. Some sections describe planned
+> work that is not implemented yet.
+
 This document separates:
 1. What is implemented today
 2. What is planned
@@ -51,7 +54,10 @@ Driver-specific type mapping exists via plugins:
 - `native/odbc_engine/src/plugins/sqlserver.rs`
 - `native/odbc_engine/src/plugins/postgres.rs`
 - `native/odbc_engine/src/plugins/oracle.rs`
-- `native/odbc_engine/src/plugins/mysql.rs`
+- `native/odbc_engine/src/plugins/sybase.rs`
+
+Driver detection also recognizes `mysql`, `mongodb`, and `sqlite`, but these
+currently use the generic mapping path (no dedicated plugin file yet).
 
 ## Bulk insert nullability
 
@@ -80,7 +86,7 @@ This model is a valid inspiration for `odbc_fast`, but it is not yet the current
 
 ## Planned implementation direction
 
-### Phase 1: Make current behavior explicit (Completed ✅)
+### Phase 1: Make current behavior explicit (Completed)
 
 1. Keep `ParamValue` as stable contract.
 2. Document exact auto-conversion and limitations.
@@ -108,7 +114,8 @@ This model is a valid inspiration for `odbc_fast`, but it is not yet the current
 
 ## References
 
-- `doc/notes/GAPS_IMPLEMENTATION_MASTER_PLAN.md` (GAP 6)
 - `doc/notes/TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md`
+- `doc/notes/FUTURE_IMPLEMENTATIONS.md`
 - https://www.npmjs.com/package/mssql
 - https://github.com/tediousjs/node-mssql
+

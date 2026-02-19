@@ -1,6 +1,9 @@
-﻿# FUTURE_IMPLEMENTATIONS.md - Technical Backlog
+# FUTURE_IMPLEMENTATIONS.md - Technical Backlog
 
 Consolidated backlog of items not yet included in implemented scope.
+
+> Note: this file is in `doc/notes/` and intentionally documents pending
+> implementation work.
 
 ## Summary
 
@@ -41,3 +44,5 @@ Consolidated backlog of items not yet included in implemented scope.
 2. Unit and integration tests covering main flow
 3. Working example in `example/` (when applicable)
 4. Entry in `CHANGELOG.md`
+
+

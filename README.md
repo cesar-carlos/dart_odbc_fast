@@ -48,6 +48,14 @@
 - Use query timeout as workaround (`ConnectionOptions.queryTimeout`,
   prepare/statement timeout options).
 
+### Parameter count limit (current runtime)
+
+- Current native execution path supports up to **5 parameters** per execution
+  for `executeQueryParams`, `executeQueryNamed`, `executePrepared`, and
+  `executePreparedNamed`.
+- This is a current implementation limit, not a long-term API goal.
+- For larger payloads, prefer `bulkInsert`/`bulkInsertParallel` where applicable.
+
 ### Low-level wrappers (`NativeOdbcConnection`)
 
 - Connection extras: `connectWithTimeout`, `getStructuredError`
@@ -484,6 +492,9 @@ dart_odbc_fast/
 - [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md)
 - [doc/notes/FUTURE_IMPLEMENTATIONS.md](doc/notes/FUTURE_IMPLEMENTATIONS.md)
 - [doc/notes/RELIABILITY_PERFORMANCE_IMPROVEMENTS_PLAN.md](doc/notes/RELIABILITY_PERFORMANCE_IMPROVEMENTS_PLAN.md)
+
+Files under `doc/notes/` are working plans/backlog and may include features
+that are not implemented yet.
 
 ## CI/CD
 

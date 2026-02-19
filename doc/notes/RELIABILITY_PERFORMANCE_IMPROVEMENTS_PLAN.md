@@ -1,5 +1,8 @@
 # Reliability and Performance Improvements Plan
 
+> Note: this file is in `doc/notes/` and tracks planned work. It may contain
+> items that are not implemented yet.
+
 ## Table of Contents
 
 - [Overview](#overview) - Executive summary and completion status
@@ -701,14 +704,14 @@ throw ArgumentError(
 
 ### 4.1 - Update documentation with new validation behavior
 
-**Files:** `doc/TYPE_MAPPING.md`, `doc/README.md`, `doc/TROUBLESHOOTING.md`
+**Files:** `doc/notes/TYPE_MAPPING.md`, `README.md`, `doc/BUILD.md`
 
 **Tasks:**
 
 - [ ] P4.1.1 Document type validation in `addRow()`
 - [ ] P4.1.2 Document `validateOnAddRow` flag (if implemented)
 - [ ] P4.1.3 Add examples of validation error messages
-- [ ] P4.1.4 Update TROUBLESHOOTING.md with new error types
+- [ ] P4.1.4 Update README.md and doc/BUILD.md with new error types and guidance
 
 **Validation:**
 
@@ -835,7 +838,8 @@ If any phase introduces breaking changes:
 
 ## Related Documents
 
-- [NULL_HANDLING_RELIABILITY_PERFORMANCE_PLAN.md](NULL_HANDLING_RELIABILITY_PERFORMANCE_PLAN.md) - Completed NULL handling implementation
-- [TYPE_MAPPING.md](../TYPE_MAPPING.md) - Type mapping documentation
-- [TROUBLESHOOTING.md](../TROUBLESHOOTING.md) - Common issues and solutions
-- [FUTURE_IMPLEMENTATIONS.md](../FUTURE_IMPLEMENTATIONS.md) - Technical backlog
+- [TYPE_MAPPING.md](TYPE_MAPPING.md) - Type mapping documentation
+- [TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md](TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md) - Gap closure checklist
+- [FUTURE_IMPLEMENTATIONS.md](FUTURE_IMPLEMENTATIONS.md) - Technical backlog
+- [doc/BUILD.md](../BUILD.md) - Build and validation reference
+

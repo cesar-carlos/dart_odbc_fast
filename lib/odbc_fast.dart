@@ -6,7 +6,7 @@
 /// - Connection pooling
 /// - Streaming queries
 /// - Async API for non-blocking operations
-/// - Automatic retry with exponential backoff
+/// - Automatic reconnect on connection-lost (configurable attempts/backoff)
 /// - Savepoints (nested transactions)
 ///
 /// ## Quick Start

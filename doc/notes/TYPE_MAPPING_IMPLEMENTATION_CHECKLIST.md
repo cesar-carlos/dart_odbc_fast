@@ -2,6 +2,9 @@
 
 Execution checklist for GAP 6 (Data type mapping parity and canonical contract).
 
+> Note: this file is in `doc/notes/` and tracks planned work. Checklist items
+> can remain open while implementation is in progress.
+
 ## Objective
 
 Ship a clear, testable, and maintainable type mapping contract across Dart and Rust without breaking current public APIs.
@@ -21,14 +24,14 @@ Ship a clear, testable, and maintainable type mapping contract across Dart and R
 
 ## Phase 1 - Canonical contract in docs
 
-- [ ] P1.1 Confirm `doc/TYPE_MAPPING.md` reflects real code behavior.
+- [ ] P1.1 Confirm `doc/notes/TYPE_MAPPING.md` reflects real code behavior.
 - [ ] P1.2 Add explicit link to type mapping in root `README.md` (documentation section).
-- [ ] P1.3 Add explicit “implemented vs planned” notes in `README.md` type-related sections.
+- [ ] P1.3 Add explicit "implemented vs planned" notes in `README.md` type-related sections.
 - [ ] P1.4 Verify no canonical document references unimplemented `SqlType`/`request.output`.
 
 Acceptance gate:
 
-- `README.md`, `doc/README.md`, and `doc/TYPE_MAPPING.md` are consistent.
+- `README.md` and `doc/notes/TYPE_MAPPING.md` are consistent.
 
 ## Phase 2 - Parser strategy alignment
 
@@ -63,7 +66,7 @@ Acceptance gate:
 - [ ] P4.1 Draft `SqlDataType` proposal (API design note).
 - [ ] P4.2 Prototype explicit typed parameter API without breaking `ParamValue`.
 - [ ] P4.3 Add migration notes showing old and new usage side by side.
-- [ ] P4.4 Keep feature behind clear “experimental/planned” label until stable.
+- [ ] P4.4 Keep feature behind clear "experimental/planned" label until stable.
 
 Acceptance gate:
 
@@ -94,3 +97,4 @@ Reference links:
 
 - https://www.npmjs.com/package/mssql
 - https://github.com/tediousjs/node-mssql
+
