@@ -46,16 +46,17 @@ fn test_execution_engine_basic_query() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 42 AS value, 'Hello' AS msg";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -102,9 +103,10 @@ fn test_execution_engine_prepared_cache() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(10);
     engine.set_connection_string(&conn_str);
@@ -112,11 +114,11 @@ fn test_execution_engine_prepared_cache() {
     let sql = "SELECT 1 AS value";
 
     let buffer1 = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     let buffer2 = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     let decoded1 = BinaryProtocolDecoder::parse(&buffer1).expect("Failed to decode first result");
@@ -150,16 +152,17 @@ fn test_execution_engine_plugin_optimization() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT TOP 10 * FROM (SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3) AS t";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -192,16 +195,17 @@ fn test_execution_engine_row_based_encoding() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS col1, 2 AS col2, 3 AS col3";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -234,16 +238,17 @@ fn test_execution_engine_columnar_encoding() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::with_columnar(100, false);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS col1, 2 AS col2, 3 AS col3";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -287,16 +292,17 @@ fn test_execution_engine_columnar_with_compression() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::with_columnar(100, true);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS col1, 2 AS col2, 3 AS col3";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -348,9 +354,10 @@ fn test_execution_engine_metrics_recording() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
@@ -361,7 +368,7 @@ fn test_execution_engine_metrics_recording() {
 
     let sql = "SELECT 1 AS value";
     let _buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     let query_metrics_after = metrics.get_query_metrics();
@@ -400,9 +407,10 @@ fn test_execution_engine_tracing() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
@@ -413,7 +421,7 @@ fn test_execution_engine_tracing() {
 
     let sql = "SELECT 1 AS value";
     let _buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -441,16 +449,17 @@ fn test_execution_engine_multiple_rows() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 ORDER BY id";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -491,16 +500,17 @@ fn test_execution_engine_null_values() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT NULL AS null_col, 42 AS not_null_col";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -545,16 +555,17 @@ fn test_execution_engine_empty_result_set() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS value WHERE 1 = 0";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -587,9 +598,10 @@ fn test_execution_engine_mixed_data_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
@@ -602,7 +614,7 @@ fn test_execution_engine_mixed_data_types() {
         CAST(1 AS BIT) AS bit_val";
 
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);
@@ -640,15 +652,16 @@ fn test_execution_engine_invalid_sql_returns_error() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let invalid_sql = "SELECT * FROM nonexistent_table_xyz_12345";
-    let result = engine.execute_query(odbc_conn, invalid_sql);
+    let result = engine.execute_query(&odbc_conn, invalid_sql);
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -676,9 +689,10 @@ fn test_exec_query_with_params_integer() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
@@ -686,7 +700,7 @@ fn test_exec_query_with_params_integer() {
     let params = vec![ParamValue::Integer(42)];
     let sql = "SELECT ? AS value";
     let buffer = engine
-        .execute_query_with_params(odbc_conn, sql, &params)
+        .execute_query_with_params(&odbc_conn, sql, &params)
         .expect("Failed to execute parameterized query");
 
     drop(handles_guard);
@@ -725,16 +739,17 @@ fn test_exec_query_with_params_null() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let params = vec![ParamValue::Null];
     let sql = "SELECT ? AS x";
-    let result = engine.execute_query_with_params(odbc_conn, sql, &params);
+    let result = engine.execute_query_with_params(&odbc_conn, sql, &params);
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -764,9 +779,10 @@ fn test_exec_query_with_params_mixed_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
@@ -778,7 +794,7 @@ fn test_exec_query_with_params_mixed_types() {
     ];
     let sql = "SELECT ? AS a, ? AS b, ? AS c";
     let buffer = engine
-        .execute_query_with_params(odbc_conn, sql, &params)
+        .execute_query_with_params(&odbc_conn, sql, &params)
         .expect("Failed to execute parameterized query");
 
     drop(handles_guard);
@@ -825,16 +841,17 @@ fn test_execute_multi_result_single_select() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string(&conn_str);
 
     let sql = "SELECT 1 AS value";
     let buffer = engine
-        .execute_multi_result(odbc_conn, sql)
+        .execute_multi_result(&odbc_conn, sql)
         .expect("Failed to execute multi-result");
 
     drop(handles_guard);
@@ -858,6 +875,67 @@ fn test_execute_multi_result_single_select() {
 }
 
 #[test]
+fn test_execute_multi_result_multiple_result_sets() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let engine = ExecutionEngine::new(100);
+    engine.set_connection_string(&conn_str);
+
+    let sql = "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c";
+    let buffer = engine
+        .execute_multi_result(&odbc_conn, sql)
+        .expect("Failed to execute multi-result");
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    let items = decode_multi(&buffer).expect("Failed to decode multi-result");
+    assert_eq!(
+        items.len(),
+        3,
+        "Should have 3 multi-result items (SQLMoreResults iteration)"
+    );
+
+    for (i, expected) in [1, 2, 3].iter().enumerate() {
+        match &items[i] {
+            MultiResultItem::ResultSet(ref enc) => {
+                let decoded =
+                    BinaryProtocolDecoder::parse(enc).expect("Failed to decode result set");
+                assert_eq!(decoded.column_count, 1);
+                assert_eq!(decoded.row_count, 1);
+                let v = decoded.rows[0][0].as_ref().expect("value not null");
+                assert_eq!(decode_integer(v), *expected);
+            }
+            MultiResultItem::RowCount(_) => {
+                panic!("Expected ResultSet at index {}, got RowCount", i)
+            }
+        }
+    }
+
+    println!("✓ Execute multi-result (multiple result sets via SQLMoreResults) test passed");
+}
+
+#[test]
 fn test_execution_engine_execute_query_no_plugin_uses_raw_sql() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
@@ -875,15 +953,16 @@ fn test_execution_engine_execute_query_no_plugin_uses_raw_sql() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let engine = ExecutionEngine::new(100);
     engine.set_connection_string("Driver={UnknownDriver};");
     let sql = "SELECT 1 AS value";
     let buffer = engine
-        .execute_query(odbc_conn, sql)
+        .execute_query(&odbc_conn, sql)
         .expect("Failed to execute query");
 
     drop(handles_guard);

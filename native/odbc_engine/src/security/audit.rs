@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -14,26 +15,26 @@ pub struct AuditEvent {
 
 pub struct AuditLogger {
     events: Arc<Mutex<Vec<AuditEvent>>>,
-    enabled: bool,
+    enabled: Arc<AtomicBool>,
 }
 
 impl AuditLogger {
     pub fn new(enabled: bool) -> Self {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
-            enabled,
+            enabled: Arc::new(AtomicBool::new(enabled)),
         }
     }
 
     pub fn log_connection(&self, connection_id: u32, connection_string: &str) {
-        if !self.enabled {
+        if !self.is_enabled() {
             return;
         }
 
         let mut metadata = HashMap::new();
         metadata.insert(
             "connection_string".to_string(),
-            connection_string.to_string(),
+            super::sanitize_connection_string(connection_string),
         );
 
         let event = AuditEvent {
@@ -54,7 +55,7 @@ impl AuditLogger {
     }
 
     pub fn log_query(&self, connection_id: u32, query: &str) {
-        if !self.enabled {
+        if !self.is_enabled() {
             return;
         }
 
@@ -76,7 +77,7 @@ impl AuditLogger {
     }
 
     pub fn log_error(&self, connection_id: Option<u32>, error: &str) {
-        if !self.enabled {
+        if !self.is_enabled() {
             return;
         }
 
@@ -106,6 +107,27 @@ impl AuditLogger {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn clear_events(&self) {
+        if let Ok(mut events) = self.events.lock() {
+            events.clear();
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.events
+            .lock()
+            .map(|events| events.len())
+            .unwrap_or_default()
     }
 }
 

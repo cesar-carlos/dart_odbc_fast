@@ -110,6 +110,20 @@ Integration tests in `.rs` files here test higher-level scenarios:
 - `integration_test.rs`: End-to-end connection tests (requires real ODBC DSN)
 - `e2e_*.rs`: End-to-end tests for specific features (connection, execution, streaming, pooling)
 - `e2e_bulk_transaction_stress_test.rs`: E2E stress with massive insert/update/delete under explicit transaction control (commit and rollback)
+- `concurrent_access_test.rs`: Pool and query execution from multiple threads (ignored; requires E2E)
+- `concurrent_error_test.rs`: Error isolation across connections (requires `ffi-tests` feature)
+
+### Concurrency and stress tests (Fase 5)
+
+Run with `ENABLE_E2E_TESTS=1` and ODBC DSN configured:
+
+```powershell
+cd native\odbc_engine
+$env:ENABLE_E2E_TESTS = "1"
+cargo test -- --ignored
+```
+
+Covers: `test_concurrent_pool_access`, `test_concurrent_query_execution`, `test_pool_stress_checkout_release`, `test_e2e_bulk_stress_transaction_commit`, `test_e2e_bulk_stress_transaction_rollback`, `test_streaming_50k_rows_memory_validation`, and other ignored E2E tests.
 
 **Note:** Tests that require a real database **self-skip** when a DSN is not
 configured or when E2E is disabled (so local runs/CI can stay green without DB).

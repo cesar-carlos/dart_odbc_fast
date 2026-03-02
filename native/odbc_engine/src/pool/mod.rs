@@ -6,7 +6,9 @@ use std::time::Duration;
 
 static GLOBAL_POOL_ENV: OnceLock<std::result::Result<Environment, String>> = OnceLock::new();
 const POOL_TEST_ON_CHECKOUT_ENV: &str = "ODBC_POOL_TEST_ON_CHECKOUT";
+const POOL_HEALTH_CHECK_QUERY_ENV: &str = "ODBC_POOL_HEALTH_CHECK_QUERY";
 const DEFAULT_TEST_ON_CHECKOUT: bool = true;
+const DEFAULT_HEALTH_CHECK_QUERY: &str = "SELECT 1";
 
 fn get_global_pool_env() -> Result<&'static Environment> {
     let env = GLOBAL_POOL_ENV.get_or_init(|| {
@@ -23,18 +25,22 @@ fn get_global_pool_env() -> Result<&'static Environment> {
 struct PoolConfig {
     sanitized_connection_string: String,
     test_on_check_out: bool,
+    health_check_query: String,
 }
 
 impl PoolConfig {
     fn from_connection_string(connection_string: &str) -> Self {
-        let (sanitized_connection_string, conn_override) =
+        let (sanitized_connection_string, conn_override, health_check_query) =
             parse_pool_options_from_connection_string(connection_string);
         let test_on_check_out =
             resolve_checkout_validation(conn_override, read_checkout_validation_from_env());
+        let health_check_query =
+            resolve_health_check_query(health_check_query, read_health_check_query_from_env());
 
         Self {
             sanitized_connection_string,
             test_on_check_out,
+            health_check_query,
         }
     }
 }
@@ -48,6 +54,16 @@ fn is_pool_checkout_option(key: &str) -> bool {
             | "pool_test_on_check_out"
             | "test_on_checkout"
             | "test_on_check_out"
+    )
+}
+
+fn is_pool_health_check_option(key: &str) -> bool {
+    matches!(
+        key,
+        "poolhealthcheckquery"
+            | "healthcheckquery"
+            | "pool_health_check_query"
+            | "health_check_query"
     )
 }
 
@@ -79,9 +95,12 @@ fn split_connection_string_parts(connection_string: &str) -> Vec<&str> {
     parts
 }
 
-fn parse_pool_options_from_connection_string(connection_string: &str) -> (String, Option<bool>) {
+fn parse_pool_options_from_connection_string(
+    connection_string: &str,
+) -> (String, Option<bool>, Option<String>) {
     let mut sanitized_parts = Vec::new();
     let mut conn_override = None;
+    let mut health_check_query = None;
 
     for part in split_connection_string_parts(connection_string) {
         let trimmed = part.trim();
@@ -98,6 +117,13 @@ fn parse_pool_options_from_connection_string(connection_string: &str) -> (String
                 }
                 continue;
             }
+            if is_pool_health_check_option(&normalized_key) {
+                let value = raw_value.trim().trim_matches(|c| c == '{' || c == '}');
+                if !value.is_empty() {
+                    health_check_query = Some(value.to_string());
+                }
+                continue;
+            }
         }
 
         sanitized_parts.push(trimmed);
@@ -108,7 +134,11 @@ fn parse_pool_options_from_connection_string(connection_string: &str) -> (String
         sanitized_connection_string.push(';');
     }
 
-    (sanitized_connection_string, conn_override)
+    (
+        sanitized_connection_string,
+        conn_override,
+        health_check_query,
+    )
 }
 
 fn read_checkout_validation_from_env() -> Option<bool> {
@@ -123,18 +153,37 @@ fn resolve_checkout_validation(conn_override: Option<bool>, env_override: Option
         .unwrap_or(DEFAULT_TEST_ON_CHECKOUT)
 }
 
+fn read_health_check_query_from_env() -> Option<String> {
+    std::env::var(POOL_HEALTH_CHECK_QUERY_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn resolve_health_check_query(
+    conn_override: Option<String>,
+    env_override: Option<String>,
+) -> String {
+    conn_override
+        .or(env_override)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_HEALTH_CHECK_QUERY.to_string())
+}
+
 #[derive(Clone)]
 struct OdbcConnectionManager {
     env: &'static Environment,
     connection_string: String,
+    health_check_query: String,
 }
 
 impl OdbcConnectionManager {
-    fn new(connection_string: &str) -> Result<Self> {
+    fn new(connection_string: &str, health_check_query: &str) -> Result<Self> {
         let env = get_global_pool_env()?;
         Ok(Self {
             env,
             connection_string: connection_string.to_string(),
+            health_check_query: health_check_query.to_string(),
         })
     }
 }
@@ -151,7 +200,7 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
 
     fn is_valid(&self, conn: &mut Self::Connection) -> std::result::Result<(), Self::Error> {
         conn.set_autocommit(true).map_err(OdbcError::from)?;
-        conn.execute("SELECT 1", (), None)
+        conn.execute(&self.health_check_query, (), None)
             .map(|_| ())
             .map_err(OdbcError::from)
     }
@@ -171,7 +220,10 @@ pub struct ConnectionPool {
 impl ConnectionPool {
     pub fn new(connection_string: &str, max_size: u32) -> Result<Self> {
         let config = PoolConfig::from_connection_string(connection_string);
-        let manager = OdbcConnectionManager::new(&config.sanitized_connection_string)?;
+        let manager = OdbcConnectionManager::new(
+            &config.sanitized_connection_string,
+            &config.health_check_query,
+        )?;
         let pool = Pool::builder()
             .max_size(max_size)
             .connection_timeout(Duration::from_secs(30))
@@ -344,17 +396,35 @@ mod tests {
     #[test]
     fn test_parse_pool_option_keeps_semicolon_inside_braces() {
         let conn = "PWD={ab;c};PoolTestOnCheckout=false;DSN=MainDsn";
-        let (sanitized, override_flag) = parse_pool_options_from_connection_string(conn);
+        let (sanitized, override_flag, health_query) =
+            parse_pool_options_from_connection_string(conn);
         assert_eq!(sanitized, "PWD={ab;c};DSN=MainDsn");
         assert_eq!(override_flag, Some(false));
+        assert_eq!(health_query, None);
     }
 
     #[test]
     fn test_parse_pool_option_ignores_invalid_value() {
         let conn = "DSN=MainDsn;PoolTestOnCheckout=maybe;";
-        let (sanitized, override_flag) = parse_pool_options_from_connection_string(conn);
+        let (sanitized, override_flag, health_query) =
+            parse_pool_options_from_connection_string(conn);
         assert_eq!(sanitized, "DSN=MainDsn;");
         assert_eq!(override_flag, None);
+        assert_eq!(health_query, None);
+    }
+
+    #[test]
+    fn test_parse_pool_health_check_query_from_connection_string() {
+        let conn = "DSN=MainDsn;PoolHealthCheckQuery=SELECT 1 AS ping;";
+        let (sanitized, _, health_query) = parse_pool_options_from_connection_string(conn);
+        assert_eq!(sanitized, "DSN=MainDsn;");
+        assert_eq!(health_query, Some("SELECT 1 AS ping".to_string()));
+    }
+
+    #[test]
+    fn test_parse_pool_health_check_query_default() {
+        let (_, _, health_query) = parse_pool_options_from_connection_string("DSN=MainDsn;");
+        assert_eq!(health_query, None);
     }
 
     #[test]

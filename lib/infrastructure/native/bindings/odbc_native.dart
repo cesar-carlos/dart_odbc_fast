@@ -36,6 +36,9 @@ class OdbcNative {
   late final bindings.OdbcBindings _bindings;
   late final ffi.DynamicLibrary _library;
 
+  /// True when the loaded native library exposes the audit FFI API.
+  bool get supportsAuditApi => _bindings.supportsAuditApi;
+
   /// Initializes the ODBC environment.
   ///
   /// Must be called before any other operations.
@@ -139,6 +142,50 @@ class OdbcNative {
     }
   }
 
+  /// Enables or disables native audit event collection.
+  ///
+  /// Returns true when operation succeeds.
+  bool setAuditEnabled({required bool enabled}) {
+    final result = _bindings.odbc_audit_enable(enabled ? 1 : 0);
+    return result == 0;
+  }
+
+  /// Clears all in-memory native audit events.
+  ///
+  /// Returns true on success.
+  bool clearAuditEvents() {
+    final result = _bindings.odbc_audit_clear();
+    return result == 0;
+  }
+
+  /// Gets audit events encoded as UTF-8 JSON array.
+  ///
+  /// Returns null on FFI failure.
+  String? getAuditEventsJson({int limit = 0}) {
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) =>
+          _bindings.odbc_audit_get_events(buf, bufLen, outWritten, limit),
+    );
+    if (data == null) {
+      return null;
+    }
+    return utf8.decode(data);
+  }
+
+  /// Gets current audit status encoded as UTF-8 JSON object.
+  ///
+  /// Returns null on FFI failure.
+  String? getAuditStatusJson() {
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) =>
+          _bindings.odbc_audit_get_status(buf, bufLen, outWritten),
+    );
+    if (data == null) {
+      return null;
+    }
+    return utf8.decode(data);
+  }
+
   /// Gets structured error information including SQLSTATE and native code.
   ///
   /// Returns null if no error occurred or if structured error info
@@ -234,6 +281,16 @@ class OdbcNative {
     );
   }
 
+  /// Requests cancellation of a batched stream.
+  ///
+  /// Only effective for streams created with [streamStartBatched].
+  /// No-op for buffer-mode streams. The worker exits between batches.
+  /// Returns true on success, false if stream_id is invalid.
+  bool streamCancel(int streamId) {
+    final result = _bindings.odbc_stream_cancel(streamId);
+    return result == 0;
+  }
+
   /// Closes a streaming query.
   ///
   /// The [streamId] must be a valid stream identifier.
@@ -254,7 +311,7 @@ class OdbcNative {
   Uint8List? execQuery(int connectionId, String sql, {int? maxBufferBytes}) {
     return _withSql(
       sql,
-      (ffi.Pointer<bindings.Utf8> sqlPtr) => callWithBuffer(
+      (sqlPtr) => callWithBuffer(
         (buf, bufLen, outWritten) => _bindings.odbc_exec_query(
           connectionId,
           sqlPtr,
@@ -286,10 +343,10 @@ class OdbcNative {
         (params == null || params.isEmpty) ? Uint8List(0) : params;
     return _withSql(
       sql,
-      (ffi.Pointer<bindings.Utf8> sqlPtr) {
+      (sqlPtr) {
         return _withParamsBuffer(
           paramsOrEmpty,
-          (ffi.Pointer<ffi.Uint8> paramsPtr) => callWithBuffer(
+          (paramsPtr) => callWithBuffer(
             (buf, bufLen, outWritten) => _bindings.odbc_exec_query_params(
               connectionId,
               sqlPtr,
@@ -353,7 +410,7 @@ class OdbcNative {
   }) {
     return _withSql(
       sql,
-      (ffi.Pointer<bindings.Utf8> sqlPtr) => callWithBuffer(
+      (sqlPtr) => callWithBuffer(
         (buf, bufLen, outWritten) => _bindings.odbc_exec_query_multi(
           connectionId,
           sqlPtr,
@@ -512,10 +569,10 @@ class OdbcNative {
     return _withUtf8Pair(
       catalog,
       schema,
-      (ffi.Pointer<bindings.Utf8> cPtr, ffi.Pointer<bindings.Utf8> sPtr) =>
+      (cPtr, sPtr) =>
           _withConn(
         connectionId,
-        (int conn) => callWithBuffer(
+        (conn) => callWithBuffer(
           (buf, bufLen, outWritten) => _bindings.odbc_catalog_tables(
             conn,
             cPtr,
@@ -538,7 +595,7 @@ class OdbcNative {
   Uint8List? catalogColumns(int connectionId, String table) {
     return _withSql(
       table,
-      (ffi.Pointer<bindings.Utf8> tablePtr) => callWithBuffer(
+      (tablePtr) => callWithBuffer(
         (buf, bufLen, outWritten) => _bindings.odbc_catalog_columns(
           connectionId,
           tablePtr,
@@ -621,7 +678,7 @@ class OdbcNative {
     }
     return _withParamsBuffer(
       params,
-      (ffi.Pointer<ffi.Uint8> paramsPtr) => callWithBuffer(
+      (paramsPtr) => callWithBuffer(
         (buf, bufLen, outWritten) => _bindings.odbc_execute(
           stmtId,
           paramsPtr,

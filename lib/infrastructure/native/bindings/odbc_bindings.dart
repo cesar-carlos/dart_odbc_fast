@@ -20,6 +20,7 @@ class OdbcBindings {
     _odbc_exec_query_ptr = _dylib.lookup('odbc_exec_query');
     _odbc_stream_start_ptr = _dylib.lookup('odbc_stream_start');
     _odbc_stream_fetch_ptr = _dylib.lookup('odbc_stream_fetch');
+    _odbc_stream_cancel_ptr = _dylib.lookup('odbc_stream_cancel');
     _odbc_stream_close_ptr = _dylib.lookup('odbc_stream_close');
     _odbc_transaction_begin_ptr = _dylib.lookup('odbc_transaction_begin');
     _odbc_transaction_commit_ptr = _dylib.lookup('odbc_transaction_commit');
@@ -57,6 +58,17 @@ class OdbcBindings {
     _odbc_bulk_insert_array_ptr = _dylib.lookup('odbc_bulk_insert_array');
     _odbc_bulk_insert_parallel_ptr = _dylib.lookup('odbc_bulk_insert_parallel');
     _odbc_detect_driver_ptr = _dylib.lookup('odbc_detect_driver');
+    try {
+      _odbc_audit_enable_ptr = _dylib.lookup('odbc_audit_enable');
+      _odbc_audit_get_events_ptr = _dylib.lookup('odbc_audit_get_events');
+      _odbc_audit_clear_ptr = _dylib.lookup('odbc_audit_clear');
+      _odbc_audit_get_status_ptr = _dylib.lookup('odbc_audit_get_status');
+    } on Object catch (_) {
+      _odbc_audit_enable_ptr = null;
+      _odbc_audit_get_events_ptr = null;
+      _odbc_audit_clear_ptr = null;
+      _odbc_audit_get_status_ptr = null;
+    }
   }
   final ffi.DynamicLibrary _dylib;
 
@@ -77,6 +89,8 @@ class OdbcBindings {
       _odbc_stream_start_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_fetch_func>>
       _odbc_stream_fetch_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_stream_cancel_func>>
+      _odbc_stream_cancel_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_close_func>>
       _odbc_stream_close_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_func>>
@@ -136,6 +150,20 @@ class OdbcBindings {
       _odbc_bulk_insert_parallel_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_detect_driver_func>>
       _odbc_detect_driver_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_audit_enable_func>>?
+      _odbc_audit_enable_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_audit_get_events_func>>?
+      _odbc_audit_get_events_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_audit_clear_func>>?
+      _odbc_audit_clear_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_audit_get_status_func>>?
+      _odbc_audit_get_status_ptr;
+
+  bool get supportsAuditApi =>
+      _odbc_audit_enable_ptr != null &&
+      _odbc_audit_get_events_ptr != null &&
+      _odbc_audit_clear_ptr != null &&
+      _odbc_audit_get_status_ptr != null;
 
   int odbc_init() => _odbc_init_ptr.asFunction<int Function()>()();
 
@@ -220,13 +248,21 @@ class OdbcBindings {
             ffi.Pointer<ffi.Uint8>,
           )>()(streamId, outBuf, bufLen, outWritten, hasMore);
 
+  int odbc_stream_cancel(int streamId) =>
+      _odbc_stream_cancel_ptr.asFunction<int Function(int)>()(streamId);
+
   int odbc_stream_close(int streamId) =>
       _odbc_stream_close_ptr.asFunction<int Function(int)>()(streamId);
 
-  int odbc_transaction_begin(int connId, int isolationLevel) =>
-      _odbc_transaction_begin_ptr.asFunction<int Function(int, int)>()(
+  int odbc_transaction_begin(
+    int connId,
+    int isolationLevel, [
+    int savepointDialect = 0,
+  ]) =>
+      _odbc_transaction_begin_ptr.asFunction<int Function(int, int, int)>()(
         connId,
         isolationLevel,
+        savepointDialect,
       );
 
   int odbc_transaction_commit(int txnId) =>
@@ -541,6 +577,67 @@ class OdbcBindings {
         parallelism,
         rowsInserted,
       );
+
+  int odbc_audit_enable(int enabled) {
+    final ptr = _odbc_audit_enable_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<int Function(int)>()(enabled);
+  }
+
+  int odbc_audit_get_events(
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+    int limit,
+  ) {
+    final ptr = _odbc_audit_get_events_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+          int,
+        )>()(
+      buffer,
+      bufferLen,
+      outWritten,
+      limit,
+    );
+  }
+
+  int odbc_audit_clear() {
+    final ptr = _odbc_audit_clear_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<int Function()>()();
+  }
+
+  int odbc_audit_get_status(
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_audit_get_status_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(
+      buffer,
+      bufferLen,
+      outWritten,
+    );
+  }
 }
 
 typedef odbc_init_func = ffi.Int32 Function();
@@ -578,8 +675,10 @@ typedef odbc_stream_fetch_func = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint32>,
   ffi.Pointer<ffi.Uint8>,
 );
+typedef odbc_stream_cancel_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_stream_close_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_transaction_begin_func = ffi.Uint32 Function(
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
 );
@@ -704,6 +803,19 @@ typedef odbc_bulk_insert_parallel_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_audit_enable_func = ffi.Int32 Function(ffi.Int32);
+typedef odbc_audit_get_events_func = ffi.Int32 Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+  ffi.Uint32,
+);
+typedef odbc_audit_clear_func = ffi.Int32 Function();
+typedef odbc_audit_get_status_func = ffi.Int32 Function(
+  ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
 );

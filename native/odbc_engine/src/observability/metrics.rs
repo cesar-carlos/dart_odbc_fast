@@ -1,3 +1,14 @@
+//! Standard metrics for critical operations.
+//!
+//! ## Minimal metrics per operation
+//!
+//! - **Query execution**: `record_query(latency)` → query_count, total_latency, min/max, p50/p95/p99
+//! - **Errors**: `record_error()` → error_count
+//! - **Pool**: `update_pool_metrics()` → pool_id, total/active/idle connections, requests, errors
+//! - **Uptime**: `start_time.elapsed()` from Metrics creation
+//!
+//! Exposed via `odbc_get_metrics` (40 bytes) and `odbc_get_cache_metrics` (64 bytes).
+
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

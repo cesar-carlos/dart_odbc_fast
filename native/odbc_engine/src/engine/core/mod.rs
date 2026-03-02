@@ -17,7 +17,7 @@ pub use array_binding::ArrayBinding;
 pub use batch_executor::{BatchExecutor, BatchParam, BatchQuery};
 pub use bulk_copy::{BulkCopyExecutor, BulkCopyFormat};
 pub use connection_manager::ConnectionManager;
-pub use disk_spill::DiskSpillStream;
+pub use disk_spill::{DiskSpillStream, DiskSpillWriter, SpillReadSource};
 pub use driver_capabilities::DriverCapabilities;
 pub use execution_engine::ExecutionEngine;
 pub use memory_engine::MemoryEngine;

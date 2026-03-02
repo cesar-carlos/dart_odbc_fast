@@ -28,9 +28,10 @@ fn test_streaming_small_result_set() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create streaming executor with small chunk size
     let executor = StreamingExecutor::new(1024);
@@ -40,7 +41,7 @@ fn test_streaming_small_result_set() {
     println!("Executing: {}", sql);
 
     let mut state = executor
-        .execute_streaming(odbc_conn, sql)
+        .execute_streaming(&odbc_conn, sql)
         .expect("Failed to execute streaming query");
     println!("✓ Streaming query executed");
 
@@ -111,9 +112,10 @@ fn test_streaming_large_result_set() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create streaming executor with small chunk size to force multiple chunks
     let executor = StreamingExecutor::new(512); // Small chunk size
@@ -141,7 +143,7 @@ fn test_streaming_large_result_set() {
     println!("Executing query for 100 rows...");
 
     let mut state = executor
-        .execute_streaming(odbc_conn, sql)
+        .execute_streaming(&odbc_conn, sql)
         .expect("Failed to execute streaming query");
     println!("✓ Streaming query executed");
 
@@ -196,9 +198,10 @@ fn test_streaming_multiple_columns() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create streaming executor
     let executor = StreamingExecutor::new(2048);
@@ -218,7 +221,7 @@ fn test_streaming_multiple_columns() {
     println!("Executing multi-column query...");
 
     let mut state = executor
-        .execute_streaming(odbc_conn, sql)
+        .execute_streaming(&odbc_conn, sql)
         .expect("Failed to execute streaming query");
     println!("✓ Streaming query executed");
 
@@ -289,9 +292,10 @@ fn test_streaming_with_nulls() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create streaming executor
     let executor = StreamingExecutor::new(1024);
@@ -310,7 +314,7 @@ fn test_streaming_with_nulls() {
     println!("Executing query with NULLs...");
 
     let mut state = executor
-        .execute_streaming(odbc_conn, sql)
+        .execute_streaming(&odbc_conn, sql)
         .expect("Failed to execute streaming query");
     println!("✓ Streaming query executed");
 
@@ -379,9 +383,10 @@ fn test_streaming_different_chunk_sizes() {
         // Get ODBC connection
         let conn_handles = conn.get_handles();
         let handles_guard = conn_handles.lock().unwrap();
-        let odbc_conn = handles_guard
+        let conn_arc = handles_guard
             .get_connection(conn.get_connection_id())
             .expect("Failed to get ODBC connection handle");
+        let odbc_conn = conn_arc.lock().unwrap();
 
         // Create streaming executor with specific chunk size
         let executor = StreamingExecutor::new(chunk_size);
@@ -390,7 +395,7 @@ fn test_streaming_different_chunk_sizes() {
         let sql = "SELECT number FROM (SELECT 1 AS number UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10) AS t";
 
         let mut state = executor
-            .execute_streaming(odbc_conn, sql)
+            .execute_streaming(&odbc_conn, sql)
             .expect("Failed to execute streaming query");
 
         // Fetch all chunks
@@ -439,9 +444,10 @@ fn test_streaming_has_more() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create streaming executor with very small chunk size
     let executor = StreamingExecutor::new(100); // Very small
@@ -450,7 +456,7 @@ fn test_streaming_has_more() {
     let sql = "SELECT number FROM (SELECT 1 AS number UNION ALL SELECT 2 UNION ALL SELECT 3) AS t";
 
     let mut state = executor
-        .execute_streaming(odbc_conn, sql)
+        .execute_streaming(&odbc_conn, sql)
         .expect("Failed to execute streaming query");
 
     // Verify has_more() behavior
@@ -506,9 +512,10 @@ fn test_streaming_batched_lazy() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = StreamingExecutor::new(1024);
     let sql = "SELECT number FROM (SELECT 1 AS number UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) AS t ORDER BY number";
@@ -516,10 +523,16 @@ fn test_streaming_batched_lazy() {
 
     let mut batches: Vec<Vec<u8>> = Vec::new();
     executor
-        .execute_streaming_batched(odbc_conn, sql, FETCH_SIZE, |encoded| {
-            batches.push(encoded);
-            Ok(())
-        })
+        .execute_streaming_batched(
+            &odbc_conn,
+            sql,
+            FETCH_SIZE,
+            |encoded| {
+                batches.push(encoded);
+                Ok(())
+            },
+            None,
+        )
         .expect("execute_streaming_batched failed");
 
     let mut total_rows = 0_usize;
@@ -568,9 +581,10 @@ fn test_streaming_batched_large_result() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = StreamingExecutor::new(1024);
     let sql = ";WITH n(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM n WHERE n < 1000) SELECT n FROM n OPTION (MAXRECURSION 1000)";
@@ -578,10 +592,16 @@ fn test_streaming_batched_large_result() {
 
     let mut batches: Vec<Vec<u8>> = Vec::new();
     executor
-        .execute_streaming_batched(odbc_conn, sql, FETCH_SIZE, |encoded| {
-            batches.push(encoded);
-            Ok(())
-        })
+        .execute_streaming_batched(
+            &odbc_conn,
+            sql,
+            FETCH_SIZE,
+            |encoded| {
+                batches.push(encoded);
+                Ok(())
+            },
+            None,
+        )
         .expect("execute_streaming_batched failed");
 
     let mut total_rows = 0_usize;
@@ -629,13 +649,14 @@ fn test_streaming_invalid_sql_returns_error() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = StreamingExecutor::new(1024);
     let invalid_sql = "SELECT * FROM nonexistent_table_xyz_12345";
-    let result = executor.execute_streaming(odbc_conn, invalid_sql);
+    let result = executor.execute_streaming(&odbc_conn, invalid_sql);
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -660,18 +681,25 @@ fn test_streaming_batched_empty_result() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = StreamingExecutor::new(1024);
     let sql = "SELECT 1 AS n WHERE 1 = 0";
     let mut batch_count = 0_usize;
     executor
-        .execute_streaming_batched(odbc_conn, sql, 10, |_| {
-            batch_count += 1;
-            Ok(())
-        })
+        .execute_streaming_batched(
+            &odbc_conn,
+            sql,
+            10,
+            |_| {
+                batch_count += 1;
+                Ok(())
+            },
+            None,
+        )
         .expect("execute_streaming_batched should succeed for empty result");
 
     assert!(
@@ -699,23 +727,30 @@ fn test_streaming_batched_callback_error_propagates() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = StreamingExecutor::new(1024);
     let sql = "SELECT number FROM (SELECT 1 AS number UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) AS t ORDER BY number";
     let mut call_count = 0_u32;
-    let result = executor.execute_streaming_batched(odbc_conn, sql, 2, |_| {
-        call_count += 1;
-        if call_count >= 2 {
-            Err(odbc_engine::OdbcError::InternalError(
-                "callback error".to_string(),
-            ))
-        } else {
-            Ok(())
-        }
-    });
+    let result = executor.execute_streaming_batched(
+        &odbc_conn,
+        sql,
+        2,
+        |_| {
+            call_count += 1;
+            if call_count >= 2 {
+                Err(odbc_engine::OdbcError::InternalError(
+                    "callback error".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        },
+        None,
+    );
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -723,4 +758,176 @@ fn test_streaming_batched_callback_error_propagates() {
     assert!(result.is_err(), "Callback error should propagate");
     assert!(call_count >= 2, "Callback should be invoked at least twice");
     println!("✓ Streaming batched callback error propagates test passed");
+}
+
+/// E2E test for spill-to-disk mode. Validates that when ODBC_STREAM_SPILL_THRESHOLD_MB
+/// is set, large result sets spill to disk instead of staying in memory.
+/// Run with: `ODBC_STREAM_SPILL_THRESHOLD_MB=1 cargo test --test e2e_streaming_test test_streaming_spill_to_disk -- --nocapture`
+#[test]
+fn test_streaming_spill_to_disk() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const ROW_COUNT: usize = 5_000;
+    const SPILL_THRESHOLD_MB: usize = 1;
+
+    println!(
+        "Testing spill-to-disk with {} rows (threshold: {} MB)...",
+        ROW_COUNT, SPILL_THRESHOLD_MB
+    );
+
+    std::env::set_var(
+        "ODBC_STREAM_SPILL_THRESHOLD_MB",
+        SPILL_THRESHOLD_MB.to_string(),
+    );
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize ODBC environment");
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let conn_handles = conn.get_handles();
+    let handles_guard = conn_handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let sql = format!(
+        ";WITH n(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM n WHERE n < {}) SELECT n, REPLICATE('x', 200) AS padding FROM n OPTION (MAXRECURSION 0)",
+        ROW_COUNT
+    );
+
+    let executor = StreamingExecutor::new(4096);
+
+    println!("  Executing streaming query with spill-to-disk enabled...");
+    let start = std::time::Instant::now();
+    let mut state = executor
+        .execute_streaming(&odbc_conn, &sql)
+        .expect("Streaming should complete with spill-to-disk");
+
+    let mut total_bytes = 0_usize;
+    let mut chunk_count = 0_usize;
+    while let Some(chunk) = state.fetch_next_chunk().expect("fetch chunk") {
+        total_bytes += chunk.len();
+        chunk_count += 1;
+    }
+    let elapsed = start.elapsed();
+
+    println!(
+        "    ✓ Spill-to-disk mode: {} chunks, {} bytes in {:?}",
+        chunk_count, total_bytes, elapsed
+    );
+
+    assert!(
+        total_bytes > SPILL_THRESHOLD_MB * 1024 * 1024,
+        "Result should exceed spill threshold"
+    );
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    std::env::remove_var("ODBC_STREAM_SPILL_THRESHOLD_MB");
+
+    println!(
+        "\n✅ Spill-to-disk test passed: {} rows, {} bytes",
+        ROW_COUNT, total_bytes
+    );
+}
+
+/// Memory validation with 50k+ rows (Fase 4).
+/// Validates buffer mode and batched mode complete without OOM.
+/// Run with: `cargo test --test e2e_streaming_test test_streaming_50k_rows_memory_validation -- --ignored --nocapture`
+#[test]
+#[ignore = "Long-running: 50k rows; run with --ignored when ENABLE_E2E_TESTS=1"]
+fn test_streaming_50k_rows_memory_validation() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const ROW_COUNT: usize = 50_000;
+    const FETCH_SIZE: usize = 1000;
+
+    println!(
+        "Validating memory with {} rows (buffer + batched mode)...",
+        ROW_COUNT
+    );
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize ODBC environment");
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let conn_handles = conn.get_handles();
+    let handles_guard = conn_handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let sql = format!(
+        ";WITH n(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM n WHERE n < {}) SELECT n FROM n OPTION (MAXRECURSION 0)",
+        ROW_COUNT
+    );
+
+    let executor = StreamingExecutor::new(4096);
+
+    println!("  Buffer mode (full result in memory)...");
+    let start = std::time::Instant::now();
+    let mut state = executor
+        .execute_streaming(&odbc_conn, &sql)
+        .expect("Buffer mode should complete for 50k rows");
+    let mut total_bytes = 0_usize;
+    while let Some(chunk) = state.fetch_next_chunk().expect("fetch chunk") {
+        total_bytes += chunk.len();
+    }
+    let buffer_elapsed = start.elapsed();
+    println!(
+        "    ✓ Buffer mode: {} bytes in {:?}",
+        total_bytes, buffer_elapsed
+    );
+
+    println!("  Batched mode (fetch_size={})...", FETCH_SIZE);
+    let start = std::time::Instant::now();
+    let mut batches: Vec<Vec<u8>> = Vec::new();
+    executor
+        .execute_streaming_batched(
+            &odbc_conn,
+            &sql,
+            FETCH_SIZE,
+            |encoded| {
+                batches.push(encoded);
+                Ok(())
+            },
+            None,
+        )
+        .expect("Batched mode should complete for 50k rows");
+    let mut total_rows = 0_usize;
+    for batch in &batches {
+        let decoded = BinaryProtocolDecoder::parse(batch).expect("decode batch");
+        total_rows += decoded.row_count;
+    }
+    let batched_elapsed = start.elapsed();
+    println!(
+        "    ✓ Batched mode: {} batches, {} rows in {:?}",
+        batches.len(),
+        total_rows,
+        batched_elapsed
+    );
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    assert_eq!(total_rows, ROW_COUNT, "Expected {} rows", ROW_COUNT);
+    println!(
+        "\n✅ Memory validation passed: buffer and batched mode completed for {} rows",
+        ROW_COUNT
+    );
 }

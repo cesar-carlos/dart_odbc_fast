@@ -34,6 +34,7 @@ include = [
     "odbc_stream_start",
     "odbc_stream_start_batched",
     "odbc_stream_fetch",
+    "odbc_stream_cancel",
     "odbc_stream_close",
     "odbc_catalog_tables",
     "odbc_catalog_columns",

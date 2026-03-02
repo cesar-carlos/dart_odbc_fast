@@ -134,16 +134,17 @@ mod tests {
         let conn = OdbcConnection::connect(handles, &conn_str).expect("Failed to connect");
 
         let handles = conn.get_handles();
-        let handles_guard = handles.lock().unwrap();
-        let odbc_conn = handles_guard
-            .get_connection(conn.get_connection_id())
-            .expect("Failed to get ODBC connection");
+        let conn_arc = {
+            let handles_guard = handles.lock().unwrap();
+            handles_guard
+                .get_connection(conn.get_connection_id())
+                .expect("Failed to get ODBC connection")
+        };
+        let odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 42 AS value";
         let buffer =
-            execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
-
-        drop(handles_guard);
+            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -165,16 +166,17 @@ mod tests {
         let conn = OdbcConnection::connect(handles, &conn_str).expect("Failed to connect");
 
         let handles = conn.get_handles();
-        let handles_guard = handles.lock().unwrap();
-        let odbc_conn = handles_guard
-            .get_connection(conn.get_connection_id())
-            .expect("Failed to get ODBC connection");
+        let conn_arc = {
+            let handles_guard = handles.lock().unwrap();
+            handles_guard
+                .get_connection(conn.get_connection_id())
+                .expect("Failed to get ODBC connection")
+        };
+        let odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 'test' AS value";
         let buffer =
-            execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
-
-        drop(handles_guard);
+            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -196,16 +198,17 @@ mod tests {
         let conn = OdbcConnection::connect(handles, &conn_str).expect("Failed to connect");
 
         let handles = conn.get_handles();
-        let handles_guard = handles.lock().unwrap();
-        let odbc_conn = handles_guard
-            .get_connection(conn.get_connection_id())
-            .expect("Failed to get ODBC connection");
+        let conn_arc = {
+            let handles_guard = handles.lock().unwrap();
+            handles_guard
+                .get_connection(conn.get_connection_id())
+                .expect("Failed to get ODBC connection")
+        };
+        let odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT NULL AS value";
         let buffer =
-            execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
-
-        drop(handles_guard);
+            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -228,16 +231,17 @@ mod tests {
         let conn = OdbcConnection::connect(handles, &conn_str).expect("Failed to connect");
 
         let handles = conn.get_handles();
-        let handles_guard = handles.lock().unwrap();
-        let odbc_conn = handles_guard
-            .get_connection(conn.get_connection_id())
-            .expect("Failed to get ODBC connection");
+        let conn_arc = {
+            let handles_guard = handles.lock().unwrap();
+            handles_guard
+                .get_connection(conn.get_connection_id())
+                .expect("Failed to get ODBC connection")
+        };
+        let odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 9223372036854775807 AS value";
         let buffer =
-            execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
-
-        drop(handles_guard);
+            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =

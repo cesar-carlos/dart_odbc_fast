@@ -28,12 +28,14 @@ fn test_driver_capabilities_detect() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Detect capabilities
-    let caps = DriverCapabilities::detect(odbc_conn).expect("Failed to detect driver capabilities");
+    let caps =
+        DriverCapabilities::detect(&odbc_conn).expect("Failed to detect driver capabilities");
 
     println!("✓ Capabilities detected");
     println!(
@@ -99,17 +101,18 @@ fn test_driver_capabilities_detect_multiple_times() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Detect capabilities multiple times
     let caps1 =
-        DriverCapabilities::detect(odbc_conn).expect("Failed to detect capabilities (first time)");
-    let caps2 =
-        DriverCapabilities::detect(odbc_conn).expect("Failed to detect capabilities (second time)");
+        DriverCapabilities::detect(&odbc_conn).expect("Failed to detect capabilities (first time)");
+    let caps2 = DriverCapabilities::detect(&odbc_conn)
+        .expect("Failed to detect capabilities (second time)");
     let caps3 =
-        DriverCapabilities::detect(odbc_conn).expect("Failed to detect capabilities (third time)");
+        DriverCapabilities::detect(&odbc_conn).expect("Failed to detect capabilities (third time)");
 
     // Verify consistency
     assert_eq!(
@@ -169,12 +172,13 @@ fn test_driver_capabilities_clone() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Detect capabilities
-    let caps1 = DriverCapabilities::detect(odbc_conn).expect("Failed to detect capabilities");
+    let caps1 = DriverCapabilities::detect(&odbc_conn).expect("Failed to detect capabilities");
 
     // Clone
     let caps2 = caps1.clone();
@@ -220,12 +224,13 @@ fn test_driver_capabilities_debug() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Detect capabilities
-    let caps = DriverCapabilities::detect(odbc_conn).expect("Failed to detect capabilities");
+    let caps = DriverCapabilities::detect(&odbc_conn).expect("Failed to detect capabilities");
 
     // Format as debug string
     let debug_str = format!("{:?}", caps);
@@ -286,12 +291,13 @@ fn test_driver_capabilities_with_different_connections() {
 
     let conn_handles1 = conn1.get_handles();
     let handles_guard1 = conn_handles1.lock().unwrap();
-    let odbc_conn1 = handles_guard1
+    let conn_arc1 = handles_guard1
         .get_connection(conn1.get_connection_id())
         .expect("Failed to get ODBC connection handle (first)");
+    let odbc_conn1 = conn_arc1.lock().unwrap();
 
     let caps1 =
-        DriverCapabilities::detect(odbc_conn1).expect("Failed to detect capabilities (first)");
+        DriverCapabilities::detect(&odbc_conn1).expect("Failed to detect capabilities (first)");
 
     drop(handles_guard1);
     conn1.disconnect().expect("Failed to disconnect (first)");
@@ -305,12 +311,13 @@ fn test_driver_capabilities_with_different_connections() {
 
     let conn_handles2 = conn2.get_handles();
     let handles_guard2 = conn_handles2.lock().unwrap();
-    let odbc_conn2 = handles_guard2
+    let conn_arc2 = handles_guard2
         .get_connection(conn2.get_connection_id())
         .expect("Failed to get ODBC connection handle (second)");
+    let odbc_conn2 = conn_arc2.lock().unwrap();
 
     let caps2 =
-        DriverCapabilities::detect(odbc_conn2).expect("Failed to detect capabilities (second)");
+        DriverCapabilities::detect(&odbc_conn2).expect("Failed to detect capabilities (second)");
 
     drop(handles_guard2);
     conn2.disconnect().expect("Failed to disconnect (second)");

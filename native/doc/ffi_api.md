@@ -1,4 +1,4 @@
-﻿# FFI API (C ABI) — `odbc_*`
+# FFI API (C ABI) — `odbc_*`
 
 This document describes the public C ABI entrypoints implemented in
 `native/odbc_engine/src/ffi/mod.rs`.
@@ -20,12 +20,56 @@ Creates a new ODBC connection and stores it in global state.
 - **Returns**: `conn_id > 0` on success; `0` on failure.
 - **Errors**: use `odbc_get_error(...)` / `odbc_get_structured_error(...)`.
 
+### `odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms: unsigned int) -> unsigned int`
+
+Creates a new ODBC connection with login timeout.
+
+- **Returns**: `conn_id > 0` on success; `0` on failure.
+- **timeout_ms**: login timeout in milliseconds. Current implementation maps
+  `0` to a minimum timeout of `1` second.
+
 ### `odbc_disconnect(conn_id: unsigned int) -> int`
 
 Disconnects and removes the connection. Also rolls back any active transactions
 belonging to that connection.
 
 - **Returns**: `0` on success; non‑zero on failure.
+
+## Audit logging
+
+### `odbc_audit_enable(enabled: int) -> int`
+
+Enables or disables in-memory audit event collection.
+
+- **enabled**: `0` disables logging; non-zero enables logging.
+- **Returns**: `0` on success; `-1` on failure.
+
+### `odbc_audit_get_events(buffer, buffer_len, out_written, limit) -> int`
+
+Returns audit events as a JSON array.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if `buffer` is too small.
+- **limit**: max number of most recent events (`0` = all available).
+- **Buffer contract**:
+  - Caller provides `buffer` and `buffer_len`.
+  - On success, `out_written` contains bytes copied.
+  - On error, `out_written` is set to `0` when pointer is valid.
+
+### `odbc_audit_clear() -> int`
+
+Clears all in-memory audit events.
+
+- **Returns**: `0` on success; `-1` on failure.
+
+### `odbc_audit_get_status(buffer, buffer_len, out_written) -> int`
+
+Returns audit status as a JSON object:
+
+```json
+{ "enabled": true, "event_count": 12 }
+```
+
+- **Returns**: `0` on success; `-1` on error; `-2` if `buffer` is too small.
 
 ## Query execution
 
@@ -55,7 +99,7 @@ Executes a **parameterized** query and writes the binary protocol into `out_buff
 Executes **batch SQL** (e.g. multiple statements, stored procedures) and returns a **multi-result** binary buffer.
 
 - **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
-- **Output format**: `[count: 4 bytes LE][foreach item: tag(1) + len(4) LE + payload]`. Tag `0` = result set (payload = standard binary protocol); tag `1` = row count (payload = 8 bytes i64 LE). Currently only the **first** result (result set or row count) is returned; full `SQLMoreResults` iteration is planned.
+- **Output format**: `[count: 4 bytes LE][foreach item: tag(1) + len(4) LE + payload]`. Tag `0` = result set (payload = standard binary protocol); tag `1` = row count (payload = 8 bytes i64 LE). All results are returned via full `SQLMoreResults` iteration (batch SQL, stored procedures, multiple statements).
 
 ### Prepare / Execute / Cancel / Close (timeout support)
 
@@ -66,22 +110,37 @@ Workflow: `odbc_prepare` → `odbc_execute` (possibly multiple times) → `odbc_
 Prepares a statement with optional query timeout.
 
 - **Returns**: `stmt_id > 0` on success; `0` on failure.
+- **conn_id**: accepts either a regular connection ID (`odbc_connect`) or a pooled
+  connection ID (`odbc_pool_get_connection`).
 - **timeout_ms**: `0` = no timeout; otherwise timeout in milliseconds. Uses ODBC `SQL_ATTR_QUERY_TIMEOUT` where supported (e.g. SQL Server, PostgreSQL).
 
-#### `odbc_execute(stmt_id, params_buffer, params_len, out_buffer, buffer_len, out_written) -> int`
+#### `odbc_execute(stmt_id, params_buffer, params_len, timeout_override_ms, fetch_size, out_buffer, buffer_len, out_written) -> int`
 
 Executes a prepared statement. Same output contract as `odbc_exec_query` / `odbc_exec_query_params`.
 
 - **Returns**: `0` on success; `-1` on error; `-2` if output buffer too small.
 - **params_buffer** / **params_len**: Serialized `ParamValue` array; use `NULL` / `0` for no parameters.
+- **timeout_override_ms**: `0` keeps the timeout configured in `odbc_prepare`; non-zero
+  overrides timeout for this execution.
+- **fetch_size**: optional execution fetch hint (`0` = default behavior).
 
 #### `odbc_cancel(stmt_id) -> int`
 
-Requests cancellation of a statement **currently executing**. **Limitation**: Full cancel (ODBC `SQLCancel`) requires an active execution context (e.g. background execution). Currently returns non‑zero with an error indicating cancel is not implemented; proper support is planned.
+Requests cancellation of a statement **currently executing**. **Limitation**: Full cancel (ODBC `SQLCancel`) requires an active ODBC statement handle. The prepare/execute flow is synchronous and does not hold a persistent statement handle during execution; cancel is planned for when async execution or streaming-with-cancel is implemented. **Workaround**: Use query timeout (`odbc_prepare` with `timeout_ms`, or `odbc_connect_with_timeout`) to bound execution time.
+
+**Timeout vs cancel semantics**:
+- **Timeout**: Set before execution; the driver aborts the query after the specified duration. Supported by SQL Server, PostgreSQL, and others via `SQL_ATTR_QUERY_TIMEOUT`.
+- **Cancel**: Requested during execution; requires the caller to invoke cancel while another thread holds the executing statement. Not yet supported in the current synchronous prepare/execute flow.
 
 #### `odbc_close_statement(stmt_id) -> int`
 
 Closes the prepared statement and releases resources. **Returns**: `0` on success; non‑zero on failure (e.g. invalid `stmt_id`). Statements for a connection are also removed when that connection is disconnected.
+
+#### `odbc_clear_all_statements() -> int`
+
+Closes all tracked prepared statements and clears statement state.
+
+- **Returns**: `0` on success; non-zero on failure.
 
 ## Streaming (chunked copy-out over FFI)
 
@@ -91,8 +150,9 @@ allocating a huge buffer on the Dart side.
 **Two modes:**
 
 1. **Buffer mode** (`odbc_stream_start`): Executes the query, encodes the full
-   result in memory, then yields fixed-size chunks. Bounded memory on the Dart
-   side; engine holds the full result.
+   result, then yields fixed-size chunks. Bounded memory on the Dart side.
+   When `ODBC_STREAM_SPILL_THRESHOLD_MB` is set (>0), large results spill to
+   temp file; engine reads in chunks without holding full result in memory.
 
 2. **Batched mode** (`odbc_stream_start_batched`): Cursor-based batching. Fetches
    `fetch_size` rows per batch, encodes each batch, and stores only the next
@@ -107,6 +167,7 @@ Executes `sql`, encodes the entire result to the binary protocol, and creates a
 stream handle that can be consumed in chunks (buffer mode).
 
 - **Returns**: `stream_id > 0` on success; `0` on failure.
+- **chunk_size**: bytes per FFI chunk; `0` = default (1024).
 
 ### `odbc_stream_start_batched(conn_id, sql, fetch_size, chunk_size) -> unsigned int`
 
@@ -114,8 +175,8 @@ Starts **cursor-based batched** streaming. Fetches up to `fetch_size` rows per
 batch; each batch is then chunked into `chunk_size`-byte pieces for `odbc_stream_fetch`.
 
 - **Returns**: `stream_id > 0` on success; `0` on failure.
-- **fetch_size**: rows per batch (engine-side).
-- **chunk_size**: bytes per FFI chunk (same semantics as `odbc_stream_start`).
+- **fetch_size**: rows per batch (engine-side); `0` = default (100).
+- **chunk_size**: bytes per FFI chunk; `0` = default (1024).
 
 ### `odbc_stream_fetch(stream_id, out_buffer, buffer_len, out_written, out_has_more) -> int`
 
@@ -125,6 +186,15 @@ Fetches the next chunk. Works for both buffer and batched streams.
 - On success:
   - `out_written` is set to the bytes written for this chunk (may be `0` on EOF).
   - `out_has_more` is set to `1` if there is more, otherwise `0`.
+
+### `odbc_stream_cancel(stream_id) -> int`
+
+Requests cancellation of a **batched** stream (created with `odbc_stream_start_batched`).
+The worker checks the cancellation flag between batches and exits early. No-op for
+buffer-mode streams (`odbc_stream_start`).
+
+- **Returns**: `0` on success; non‑zero if `stream_id` is invalid.
+- After cancel, `odbc_stream_fetch` will eventually return `out_has_more = 0`.
 
 ### `odbc_stream_close(stream_id) -> int`
 
@@ -171,7 +241,7 @@ Transactions are implemented with:
 - Isolation level applied via SQL‑92:
   `SET TRANSACTION ISOLATION LEVEL <READ COMMITTED | ...>`
 
-### `odbc_transaction_begin(conn_id, isolation_level) -> unsigned int`
+### `odbc_transaction_begin(conn_id, isolation_level, savepoint_dialect) -> unsigned int`
 
 Begins a transaction for an existing connection.
 
@@ -182,6 +252,11 @@ Isolation levels (ODBC mapping):
 - `2`: RepeatableRead
 - `3`: Serializable
 
+Savepoint dialect (determines SQL syntax for savepoints):
+
+- `0`: SQL-92 (SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT) — PostgreSQL, MySQL, etc.
+- `1`: SQL Server (SAVE TRANSACTION, ROLLBACK TRANSACTION)
+
 Returns `txn_id > 0` on success; `0` on failure.
 
 ### `odbc_transaction_commit(txn_id) -> int`
@@ -191,6 +266,23 @@ Commits and ends the transaction.
 ### `odbc_transaction_rollback(txn_id) -> int`
 
 Rolls back and ends the transaction.
+
+### Savepoints
+
+Savepoint operations run inside an active transaction and keep the transaction active.
+The SQL syntax depends on the `savepoint_dialect` passed to `odbc_transaction_begin`.
+
+### `odbc_savepoint_create(txn_id, name) -> int`
+
+Creates a savepoint (SAVEPOINT &lt;name&gt; or SAVE TRANSACTION &lt;name&gt; per dialect).
+
+### `odbc_savepoint_rollback(txn_id, name) -> int`
+
+Rolls back to the savepoint (ROLLBACK TO SAVEPOINT or ROLLBACK TRANSACTION per dialect).
+
+### `odbc_savepoint_release(txn_id, name) -> int`
+
+Releases the savepoint (RELEASE SAVEPOINT for SQL-92; no-op for SQL Server).
 
 ## Connection pool (r2d2)
 
@@ -208,7 +300,9 @@ Returns `pooled_conn_id > 0` on success; `0` on failure.
 
 ### `odbc_pool_release_connection(pooled_conn_id) -> int`
 
-Releases the checked-out pooled connection back to the pool.
+Releases the checked-out pooled connection back to the pool. Before return, any active
+transaction is rolled back and autocommit is restored (RAII). Prepared statements for
+this connection are closed.
 
 ### `odbc_pool_health_check(pool_id) -> int`
 
@@ -223,14 +317,40 @@ Writes pool state:
 
 ### `odbc_pool_close(pool_id) -> int`
 
-Closes and removes the pool. Any still-checked-out pooled connections must be
-released first.
+Closes and removes the pool. Before close, any checked-out connections have their
+active transactions rolled back and autocommit restored (RAII). Prepared statements
+for those connections are closed. Connections are then invalidated/removed from
+global state.
+
+## Bulk insert
+
+### `odbc_bulk_insert_array(conn_id, table, columns, column_count, data_buffer, buffer_len, row_count, rows_inserted) -> int`
+
+Performs bulk insert on a regular connection. When feature `sqlserver-bcp` is enabled, uses
+`BulkCopyExecutor` (ArrayBinding path); otherwise uses `ArrayBinding` directly.
+
+- **Returns**: `0` on success; `-1` on failure.
+- **Data source**: current implementation reads table/columns/rows from `data_buffer`
+  (serialized bulk payload); `table`/`columns`/`column_count`/`row_count` parameters are
+  currently ignored by the Rust side.
+
+### `odbc_bulk_insert_parallel(pool_id, table, columns, column_count, data_buffer, buffer_len, parallelism, rows_inserted) -> int`
+
+Performs parallel bulk insert using a pool (`rayon` workers + pooled checkout). Uses
+`bulk_insert_payload` (BulkCopyExecutor when `sqlserver-bcp` enabled, else ArrayBinding).
+On partial failure, returns consolidated error with chunk indices and rows inserted before failure.
+
+- **Returns**: `0` on success; `-1` on failure.
+- **parallelism** must be `>= 1`.
+- As above, table/column shape is taken from `data_buffer`.
 
 ## Errors
 
-### `odbc_get_error(out_buffer, buffer_len, out_written) -> int`
+### `odbc_get_error(out_buffer, buffer_len) -> int`
 
 Writes the last error message (UTF‑8) into `out_buffer`.
+
+- **Returns**: bytes written (excluding null terminator), or `-1` on error.
 
 ### `odbc_get_structured_error(out_buffer, buffer_len, out_written) -> int`
 
@@ -238,12 +358,40 @@ Writes the last structured error into `out_buffer` (binary encoding).
 When the ODBC driver provides diagnostic information, **SQLSTATE** (5 bytes) and
 **native error code** (4 bytes LE) are preserved and included in the payload;
 otherwise they are zero. Format: `[sqlstate: 5][native_code: 4 LE][message_len: 4 LE][message: N]`.
+- **Return behavior**:
+  - `0`: structured error written
+  - `1`: no structured error available (`out_written = 0`)
+  - negative values: failure (e.g., invalid pointers/buffer issues)
 
 ## Metrics
 
 ### `odbc_get_metrics(out_buffer, buffer_len, out_written) -> int`
 
-Returns a JSON payload with metrics tracked inside the engine.
+Writes a fixed 40-byte binary payload (5 little-endian `u64` values):
+
+- query_count
+- error_count
+- uptime_secs
+- total_latency_millis
+- avg_latency_millis
+
+### `odbc_get_cache_metrics(out_buffer, buffer_len, out_written) -> int`
+
+Writes a fixed 64-byte payload with prepared-statement cache metrics
+(`u64` counters + `f64` for average executions/statement).
+
+### `odbc_clear_statement_cache() -> int`
+
+Clears prepared-statement cache metrics/state.
+
+## Driver helper
+
+### `odbc_detect_driver(conn_str, out_buf, buffer_len) -> int`
+
+Attempts to detect driver family from the connection string and writes the
+detected name to `out_buf`.
+
+- **Returns**: `1` if known driver detected; `0` if unknown (writes `"unknown"`).
 
 ## Minimal usage example (C-style)
 

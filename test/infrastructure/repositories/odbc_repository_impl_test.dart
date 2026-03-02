@@ -31,7 +31,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -50,7 +50,7 @@ void main() {
       expect(first.isSuccess(), isFalse);
       first.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -70,7 +70,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -89,7 +89,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -109,7 +109,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -124,7 +124,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -146,7 +146,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,
@@ -161,7 +161,7 @@ void main() {
       expect(result.isSuccess(), isFalse);
       result.fold(
         (_) => fail('Expected failure'),
-        (Exception e) {
+        (e) {
           expect(e, isA<ValidationError>());
           expect(
             (e as ValidationError).message,

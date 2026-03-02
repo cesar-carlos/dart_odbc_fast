@@ -97,10 +97,28 @@ impl ParallelBulkInsert {
             .collect();
 
         let mut total = 0_usize;
-        for r in results {
-            total += r?;
+        let mut errors: Vec<(usize, String)> = Vec::new();
+        for (chunk_idx, r) in results.into_iter().enumerate() {
+            match r {
+                Ok(n) => total += n,
+                Err(e) => errors.push((chunk_idx, e.to_string())),
+            }
         }
-        Ok(total)
+        if errors.is_empty() {
+            Ok(total)
+        } else {
+            let msg = errors
+                .iter()
+                .map(|(idx, err)| format!("chunk[{}]: {}", idx, err))
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(OdbcError::InternalError(format!(
+                "Parallel bulk insert: {} failed chunk(s) ({} rows inserted before failure): {}",
+                errors.len(),
+                total,
+                msg
+            )))
+        }
     }
 }
 

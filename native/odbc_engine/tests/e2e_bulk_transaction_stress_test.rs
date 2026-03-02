@@ -163,14 +163,16 @@ fn test_e2e_bulk_stress_transaction_commit() {
     let drop_sql = drop_table_sql_idempotent(TABLE_NAME, db_type);
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &drop_sql).ok();
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &drop_sql).ok();
     }
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
         let create_sql = generate_create_table_sql(TABLE_NAME, db_type);
-        execute_sql_on_conn(c, &create_sql).expect("CREATE TABLE failed");
+        execute_sql_on_conn(&c, &create_sql).expect("CREATE TABLE failed");
     }
 
     let txn = conn
@@ -183,8 +185,9 @@ fn test_e2e_bulk_stress_transaction_commit() {
         let insert_sql =
             generate_insert_batch(TABLE_NAME, batch_start as i32, batch_count, db_type);
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &insert_sql)
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &insert_sql)
             .unwrap_or_else(|_| panic!("INSERT batch {}-{} failed", batch_start, batch_end));
     }
 
@@ -194,8 +197,9 @@ fn test_e2e_bulk_stress_transaction_commit() {
     );
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &update_sql).expect("UPDATE failed");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &update_sql).expect("UPDATE failed");
     }
 
     let delete_sql = format!(
@@ -204,8 +208,9 @@ fn test_e2e_bulk_stress_transaction_commit() {
     );
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &delete_sql).expect("DELETE failed");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &delete_sql).expect("DELETE failed");
     }
 
     txn.commit().expect("commit failed");
@@ -213,8 +218,9 @@ fn test_e2e_bulk_stress_transaction_commit() {
     let expected_rows = STRESS_DELETE_AFTER_ID as usize;
     let count = {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        get_row_count_from_conn(c, TABLE_NAME).expect("SELECT COUNT failed")
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        get_row_count_from_conn(&c, TABLE_NAME).expect("SELECT COUNT failed")
     };
     assert_eq!(
         count, expected_rows,
@@ -224,9 +230,10 @@ fn test_e2e_bulk_stress_transaction_commit() {
 
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
         let drop_sql = drop_table_sql_idempotent(TABLE_NAME, db_type);
-        execute_sql_on_conn(c, &drop_sql).ok();
+        execute_sql_on_conn(&c, &drop_sql).ok();
     }
     conn.disconnect().expect("disconnect failed");
 }
@@ -252,14 +259,16 @@ fn test_e2e_bulk_stress_transaction_rollback() {
     let drop_sql = drop_table_sql_idempotent(TABLE_NAME, db_type);
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &drop_sql).ok();
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &drop_sql).ok();
     }
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
         let create_sql = generate_create_table_sql(TABLE_NAME, db_type);
-        execute_sql_on_conn(c, &create_sql).expect("CREATE TABLE failed");
+        execute_sql_on_conn(&c, &create_sql).expect("CREATE TABLE failed");
     }
 
     {
@@ -273,23 +282,26 @@ fn test_e2e_bulk_stress_transaction_rollback() {
             let insert_sql =
                 generate_insert_batch(TABLE_NAME, batch_start as i32, batch_count, db_type);
             let h = handles.lock().expect("lock");
-            let c = h.get_connection(conn_id).expect("get_connection");
-            execute_sql_on_conn(c, &insert_sql)
+            let conn_arc = h.get_connection(conn_id).expect("get_connection");
+            let c = conn_arc.lock().expect("lock");
+            execute_sql_on_conn(&c, &insert_sql)
                 .unwrap_or_else(|_| panic!("INSERT batch {}-{} failed", batch_start, batch_end));
         }
 
         let update_sql = format!("UPDATE {} SET age = age + 1 WHERE id <= 1000", TABLE_NAME);
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        execute_sql_on_conn(c, &update_sql).expect("UPDATE failed");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        execute_sql_on_conn(&c, &update_sql).expect("UPDATE failed");
 
         txn.rollback().expect("rollback failed");
     }
 
     let count = {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
-        get_row_count_from_conn(c, TABLE_NAME).expect("SELECT COUNT failed")
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
+        get_row_count_from_conn(&c, TABLE_NAME).expect("SELECT COUNT failed")
     };
     assert_eq!(
         count, 0,
@@ -299,9 +311,10 @@ fn test_e2e_bulk_stress_transaction_rollback() {
 
     {
         let h = handles.lock().expect("lock");
-        let c = h.get_connection(conn_id).expect("get_connection");
+        let conn_arc = h.get_connection(conn_id).expect("get_connection");
+        let c = conn_arc.lock().expect("lock");
         let drop_sql = drop_table_sql_idempotent(TABLE_NAME, db_type);
-        execute_sql_on_conn(c, &drop_sql).ok();
+        execute_sql_on_conn(&c, &drop_sql).ok();
     }
     conn.disconnect().expect("disconnect failed");
 }

@@ -1,4 +1,4 @@
-use super::transaction::{IsolationLevel, Transaction};
+use super::transaction::{IsolationLevel, SavepointDialect, Transaction};
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 
@@ -66,11 +66,42 @@ impl OdbcConnection {
         Transaction::begin(self.handles.clone(), self.conn_id, isolation_level)
     }
 
+    pub fn begin_transaction_with_dialect(
+        &self,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+    ) -> Result<Transaction> {
+        Transaction::begin_with_dialect(
+            self.handles.clone(),
+            self.conn_id,
+            isolation_level,
+            savepoint_dialect,
+        )
+    }
+
     pub fn with_transaction<F, T>(&self, isolation_level: IsolationLevel, f: F) -> Result<T>
     where
         F: FnOnce(&Transaction) -> Result<T>,
     {
         Transaction::execute(self.handles.clone(), self.conn_id, isolation_level, f)
+    }
+
+    pub fn with_transaction_with_dialect<F, T>(
+        &self,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        f: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&Transaction) -> Result<T>,
+    {
+        Transaction::execute_with_dialect(
+            self.handles.clone(),
+            self.conn_id,
+            isolation_level,
+            savepoint_dialect,
+            f,
+        )
     }
 }
 

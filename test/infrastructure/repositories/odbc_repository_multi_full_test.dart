@@ -11,7 +11,7 @@ void _fakeWorkerMultiSupport(SendPort mainSendPort) {
   mainSendPort.send(receivePort.sendPort);
   final multiBuffer = _createMultiResultSetBuffer();
 
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;

@@ -82,9 +82,10 @@ fn test_e2e_sqlserver_integer_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test INT, BIGINT, SMALLINT, TINYINT
     let sql = "SELECT 
@@ -93,7 +94,7 @@ fn test_e2e_sqlserver_integer_types() {
         32767 AS smallint_val,
         255 AS tinyint_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -163,9 +164,10 @@ fn test_e2e_sqlserver_decimal_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test DECIMAL, NUMERIC, FLOAT, REAL
     let sql = "SELECT 
@@ -174,7 +176,7 @@ fn test_e2e_sqlserver_decimal_types() {
         3.14159265359 AS float_val,
         2.71828 AS real_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -217,9 +219,10 @@ fn test_e2e_sqlserver_string_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test VARCHAR, NVARCHAR, CHAR, NCHAR
     let sql = "SELECT 
@@ -228,7 +231,7 @@ fn test_e2e_sqlserver_string_types() {
         'Fixed' AS char_val,
         N'FixedUnicode' AS nchar_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -287,9 +290,10 @@ fn test_e2e_sqlserver_date_time_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test DATE, DATETIME, DATETIME2, TIME
     let sql = "SELECT 
@@ -298,7 +302,7 @@ fn test_e2e_sqlserver_date_time_types() {
         CAST('2024-01-15 14:30:00.123' AS DATETIME2) AS datetime2_val,
         CAST('14:30:00' AS TIME) AS time_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -340,9 +344,10 @@ fn test_e2e_sqlserver_null_values() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test NULL values in different types
     let sql = "SELECT 
@@ -352,7 +357,7 @@ fn test_e2e_sqlserver_null_values() {
         NULL AS null_date,
         42 AS not_null_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -402,9 +407,10 @@ fn test_e2e_sqlserver_multiple_rows() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test multiple rows
     let sql = "SELECT 
@@ -419,7 +425,7 @@ fn test_e2e_sqlserver_multiple_rows() {
     ) AS numbers
     ORDER BY id";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -478,9 +484,10 @@ fn test_e2e_sqlserver_aggregate_functions() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test aggregate functions
     let sql = "SELECT 
@@ -497,7 +504,7 @@ fn test_e2e_sqlserver_aggregate_functions() {
         SELECT 50
     ) AS numbers";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -571,9 +578,10 @@ fn test_e2e_sqlserver_complex_query() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test complex query with JOIN, WHERE, ORDER BY
     let sql = "SELECT 
@@ -593,7 +601,7 @@ fn test_e2e_sqlserver_complex_query() {
     WHERE a.value >= 2
     ORDER BY a.id";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -673,9 +681,10 @@ fn test_e2e_sqlserver_binary_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test BINARY, VARBINARY, and IMAGE types
     // Note: IMAGE is deprecated but still supported in SQL Server
@@ -685,7 +694,7 @@ fn test_e2e_sqlserver_binary_types() {
         CAST(0x576F726C64 AS VARBINARY(5)) AS varbinary_val,
         CAST(0x54657374496D616765 AS VARBINARY(MAX)) AS image_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -748,16 +757,17 @@ fn test_e2e_sqlserver_binary_with_null() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test NULL values in binary types
     let sql = "SELECT 
         NULL AS null_binary,
         CAST(0x48656C6C6F AS BINARY(5)) AS not_null_binary";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -808,9 +818,10 @@ fn test_e2e_sqlserver_bit_and_money_types() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test BIT and MONEY types
     let sql = "SELECT 
@@ -819,7 +830,7 @@ fn test_e2e_sqlserver_bit_and_money_types() {
         CAST(1234.5678 AS MONEY) AS money_val,
         CAST(-9876.5432 AS MONEY) AS money_negative";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -895,9 +906,10 @@ fn test_e2e_sqlserver_text_type() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Test TEXT type (legacy type, deprecated but still supported)
     // Note: TEXT is deprecated, but we test it for compatibility
@@ -906,7 +918,7 @@ fn test_e2e_sqlserver_text_type() {
         CAST('This is a TEXT type test with some content' AS TEXT) AS text_val,
         CAST('Large text content for TEXT type validation' AS VARCHAR(MAX)) AS varchar_max_val";
 
-    let buffer = execute_query_with_connection(odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
 
     drop(handles_guard);
 

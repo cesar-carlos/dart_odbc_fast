@@ -1,10 +1,11 @@
 /// E2E tests for savepoint FFI and engine behavior.
 ///
-/// Savepoints use standard SQL: SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT.
-/// SQL Server uses different syntax (SAVE TRANSACTION / ROLLBACK TRANSACTION),
-/// so these tests are skipped when the detected database is SQL Server.
+/// Savepoints use dialect-specific SQL:
+/// - SQL-92 (PostgreSQL, MySQL, etc.): SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT
+/// - SQL Server: SAVE TRANSACTION, ROLLBACK TRANSACTION (no RELEASE)
 use odbc_engine::engine::{
     execute_query_with_connection, IsolationLevel, OdbcConnection, OdbcEnvironment, Savepoint,
+    SavepointDialect,
 };
 use odbc_engine::protocol::BinaryProtocolDecoder;
 #[cfg(feature = "ffi-tests")]
@@ -27,11 +28,12 @@ fn test_savepoint_create_and_rollback() {
         eprintln!("⚠️  Skipping E2E test: no DSN available");
         return;
     }
-    if is_database_type(DatabaseType::SqlServer) {
-        eprintln!("⚠️  Skipping: SQL Server uses SAVE TRANSACTION, not SAVEPOINT");
-        return;
-    }
     let conn_str = get_sqlserver_test_dsn().expect("ODBC_TEST_DSN or SQLSERVER_TEST_* not set");
+    let dialect = if is_database_type(DatabaseType::SqlServer) {
+        SavepointDialect::SqlServer
+    } else {
+        SavepointDialect::Sql92
+    };
 
     let env = OdbcEnvironment::new();
     env.init().expect("Init failed");
@@ -41,34 +43,45 @@ fn test_savepoint_create_and_rollback() {
 
     {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE sp_test (id INT)").unwrap();
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        if dialect == SavepointDialect::SqlServer {
+            let _ = execute_query_with_connection(
+                &c,
+                "IF OBJECT_ID(N'sp_test', N'U') IS NOT NULL DROP TABLE sp_test",
+            );
+        }
+        execute_query_with_connection(&c, "CREATE TABLE sp_test (id INT)").unwrap();
     }
 
-    conn.with_transaction(IsolationLevel::ReadCommitted, |txn| {
+    conn.with_transaction_with_dialect(IsolationLevel::ReadCommitted, dialect, |txn| {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        let _ = execute_query_with_connection(c, "INSERT INTO sp_test VALUES (1)")?;
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (1)")?;
         drop(h);
 
         let sp = Savepoint::create(txn, "sp1")?;
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        let _ = execute_query_with_connection(c, "INSERT INTO sp_test VALUES (2)")?;
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (2)")?;
         drop(h);
 
         sp.rollback_to()?;
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        let _ = execute_query_with_connection(c, "INSERT INTO sp_test VALUES (3)")?;
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (3)")?;
         Ok::<(), odbc_engine::OdbcError>(())
     })
     .expect("with_transaction failed");
 
     let buf = {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "SELECT id FROM sp_test ORDER BY id").unwrap()
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        execute_query_with_connection(&c, "SELECT id FROM sp_test ORDER BY id").unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     assert_eq!(
@@ -80,8 +93,9 @@ fn test_savepoint_create_and_rollback() {
 
     {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        let _ = execute_query_with_connection(c, "DROP TABLE sp_test");
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        let _ = execute_query_with_connection(&c, "DROP TABLE sp_test");
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -91,10 +105,12 @@ fn test_savepoint_release() {
     if !should_run_e2e_tests() {
         return;
     }
-    if is_database_type(DatabaseType::SqlServer) {
-        return;
-    }
     let conn_str = get_sqlserver_test_dsn().expect("DSN not set");
+    let dialect = if is_database_type(DatabaseType::SqlServer) {
+        SavepointDialect::SqlServer
+    } else {
+        SavepointDialect::Sql92
+    };
 
     let env = OdbcEnvironment::new();
     env.init().expect("Init failed");
@@ -104,11 +120,18 @@ fn test_savepoint_release() {
 
     {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        execute_query_with_connection(c, "CREATE TABLE sp_rel_test (id INT)").unwrap();
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        if dialect == SavepointDialect::SqlServer {
+            let _ = execute_query_with_connection(
+                &c,
+                "IF OBJECT_ID(N'sp_rel_test', N'U') IS NOT NULL DROP TABLE sp_rel_test",
+            );
+        }
+        execute_query_with_connection(&c, "CREATE TABLE sp_rel_test (id INT)").unwrap();
     }
 
-    conn.with_transaction(IsolationLevel::ReadCommitted, |txn| {
+    conn.with_transaction_with_dialect(IsolationLevel::ReadCommitted, dialect, |txn| {
         let sp = Savepoint::create(txn, "sp_rel")?;
         sp.release()?;
         Ok::<(), odbc_engine::OdbcError>(())
@@ -117,8 +140,9 @@ fn test_savepoint_release() {
 
     {
         let h = handles.lock().unwrap();
-        let c = h.get_connection(conn_id).unwrap();
-        let _ = execute_query_with_connection(c, "DROP TABLE sp_rel_test");
+        let conn_arc = h.get_connection(conn_id).unwrap();
+        let c = conn_arc.lock().unwrap();
+        let _ = execute_query_with_connection(&c, "DROP TABLE sp_rel_test");
     }
     conn.disconnect().expect("Disconnect failed");
 }

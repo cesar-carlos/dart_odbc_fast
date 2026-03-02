@@ -29,9 +29,10 @@ fn test_execute_batch_single_query() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor
     let executor = BatchExecutor::new(100, 10);
@@ -42,7 +43,7 @@ fn test_execute_batch_single_query() {
 
     // Execute batch
     let results = executor
-        .execute_batch(odbc_conn, queries)
+        .execute_batch(&odbc_conn, queries)
         .expect("Failed to execute batch");
 
     assert_eq!(results.len(), 1, "Should have 1 result");
@@ -86,9 +87,10 @@ fn test_execute_batch_multiple_queries() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor
     let executor = BatchExecutor::new(100, 10);
@@ -102,7 +104,7 @@ fn test_execute_batch_multiple_queries() {
 
     // Execute batch
     let results = executor
-        .execute_batch(odbc_conn, queries)
+        .execute_batch(&odbc_conn, queries)
         .expect("Failed to execute batch");
 
     assert_eq!(results.len(), 3, "Should have 3 results");
@@ -149,9 +151,10 @@ fn test_execute_batch_different_result_types() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor
     let executor = BatchExecutor::new(100, 10);
@@ -165,7 +168,7 @@ fn test_execute_batch_different_result_types() {
 
     // Execute batch
     let results = executor
-        .execute_batch(odbc_conn, queries)
+        .execute_batch(&odbc_conn, queries)
         .expect("Failed to execute batch");
 
     assert_eq!(results.len(), 3, "Should have 3 results");
@@ -217,9 +220,10 @@ fn test_execute_batch_empty_result() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor
     let executor = BatchExecutor::new(100, 10);
@@ -231,7 +235,7 @@ fn test_execute_batch_empty_result() {
 
     // Execute batch
     let results = executor
-        .execute_batch(odbc_conn, queries)
+        .execute_batch(&odbc_conn, queries)
         .expect("Failed to execute batch");
 
     assert_eq!(results.len(), 1, "Should have 1 result");
@@ -270,9 +274,10 @@ fn test_execute_batch_optimized_single_execution() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor with batch_size = 5
     let executor = BatchExecutor::new(100, 5);
@@ -283,7 +288,7 @@ fn test_execute_batch_optimized_single_execution() {
 
     // Execute batch optimized
     let results = executor
-        .execute_batch_optimized(odbc_conn, sql, param_sets)
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
         .expect("Failed to execute batch optimized");
 
     assert_eq!(results.len(), 1, "Should have 1 result");
@@ -327,9 +332,10 @@ fn test_execute_batch_optimized_multiple_executions() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor with batch_size = 2
     let executor = BatchExecutor::new(100, 2);
@@ -340,7 +346,7 @@ fn test_execute_batch_optimized_multiple_executions() {
 
     // Execute batch optimized
     let results = executor
-        .execute_batch_optimized(odbc_conn, sql, param_sets)
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
         .expect("Failed to execute batch optimized");
 
     assert_eq!(results.len(), 3, "Should have 3 results");
@@ -386,9 +392,10 @@ fn test_execute_batch_optimized_with_batch_size_chunking() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor with batch_size = 2 (will chunk into groups of 2)
     let executor = BatchExecutor::new(100, 2);
@@ -399,7 +406,7 @@ fn test_execute_batch_optimized_with_batch_size_chunking() {
 
     // Execute batch optimized
     let results = executor
-        .execute_batch_optimized(odbc_conn, sql, param_sets)
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
         .expect("Failed to execute batch optimized");
 
     assert_eq!(
@@ -450,9 +457,10 @@ fn test_execute_batch_optimized_multiple_columns() {
     // Get ODBC connection
     let conn_handles = conn.get_handles();
     let handles = conn_handles.lock().unwrap();
-    let odbc_conn = handles
+    let conn_arc = handles
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     // Create batch executor
     let executor = BatchExecutor::new(100, 10);
@@ -463,7 +471,7 @@ fn test_execute_batch_optimized_multiple_columns() {
 
     // Execute batch optimized
     let results = executor
-        .execute_batch_optimized(odbc_conn, sql, param_sets)
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
         .expect("Failed to execute batch optimized");
 
     assert_eq!(results.len(), 1, "Should have 1 result");
@@ -505,9 +513,10 @@ fn test_execute_batch_query_fails_midway() {
 
     let conn_handles = conn.get_handles();
     let handles_guard = conn_handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let executor = BatchExecutor::new(100, 10);
     let queries = vec![
@@ -516,7 +525,7 @@ fn test_execute_batch_query_fails_midway() {
         BatchQuery::new("SELECT 3 AS value".to_string()),
     ];
 
-    let result = executor.execute_batch(odbc_conn, queries);
+    let result = executor.execute_batch(&odbc_conn, queries);
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");

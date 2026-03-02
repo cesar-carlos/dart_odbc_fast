@@ -146,7 +146,7 @@ fn test_e2e_bulk_compare_array_vs_parallel() {
 
     let conn_handles = conn.get_handles();
     let guard = conn_handles.lock().expect("Lock handles");
-    let odbc_conn = guard
+    let conn_arc = guard
         .get_connection(conn.get_connection_id())
         .expect("Get ODBC connection");
 
@@ -160,7 +160,8 @@ fn test_e2e_bulk_compare_array_vs_parallel() {
         let array_table = format!("odbc_bench_array_{}", label);
         let parallel_table = format!("odbc_bench_parallel_{}", label);
 
-        let array_rps = benchmark_array_binding(odbc_conn, &array_table, rows, 1_000);
+        let odbc_conn = conn_arc.lock().expect("lock");
+        let array_rps = benchmark_array_binding(&odbc_conn, &array_table, rows, 1_000);
         let parallel_rps =
             benchmark_parallel_bulk(Arc::clone(&pool), &parallel_table, rows, 4, 500);
         let speedup = if array_rps > 0.0 {

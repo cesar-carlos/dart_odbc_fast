@@ -22,8 +22,9 @@ pub use protocol::{
 
 #[cfg(feature = "ffi-tests")]
 pub use ffi::{
-    odbc_connect, odbc_disconnect, odbc_exec_query, odbc_get_error, odbc_init,
-    odbc_savepoint_create, odbc_savepoint_release, odbc_savepoint_rollback,
+    odbc_connect, odbc_connect_with_timeout, odbc_disconnect, odbc_exec_query, odbc_get_error,
+    odbc_get_structured_error, odbc_init, odbc_savepoint_create, odbc_savepoint_release,
+    odbc_savepoint_rollback,
 };
 
 #[cfg(feature = "test-helpers")]

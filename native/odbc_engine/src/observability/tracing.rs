@@ -48,18 +48,22 @@ impl Tracer {
     }
 
     pub fn start_span(&self, query: String) -> u64 {
-        let mut next_id = self.next_span_id.lock().unwrap();
+        let mut next_id = self.next_span_id.lock().unwrap_or_else(|e| e.into_inner());
         let span_id = *next_id;
         *next_id += 1;
 
         let span = QuerySpan::new(span_id, query);
-        self.spans.lock().unwrap().insert(span_id, span);
+        if let Ok(mut spans) = self.spans.lock() {
+            spans.insert(span_id, span);
+        } else {
+            log::warn!("Tracer spans lock poisoned; span {} not recorded", span_id);
+        }
 
         span_id
     }
 
     pub fn finish_span(&self, span_id: u64) -> Option<QuerySpan> {
-        let mut spans = self.spans.lock().unwrap();
+        let mut spans = self.spans.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut span) = spans.remove(&span_id) {
             span.finish();
             Some(span)
@@ -214,5 +218,28 @@ mod tests {
             let span_id = tracer.start_span(format!("Query {}", i));
             assert_eq!(span_id, i);
         }
+    }
+
+    /// Verifies that lock poisoning recovery (unwrap_or_else + into_inner) works:
+    /// a thread panics while holding the lock, then another thread can still proceed.
+    #[test]
+    fn test_lock_poisoning_recovery() {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let mutex = Arc::new(Mutex::new(42u32));
+        let mutex_clone = Arc::clone(&mutex);
+
+        let poison_handle = thread::spawn(move || {
+            let _guard = mutex_clone.lock().unwrap();
+            panic!("Intentional panic to poison the lock");
+        });
+        let _ = poison_handle.join();
+
+        let result = mutex.lock();
+        assert!(result.is_err(), "Lock should be poisoned");
+
+        let recovered = result.unwrap_or_else(|e| e.into_inner());
+        assert_eq!(*recovered, 42, "Recovered value should match");
     }
 }

@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_mysql_plugin_default() {
-        let plugin = MySqlPlugin::default();
+        let plugin = MySqlPlugin;
         assert_eq!(plugin.name(), "mysql");
     }
 

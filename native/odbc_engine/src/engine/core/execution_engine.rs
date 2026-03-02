@@ -349,89 +349,78 @@ impl ExecutionEngine {
         loop {
             use crate::protocol::{ColumnarEncoder, RowBuffer, RowBufferEncoder};
 
-            let item = if let Some(ref mut c) = cursor_opt {
-                // Has cursor - process as ResultSet
-                let mut row_buffer = RowBuffer::new();
-                let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
-                let cols_u16: u16 = cols_i16
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-                let cols_usize: usize = cols_u16.into();
-                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+            if cursor_opt.is_none() {
+                drop(cursor_opt);
+                let row_count = stmt
+                    .row_count()
+                    .map_err(OdbcError::from)?
+                    .map(|n| n as i64)
+                    .unwrap_or(0);
+                all_items.push(MultiResultItem::RowCount(row_count));
+                break;
+            }
 
-                for col_idx in 1..=cols_u16 {
-                    let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
-                    let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
-                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                        if let Some(ref plugin) = *active {
-                            plugin.map_type(sql_type_code)
-                        } else {
-                            OdbcType::from_odbc_sql_type(sql_type_code)
-                        }
+            let mut c = cursor_opt.take().unwrap();
+            let mut row_buffer = RowBuffer::new();
+            let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
+            let cols_u16: u16 = cols_i16
+                .try_into()
+                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+            let cols_usize: usize = cols_u16.into();
+            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+            for col_idx in 1..=cols_u16 {
+                let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
+                let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
+                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                    if let Some(ref plugin) = *active {
+                        plugin.map_type(sql_type_code)
                     } else {
                         OdbcType::from_odbc_sql_type(sql_type_code)
-                    };
-                    row_buffer.add_column(col_name.to_string(), odbc_type);
-                    column_types.push(odbc_type);
-                }
-
-                while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
-                    let mut row_data = Vec::new();
-                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                            OdbcError::InternalError("Invalid column number".to_string())
-                        })?;
-                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-                        row_data.push(cell_data);
                     }
-                    row_buffer.add_row(row_data);
-                }
-
-                let encoded = if self.use_columnar {
-                    let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
-                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
                 } else {
-                    RowBufferEncoder::encode(&row_buffer)
+                    OdbcType::from_odbc_sql_type(sql_type_code)
                 };
-                MultiResultItem::ResultSet(encoded)
+                row_buffer.add_column(col_name.to_string(), odbc_type);
+                column_types.push(odbc_type);
+            }
+
+            while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
+                let mut row_data = Vec::new();
+                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                        OdbcError::InternalError("Invalid column number".to_string())
+                    })?;
+                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    row_data.push(cell_data);
+                }
+                row_buffer.add_row(row_data);
+            }
+
+            let encoded = if self.use_columnar {
+                let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
+                ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
             } else {
-                // No cursor - this was INSERT/UPDATE/DDL, get row count
-                // We can't call stmt.row_count() here as stmt is already borrowed
-                // For operations without result sets, return RowCount(0) as placeholder
-                // The actual row count is already tracked by ODBC internally
-                MultiResultItem::RowCount(0)
+                RowBufferEncoder::encode(&row_buffer)
             };
-
-            all_items.push(item);
-
-            // Try to get next result set using SQLMoreResults
-            match cursor_opt {
-                Some(cursor) => {
-                    match cursor.more_results() {
-                        Ok(Some(next)) => {
-                            cursor_opt = Some(next);
-                        }
-                        Ok(None) => {
-                            // No more results
-                            break;
-                        }
-                        Err(e) => {
-                            // Error or SQL_NO_DATA (common when no more results)
-                            let odbc_err = OdbcError::from(e);
-                            if odbc_err.to_string().contains("SQL_NO_DATA")
-                                || odbc_err.to_string().contains("No data")
-                            {
-                                break;
-                            }
-                            return Err(odbc_err);
-                        }
+            cursor_opt = match c.more_results() {
+                Ok(next) => next,
+                Err(e) => {
+                    let odbc_err = OdbcError::from(e);
+                    if odbc_err.to_string().contains("SQL_NO_DATA")
+                        || odbc_err.to_string().contains("No data")
+                    {
+                        None
+                    } else {
+                        return Err(odbc_err);
                     }
                 }
-                None => {
-                    // First result was row count (no cursor), so no more results
-                    break;
-                }
+            };
+            all_items.push(MultiResultItem::ResultSet(encoded));
+
+            if cursor_opt.is_none() {
+                break;
             }
         }
 

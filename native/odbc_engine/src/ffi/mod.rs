@@ -22,12 +22,13 @@ use crate::protocol::{
     bulk_insert::is_null, deserialize_params, parse_bulk_insert_payload, BulkColumnData,
     BulkInsertPayload, ParamValue,
 };
+use crate::security::AuditLogger;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Instant, UNIX_EPOCH};
 
 /// Default rows per batch when caller passes 0 to odbc_stream_start_batched.
 pub const DEFAULT_FETCH_SIZE: c_uint = 100;
@@ -92,6 +93,7 @@ struct GlobalState {
     // Per-connection errors (thread-safe isolation)
     connection_errors: HashMap<u32, ConnectionError>,
     metrics: Arc<Metrics>,
+    audit_logger: Arc<AuditLogger>,
 }
 
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
@@ -136,6 +138,7 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             last_structured_error: None,
             connection_errors: HashMap::new(),
             metrics: Arc::new(Metrics::new()),
+            audit_logger: Arc::new(AuditLogger::new(false)),
         }))
     })
 }
@@ -220,6 +223,42 @@ fn get_error(state: &GlobalState) -> String {
         .unwrap_or_else(|| "No error".to_string())
 }
 
+fn serialize_audit_events(events: Vec<crate::security::audit::AuditEvent>) -> Result<Vec<u8>> {
+    let serialized_events: Vec<serde_json::Value> = events
+        .into_iter()
+        .map(|event| {
+            let timestamp_ms = event
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0);
+
+            serde_json::json!({
+                "timestamp_ms": timestamp_ms,
+                "event_type": event.event_type,
+                "connection_id": event.connection_id,
+                "query": event.query,
+                "metadata": event.metadata,
+            })
+        })
+        .collect();
+
+    serde_json::to_vec(&serialized_events).map_err(|error| {
+        OdbcError::InternalError(format!("Failed to serialize audit events: {}", error))
+    })
+}
+
+fn serialize_audit_status(audit_logger: &AuditLogger) -> Result<Vec<u8>> {
+    let payload = serde_json::json!({
+        "enabled": audit_logger.is_enabled(),
+        "event_count": audit_logger.event_count(),
+    });
+
+    serde_json::to_vec(&payload).map_err(|error| {
+        OdbcError::InternalError(format!("Failed to serialize audit status: {}", error))
+    })
+}
+
 /// Helper to safely lock global state mutex.
 /// Returns None if mutex is poisoned, avoiding panic in FFI.
 fn try_lock_global_state() -> Option<std::sync::MutexGuard<'static, GlobalState>> {
@@ -295,6 +334,7 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
         Ok(conn) => {
             let conn_id = conn.get_connection_id();
             state.connections.insert(conn_id, conn);
+            state.audit_logger.log_connection(conn_id, conn_str_rust);
             conn_id
         }
         Err(e) => {
@@ -352,6 +392,7 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
         Ok(conn) => {
             let conn_id = conn.get_connection_id();
             state.connections.insert(conn_id, conn);
+            state.audit_logger.log_connection(conn_id, conn_str_rust);
             conn_id
         }
         Err(e) => {
@@ -768,6 +809,127 @@ pub extern "C" fn odbc_get_metrics(
     0
 }
 
+/// Enable or disable audit logging.
+/// enabled: 0 = disable, non-zero = enable
+/// Returns: 0 on success, -1 on failure
+#[no_mangle]
+pub extern "C" fn odbc_audit_enable(enabled: c_int) -> c_int {
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    state.audit_logger.set_enabled(enabled != 0);
+    0
+}
+
+/// Get audit events as JSON array.
+/// Returns: 0 on success, -1 on error, -2 if buffer too small
+#[no_mangle]
+pub extern "C" fn odbc_audit_get_events(
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+    limit: c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    if buffer_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    let take_limit: usize = if limit == 0 {
+        usize::MAX
+    } else {
+        limit as usize
+    };
+    let events = state.audit_logger.get_events(take_limit);
+    drop(state);
+
+    let data = match serialize_audit_events(events) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+
+    if data.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
+        *out_written = data.len() as c_uint;
+    }
+
+    0
+}
+
+/// Clear all audit events.
+/// Returns: 0 on success, -1 on failure
+#[no_mangle]
+pub extern "C" fn odbc_audit_clear() -> c_int {
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    state.audit_logger.clear_events();
+    0
+}
+
+/// Get audit status as JSON object.
+/// Returns: 0 on success, -1 on error, -2 if buffer too small
+#[no_mangle]
+pub extern "C" fn odbc_audit_get_status(
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    if buffer_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    let data = match serialize_audit_status(&state.audit_logger) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+    drop(state);
+
+    if data.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
+        *out_written = data.len() as c_uint;
+    }
+
+    0
+}
+
 /// Get prepared statement cache metrics.
 /// Writes 64 bytes to buffer:
 /// cache_size(u64), cache_max_size(u64), cache_hits(u64), cache_misses(u64),
@@ -965,6 +1127,8 @@ pub extern "C" fn odbc_exec_query(
         }
     };
 
+    state.audit_logger.log_query(conn_id, sql_str);
+
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
@@ -1011,6 +1175,12 @@ pub extern "C" fn odbc_exec_query(
             };
             let structured = e.to_structured();
             set_connection_structured_error(&mut state, conn_id, structured);
+            let error_message = state
+                .connection_errors
+                .get(&conn_id)
+                .map(|conn_error| conn_error.simple_message.clone())
+                .unwrap_or_else(|| "Query execution failed".to_string());
+            state.audit_logger.log_error(Some(conn_id), &error_message);
             set_out_written_zero(out_written);
             -1
         }
@@ -2906,6 +3076,8 @@ mod tests {
         serialize_bulk_insert_payload, serialize_params, BulkColumnData, BulkColumnSpec,
         BulkColumnType, BulkInsertPayload, ParamValue,
     };
+    use serde_json::Value;
+    use serial_test::serial;
     use std::ffi::CString;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -2980,6 +3152,101 @@ mod tests {
         state.last_structured_error = prev_last_structured_error;
 
         result
+    }
+
+    #[test]
+    #[serial]
+    fn test_ffi_audit_enable_get_and_clear() {
+        odbc_init();
+        assert_eq!(odbc_audit_clear(), 0);
+        assert_eq!(odbc_audit_enable(1), 0);
+
+        let Some(state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        assert!(state.audit_logger.is_enabled());
+        state.audit_logger.log_query(42, "SELECT 1");
+        state.audit_logger.log_error(Some(42), "boom");
+        drop(state);
+
+        let mut buffer = vec![0u8; 4096];
+        let mut written: c_uint = 0;
+        let result =
+            odbc_audit_get_events(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written, 0);
+        assert_eq!(result, 0, "Audit events should be returned");
+        assert!(written > 0, "Audit payload should not be empty");
+
+        let payload = &buffer[..written as usize];
+        let parsed: Value = serde_json::from_slice(payload).expect("Valid JSON payload");
+        let events = parsed.as_array().expect("Expected JSON array");
+        assert!(!events.is_empty(), "Expected at least one audit event");
+        let has_query_or_error = events.iter().any(|event| {
+            event.get("event_type").and_then(Value::as_str) == Some("query")
+                || event.get("event_type").and_then(Value::as_str) == Some("error")
+        });
+        assert!(
+            has_query_or_error,
+            "Expected query/error event in audit payload",
+        );
+
+        assert_eq!(odbc_audit_clear(), 0);
+        let Some(state_after_clear) = try_lock_global_state() else {
+            panic!("Failed to lock global state after clear");
+        };
+        assert_eq!(state_after_clear.audit_logger.event_count(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_ffi_audit_get_events_buffer_too_small() {
+        odbc_init();
+        assert_eq!(odbc_audit_enable(1), 0);
+        let Some(state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state.audit_logger.log_query(7, "SELECT 7");
+        drop(state);
+
+        let mut tiny_buffer = [0u8; 4];
+        let mut written: c_uint = 123;
+        let result = odbc_audit_get_events(
+            tiny_buffer.as_mut_ptr(),
+            tiny_buffer.len() as c_uint,
+            &mut written,
+            0,
+        );
+
+        assert_eq!(result, -2, "Tiny buffer should return -2");
+        assert_eq!(written, 0, "written should be zero on buffer-too-small");
+    }
+
+    #[test]
+    #[serial]
+    fn test_ffi_audit_get_status() {
+        odbc_init();
+        assert_eq!(odbc_audit_clear(), 0);
+        assert_eq!(odbc_audit_enable(1), 0);
+
+        let mut status_buffer = vec![0u8; 256];
+        let mut written: c_uint = 0;
+        let result = odbc_audit_get_status(
+            status_buffer.as_mut_ptr(),
+            status_buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(result, 0, "Audit status should be returned");
+        assert!(written > 0, "Audit status payload should not be empty");
+
+        let payload = &status_buffer[..written as usize];
+        let parsed: Value = serde_json::from_slice(payload).expect("Valid status JSON payload");
+        assert!(
+            parsed.get("enabled").and_then(Value::as_bool).is_some(),
+            "Status payload should contain enabled",
+        );
+        assert!(
+            parsed.get("event_count").and_then(Value::as_u64).is_some(),
+            "Status payload should contain event_count",
+        );
     }
 
     #[test]
@@ -3286,6 +3553,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_structured_error() {
         with_structured_error_test_isolation(|| {
             odbc_init();
@@ -3319,6 +3587,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_structured_error_null_buffer() {
         let mut written: c_uint = 0;
 
@@ -3328,6 +3597,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_structured_error_null_out_written() {
         let mut buffer = vec![0u8; 1024];
 
@@ -3405,6 +3675,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_structured_error_small_buffer() {
         with_structured_error_test_isolation(|| {
             odbc_init();
@@ -3631,6 +3902,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_structured_error_no_error() {
         with_structured_error_test_isolation(|| {
             odbc_init();

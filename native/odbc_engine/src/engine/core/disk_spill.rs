@@ -4,6 +4,46 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 const DEFAULT_THRESHOLD_MB: usize = 100;
+const WRITE_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Adapter that implements `Write` and forwards to `DiskSpillStream::write_chunk`.
+/// Buffers up to 64KB before calling write_chunk.
+pub struct DiskSpillWriter<'a> {
+    spill: &'a mut DiskSpillStream,
+    buffer: Vec<u8>,
+}
+
+impl<'a> DiskSpillWriter<'a> {
+    pub fn new(spill: &'a mut DiskSpillStream) -> Self {
+        Self {
+            spill,
+            buffer: Vec::with_capacity(WRITE_CHUNK_SIZE),
+        }
+    }
+}
+
+impl Write for DiskSpillWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        while self.buffer.len() >= WRITE_CHUNK_SIZE {
+            let chunk: Vec<u8> = self.buffer.drain(..WRITE_CHUNK_SIZE).collect();
+            self.spill
+                .write_chunk(&chunk)
+                .map_err(std::io::Error::other)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.buffer.is_empty() {
+            let chunk = std::mem::take(&mut self.buffer);
+            self.spill
+                .write_chunk(&chunk)
+                .map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    }
+}
 
 pub struct DiskSpillStream {
     threshold_bytes: usize,
@@ -90,6 +130,32 @@ impl DiskSpillStream {
             Ok(std::mem::take(&mut self.memory_buffer))
         }
     }
+
+    /// Prepares for streaming read. If data was spilled to disk, returns the path
+    /// (caller must delete when done). Otherwise returns the in-memory buffer.
+    /// Flushes and closes the writer when spilled.
+    pub fn finish_for_streaming_read(&mut self) -> Result<SpillReadSource> {
+        if let Some(ref mut w) = self.file {
+            w.flush()
+                .map_err(|e| OdbcError::InternalError(format!("spill flush: {}", e)))?;
+        }
+        drop(self.file.take());
+        let path = self.temp_path.take();
+        if let Some(p) = path {
+            Ok(SpillReadSource::File(p))
+        } else {
+            Ok(SpillReadSource::Memory(std::mem::take(
+                &mut self.memory_buffer,
+            )))
+        }
+    }
+}
+
+/// Result of `finish_for_streaming_read`: either a file path (caller reads and deletes)
+/// or the in-memory buffer.
+pub enum SpillReadSource {
+    File(PathBuf),
+    Memory(Vec<u8>),
 }
 
 impl Default for DiskSpillStream {

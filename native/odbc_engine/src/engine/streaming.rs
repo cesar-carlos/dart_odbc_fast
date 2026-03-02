@@ -1,9 +1,15 @@
 use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::core::{DiskSpillStream, DiskSpillWriter};
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::{Connection, Cursor, ResultSetMetadata};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 pub struct StreamingExecutor {
@@ -70,6 +76,98 @@ impl StreamingExecutor {
         }
     }
 
+    /// Buffer-mode streaming with optional spill-to-disk. When `spill_threshold_mb > 0`,
+    /// encodes to `DiskSpillStream`; if data exceeds threshold, spills to temp file
+    /// and returns `StreamState::FileBacked` for chunked read without loading full result.
+    pub fn execute_streaming_with_spill(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        spill_threshold_mb: Option<usize>,
+    ) -> Result<StreamState> {
+        let mut row_buffer = RowBuffer::new();
+        let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+
+        let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+
+        if let Some(mut cursor) = cursor {
+            let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+            let cols_u16: u16 = cols_i16
+                .try_into()
+                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+            let cols_usize: usize = cols_u16.into();
+
+            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+            for col_idx in 1..=cols_u16 {
+                let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+                let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
+                row_buffer.add_column(col_name.to_string(), odbc_type);
+                column_types.push(odbc_type);
+            }
+
+            while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                let mut row_data = Vec::new();
+
+                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                        OdbcError::InternalError("Invalid column number".to_string())
+                    })?;
+
+                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+
+                    row_data.push(cell_data);
+                }
+
+                row_buffer.add_row(row_data);
+            }
+
+            let chunk_size = self.chunk_size;
+
+            if let Some(threshold_mb) = spill_threshold_mb.filter(|&t| t > 0) {
+                let mut spill = DiskSpillStream::new(threshold_mb);
+                let mut writer = DiskSpillWriter::new(&mut spill);
+                RowBufferEncoder::encode_to_writer(&row_buffer, &mut writer)
+                    .map_err(|e| OdbcError::InternalError(format!("encode to spill: {}", e)))?;
+                writer
+                    .flush()
+                    .map_err(|e| OdbcError::InternalError(format!("spill flush: {}", e)))?;
+
+                match spill.finish_for_streaming_read()? {
+                    crate::engine::core::SpillReadSource::File(path) => {
+                        let total_len = std::fs::metadata(&path)
+                            .map(|m| m.len() as usize)
+                            .unwrap_or(0);
+                        Ok(StreamState::FileBacked(StreamingStateFileBacked {
+                            path,
+                            offset: 0,
+                            chunk_size,
+                            total_len,
+                        }))
+                    }
+                    crate::engine::core::SpillReadSource::Memory(data) => {
+                        Ok(StreamState::InMemory(StreamingState {
+                            data,
+                            offset: 0,
+                            chunk_size,
+                        }))
+                    }
+                }
+            } else {
+                let encoded = RowBufferEncoder::encode(&row_buffer);
+                Ok(StreamState::InMemory(StreamingState {
+                    data: encoded,
+                    offset: 0,
+                    chunk_size,
+                }))
+            }
+        } else {
+            Err(OdbcError::InternalError("No data returned".to_string()))
+        }
+    }
+
     /// True cursor-based streaming: fetches up to `fetch_size` rows per batch,
     /// invokes `on_batch` for each encoded batch. Memory footprint is bounded
     /// by one batch instead of the full result set.
@@ -79,6 +177,7 @@ impl StreamingExecutor {
         sql: &str,
         fetch_size: usize,
         mut on_batch: F,
+        cancel_requested: Option<Arc<AtomicBool>>,
     ) -> Result<()>
     where
         F: FnMut(Vec<u8>) -> Result<()>,
@@ -111,6 +210,13 @@ impl StreamingExecutor {
 
         let mut first_batch = true;
         loop {
+            if cancel_requested
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                return Err(OdbcError::InternalError("Stream cancelled".to_string()));
+            }
+
             row_buffer.rows.clear();
             let mut rows_fetched = 0;
 
@@ -149,7 +255,8 @@ impl StreamingExecutor {
     /// Starts cursor-based batched streaming via a worker thread. Uses
     /// `execute_streaming_batched` internally; memory is bounded to one batch.
     /// Returns state that yields chunks on `fetch_next_chunk` until done.
-    /// The worker holds the HandleManager lock for the duration of the stream.
+    /// The HandleManager lock is held only briefly to clone the connection;
+    /// the per-connection lock is held for the stream duration.
     pub fn start_batched_stream(
         &self,
         handles: SharedHandleManager,
@@ -161,33 +268,50 @@ impl StreamingExecutor {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+
+        let conn_arc = {
+            let Ok(guard) = handles.lock() else {
+                return Err(OdbcError::InternalError(
+                    "Failed to lock HandleManager".to_string(),
+                ));
+            };
+            guard
+                .get_connection(conn_id)
+                .map_err(|e| OdbcError::InternalError(format!("Invalid connection: {}", e)))?
+        };
 
         let join = std::thread::spawn({
             let sql = sql.clone();
+            let cancel = Arc::clone(&cancel_requested);
             move || {
-                let Ok(guard) = handles.lock() else {
+                let Ok(conn_guard) = conn_arc.lock() else {
                     let _ = tx.send(BatchedMessage::Error(
-                        "Failed to lock HandleManager".to_string(),
+                        "Failed to lock connection".to_string(),
                     ));
                     return;
                 };
-                let conn = match guard.get_connection(conn_id) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(BatchedMessage::Error(e.to_string()));
-                        return;
-                    }
-                };
                 let executor = StreamingExecutor::new(chunk_size);
-                match executor.execute_streaming_batched(conn, &sql, fetch_size, |batch| {
-                    tx.send(BatchedMessage::Batch(batch))
-                        .map_err(|e| OdbcError::InternalError(e.to_string()))
-                }) {
+                match executor.execute_streaming_batched(
+                    &conn_guard,
+                    &sql,
+                    fetch_size,
+                    |batch| {
+                        tx.send(BatchedMessage::Batch(batch))
+                            .map_err(|e| OdbcError::InternalError(e.to_string()))
+                    },
+                    Some(cancel),
+                ) {
                     Ok(()) => {
                         let _ = tx.send(BatchedMessage::Done);
                     }
                     Err(e) => {
-                        let _ = tx.send(BatchedMessage::Error(e.to_string()));
+                        let msg = e.to_string();
+                        let _ = tx.send(if msg.contains("cancelled") {
+                            BatchedMessage::Cancelled
+                        } else {
+                            BatchedMessage::Error(msg)
+                        });
                     }
                 }
             }
@@ -200,6 +324,8 @@ impl StreamingExecutor {
             chunk_size,
             done: false,
             stream_error: None,
+            cancelled: false,
+            cancel_requested,
             _join: Some(join),
         })
     }
@@ -208,6 +334,7 @@ impl StreamingExecutor {
 pub(crate) enum BatchedMessage {
     Batch(Vec<u8>),
     Done,
+    Cancelled,
     Error(String),
 }
 
@@ -218,10 +345,18 @@ pub struct BatchedStreamingState {
     chunk_size: usize,
     done: bool,
     stream_error: Option<String>,
+    cancelled: bool,
+    cancel_requested: Arc<AtomicBool>,
     _join: Option<JoinHandle<()>>,
 }
 
 impl BatchedStreamingState {
+    /// Requests cancellation of the batched stream. The worker checks this flag
+    /// between batches and exits early when set.
+    pub fn request_cancel(&self) {
+        self.cancel_requested.store(true, Ordering::Relaxed);
+    }
+
     pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
         if let Some(ref msg) = self.stream_error {
             return Err(OdbcError::InternalError(msg.clone()));
@@ -239,6 +374,11 @@ impl BatchedStreamingState {
                 }
                 Ok(BatchedMessage::Done) => {
                     self.done = true;
+                    return Ok(None);
+                }
+                Ok(BatchedMessage::Cancelled) => {
+                    self.done = true;
+                    self.cancelled = true;
                     return Ok(None);
                 }
                 Ok(BatchedMessage::Error(m)) => {
@@ -278,8 +418,77 @@ impl BatchedStreamingState {
             chunk_size,
             done: false,
             stream_error: None,
+            cancelled: false,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
             _join: None,
         }
+    }
+}
+
+/// Unified streaming state: in-memory or file-backed (spill-to-disk).
+pub enum StreamState {
+    InMemory(StreamingState),
+    FileBacked(StreamingStateFileBacked),
+}
+
+impl StreamState {
+    pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+        match self {
+            StreamState::InMemory(s) => s.fetch_next_chunk(),
+            StreamState::FileBacked(s) => s.fetch_next_chunk(),
+        }
+    }
+
+    pub fn has_more(&self) -> bool {
+        match self {
+            StreamState::InMemory(s) => s.has_more(),
+            StreamState::FileBacked(s) => s.has_more(),
+        }
+    }
+}
+
+/// Streaming state backed by a temp file. Reads in chunks; deletes file on drop.
+pub struct StreamingStateFileBacked {
+    path: PathBuf,
+    offset: usize,
+    chunk_size: usize,
+    total_len: usize,
+}
+
+impl StreamingStateFileBacked {
+    pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+        if self.offset >= self.total_len {
+            return Ok(None);
+        }
+
+        let mut f = File::open(&self.path)
+            .map_err(|e| OdbcError::InternalError(format!("spill file read: {}", e)))?;
+        f.seek(SeekFrom::Start(self.offset as u64))
+            .map_err(|e| OdbcError::InternalError(format!("spill file seek: {}", e)))?;
+
+        let to_read = (self.chunk_size).min(self.total_len - self.offset);
+        let mut buf = vec![0u8; to_read];
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| OdbcError::InternalError(format!("spill file read: {}", e)))?;
+        self.offset += n;
+
+        if n == 0 {
+            Ok(None)
+        } else {
+            buf.truncate(n);
+            Ok(Some(buf))
+        }
+    }
+
+    pub fn has_more(&self) -> bool {
+        self.offset < self.total_len
+    }
+}
+
+impl Drop for StreamingStateFileBacked {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 

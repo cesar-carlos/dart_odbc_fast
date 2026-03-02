@@ -14,7 +14,7 @@ import '../../helpers/load_env.dart';
 void _fakeWorkerNoResponse(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -29,7 +29,7 @@ void _fakeWorkerNoResponse(SendPort mainSendPort) {
 void _fakeWorkerNeverResponds(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -41,7 +41,7 @@ void _fakeWorkerNeverResponds(SendPort mainSendPort) {
 void _fakeWorkerNamedSupport(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -103,7 +103,7 @@ void _fakeWorkerStreamingSupport(SendPort mainSendPort) {
   var fetched = false;
   final payload = _createStreamTestBuffer();
 
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -152,7 +152,7 @@ void _fakeWorkerStreamingSupport(SendPort mainSendPort) {
 void _fakeWorkerStreamStartFailure(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -189,7 +189,7 @@ void _fakeWorkerFetchFailureRequiresClose(SendPort mainSendPort) {
 
   var streamOpen = false;
 
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -243,7 +243,7 @@ void _fakeWorkerFetchFailureRequiresClose(SendPort mainSendPort) {
 void _fakeWorkerBulkSupport(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -267,7 +267,7 @@ void _fakeWorkerBulkSupport(SendPort mainSendPort) {
 void _fakeWorkerCancelSupport(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
       return;
@@ -278,6 +278,46 @@ void _fakeWorkerCancelSupport(SendPort mainSendPort) {
     }
     if (message is CancelStatementRequest) {
       mainSendPort.send(BoolResponse(message.requestId, value: false));
+      return;
+    }
+  });
+}
+
+/// Fake worker: supports audit requests.
+void _fakeWorkerAuditSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  var enabled = false;
+  const payload = '[{"event_type":"query","timestamp_ms":1}]';
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is AuditEnableRequest) {
+      enabled = message.enabled;
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AuditGetEventsRequest) {
+      mainSendPort.send(
+        AuditPayloadResponse(message.requestId, payload: payload),
+      );
+      return;
+    }
+    if (message is AuditGetStatusRequest) {
+      final status = '{"enabled":$enabled,"event_count":1}';
+      mainSendPort.send(
+        AuditPayloadResponse(message.requestId, payload: status),
+      );
+      return;
+    }
+    if (message is AuditClearRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
       return;
     }
   });
@@ -804,6 +844,26 @@ void main() {
       await async.initialize();
       final ok = await async.cancelStatement(42);
       expect(ok, isFalse);
+      async.dispose();
+    });
+  });
+
+  group('AsyncNativeOdbcConnection audit', () {
+    test('should enable/get/clear audit via worker messages', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAuditSupport,
+      );
+      await async.initialize();
+
+      final enabled = await async.setAuditEnabled(enabled: true);
+      final status = await async.getAuditStatusJson();
+      final events = await async.getAuditEventsJson(limit: 10);
+      final cleared = await async.clearAuditEvents();
+
+      expect(enabled, isTrue);
+      expect(status, contains('"enabled":true'));
+      expect(events, startsWith('['));
+      expect(cleared, isTrue);
       async.dispose();
     });
   });

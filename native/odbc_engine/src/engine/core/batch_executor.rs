@@ -1,8 +1,8 @@
 use super::pipeline::QueryPipeline;
 use crate::engine::cell_reader::read_cell_bytes;
 use crate::error::{OdbcError, Result};
-use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
-use odbc_api::{Connection, Cursor, ResultSetMetadata};
+use crate::protocol::{param_values_to_strings, OdbcType, ParamValue, RowBuffer, RowBufferEncoder};
+use odbc_api::{Connection, Cursor, IntoParameter, ResultSetMetadata};
 use std::sync::Arc;
 
 pub struct BatchQuery {
@@ -70,50 +70,107 @@ impl BatchExecutor {
     ) -> Result<Vec<Vec<u8>>> {
         let mut results = Vec::new();
 
-        for params in param_sets.chunks(self.batch_size) {
-            for _param_set in params {
+        for params_chunk in param_sets.chunks(self.batch_size) {
+            for param_set in params_chunk {
+                let param_values: Vec<ParamValue> = param_set
+                    .iter()
+                    .map(|p| match p {
+                        BatchParam::String(s) => ParamValue::String(s.clone()),
+                        BatchParam::Integer(n) => ParamValue::Integer(*n),
+                        BatchParam::BigInt(n) => ParamValue::BigInt(*n),
+                        BatchParam::Null => ParamValue::Null,
+                    })
+                    .collect();
+
+                let optional_strings = param_values_to_strings(&param_values)?;
+
                 let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
 
-                let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+                let mut cursor = match optional_strings.len() {
+                    0 => stmt.execute(()).map_err(OdbcError::from)?,
+                    1 => {
+                        let p0 = optional_strings[0].as_deref().into_parameter();
+                        stmt.execute((&p0,)).map_err(OdbcError::from)?
+                    }
+                    2 => {
+                        let p0 = optional_strings[0].as_deref().into_parameter();
+                        let p1 = optional_strings[1].as_deref().into_parameter();
+                        stmt.execute((&p0, &p1)).map_err(OdbcError::from)?
+                    }
+                    3 => {
+                        let p0 = optional_strings[0].as_deref().into_parameter();
+                        let p1 = optional_strings[1].as_deref().into_parameter();
+                        let p2 = optional_strings[2].as_deref().into_parameter();
+                        stmt.execute((&p0, &p1, &p2)).map_err(OdbcError::from)?
+                    }
+                    4 => {
+                        let p0 = optional_strings[0].as_deref().into_parameter();
+                        let p1 = optional_strings[1].as_deref().into_parameter();
+                        let p2 = optional_strings[2].as_deref().into_parameter();
+                        let p3 = optional_strings[3].as_deref().into_parameter();
+                        stmt.execute((&p0, &p1, &p2, &p3))
+                            .map_err(OdbcError::from)?
+                    }
+                    5 => {
+                        let p0 = optional_strings[0].as_deref().into_parameter();
+                        let p1 = optional_strings[1].as_deref().into_parameter();
+                        let p2 = optional_strings[2].as_deref().into_parameter();
+                        let p3 = optional_strings[3].as_deref().into_parameter();
+                        let p4 = optional_strings[4].as_deref().into_parameter();
+                        stmt.execute((&p0, &p1, &p2, &p3, &p4))
+                            .map_err(OdbcError::from)?
+                    }
+                    n => {
+                        return Err(OdbcError::ValidationError(format!(
+                            "At most 5 parameters supported in batch, got {}",
+                            n
+                        )));
+                    }
+                };
 
-                let mut row_buffer = RowBuffer::new();
-
-                if let Some(mut cursor) = cursor {
-                    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+                let mut taken = cursor.take();
+                let encoded = if taken.is_none() {
+                    drop(taken);
+                    drop(cursor);
+                    let row_count = stmt.row_count().map_err(OdbcError::from)?.unwrap_or(0) as i64;
+                    crate::protocol::encode_multi(&[crate::protocol::MultiResultItem::RowCount(
+                        row_count,
+                    )])
+                } else {
+                    let mut c = taken.take().expect("cursor is Some");
+                    let mut row_buffer = RowBuffer::new();
+                    let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
                     let cols_u16: u16 = cols_i16.try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column count".to_string())
                     })?;
                     let cols_usize: usize = cols_u16.into();
-
                     let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
 
                     for col_idx in 1..=cols_u16 {
-                        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                        let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+                        let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
+                        let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
                         let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
                         let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
                         row_buffer.add_column(col_name.to_string(), odbc_type);
                         column_types.push(odbc_type);
                     }
 
-                    while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                    while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
                         let mut row_data = Vec::new();
-
                         for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                             let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                                 OdbcError::InternalError("Invalid column number".to_string())
                             })?;
-
                             let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-
                             row_data.push(cell_data);
                         }
-
                         row_buffer.add_row(row_data);
                     }
-                }
 
-                results.push(RowBufferEncoder::encode(&row_buffer));
+                    RowBufferEncoder::encode(&row_buffer)
+                };
+
+                results.push(encoded);
             }
         }
 

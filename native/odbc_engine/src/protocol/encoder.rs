@@ -1,5 +1,6 @@
 use crate::protocol::compression::CompressionStrategy;
 use crate::protocol::row_buffer::RowBuffer;
+use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION: u16 = 1;
@@ -9,7 +10,12 @@ pub struct RowBufferEncoder;
 impl RowBufferEncoder {
     pub fn encode(buffer: &RowBuffer) -> Vec<u8> {
         let mut output = Vec::new();
+        Self::encode_to_writer(buffer, &mut output).expect("write to Vec never fails");
+        output
+    }
 
+    /// Encode buffer to a writer. Used for spill-to-disk when result exceeds memory threshold.
+    pub fn encode_to_writer<W: Write>(buffer: &RowBuffer, w: &mut W) -> std::io::Result<()> {
         let mut metadata_size = 0;
         for col in &buffer.columns {
             metadata_size += 2 + 2 + col.name.len();
@@ -25,31 +31,31 @@ impl RowBufferEncoder {
             }
         }
 
-        output.extend_from_slice(&MAGIC.to_le_bytes());
-        output.extend_from_slice(&VERSION.to_le_bytes());
-        output.extend_from_slice(&(buffer.column_count() as u16).to_le_bytes());
-        output.extend_from_slice(&(buffer.row_count() as u32).to_le_bytes());
-        output.extend_from_slice(&(payload_size as u32).to_le_bytes());
+        w.write_all(&MAGIC.to_le_bytes())?;
+        w.write_all(&VERSION.to_le_bytes())?;
+        w.write_all(&(buffer.column_count() as u16).to_le_bytes())?;
+        w.write_all(&(buffer.row_count() as u32).to_le_bytes())?;
+        w.write_all(&(payload_size as u32).to_le_bytes())?;
 
         for col in &buffer.columns {
-            output.extend_from_slice(&(col.odbc_type as u16).to_le_bytes());
-            output.extend_from_slice(&(col.name.len() as u16).to_le_bytes());
-            output.extend_from_slice(col.name.as_bytes());
+            w.write_all(&(col.odbc_type as u16).to_le_bytes())?;
+            w.write_all(&(col.name.len() as u16).to_le_bytes())?;
+            w.write_all(col.name.as_bytes())?;
         }
 
         for row in &buffer.rows {
             for cell in row {
                 if let Some(data) = cell {
-                    output.push(0);
-                    output.extend_from_slice(&(data.len() as u32).to_le_bytes());
-                    output.extend_from_slice(data);
+                    w.write_all(&[0])?;
+                    w.write_all(&(data.len() as u32).to_le_bytes())?;
+                    w.write_all(data)?;
                 } else {
-                    output.push(1);
+                    w.write_all(&[1])?;
                 }
             }
         }
 
-        output
+        Ok(())
     }
 
     /// Encode then optionally compress when payload exceeds 1MB.
@@ -232,6 +238,19 @@ mod tests {
 
         // Verify structure exists (detailed parsing skipped for brevity)
         assert!(encoded.len() > 16); // Has header + data
+    }
+
+    #[test]
+    fn test_encode_to_writer_matches_encode() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("id".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
+        buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
+
+        let encoded = RowBufferEncoder::encode(&buffer);
+        let mut out = Vec::new();
+        RowBufferEncoder::encode_to_writer(&buffer, &mut out).unwrap();
+        assert_eq!(encoded, out);
     }
 
     #[test]

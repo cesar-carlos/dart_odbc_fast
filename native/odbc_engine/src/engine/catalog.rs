@@ -173,4 +173,18 @@ mod tests {
         assert_eq!(schema.as_deref(), Some("dbo"));
         assert_eq!(name, "mytable");
     }
+
+    #[test]
+    fn test_validate_and_parse_table_multiple_dots_uses_last_as_separator() {
+        let (schema, name) = validate_and_parse_table("cat.schema.mytable").unwrap();
+        assert_eq!(schema.as_deref(), Some("cat.schema"));
+        assert_eq!(name, "mytable");
+    }
+
+    #[test]
+    fn test_validate_and_parse_table_single_char_table() {
+        let (schema, name) = validate_and_parse_table("x").unwrap();
+        assert!(schema.is_none());
+        assert_eq!(name, "x");
+    }
 }

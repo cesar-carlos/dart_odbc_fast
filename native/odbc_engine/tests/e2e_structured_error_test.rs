@@ -67,13 +67,13 @@ fn test_structured_error_connection_failure() {
     let env = OdbcEnvironment::new();
     env.init().expect("init");
     let handles = env.get_handles();
-    
+
     let result = OdbcConnection::connect(handles, invalid_conn_str);
     assert!(result.is_err(), "connection to invalid host must fail");
-    
+
     if let Err(err) = result {
         let structured = err.to_structured();
-        
+
         assert_ne!(
             structured.sqlstate, [0u8; 5],
             "connection error should have non-zero SQLSTATE"
@@ -113,7 +113,7 @@ fn test_structured_error_syntax_error() {
 
     let err = result.unwrap_err();
     let structured = err.to_structured();
-    
+
     assert_ne!(
         structured.sqlstate, [0u8; 5],
         "syntax error should have non-zero SQLSTATE (likely 42000)"
@@ -123,7 +123,7 @@ fn test_structured_error_syntax_error() {
         "syntax error message must be non-empty"
     );
     assert!(
-        structured.message.to_lowercase().contains("syntax") 
+        structured.message.to_lowercase().contains("syntax")
             || structured.message.to_lowercase().contains("incorrect"),
         "error message should mention syntax or incorrect keyword"
     );
@@ -155,7 +155,7 @@ fn test_structured_error_table_not_found() {
 
     let err = result.unwrap_err();
     let structured = err.to_structured();
-    
+
     assert_ne!(
         structured.sqlstate, [0u8; 5],
         "table not found should have non-zero SQLSTATE"
@@ -199,7 +199,7 @@ fn test_structured_error_column_not_found() {
 
     let err = result.unwrap_err();
     let structured = err.to_structured();
-    
+
     assert_ne!(
         structured.sqlstate, [0u8; 5],
         "column not found should have non-zero SQLSTATE"
@@ -249,7 +249,7 @@ fn test_structured_error_type_mismatch() {
 
     let err = result.unwrap_err();
     let structured = err.to_structured();
-    
+
     assert_ne!(
         structured.sqlstate, [0u8; 5],
         "type mismatch should have non-zero SQLSTATE"
@@ -300,7 +300,7 @@ fn test_structured_error_null_constraint_violation() {
 
     let err = result.unwrap_err();
     let structured = err.to_structured();
-    
+
     assert_ne!(
         structured.sqlstate, [0u8; 5],
         "NULL constraint violation should have non-zero SQLSTATE"

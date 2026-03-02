@@ -108,7 +108,10 @@ impl PreparedStatementCache {
     }
 
     pub fn len(&self) -> usize {
-        self.cache.lock().map(|c| c.len()).unwrap_or(0)
+        self.cache.lock().map(|c| c.len()).unwrap_or_else(|_| {
+            log::error!("PreparedStatementCache len: mutex poisoned");
+            0
+        })
     }
 
     pub fn is_empty(&self) -> bool {

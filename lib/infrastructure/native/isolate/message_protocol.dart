@@ -41,6 +41,10 @@ enum RequestType {
   getError,
   getStructuredError,
   detectDriver,
+  auditEnable,
+  auditGetEvents,
+  auditGetStatus,
+  auditClear,
 }
 
 /// Base class for worker requests. All subclasses must be sendable.
@@ -387,6 +391,32 @@ class DetectDriverRequest extends WorkerRequest {
   final String connectionString;
 }
 
+/// Enable/disable audit logging.
+class AuditEnableRequest extends WorkerRequest {
+  const AuditEnableRequest(int requestId, {required this.enabled})
+      : super(requestId, RequestType.auditEnable);
+  final bool enabled;
+}
+
+/// Get audit events JSON payload.
+class AuditGetEventsRequest extends WorkerRequest {
+  const AuditGetEventsRequest(int requestId, {this.limit = 0})
+      : super(requestId, RequestType.auditGetEvents);
+  final int limit;
+}
+
+/// Get audit status JSON payload.
+class AuditGetStatusRequest extends WorkerRequest {
+  const AuditGetStatusRequest(int requestId)
+      : super(requestId, RequestType.auditGetStatus);
+}
+
+/// Clear all audit events.
+class AuditClearRequest extends WorkerRequest {
+  const AuditClearRequest(int requestId)
+      : super(requestId, RequestType.auditClear);
+}
+
 /// Base class for worker responses. All subclasses must be sendable.
 sealed class WorkerResponse {
   const WorkerResponse(this.requestId);
@@ -508,6 +538,13 @@ class StructuredErrorResponse extends WorkerResponse {
 class DetectDriverResponse extends WorkerResponse {
   const DetectDriverResponse(super.requestId, this.driverName);
   final String? driverName;
+}
+
+/// Response carrying JSON payload for audit operations.
+class AuditPayloadResponse extends WorkerResponse {
+  const AuditPayloadResponse(super.requestId, {this.payload, this.error});
+  final String? payload;
+  final String? error;
 }
 
 /// Response for stream fetch operation.

@@ -28,13 +28,14 @@ fn test_async_query_returns_same_as_sync() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let sql = "SELECT 1 AS col, 'test' AS str";
-    let result1 = execute_query_with_connection(odbc_conn, sql).expect("First query failed");
-    let result2 = execute_query_with_connection(odbc_conn, sql).expect("Second query failed");
+    let result1 = execute_query_with_connection(&odbc_conn, sql).expect("First query failed");
+    let result2 = execute_query_with_connection(&odbc_conn, sql).expect("Second query failed");
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -72,12 +73,13 @@ fn test_async_connection_lifecycle() {
 
     let handles = conn.get_handles();
     let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard
+    let conn_arc = handles_guard
         .get_connection(conn.get_connection_id())
         .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
 
     let buffer =
-        execute_query_with_connection(odbc_conn, "SELECT 1").expect("Failed to execute SELECT 1");
+        execute_query_with_connection(&odbc_conn, "SELECT 1").expect("Failed to execute SELECT 1");
     assert!(!buffer.is_empty(), "Result should not be empty");
 
     drop(handles_guard);

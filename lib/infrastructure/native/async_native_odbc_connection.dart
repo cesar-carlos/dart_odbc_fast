@@ -106,7 +106,7 @@ class AsyncNativeOdbcConnection {
     final handshake = Completer<SendPort>();
     _receivePort = ReceivePort();
     _receivePort!.listen(
-      (Object? message) {
+      (message) {
         if (message is SendPort) {
           if (!handshake.isCompleted) handshake.complete(message);
         } else if (message is WorkerResponse) {
@@ -330,6 +330,44 @@ class AsyncNativeOdbcConnection {
       sqlState: sqlState.isNotEmpty ? sqlState : List.filled(5, 0),
       nativeCode: r.nativeCode ?? 0,
     );
+  }
+
+  /// Enables/disables native audit event collection in the worker.
+  Future<bool> setAuditEnabled({required bool enabled}) async {
+    final r = await _sendRequest<BoolResponse>(
+      AuditEnableRequest(_nextRequestId(), enabled: enabled),
+    );
+    return r.value;
+  }
+
+  /// Clears in-memory audit events in the worker.
+  Future<bool> clearAuditEvents() async {
+    final r = await _sendRequest<BoolResponse>(
+      AuditClearRequest(_nextRequestId()),
+    );
+    return r.value;
+  }
+
+  /// Returns audit events as JSON payload, or null on failure.
+  Future<String?> getAuditEventsJson({int limit = 0}) async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      AuditGetEventsRequest(_nextRequestId(), limit: limit),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
+  }
+
+  /// Returns audit status as JSON payload, or null on failure.
+  Future<String?> getAuditStatusJson() async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      AuditGetStatusRequest(_nextRequestId()),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
   }
 
   /// Starts a transaction in the worker for [connectionId] with

@@ -7,7 +7,9 @@ odbc_get_error
 odbc_get_structured_error
 odbc_exec_query
 odbc_stream_start
+odbc_stream_start_batched
 odbc_stream_fetch
+odbc_stream_cancel
 odbc_stream_close
 odbc_transaction_begin
 odbc_transaction_commit
@@ -28,7 +30,6 @@ odbc_execute
 odbc_cancel
 odbc_close_statement
 odbc_clear_all_statements
-odbc_stream_start_batched
 odbc_pool_create
 odbc_pool_get_connection
 odbc_pool_release_connection
@@ -38,6 +39,10 @@ odbc_pool_close
 odbc_bulk_insert_array
 odbc_bulk_insert_parallel
 odbc_detect_driver
+odbc_audit_enable
+odbc_audit_get_events
+odbc_audit_clear
+odbc_audit_get_status
 otel_init
 otel_export_trace
 otel_export_trace_to_string

@@ -334,4 +334,198 @@ mod tests {
         assert_eq!(candidate4, u32::MAX);
         assert_eq!(manager.next_conn_id, 0);
     }
+
+    #[test]
+    fn test_id_collision_detection_skips_zero() {
+        let mut manager = HandleManager::new();
+        manager.next_conn_id = 0;
+
+        let candidate1 = manager.next_conn_id;
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+
+        assert_eq!(candidate1, 0, "First candidate is 0");
+        assert_eq!(
+            manager.next_conn_id, 1,
+            "After increment, next_conn_id is 1"
+        );
+    }
+
+    #[test]
+    fn test_id_collision_detection_logic() {
+        let manager = HandleManager::new();
+
+        let id_1_exists = manager.connections.contains_key(&1);
+        let id_2_exists = manager.connections.contains_key(&2);
+        let id_3_exists = manager.connections.contains_key(&3);
+
+        assert!(!id_1_exists, "ID 1 should not exist initially");
+        assert!(!id_2_exists, "ID 2 should not exist initially");
+        assert!(!id_3_exists, "ID 3 should not exist initially");
+
+        let candidate = 1u32;
+        let is_valid = candidate != 0 && !manager.connections.contains_key(&candidate);
+        assert!(is_valid, "ID 1 should be valid for allocation");
+
+        let candidate_zero = 0u32;
+        let is_valid_zero =
+            candidate_zero != 0 && !manager.connections.contains_key(&candidate_zero);
+        assert!(!is_valid_zero, "ID 0 should never be valid for allocation");
+    }
+
+    #[test]
+    fn test_id_wrap_around_sequence() {
+        let mut manager = HandleManager::new();
+        manager.next_conn_id = u32::MAX;
+
+        let mut found_id = 0u32;
+        for _ in 0..MAX_CONN_ID_ALLOC_ATTEMPTS {
+            let candidate = manager.next_conn_id;
+            manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+
+            if candidate != 0 && !manager.connections.contains_key(&candidate) {
+                found_id = candidate;
+                break;
+            }
+        }
+
+        assert_eq!(found_id, u32::MAX, "Should find u32::MAX as available");
+        assert_eq!(
+            manager.next_conn_id, 0,
+            "After MAX, next_conn_id wraps to 0"
+        );
+    }
+
+    #[test]
+    fn test_id_allocation_algorithm_simulation() {
+        let mut next_id = 1u32;
+        let occupied_ids: std::collections::HashSet<u32> = vec![1, 2].into_iter().collect();
+
+        let mut found_id = 0u32;
+        for _ in 0..10 {
+            let candidate = next_id;
+            next_id = next_id.wrapping_add(1);
+
+            if candidate != 0 && !occupied_ids.contains(&candidate) {
+                found_id = candidate;
+                break;
+            }
+        }
+
+        assert_eq!(
+            found_id, 3,
+            "First available ID should be 3 when 1 and 2 are occupied"
+        );
+    }
+
+    #[test]
+    fn test_id_generation_never_returns_zero() {
+        let mut next_id = 0u32;
+
+        for _ in 0..10 {
+            let candidate = next_id;
+            next_id = next_id.wrapping_add(1);
+
+            if candidate != 0 {
+                assert_ne!(candidate, 0, "Allocated ID should never be 0");
+            }
+        }
+    }
+
+    #[test]
+    fn test_id_collision_exhaustion_simulation() {
+        let mut next_id = 1u32;
+        let occupied_ids: std::collections::HashSet<u32> = (1..=100).collect();
+
+        let mut found_id = 0u32;
+        let mut attempts = 0u32;
+
+        for _ in 0..MAX_CONN_ID_ALLOC_ATTEMPTS {
+            attempts += 1;
+            let candidate = next_id;
+            next_id = next_id.wrapping_add(1);
+
+            if candidate != 0 && !occupied_ids.contains(&candidate) {
+                found_id = candidate;
+                break;
+            }
+        }
+
+        assert_eq!(found_id, 101, "Should find ID 101 after 100 occupied slots");
+        assert!(
+            attempts <= MAX_CONN_ID_ALLOC_ATTEMPTS,
+            "Should find within max attempts"
+        );
+    }
+
+    #[test]
+    fn test_id_allocation_near_max_attempts() {
+        let mut next_id = 1u32;
+        let occupied_ids: std::collections::HashSet<u32> = (1..=500).collect();
+
+        let mut found_id = 0u32;
+        let mut attempts = 0u32;
+
+        for _ in 0..MAX_CONN_ID_ALLOC_ATTEMPTS {
+            attempts += 1;
+            let candidate = next_id;
+            next_id = next_id.wrapping_add(1);
+
+            if candidate != 0 && !occupied_ids.contains(&candidate) {
+                found_id = candidate;
+                break;
+            }
+        }
+
+        assert_eq!(found_id, 501, "Should find ID 501 after 500 occupied slots");
+        assert!(
+            attempts <= MAX_CONN_ID_ALLOC_ATTEMPTS,
+            "Should find within max attempts"
+        );
+        assert_eq!(attempts, 501, "Should take exactly 501 attempts");
+    }
+
+    #[test]
+    fn test_wrapping_add_arithmetic() {
+        let test_cases = vec![
+            (0u32, 1u32),
+            (u32::MAX - 1, u32::MAX),
+            (u32::MAX, 0u32),
+            (100, 101),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = input.wrapping_add(1);
+            assert_eq!(
+                result, expected,
+                "wrapping_add(1) for {} should be {}",
+                input, expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_hashmap_contains_key_behavior() {
+        use std::collections::HashMap;
+        let mut map: HashMap<u32, u32> = HashMap::new();
+
+        map.insert(5, 100);
+        map.insert(10, 200);
+
+        assert!(map.contains_key(&5));
+        assert!(map.contains_key(&10));
+        assert!(!map.contains_key(&1));
+        assert!(!map.contains_key(&0));
+
+        map.remove(&5);
+        assert!(!map.contains_key(&5));
+        assert!(map.contains_key(&10));
+    }
+
+    #[test]
+    fn test_max_conn_id_alloc_attempts_constant() {
+        assert_eq!(
+            MAX_CONN_ID_ALLOC_ATTEMPTS, 1000,
+            "MAX_CONN_ID_ALLOC_ATTEMPTS should be 1000"
+        );
+    }
 }

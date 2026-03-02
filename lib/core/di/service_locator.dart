@@ -2,6 +2,8 @@ import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
+import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 
@@ -146,6 +148,24 @@ class ServiceLocator {
   ///
   /// Throws if [initialize] has not been called.
   NativeOdbcConnection get nativeConnection => _nativeConnection;
+
+  /// Gets the typed native audit logger wrapper.
+  ///
+  /// Available after [initialize], and backed by [nativeConnection].
+  OdbcAuditLogger get auditLogger => _nativeConnection.auditLogger;
+
+  /// Gets async typed audit logger wrapper.
+  ///
+  /// Only available if [initialize] was called with `useAsync: true`.
+  AsyncOdbcAuditLogger get asyncAuditLogger {
+    if (!_useAsync) {
+      throw StateError(
+        'ServiceLocator not initialized with useAsync: true. '
+        'Call locator.initialize(useAsync: true) first.',
+      );
+    }
+    return AsyncOdbcAuditLogger(_asyncNativeConnection);
+  }
 
   /// Gets the [AsyncNativeOdbcConnection] instance.
   ///

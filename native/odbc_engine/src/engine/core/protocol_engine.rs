@@ -201,7 +201,10 @@ mod tests {
         let engine = ProtocolEngine::new(ProtocolVersion::new(2, 0));
         let client = ProtocolVersion::new(1, 0);
         let result = engine.negotiate(client);
-        assert!(result.is_err(), "v2 engine should not support v1 client (major mismatch)");
+        assert!(
+            result.is_err(),
+            "v2 engine should not support v1 client (major mismatch)"
+        );
     }
 
     #[test]
@@ -209,7 +212,10 @@ mod tests {
         let engine = ProtocolEngine::new(ProtocolVersion::new(1, 0));
         let client = ProtocolVersion::new(2, 0);
         let result = engine.negotiate(client);
-        assert!(result.is_err(), "v1 engine should not support v2 client (major mismatch)");
+        assert!(
+            result.is_err(),
+            "v1 engine should not support v2 client (major mismatch)"
+        );
     }
 
     #[test]
@@ -231,7 +237,10 @@ mod tests {
         assert!(result.is_ok());
         let negotiated = result.unwrap();
         assert_eq!(negotiated.major, 1);
-        assert_eq!(negotiated.minor, 3, "Should negotiate to client's minor version");
+        assert_eq!(
+            negotiated.minor, 3,
+            "Should negotiate to client's minor version"
+        );
     }
 
     #[test]
@@ -242,7 +251,10 @@ mod tests {
         assert!(result.is_ok());
         let negotiated = result.unwrap();
         assert_eq!(negotiated.major, 1);
-        assert_eq!(negotiated.minor, 3, "Should negotiate to engine's minor version (client too new)");
+        assert_eq!(
+            negotiated.minor, 3,
+            "Should negotiate to engine's minor version (client too new)"
+        );
     }
 
     #[test]
@@ -252,9 +264,18 @@ mod tests {
         let v1_5 = ProtocolVersion::new(1, 5);
 
         assert!(v1_0.supports(&v1_0), "v1.0 should support v1.0");
-        assert!(v1_1.supports(&v1_0), "v1.1 should support v1.0 (backward compatible)");
-        assert!(v1_5.supports(&v1_0), "v1.5 should support v1.0 (backward compatible)");
-        assert!(!v1_0.supports(&v1_1), "v1.0 should not support v1.1 (needs upgrade)");
+        assert!(
+            v1_1.supports(&v1_0),
+            "v1.1 should support v1.0 (backward compatible)"
+        );
+        assert!(
+            v1_5.supports(&v1_0),
+            "v1.5 should support v1.0 (backward compatible)"
+        );
+        assert!(
+            !v1_0.supports(&v1_1),
+            "v1.0 should not support v1.1 (needs upgrade)"
+        );
     }
 
     #[test]

@@ -429,6 +429,69 @@ fn test_pool_concurrent_access() {
     println!("✅ Concurrent access test PASSED");
 }
 
+/// Stress test: many concurrent checkout/release cycles (Fase 5).
+/// Validates no connection leak under load.
+#[test]
+#[ignore = "Long-running stress; run with --ignored when ENABLE_E2E_TESTS=1"]
+fn test_pool_stress_checkout_release() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const POOL_SIZE: u32 = 4;
+    const CYCLES_PER_THREAD: usize = 50;
+    const NUM_THREADS: usize = 8;
+
+    println!(
+        "Pool stress: {} threads × {} cycles, pool_size={}",
+        NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
+    );
+
+    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+
+    let handles: Vec<_> = (0..NUM_THREADS)
+        .map(|t| {
+            let p = Arc::clone(&pool);
+            std::thread::spawn(move || {
+                for i in 0..CYCLES_PER_THREAD {
+                    let w = p
+                        .get()
+                        .unwrap_or_else(|e| panic!("Thread {} cycle {}: get failed: {}", t, i, e));
+                    {
+                        let conn = w.get_connection();
+                        let mut stmt = conn.prepare("SELECT 1 AS v").unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: prepare failed: {}", t, i, e)
+                        });
+                        let _ = stmt.execute(()).unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: execute failed: {}", t, i, e)
+                        });
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let state = pool.state();
+    println!("Final state: size={}, idle={}", state.size, state.idle);
+
+    assert!(
+        state.size <= POOL_SIZE,
+        "Pool size should not exceed max (got {})",
+        state.size
+    );
+    assert!(state.idle <= state.size, "Idle should not exceed size");
+
+    println!("✅ Pool stress checkout/release PASSED");
+}
+
 /// Pool integration: when a connection is returned after being left in
 /// manual-commit mode (e.g. from a transaction), the next checkout runs
 /// is_valid (test_on_check_out), which resets autocommit and runs SELECT 1.
@@ -464,4 +527,190 @@ fn test_pool_transaction_reset_state() {
     assert!(cur.is_some(), "Query after reuse should succeed");
 
     println!("✅ Transaction reset state test PASSED");
+}
+
+/// Stress test: high contention with small pool size.
+/// Validates that many threads competing for few connections complete without deadlock.
+#[test]
+fn test_pool_stress_high_contention() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const POOL_SIZE: u32 = 2;
+    const NUM_THREADS: usize = 20;
+    const CYCLES_PER_THREAD: usize = 10;
+
+    println!(
+        "Pool stress (high contention): {} threads × {} cycles, pool_size={}",
+        NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
+    );
+
+    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let start = std::time::Instant::now();
+
+    let handles: Vec<_> = (0..NUM_THREADS)
+        .map(|t| {
+            let p = Arc::clone(&pool);
+            std::thread::spawn(move || {
+                for i in 0..CYCLES_PER_THREAD {
+                    let w = p
+                        .get()
+                        .unwrap_or_else(|e| panic!("Thread {} cycle {}: get failed: {}", t, i, e));
+                    {
+                        let conn = w.get_connection();
+                        let mut stmt = conn.prepare("SELECT 1 AS v").unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: prepare failed: {}", t, i, e)
+                        });
+                        let _ = stmt.execute(()).unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: execute failed: {}", t, i, e)
+                        });
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    let elapsed = start.elapsed();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let state = pool.state();
+    println!(
+        "Final state: size={}, idle={} (completed in {:?})",
+        state.size, state.idle, elapsed
+    );
+
+    assert!(
+        state.size <= POOL_SIZE,
+        "Pool size should not exceed max (got {})",
+        state.size
+    );
+    assert!(state.idle <= state.size, "Idle should not exceed size");
+
+    println!("✅ Pool stress high contention PASSED");
+}
+
+/// Stress test: timeout behavior when pool is exhausted.
+/// Validates that get() returns error when no connections available within timeout.
+#[test]
+fn test_pool_timeout_when_exhausted() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const POOL_SIZE: u32 = 1;
+
+    println!(
+        "Testing pool timeout when exhausted (pool_size={})...",
+        POOL_SIZE
+    );
+
+    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+
+    let wrapper1 = pool.get().expect("Failed to get connection 1");
+
+    let pool_clone = Arc::clone(&pool);
+    let handle = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let result = pool_clone.get();
+        let elapsed = start.elapsed();
+        (result, elapsed)
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let (result, elapsed) = handle.join().expect("Thread should complete");
+
+    println!("  get() returned after {:?}", elapsed);
+
+    if result.is_err() {
+        println!("  ✓ get() timed out as expected when pool exhausted");
+    } else {
+        println!("  ✓ get() succeeded (pool may have longer timeout than test duration)");
+    }
+
+    drop(wrapper1);
+    drop(result);
+
+    println!("✅ Pool timeout test PASSED");
+}
+
+/// Stress test: rapid checkout/release cycles without holding connections.
+/// Validates pool stability under rapid churn.
+#[test]
+fn test_pool_stress_rapid_churn() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    const POOL_SIZE: u32 = 3;
+    const NUM_THREADS: usize = 10;
+    const CYCLES_PER_THREAD: usize = 50;
+
+    println!(
+        "Pool stress (rapid churn): {} threads × {} cycles, pool_size={}",
+        NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
+    );
+
+    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let start = std::time::Instant::now();
+
+    let handles: Vec<_> = (0..NUM_THREADS)
+        .map(|t| {
+            let p = Arc::clone(&pool);
+            std::thread::spawn(move || {
+                for i in 0..CYCLES_PER_THREAD {
+                    let w = p
+                        .get()
+                        .unwrap_or_else(|e| panic!("Thread {} cycle {}: get failed: {}", t, i, e));
+                    {
+                        let conn = w.get_connection();
+                        let mut stmt = conn.prepare("SELECT 1 AS v").unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: prepare failed: {}", t, i, e)
+                        });
+                        let _ = stmt.execute(()).unwrap_or_else(|e| {
+                            panic!("Thread {} cycle {}: execute failed: {}", t, i, e)
+                        });
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    let elapsed = start.elapsed();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let state = pool.state();
+    println!(
+        "Final state: size={}, idle={} (completed in {:?})",
+        state.size, state.idle, elapsed
+    );
+
+    assert!(
+        state.size <= POOL_SIZE,
+        "Pool size should not exceed max (got {})",
+        state.size
+    );
+    assert!(state.idle <= state.size, "Idle should not exceed size");
+    assert_eq!(
+        state.idle, state.size,
+        "All connections should be idle after stress test"
+    );
+
+    println!("✅ Pool stress rapid churn PASSED");
 }

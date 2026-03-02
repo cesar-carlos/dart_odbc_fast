@@ -22,6 +22,7 @@ functions:
     - "odbc_exec_query"
     - "odbc_stream_start"
     - "odbc_stream_fetch"
+    - "odbc_stream_cancel"
     - "odbc_stream_close"
     - "odbc_pool_create"
     - "odbc_pool_get_connection"

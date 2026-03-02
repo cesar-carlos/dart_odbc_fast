@@ -41,11 +41,31 @@ pub enum TransactionState {
     RolledBack,
 }
 
+/// Savepoint SQL dialect. SQL Server uses SAVE TRANSACTION / ROLLBACK TRANSACTION;
+/// SQL-92 (PostgreSQL, MySQL, etc.) uses SAVEPOINT / ROLLBACK TO SAVEPOINT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavepointDialect {
+    /// SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT (PostgreSQL, MySQL, etc.)
+    Sql92,
+    /// SAVE TRANSACTION, ROLLBACK TRANSACTION (SQL Server; no RELEASE)
+    SqlServer,
+}
+
+impl SavepointDialect {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => Self::SqlServer,
+            _ => Self::Sql92,
+        }
+    }
+}
+
 pub struct Transaction {
     handles: SharedHandleManager,
     conn_id: u32,
     state: Arc<Mutex<TransactionState>>,
     isolation_level: IsolationLevel,
+    savepoint_dialect: SavepointDialect,
 }
 
 impl Transaction {
@@ -54,11 +74,25 @@ impl Transaction {
         conn_id: u32,
         isolation_level: IsolationLevel,
     ) -> Result<Self> {
+        Self::begin_with_dialect(handles, conn_id, isolation_level, SavepointDialect::Sql92)
+    }
+
+    pub fn begin_with_dialect(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+    ) -> Result<Self> {
         let state = Arc::new(Mutex::new(TransactionState::Active));
-        let h = handles
+        let conn_arc = {
+            let h = handles
+                .lock()
+                .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
+            h.get_connection(conn_id)?
+        };
+        let conn = conn_arc
             .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
-        let conn = h.get_connection(conn_id)?;
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
 
         // Apply isolation level via SQL (SET TRANSACTION ISOLATION LEVEL). odbc-api does not
         // expose SQL_ATTR_TXN_ISOLATION; we use SQL-92 syntax supported by SQL Server, PostgreSQL,
@@ -72,14 +106,18 @@ impl Transaction {
             .map_err(OdbcError::from)?;
 
         conn.set_autocommit(false).map_err(OdbcError::from)?;
-        drop(h);
 
         Ok(Self {
             handles,
             conn_id,
             state,
             isolation_level,
+            savepoint_dialect,
         })
+    }
+
+    pub fn savepoint_dialect(&self) -> SavepointDialect {
+        self.savepoint_dialect
     }
 
     pub fn commit(self) -> Result<()> {
@@ -93,13 +131,17 @@ impl Transaction {
             )));
         }
 
-        let h = self.handles.lock().map_err(|_| {
-            OdbcError::InternalError("Failed to lock handles for commit".to_string())
-        })?;
-        let conn = h.get_connection(self.conn_id)?;
+        let conn_arc = {
+            let h = self.handles.lock().map_err(|_| {
+                OdbcError::InternalError("Failed to lock handles for commit".to_string())
+            })?;
+            h.get_connection(self.conn_id)?
+        };
+        let conn = conn_arc
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
         conn.commit().map_err(OdbcError::from)?;
         conn.set_autocommit(true).map_err(OdbcError::from)?;
-        drop(h);
 
         *s = TransactionState::Committed;
         Ok(())
@@ -116,13 +158,17 @@ impl Transaction {
             )));
         }
 
-        let h = self.handles.lock().map_err(|_| {
-            OdbcError::InternalError("Failed to lock handles for rollback".to_string())
-        })?;
-        let conn = h.get_connection(self.conn_id)?;
+        let conn_arc = {
+            let h = self.handles.lock().map_err(|_| {
+                OdbcError::InternalError("Failed to lock handles for rollback".to_string())
+            })?;
+            h.get_connection(self.conn_id)?
+        };
+        let conn = conn_arc
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
         conn.rollback().map_err(OdbcError::from)?;
         conn.set_autocommit(true).map_err(OdbcError::from)?;
-        drop(h);
 
         *s = TransactionState::RolledBack;
         Ok(())
@@ -137,7 +183,20 @@ impl Transaction {
     where
         F: FnOnce(&Transaction) -> Result<T>,
     {
-        let txn = Self::begin(handles.clone(), conn_id, isolation)?;
+        Self::execute_with_dialect(handles, conn_id, isolation, SavepointDialect::Sql92, f)
+    }
+
+    pub fn execute_with_dialect<F, T>(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        f: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&Transaction) -> Result<T>,
+    {
+        let txn = Self::begin_with_dialect(handles.clone(), conn_id, isolation, savepoint_dialect)?;
         match f(&txn) {
             Ok(result) => {
                 txn.commit()?;
@@ -151,10 +210,15 @@ impl Transaction {
     }
 
     pub fn execute_sql(&self, sql: &str) -> Result<()> {
-        let h = self.handles.lock().map_err(|_| {
-            OdbcError::InternalError("Failed to lock handles for execute_sql".to_string())
-        })?;
-        let conn = h.get_connection(self.conn_id)?;
+        let conn_arc = {
+            let h = self.handles.lock().map_err(|_| {
+                OdbcError::InternalError("Failed to lock handles for execute_sql".to_string())
+            })?;
+            h.get_connection(self.conn_id)?
+        };
+        let conn = conn_arc
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
         conn.execute(sql, (), None)
             .map(|_| ())
             .map_err(OdbcError::from)
@@ -191,6 +255,7 @@ impl Transaction {
             conn_id,
             state: Arc::new(Mutex::new(state)),
             isolation_level,
+            savepoint_dialect: SavepointDialect::Sql92,
         }
     }
 }
@@ -205,9 +270,11 @@ impl Drop for Transaction {
         if s == TransactionState::Active {
             log::warn!("Transaction dropped without commit - auto-rollback");
             if let Ok(h) = self.handles.lock() {
-                if let Ok(conn) = h.get_connection(self.conn_id) {
-                    let _ = conn.rollback();
-                    let _ = conn.set_autocommit(true);
+                if let Ok(conn_arc) = h.get_connection(self.conn_id) {
+                    if let Ok(conn) = conn_arc.lock() {
+                        let _ = conn.rollback();
+                        let _ = conn.set_autocommit(true);
+                    }
                 }
             }
         }
@@ -221,7 +288,10 @@ pub struct Savepoint<'t> {
 
 impl<'t> Savepoint<'t> {
     pub fn create(transaction: &'t Transaction, name: &str) -> Result<Self> {
-        let sql = format!("SAVEPOINT {}", name);
+        let sql = match transaction.savepoint_dialect() {
+            SavepointDialect::Sql92 => format!("SAVEPOINT {}", name),
+            SavepointDialect::SqlServer => format!("SAVE TRANSACTION {}", name),
+        };
         transaction.execute_sql(&sql)?;
         Ok(Self {
             transaction,
@@ -230,19 +300,30 @@ impl<'t> Savepoint<'t> {
     }
 
     pub fn rollback_to(&self) -> Result<()> {
-        let sql = format!("ROLLBACK TO SAVEPOINT {}", self.name);
+        let sql = match self.transaction.savepoint_dialect() {
+            SavepointDialect::Sql92 => format!("ROLLBACK TO SAVEPOINT {}", self.name),
+            SavepointDialect::SqlServer => format!("ROLLBACK TRANSACTION {}", self.name),
+        };
         self.transaction.execute_sql(&sql)
     }
 
     pub fn release(self) -> Result<()> {
-        let sql = format!("RELEASE SAVEPOINT {}", self.name);
-        self.transaction.execute_sql(&sql)
+        match self.transaction.savepoint_dialect() {
+            SavepointDialect::Sql92 => {
+                let sql = format!("RELEASE SAVEPOINT {}", self.name);
+                self.transaction.execute_sql(&sql)
+            }
+            SavepointDialect::SqlServer => {
+                // SQL Server has no RELEASE SAVEPOINT; savepoint is released on commit/rollback
+                Ok(())
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{IsolationLevel, Transaction, TransactionState};
+    use super::{IsolationLevel, SavepointDialect, Transaction, TransactionState};
     use crate::error::OdbcError;
     use crate::handles::{HandleManager, SharedHandleManager};
     use std::sync::{Arc, Mutex};
@@ -333,5 +414,147 @@ mod tests {
         let _ = TransactionState::Active;
         let _ = TransactionState::Committed;
         let _ = TransactionState::RolledBack;
+    }
+
+    #[test]
+    fn transaction_commit_when_already_rolled_back_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::RolledBack,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.commit();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot commit")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn transaction_commit_when_state_is_none_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::None,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.commit();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot commit")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn transaction_rollback_when_state_is_none_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::None,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.rollback();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot rollback")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn transaction_rollback_when_already_committed_returns_validation_error() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Committed,
+            IsolationLevel::ReadCommitted,
+        );
+        let result = txn.rollback();
+        match &result {
+            Err(OdbcError::ValidationError(msg)) => assert!(msg.contains("Cannot rollback")),
+            _ => panic!("expected ValidationError, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn savepoint_dialect_from_u32_sql92_default() {
+        assert_eq!(SavepointDialect::from_u32(0), SavepointDialect::Sql92);
+        assert_eq!(SavepointDialect::from_u32(99), SavepointDialect::Sql92);
+    }
+
+    #[test]
+    fn savepoint_dialect_from_u32_sqlserver() {
+        assert_eq!(SavepointDialect::from_u32(1), SavepointDialect::SqlServer);
+    }
+
+    #[test]
+    fn savepoint_dialect_sql_keywords_sql92() {
+        let create_sql = format!("SAVEPOINT {}", "sp1");
+        let rollback_sql = format!("ROLLBACK TO SAVEPOINT {}", "sp1");
+        let release_sql = format!("RELEASE SAVEPOINT {}", "sp1");
+        assert_eq!(create_sql, "SAVEPOINT sp1");
+        assert_eq!(rollback_sql, "ROLLBACK TO SAVEPOINT sp1");
+        assert_eq!(release_sql, "RELEASE SAVEPOINT sp1");
+    }
+
+    #[test]
+    fn savepoint_dialect_sql_keywords_sqlserver() {
+        let create_sql = format!("SAVE TRANSACTION {}", "sp1");
+        let rollback_sql = format!("ROLLBACK TRANSACTION {}", "sp1");
+        assert_eq!(create_sql, "SAVE TRANSACTION sp1");
+        assert_eq!(rollback_sql, "ROLLBACK TRANSACTION sp1");
+    }
+
+    #[test]
+    fn transaction_is_active_true_when_active() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(txn.is_active());
+    }
+
+    #[test]
+    fn transaction_is_active_false_when_committed() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Committed,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(!txn.is_active());
+    }
+
+    #[test]
+    fn transaction_is_active_false_when_rolled_back() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::RolledBack,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(!txn.is_active());
+    }
+
+    #[test]
+    fn transaction_for_test_exposes_conn_id_and_isolation() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            42,
+            TransactionState::Active,
+            IsolationLevel::Serializable,
+        );
+        assert_eq!(txn.conn_id(), 42);
+        assert_eq!(txn.isolation_level(), IsolationLevel::Serializable);
     }
 }

@@ -45,7 +45,7 @@ class NamedParameterParser {
     required List<String> paramNames,
   }) {
     final missing = paramNames
-        .where((String name) => !namedParams.containsKey(name))
+        .where((name) => !namedParams.containsKey(name))
         .toList();
 
     if (missing.isNotEmpty) {
@@ -54,7 +54,7 @@ class NamedParameterParser {
       );
     }
 
-    return paramNames.map((String name) => namedParams[name]).toList();
+    return paramNames.map((name) => namedParams[name]).toList();
   }
 }
 

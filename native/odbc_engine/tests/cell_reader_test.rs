@@ -17,12 +17,13 @@ fn execute_and_decode(sql: &str) -> Result<DecodedResult, Box<dyn std::error::Er
     let conn = OdbcConnection::connect(handles, &conn_str)?;
 
     let handles = conn.get_handles();
-    let handles_guard = handles.lock().unwrap();
-    let odbc_conn = handles_guard.get_connection(conn.get_connection_id())?;
+    let conn_arc = {
+        let handles_guard = handles.lock().unwrap();
+        handles_guard.get_connection(conn.get_connection_id())?
+    };
+    let odbc_conn = conn_arc.lock().unwrap();
 
-    let buffer = execute_query_with_connection(odbc_conn, sql)?;
-
-    drop(handles_guard);
+    let buffer = execute_query_with_connection(&odbc_conn, sql)?;
     conn.disconnect()?;
 
     let decoded = BinaryProtocolDecoder::parse(&buffer)?;

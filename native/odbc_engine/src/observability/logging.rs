@@ -28,7 +28,8 @@ impl StructuredLogger {
             return;
         }
 
-        log::log!(level, "Connection {}: {}", action, connection_string);
+        let sanitized = crate::security::sanitize_connection_string(connection_string);
+        log::log!(level, "Connection {}: {}", action, sanitized);
     }
 
     pub fn log_error(&self, error: &str, metadata: &HashMap<String, String>) {

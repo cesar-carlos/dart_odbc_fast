@@ -1,4 +1,5 @@
 use crate::error::{OdbcError, Result};
+use crate::protocol::BulkInsertPayload;
 
 #[cfg(feature = "sqlserver-bcp")]
 use odbc_api::Connection;
@@ -27,6 +28,8 @@ impl BulkCopyExecutor {
         self.batch_size
     }
 
+    /// Bulk copy from raw columnar byte data (for future native BCP).
+    /// Not yet implemented; use `bulk_copy_from_payload` for structured data.
     pub fn bulk_copy_from_memory(
         &self,
         _conn: &Connection<'static>,
@@ -34,14 +37,26 @@ impl BulkCopyExecutor {
         _data: &[Vec<u8>],
     ) -> Result<usize> {
         Err(OdbcError::InternalError(
-            "SQL Server BCP not yet implemented".to_string(),
+            "Native SQL Server BCP not yet implemented; use bulk_copy_from_payload".to_string(),
         ))
+    }
+
+    /// Bulk copy from structured payload using array binding (ODBC SQL_ATTR_PARAMSET_SIZE).
+    /// Provides a functional path when sqlserver-bcp feature is enabled.
+    /// Falls back to ArrayBinding; native bcp_* can be added later for SQL Server.
+    pub fn bulk_copy_from_payload(
+        &self,
+        conn: &Connection<'static>,
+        payload: &BulkInsertPayload,
+    ) -> Result<usize> {
+        let ab = super::ArrayBinding::new(self.batch_size);
+        ab.bulk_insert_generic(conn, payload)
     }
 }
 
 #[cfg(not(feature = "sqlserver-bcp"))]
 mod stub {
-    use super::{OdbcError, Result};
+    use super::{BulkInsertPayload, OdbcError, Result};
 
     pub struct BulkCopyExecutor;
 
@@ -59,6 +74,16 @@ mod stub {
             _conn: &odbc_api::Connection<'static>,
             _table: &str,
             _data: &[Vec<u8>],
+        ) -> Result<usize> {
+            Err(OdbcError::InternalError(
+                "Enable 'sqlserver-bcp' feature for BCP support".to_string(),
+            ))
+        }
+
+        pub fn bulk_copy_from_payload(
+            &self,
+            _conn: &odbc_api::Connection<'static>,
+            _payload: &BulkInsertPayload,
         ) -> Result<usize> {
             Err(OdbcError::InternalError(
                 "Enable 'sqlserver-bcp' feature for BCP support".to_string(),

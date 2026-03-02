@@ -2,12 +2,12 @@
 //
 // Provides different export strategies for OpenTelemetry traces
 // Console: Prints traces to stdout (for debugging)
-// OTLP: Sends traces to OTLP collector (http://localhost:4318)
+// OTLP: Sends traces to OTLP collector (http://localhost:4318) - requires "observability" feature
 
+#[cfg(feature = "observability")]
 use serde_json::json;
+#[cfg(feature = "observability")]
 use std::fmt;
-use std::time::Duration;
-use ureq::{Agent, AgentBuilder};
 
 /// Exporter trait for telemetry data.
 pub trait TelemetryExporter: Send {
@@ -61,13 +61,15 @@ impl TelemetryExporter for ConsoleExporter {
 /// OTLP exporter - sends traces to OpenTelemetry Protocol collector.
 ///
 /// Uses HTTP POST to send trace data in OTLP JSON format to a collector.
-/// This is the recommended exporter for production use.
+/// Requires the `observability` feature (pulls in ureq).
+#[cfg(feature = "observability")]
 pub struct OtlpExporter {
-    agent: Agent,
+    agent: ureq::Agent,
     endpoint: String,
     timeout_seconds: u64,
 }
 
+#[cfg(feature = "observability")]
 impl OtlpExporter {
     const DEFAULT_TIMEOUT: u64 = 30;
     const DEFAULT_USER_AGENT: &str = "dart_odbc_fast/0.1.0";
@@ -92,8 +94,8 @@ impl OtlpExporter {
     /// - `endpoint`: OTLP collector endpoint.
     /// - `timeout_seconds`: Request timeout in seconds.
     pub fn with_timeout(endpoint: &str, timeout_seconds: u64) -> Self {
-        let agent = AgentBuilder::new()
-            .timeout(Duration::from_secs(timeout_seconds))
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(timeout_seconds))
             .user_agent(Self::DEFAULT_USER_AGENT)
             .build();
 
@@ -188,7 +190,11 @@ impl OtlpExporter {
         let payload_str = serde_json::to_string(payload)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
-        log::debug!("Sending OTLP payload to {}: {}", self.endpoint, payload_str);
+        log::debug!(
+            "Sending OTLP payload to {} ({} bytes)",
+            self.endpoint,
+            payload_str.len()
+        );
 
         let response = self
             .agent
@@ -208,6 +214,7 @@ impl OtlpExporter {
     }
 }
 
+#[cfg(feature = "observability")]
 impl TelemetryExporter for OtlpExporter {
     fn name(&self) -> &'static str {
         "OtlpExporter"
@@ -218,6 +225,7 @@ impl TelemetryExporter for OtlpExporter {
     }
 }
 
+#[cfg(feature = "observability")]
 impl fmt::Debug for OtlpExporter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OtlpExporter")
@@ -245,12 +253,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "observability")]
     fn test_otlp_exporter_name() {
         let exporter = OtlpExporter::new("http://localhost:4318");
         assert_eq!(exporter.name(), "OtlpExporter");
     }
 
     #[test]
+    #[cfg(feature = "observability")]
     fn test_otlp_exporter_creation() {
         let exporter = OtlpExporter::new("http://localhost:4318/v1/traces");
         assert_eq!(exporter.endpoint, "http://localhost:4318/v1/traces");
@@ -258,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "observability")]
     fn test_otlp_exporter_with_custom_timeout() {
         let exporter = OtlpExporter::with_timeout("http://localhost:4318/v1/traces", 60);
         assert_eq!(exporter.endpoint, "http://localhost:4318/v1/traces");
@@ -265,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "observability")]
     fn test_otlp_payload_building() {
         let exporter = OtlpExporter::new("http://localhost:4318");
 

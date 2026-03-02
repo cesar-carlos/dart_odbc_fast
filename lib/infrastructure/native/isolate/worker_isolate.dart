@@ -21,7 +21,7 @@ void workerEntry(SendPort mainSendPort) {
     return;
   }
 
-  receivePort.listen((Object? message) {
+  receivePort.listen((message) {
     if (message == 'shutdown') {
       conn.dispose();
       receivePort.close();
@@ -393,6 +393,44 @@ void _handleRequest(
         } else {
           sendPort.send(StructuredErrorResponse(request.requestId));
         }
+
+      case AuditEnableRequest():
+        final ok = conn.setAuditEnabled(enabled: request.enabled);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
+      case AuditGetEventsRequest():
+        final payload = conn.getAuditEventsJson(limit: request.limit);
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(request.requestId, payload: payload),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case AuditGetStatusRequest():
+        final payload = conn.getAuditStatusJson();
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(request.requestId, payload: payload),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case AuditClearRequest():
+        final ok = conn.clearAuditEvents();
+        sendPort.send(BoolResponse(request.requestId, value: ok));
     }
   } on Object catch (e, st) {
     _sendErrorResponse(request, sendPort, '$e\n$st');
@@ -421,6 +459,8 @@ void _sendErrorResponse(
     case SavepointCreateRequest():
     case SavepointRollbackRequest():
     case SavepointReleaseRequest():
+    case AuditEnableRequest():
+    case AuditClearRequest():
       sendPort.send(BoolResponse(id, value: false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
@@ -460,6 +500,9 @@ void _sendErrorResponse(
       sendPort.send(StructuredErrorResponse(id, message: error, error: error));
     case DetectDriverRequest():
       sendPort.send(DetectDriverResponse(id, null));
+    case AuditGetEventsRequest():
+    case AuditGetStatusRequest():
+      sendPort.send(AuditPayloadResponse(id, error: error));
     case GetCacheMetricsRequest():
       sendPort.send(CacheMetricsResponse(id, error: error));
     case ClearCacheRequest():

@@ -6,7 +6,9 @@ pub mod console;
 pub mod exporters;
 
 pub use console::export_trace;
-pub use exporters::{ConsoleExporter, OtlpExporter, TelemetryExporter};
+#[cfg(feature = "observability")]
+pub use exporters::OtlpExporter;
+pub use exporters::{ConsoleExporter, TelemetryExporter};
 
 use std::ffi::CString;
 use std::sync::Mutex;
@@ -74,12 +76,20 @@ pub unsafe extern "C" fn otel_init(
         };
 
         if endpoint_str.is_empty() || !endpoint_str.starts_with("http") {
-            // Use console exporter for invalid/empty endpoints
             Box::new(ConsoleExporter)
         } else {
-            // Use OTLP exporter for valid HTTP endpoints
-            log::info!("Initializing OTLP exporter with endpoint: {}", endpoint_str);
-            Box::new(OtlpExporter::new(&endpoint_str))
+            #[cfg(feature = "observability")]
+            {
+                log::info!("Initializing OTLP exporter with endpoint: {}", endpoint_str);
+                Box::new(OtlpExporter::new(&endpoint_str))
+            }
+            #[cfg(not(feature = "observability"))]
+            {
+                log::info!(
+                    "OTLP requested but observability feature disabled; using ConsoleExporter"
+                );
+                Box::new(ConsoleExporter)
+            }
         }
     };
 

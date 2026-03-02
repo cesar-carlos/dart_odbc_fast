@@ -17,14 +17,14 @@ impl BufferPool {
     }
 
     pub fn acquire(&self) -> Vec<u8> {
-        let mut buffers = self.buffers.lock().unwrap();
+        let mut buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         buffers
             .pop_front()
             .unwrap_or_else(|| vec![0u8; self.buffer_size])
     }
 
     pub fn release(&self, mut buffer: Vec<u8>) {
-        let mut buffers = self.buffers.lock().unwrap();
+        let mut buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         if buffers.len() < self.max_buffers {
             buffer.clear();
             buffer.resize(self.buffer_size, 0);

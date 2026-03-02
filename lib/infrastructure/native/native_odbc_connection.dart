@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart' as domain;
+import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     as bindings;
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
@@ -23,8 +24,11 @@ import 'package:odbc_fast/odbc_fast.dart';
 /// ```
 class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Creates a new [NativeOdbcConnection] instance.
-  NativeOdbcConnection() : _native = bindings.OdbcNative();
+  NativeOdbcConnection() : _native = bindings.OdbcNative() {
+    _auditLogger = OdbcAuditLogger(_native);
+  }
   final bindings.OdbcNative _native;
+  late final OdbcAuditLogger _auditLogger;
   bool _isInitialized = false;
 
   /// Initializes the ODBC environment.
@@ -94,6 +98,26 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Returns null if no error occurred or if structured error info
   /// is not available.
   StructuredError? getStructuredError() => _native.getStructuredError();
+
+  /// Typed wrapper for native audit APIs.
+  OdbcAuditLogger get auditLogger => _auditLogger;
+
+  /// Whether the loaded native library supports audit FFI endpoints.
+  bool get supportsAuditApi => _native.supportsAuditApi;
+
+  /// Enables/disables native audit event collection.
+  bool setAuditEnabled({required bool enabled}) =>
+      _native.setAuditEnabled(enabled: enabled);
+
+  /// Clears in-memory native audit events.
+  bool clearAuditEvents() => _native.clearAuditEvents();
+
+  /// Gets audit events as JSON payload.
+  String? getAuditEventsJson({int limit = 0}) =>
+      _native.getAuditEventsJson(limit: limit);
+
+  /// Gets audit status as JSON payload.
+  String? getAuditStatusJson() => _native.getAuditStatusJson();
 
   /// Whether the ODBC environment has been initialized.
   bool get isInitialized => _isInitialized;

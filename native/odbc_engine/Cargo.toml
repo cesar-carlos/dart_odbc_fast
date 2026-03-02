@@ -14,8 +14,10 @@ categories = ["database", "api-bindings"]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["test-helpers"]
+default = ["test-helpers", "observability"]
 sqlserver-bcp = []
+# Full observability: OTLP exporter, metrics, tracing. Disable for minimal builds.
+observability = ["dep:ureq"]
 # Load .env in lib and integration tests (needs dotenvy).
 test-helpers = ["dep:dotenvy"]
 # Enables FFI tests (concurrent_error_test, e2e_savepoint_test FFI parts).
@@ -34,7 +36,7 @@ zeroize = { version = "1.7", features = ["zeroize_derive"] }
 lazy_static = "1.5"
 zstd = "0.13"
 lz4 = "1.24"
-ureq = "2.9"
+ureq = { version = "2.9", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = { version = "0.15", optional = true }
@@ -43,6 +45,11 @@ dotenvy = { version = "0.15", optional = true }
 env_logger = "0.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"
+
+[[test]]
+name = "ffi_compatibility_test"
+path = "tests/ffi_compatibility_test.rs"
+required-features = ["ffi-tests"]
 
 [[bench]]
 name = "bulk_operations_bench"
