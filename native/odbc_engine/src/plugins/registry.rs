@@ -85,6 +85,9 @@ impl Default for PluginRegistry {
             .register(Arc::new(super::postgres::PostgresPlugin::new()))
             .unwrap_or_default();
         registry
+            .register(Arc::new(super::mysql::MySqlPlugin::new()))
+            .unwrap_or_default();
+        registry
             .register(Arc::new(super::sybase::SybasePlugin::new()))
             .unwrap_or_default();
 
@@ -95,6 +98,7 @@ impl Default for PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::types::OdbcType;
 
     #[test]
     fn test_get_for_connection_sqlserver() {
@@ -164,6 +168,7 @@ mod tests {
         assert!(registry.get("sqlserver").is_ok());
         assert!(registry.get("oracle").is_ok());
         assert!(registry.get("postgres").is_ok());
+        assert!(registry.get("mysql").is_ok());
         assert!(registry.get("sybase").is_ok());
     }
 
@@ -183,5 +188,106 @@ mod tests {
         let registry = PluginRegistry::default();
         let result = registry.get("nonexistent");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_for_connection_postgres() {
+        let registry = PluginRegistry::default();
+        let conn_str = "Driver={PostgreSQL Unicode};Server=localhost;Database=test;";
+        let plugin = registry.get_for_connection(conn_str).expect("plugin");
+        assert_eq!(plugin.name(), "postgres");
+    }
+
+    #[test]
+    fn test_get_for_connection_postgresql() {
+        let registry = PluginRegistry::default();
+        let conn_str = "Driver={PostgreSQL ODBC Driver};Server=localhost;";
+        let plugin = registry.get_for_connection(conn_str).expect("plugin");
+        assert_eq!(plugin.name(), "postgres");
+    }
+
+    #[test]
+    fn test_get_for_connection_mysql() {
+        let registry = PluginRegistry::default();
+        let conn_str = "Driver={MySQL ODBC 8.0 Driver};Server=localhost;";
+        let plugin = registry.get_for_connection(conn_str).expect("plugin");
+        assert_eq!(plugin.name(), "mysql");
+    }
+
+    #[test]
+    fn test_detect_driver_postgres() {
+        let registry = PluginRegistry::default();
+        assert_eq!(
+            registry.detect_driver("Driver={PostgreSQL};Server=localhost;"),
+            Some("postgres".to_string())
+        );
+        assert_eq!(
+            registry.detect_driver("DRIVER={PostgreSQL ODBC Driver};"),
+            Some("postgres".to_string())
+        );
+    }
+
+    #[test]
+    fn test_postgres_plugin_capabilities_via_registry() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("postgres").expect("postgres plugin");
+        let caps = plugin.get_capabilities();
+
+        assert!(caps.supports_prepared_statements);
+        assert!(caps.supports_batch_operations);
+        assert!(caps.supports_streaming);
+        assert_eq!(caps.driver_name, "PostgreSQL");
+    }
+
+    #[test]
+    fn test_mysql_plugin_capabilities_via_registry() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("mysql").expect("mysql plugin");
+        let caps = plugin.get_capabilities();
+
+        assert!(caps.supports_prepared_statements);
+        assert!(caps.supports_batch_operations);
+        assert!(caps.supports_streaming);
+        assert_eq!(caps.driver_name, "MySQL");
+    }
+
+    #[test]
+    fn test_postgres_plugin_optimize_query() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("postgres").expect("postgres plugin");
+
+        let sql = "SELECT * FROM users";
+        let optimized = plugin.optimize_query(sql);
+        assert_eq!(optimized, "SELECT * FROM users LIMIT 1000");
+    }
+
+    #[test]
+    fn test_mysql_plugin_optimize_query() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("mysql").expect("mysql plugin");
+
+        let sql = "SELECT * FROM users";
+        let optimized = plugin.optimize_query(sql);
+        assert_eq!(optimized, "SELECT * FROM users LIMIT 1000");
+    }
+
+    #[test]
+    fn test_postgres_plugin_map_type_via_registry() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("postgres").expect("postgres plugin");
+
+        assert_eq!(plugin.map_type(1), OdbcType::Varchar);
+        assert_eq!(plugin.map_type(4), OdbcType::Integer);
+        assert_eq!(plugin.map_type(-5), OdbcType::BigInt);
+    }
+
+    #[test]
+    fn test_mysql_plugin_map_type_via_registry() {
+        let registry = PluginRegistry::default();
+        let plugin = registry.get("mysql").expect("mysql plugin");
+
+        assert_eq!(plugin.map_type(1), OdbcType::Varchar);
+        assert_eq!(plugin.map_type(4), OdbcType::Integer);
+        assert_eq!(plugin.map_type(-5), OdbcType::BigInt);
     }
 }

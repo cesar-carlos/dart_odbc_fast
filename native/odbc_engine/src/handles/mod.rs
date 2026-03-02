@@ -3,9 +3,16 @@ use odbc_api::{Connection, ConnectionOptions, Environment};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// Shared connection handle. Allows releasing the HandleManager lock quickly
+/// while holding a per-connection lock for the duration of use.
+pub type SharedConnection = Arc<Mutex<Connection<'static>>>;
+
+/// Max attempts when allocating connection ID to avoid collision after wrap-around.
+const MAX_CONN_ID_ALLOC_ATTEMPTS: u32 = 1000;
+
 pub struct HandleManager {
     env: Option<&'static Environment>,
-    connections: HashMap<u32, Connection<'static>>,
+    connections: HashMap<u32, SharedConnection>,
     next_conn_id: u32,
 }
 
@@ -60,17 +67,48 @@ impl HandleManager {
         let env = self.env.ok_or(OdbcError::EnvironmentNotInitialized)?;
 
         let connection = env.connect_with_connection_string(conn_str, opts)?;
-        let conn_id = self.next_conn_id;
-        self.next_conn_id += 1;
 
-        self.connections.insert(conn_id, connection);
+        let mut conn_id = 0u32;
+        for _ in 0..MAX_CONN_ID_ALLOC_ATTEMPTS {
+            let candidate = self.next_conn_id;
+            self.next_conn_id = self.next_conn_id.wrapping_add(1);
+            if candidate != 0 && !self.connections.contains_key(&candidate) {
+                conn_id = candidate;
+                break;
+            }
+        }
+
+        if conn_id == 0 {
+            return Err(OdbcError::InternalError(
+                "Failed to allocate connection ID after max attempts".to_string(),
+            ));
+        }
+
+        self.connections
+            .insert(conn_id, Arc::new(Mutex::new(connection)));
         Ok(conn_id)
     }
 
-    pub fn get_connection(&self, conn_id: u32) -> Result<&Connection<'static>> {
+    /// Returns a clone of the shared connection. Caller holds the HandleManager
+    /// lock only briefly; use the returned Arc's Mutex for the duration of use.
+    pub fn get_connection(&self, conn_id: u32) -> Result<SharedConnection> {
         self.connections
             .get(&conn_id)
+            .cloned()
             .ok_or(OdbcError::InvalidHandle(conn_id))
+    }
+
+    /// Runs a closure with the connection locked. Convenience for callers that
+    /// need brief access without managing the lock explicitly.
+    pub fn with_connection<F, T>(&self, conn_id: u32, f: F) -> Result<T>
+    where
+        F: FnOnce(&Connection<'static>) -> Result<T>,
+    {
+        let conn_arc = self.get_connection(conn_id)?;
+        let guard = conn_arc
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+        f(&guard)
     }
 
     pub fn remove_connection(&mut self, conn_id: u32) -> Result<()> {
@@ -139,7 +177,10 @@ mod tests {
         let conn = manager
             .get_connection(conn_id)
             .expect("Failed to get connection");
-        assert!(std::ptr::eq(conn, manager.get_connection(conn_id).unwrap()));
+        assert!(Arc::ptr_eq(
+            &conn,
+            &manager.get_connection(conn_id).unwrap()
+        ));
     }
 
     #[test]
@@ -173,7 +214,7 @@ mod tests {
             .get_connection(conn_id2)
             .expect("Failed to get connection 2");
 
-        assert!(!std::ptr::eq(conn1, conn2));
+        assert!(!Arc::ptr_eq(&conn1, &conn2));
     }
 
     #[test]
@@ -250,5 +291,47 @@ mod tests {
             Err(OdbcError::EnvironmentNotInitialized) => (),
             _ => panic!("Expected EnvironmentNotInitialized error"),
         }
+    }
+
+    #[test]
+    fn test_connection_id_wrapping() {
+        let mut manager = HandleManager::new();
+        manager.next_conn_id = u32::MAX;
+
+        assert_eq!(manager.next_conn_id, u32::MAX);
+
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(manager.next_conn_id, 0, "ID should wrap to 0");
+
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(manager.next_conn_id, 1, "ID should wrap to 1");
+    }
+
+    #[test]
+    fn test_connection_id_wrapping_behavior() {
+        let mut manager = HandleManager::new();
+
+        manager.next_conn_id = 5;
+
+        let candidate1 = manager.next_conn_id;
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(candidate1, 5);
+        assert_eq!(manager.next_conn_id, 6);
+
+        let candidate2 = manager.next_conn_id;
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(candidate2, 6);
+        assert_eq!(manager.next_conn_id, 7);
+
+        manager.next_conn_id = u32::MAX - 1;
+        let candidate3 = manager.next_conn_id;
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(candidate3, u32::MAX - 1);
+        assert_eq!(manager.next_conn_id, u32::MAX);
+
+        let candidate4 = manager.next_conn_id;
+        manager.next_conn_id = manager.next_conn_id.wrapping_add(1);
+        assert_eq!(candidate4, u32::MAX);
+        assert_eq!(manager.next_conn_id, 0);
     }
 }

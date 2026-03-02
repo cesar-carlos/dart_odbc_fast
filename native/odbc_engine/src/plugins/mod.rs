@@ -1,4 +1,5 @@
 pub mod driver_plugin;
+pub mod mysql;
 pub mod oracle;
 pub mod postgres;
 pub mod registry;

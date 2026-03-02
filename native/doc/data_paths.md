@@ -1,4 +1,4 @@
-﻿# Data paths (performance-oriented)
+# Data paths (performance-oriented)
 
 This document summarizes the main “data paths” implemented in the Rust engine for
 handling larger datasets: streaming, batching, pooling, transactions, and array binding.
@@ -20,7 +20,9 @@ the engine provides `engine::core::DiskSpillStream`:
 - then spills to a temp file under `std::env::temp_dir()`
 - `read_back()` returns the final bytes and cleans up the temp file
 
-This is a building block (not currently wired into the FFI query APIs by default).
+This is wired into `odbc_stream_start` when `ODBC_STREAM_SPILL_THRESHOLD_MB` is set:
+buffer-mode streaming encodes via `DiskSpillWriter`; when data exceeds threshold,
+it spills to temp file and `StreamingStateFileBacked` reads in chunks.
 
 ### 1.2 Caches and protocol negotiation (supporting utilities)
 
@@ -48,8 +50,9 @@ Use when: you need **bounded memory on the Dart side**, but can tolerate the eng
 
 - Uses `engine::StreamingExecutor::execute_streaming_batched` internally
 - Fetches up to `fetch_size` rows per batch, encodes each batch, stores only the next batch in `BatchedStreamingState`
-- Same `odbc_stream_fetch` / `odbc_stream_close`; chunks are derived from batches
+- Same `odbc_stream_fetch` / `odbc_stream_close` / `odbc_stream_cancel`; chunks are derived from batches
 - Memory footprint is bounded to one batch (Rust and Dart)
+- HandleManager lock is held only briefly to clone the connection; per-connection lock is held during the stream
 
 Use when: you want **bounded memory on the Rust side too**, and can process results incrementally (e.g. large result sets, 50k+ rows with `fetch_size=1000`).
 
@@ -98,7 +101,9 @@ It uses an internal `paramset_size` (default: 1000) and sends rows in chunks.
 
 - is backed by `r2d2`
 - uses a single process-wide ODBC `Environment` via `OnceLock`
-- validates connections on checkout (`test_on_check_out(true)` + `SELECT 1`)
+- validates connections on checkout with a configurable health check query (default `SELECT 1`;
+  `PoolHealthCheckQuery` in connection string or `ODBC_POOL_HEALTH_CHECK_QUERY` env)
+  when checkout validation is enabled (`test_on_check_out` is configurable; default is enabled)
 
 Pool identity:
 
@@ -119,28 +124,62 @@ Pool identity:
 - Autocommit is disabled on begin and restored on commit/rollback
 - RAII safety:
   - if a `Transaction` is dropped while `Active`, it attempts `rollback()` and restores autocommit
-- Savepoints:
-  - `SAVEPOINT <name>`
-  - `ROLLBACK TO SAVEPOINT <name>`
-  - `RELEASE SAVEPOINT <name>`
+- Savepoints (dialect-aware):
+  - **SQL-92** (PostgreSQL, MySQL, etc.): `SAVEPOINT <name>`, `ROLLBACK TO SAVEPOINT <name>`, `RELEASE SAVEPOINT <name>`
+  - **SQL Server**: `SAVE TRANSACTION <name>`, `ROLLBACK TRANSACTION <name>` (no RELEASE; savepoint released on commit/rollback)
+  - Use `odbc_transaction_begin(conn_id, isolation_level, savepoint_dialect)` with `savepoint_dialect=1` for SQL Server
 
 ## 7) Observability and security helpers (Rust API)
 
 These are implemented in Rust and used by the engine/FFI:
 
 - `observability::*`: `Metrics` (exposed via `odbc_get_metrics`), `StructuredLogger`, `Tracer`
-- `security::*`: `SecretManager`, `Secret`, `AuditLogger`, secure buffers
+- `security::*`: `SecretManager`, `Secret`, `AuditLogger`, `sanitize_connection_string`, secure buffers
 - `handles::HandleManager`: owns the leaked `Environment` and stores `Connection<'static>` handles
 - `async_bridge`: tokio runtime singleton used by `odbc_init` (and a blocking async runner)
 
 ## Practical notes / limitations
 
+- **Secret hygiene**:
+  - `sanitize_connection_string` redacts PWD/Password/Secret from ODBC connection strings before logging/audit.
+  - `AuditLogger` and `StructuredLogger` use it for connection events to avoid credential leakage.
+- **Observability feature**:
+  - Feature `observability` (default) enables OTLP exporter (ureq). Disable with `default-features = false` for minimal builds.
+  - When disabled, `otel_init` with HTTP endpoint falls back to ConsoleExporter.
 - **BCP (SQL Server bulk copy)**:
-  - `engine::core::BulkCopyExecutor` is currently a stub unless feature `sqlserver-bcp` is enabled.
-  - Even with the feature, the BCP path is not implemented yet.
+  - `engine::core::BulkCopyExecutor` is functional when feature `sqlserver-bcp` is enabled.
+  - Uses `bulk_copy_from_payload` with ArrayBinding internally; native bcp_* can be added later.
+  - FFI uses `bulk_insert_payload` helper: BulkCopyExecutor when feature on, ArrayBinding when off.
 - **FFI pooled connections**:
-  - Pooled connections are tracked separately from `odbc_connect` connections; the FFI query API
-    is designed around `conn_id` from `odbc_connect`.
+  - Pooled connections are tracked separately from `odbc_connect` connections.
+  - `odbc_exec_query` / `odbc_exec_query_params` / `odbc_exec_query_multi` still operate on
+    `conn_id` from `odbc_connect`.
+  - `odbc_prepare` / `odbc_execute` accept both regular `conn_id` and pooled connection IDs.
+  - **Lifecycle hardening**: `odbc_pool_release_connection` and `odbc_pool_close` remove all
+    prepared statements for the released/closed connections to avoid orphaned statements and
+    connection reuse hazards.
+  - **RAII (rollback/autocommit restore)**: On release and pool close, any active transaction is
+    rolled back and autocommit is restored before the connection returns to the pool or is
+    dropped. This ensures clean connection state regardless of `test_on_checkout`.
+- **Lock poisoning recovery**:
+  - Critical runtime locks (Tracer, BufferPool, PreparedStatementCache, Metrics) use
+    `lock().unwrap_or_else(|e| e.into_inner())` to recover from poisoning instead of panicking.
+  - If a thread panics while holding a lock, subsequent lock attempts return `PoisonError`;
+    `into_inner()` yields the guard and allows controlled degradation (e.g. return default,
+    log and continue) without bringing down the host process.
+  - See `observability::tracing::tests::test_lock_poisoning_recovery` for the pattern.
+- **Pool health check**:
+  - Health check query is configurable via connection string (`PoolHealthCheckQuery=...` or
+    `HealthCheckQuery=...`) or env `ODBC_POOL_HEALTH_CHECK_QUERY`. Default: `SELECT 1`.
+  - Use driver-specific queries when needed (e.g. Oracle `SELECT 1 FROM DUAL`).
+- **ID generation (standardized)**:
+  - All ID counters use `wrapping_add(1)` to prevent overflow panics in long-running processes.
+  - Connection IDs (`HandleManager`): collision detection with max 1000 attempts; starts at 1.
+  - FFI IDs (`GlobalState`): collision detection with max 1000 attempts per ID type.
+  - ID spaces: `conn_id` (1+), `stmt_id` (1+), `stream_id` (1+), `pool_id` (1+),
+    `pooled_conn_id` (1_000_000+), `txn_id` (1+).
+  - ID 0 is always reserved/invalid and indicates allocation failure.
+  - See `ffi_conventions.md` for detailed ID allocation rules.
 - **E2E / coverage**:
   - E2E tests may self-skip when no DSN is configured. See:
     - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
