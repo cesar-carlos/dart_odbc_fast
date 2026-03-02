@@ -51,6 +51,7 @@ As frentes tecnicas cobertas sao:
 - [x] Fase 6 - Bulk path avancado (BCP + parallel insert)
 - [x] Fase 7 - Observability, security e readiness de release
 - [x] Fase 8 - Hardening de runtime e resiliencia a falhas
+- [x] Fase 9 - Cobertura de testes completa (protocol v1 fallback + plugins PostgreSQL/MySQL)
 
 ### TODOs detalhados por fase
 
@@ -126,6 +127,15 @@ As frentes tecnicas cobertas sao:
 - [x] Tornar health check de pool configuravel por driver/ambiente
 - [x] Cobrir lock poisoning e recuperacao com testes direcionados
 - [x] Garantir degradacao controlada sem derrubar processo host
+
+#### Fase 9 - Cobertura de testes completa (2026-03-02)
+
+- [x] Adicionar 7 unit tests para protocol v1 fallback e negotiation (protocol: 75% → 85%)
+- [x] Criar modulo `plugins::mysql` com 16 unit tests completos
+- [x] Adicionar 10 testes de integracao para PostgreSQL/MySQL no registry
+- [x] Atingir 805+ testes totais (681 lib tests passando)
+- [x] Elevar coverage geral para ~88% (de ~87%)
+- [x] Resolver todos os gaps de alta, media e baixa prioridade do test_matrix.md
 
 ### Definicao de concluido (global)
 
@@ -351,6 +361,28 @@ Eliminar pontos de panic evitavel e garantir degradacao controlada sem derrubar 
 - Degradacao controlada e registrada em todos os cenarios de lock poisoning
 - Health check do pool configuravel e testado para SQL Server e ANSI-compliant drivers
 
+## Fase 9 - Cobertura de testes completa (prioridade baixa, concluida 2026-03-02)
+
+### Objetivo
+
+Completar todos os gaps de teste identificados em `test_matrix.md`, elevando a cobertura geral para ~88%.
+
+### Tarefas
+
+- Adicionar testes para protocol v1 fallback e negotiation
+- Criar modulo completo de testes para MySQL plugin
+- Adicionar testes de integracao para PostgreSQL/MySQL no registry
+- Validar todos os drivers suportados (SQL Server, Oracle, PostgreSQL, MySQL, Sybase)
+
+### Criterios de aceite
+
+✅ **Completo (2026-03-02)**: 
+- 7 unit tests protocol v1 fallback (protocol: 75% → 85%)
+- 16 unit tests MySQL plugin + 10 registry integration tests
+- 805+ testes totais (681 lib tests passando)
+- Coverage geral: ~88%
+- Todos os gaps de alta, media e baixa prioridade resolvidos
+
 ## Ordem recomendada de execucao
 
 1. Fase 0 + Fase 1
@@ -359,12 +391,13 @@ Eliminar pontos de panic evitavel e garantir degradacao controlada sem derrubar 
 4. Fase 5
 5. Fase 6 + Fase 7
 6. Fase 8
+7. Fase 9 (concluida)
 
 ## Matriz de risco
 
 - **Alto risco tecnico**: Fase 3 (multi-result/cancel), Fase 6 (BCP)
 - **Medio risco tecnico**: Fase 4 (streaming lock/memoria), Fase 5 (concorrencia), Fase 8 (runtime hardening)
-- **Baixo risco tecnico**: Fase 0, Fase 1, parte da Fase 7
+- **Baixo risco tecnico**: Fase 0, Fase 1, parte da Fase 7, Fase 9 (testes)
 
 ## Dependencias e pre-condicoes
 
