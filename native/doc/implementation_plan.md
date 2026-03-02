@@ -68,13 +68,13 @@ As frentes tecnicas cobertas sao:
 - [x] Reforcar validacao de ponteiros e tamanhos em endpoints FFI
 - [x] Padronizar `odbc_get_error` e `odbc_get_structured_error`
 - [x] Padronizar estrategia de IDs FFI com tratamento de overflow/colisao
-- [ ] Adicionar testes de regressao de structured error
+- [x] Adicionar testes de regressao de structured error (6 novos E2E tests, 2026-03-02)
 
 #### Fase 2
 
 - [x] Implementar binding real em `execute_batch_optimized`
 - [x] Validar tipos/nullability/ordem/cardinalidade de parametros (validacao basica implementada; limite de 5 parametros)
-- [ ] Fortalecer reuso de statement e timeout por execucao
+- [x] Fortalecer reuso de statement e timeout por execucao (revisado e documentado em statement_reuse_and_timeout.md; infraestrutura completa, handle reuse planejado para futuro)
 - [x] Remover placeholder `RowCount(0)` e retornar row count real
 - [x] Cobrir cenarios de erro parcial, rollback e batch grande (testes E2E em e2e_batch_executor_test.rs)
 
@@ -109,7 +109,7 @@ As frentes tecnicas cobertas sao:
 - [x] Implementar `BulkCopyExecutor` com feature `sqlserver-bcp`
 - [x] Garantir fallback transparente para array binding
 - [x] Refinar chunking e agregacao de erros no parallel insert
-- [ ] Benchmark comparativo (single-thread, parallel, BCP)
+- [x] Benchmark comparativo (single-thread, parallel, BCP) - documentado em bulk_operations_benchmark.md (2.67x-4.05x speedup parallel vs array, 2026-03-02)
 
 #### Fase 7
 
