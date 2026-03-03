@@ -5,18 +5,23 @@
 /// - Windows
 /// - ENABLE_E2E_TESTS=1
 /// - SQL Server DSN in env
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 use odbc_api::Connection;
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 use odbc_engine::{
     engine::core::sqlserver_bcp,
     execute_query_with_connection,
     protocol::{BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload},
     BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
 };
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 use serial_test::serial;
 
 mod helpers;
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, DatabaseType};
 
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 fn decode_integer(data: &[u8]) -> i64 {
     if data.len() >= 8 {
         i64::from_le_bytes([
@@ -32,12 +37,14 @@ fn decode_integer(data: &[u8]) -> i64 {
     }
 }
 
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 fn execute_command(conn: &Connection<'static>, sql: &str) -> Result<(), odbc_engine::OdbcError> {
     let mut stmt = conn.prepare(sql).map_err(odbc_engine::OdbcError::from)?;
     stmt.execute(()).map_err(odbc_engine::OdbcError::from)?;
     Ok(())
 }
 
+#[cfg(all(feature = "sqlserver-bcp", windows))]
 fn query_single_i64(conn: &Connection<'static>, sql: &str) -> i64 {
     let buf = execute_query_with_connection(conn, sql).expect("query failed");
     let decoded = BinaryProtocolDecoder::parse(&buf).expect("decode failed");

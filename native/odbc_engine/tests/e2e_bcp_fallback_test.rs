@@ -8,19 +8,25 @@
 /// Or:  `cargo test --features sqlserver-bcp e2e_bcp` (for default rows)
 ///
 /// Env: ENABLE_E2E_TESTS=1, ODBC_TEST_DSN or ODBC_TEST_DB, BCP_E2E_ROWS (optional)
+#[cfg(feature = "sqlserver-bcp")]
 use odbc_api::Connection;
+#[cfg(feature = "sqlserver-bcp")]
 use odbc_engine::{
     engine::core::BulkCopyExecutor,
     execute_query_with_connection,
     protocol::{BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload},
     BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
 };
+#[cfg(feature = "sqlserver-bcp")]
 use serial_test::serial;
+#[cfg(feature = "sqlserver-bcp")]
 use std::time::Instant;
 
 mod helpers;
+#[cfg(feature = "sqlserver-bcp")]
 use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests};
 
+#[cfg(feature = "sqlserver-bcp")]
 fn decode_integer(data: &[u8]) -> i32 {
     if data.len() >= 4 {
         i32::from_le_bytes([data[0], data[1], data[2], data[3]])
@@ -32,12 +38,14 @@ fn decode_integer(data: &[u8]) -> i32 {
     }
 }
 
+#[cfg(feature = "sqlserver-bcp")]
 fn execute_command(conn: &Connection<'static>, sql: &str) -> Result<(), odbc_engine::OdbcError> {
     let mut stmt = conn.prepare(sql).map_err(odbc_engine::OdbcError::from)?;
     stmt.execute(()).map_err(odbc_engine::OdbcError::from)?;
     Ok(())
 }
 
+#[cfg(feature = "sqlserver-bcp")]
 fn get_row_count(conn: &Connection<'static>, table: &str) -> usize {
     let sql = format!("SELECT COUNT(*) AS c FROM {}", table);
     let buf = execute_query_with_connection(conn, &sql).expect("SELECT COUNT failed");
@@ -45,6 +53,7 @@ fn get_row_count(conn: &Connection<'static>, table: &str) -> usize {
     decode_integer(dec.rows[0][0].as_ref().expect("count cell null")) as usize
 }
 
+#[cfg(feature = "sqlserver-bcp")]
 fn env_rows() -> usize {
     std::env::var("BCP_E2E_ROWS")
         .ok()
