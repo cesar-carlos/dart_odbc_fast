@@ -856,8 +856,9 @@ impl BulkCopyExecutor {
 >
 > Atualização (2026-03-03): adicionada job `e2e-oracle` no workflow
 > `e2e_multidb.yml` + suporte `ODBC_TEST_DB=oracle|sybase` nos helpers E2E.
-> Execução validada em CI: run `22641867638` com jobs green para Oracle,
-> SQL Server, PostgreSQL, MySQL e SQLite.
+> Execuções validadas em CI: `22641867638` (stabilization) e `22642141795`
+> (Oracle obrigatório, sem `continue-on-error`), ambas com jobs green para
+> Oracle, SQL Server, PostgreSQL, MySQL e SQLite.
 
 ---
 
