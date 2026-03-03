@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart' as domain;
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     as bindings;
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/odbc_fast.dart';
@@ -88,6 +89,15 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   String? detectDriver(String connectionString) =>
       _native.detectDriver(connectionString);
 
+  /// Whether the loaded native library supports driver capabilities FFI API.
+  bool get supportsDriverCapabilitiesApi =>
+      _native.supportsDriverCapabilitiesApi;
+
+  /// Returns typed driver capabilities from [connectionString], or null when
+  /// API is unavailable or invalid.
+  DriverCapabilities? getDriverCapabilities(String connectionString) =>
+      OdbcDriverCapabilities(_native).getCapabilities(connectionString);
+
   /// Gets the last error message from the native engine.
   ///
   /// Returns an empty string if no error occurred.
@@ -99,11 +109,30 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// is not available.
   StructuredError? getStructuredError() => _native.getStructuredError();
 
+  /// Whether the native library supports per-connection structured error API.
+  bool get supportsStructuredErrorForConnection =>
+      _native.supportsStructuredErrorForConnection;
+
+  /// Gets structured error for a specific connection (per-connection
+  /// isolation).
+  ///
+  /// When [connectionId] != 0, returns only that connection's error.
+  /// Returns null when API is unavailable, no error for this connection,
+  /// or on FFI failure.
+  StructuredError? getStructuredErrorForConnection(int connectionId) =>
+      _native.getStructuredErrorForConnection(connectionId);
+
   /// Typed wrapper for native audit APIs.
   OdbcAuditLogger get auditLogger => _auditLogger;
 
   /// Whether the loaded native library supports audit FFI endpoints.
   bool get supportsAuditApi => _native.supportsAuditApi;
+
+  /// Whether the loaded native library supports async execute FFI endpoints.
+  bool get supportsAsyncExecuteApi => _native.supportsAsyncExecuteApi;
+
+  /// Whether the loaded native library supports async stream FFI endpoints.
+  bool get supportsAsyncStreamApi => _native.supportsAsyncStreamApi;
 
   /// Enables/disables native audit event collection.
   bool setAuditEnabled({required bool enabled}) =>
@@ -111,6 +140,43 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
 
   /// Clears in-memory native audit events.
   bool clearAuditEvents() => _native.clearAuditEvents();
+
+  /// Starts non-blocking query execution and returns async request ID.
+  int? executeAsyncStart(int connectionId, String sql) =>
+      _native.executeAsyncStart(connectionId, sql);
+
+  /// Polls async request status:
+  /// `0` pending, `1` ready, `-1` error, `-2` cancelled.
+  int? asyncPoll(int requestId) => _native.asyncPoll(requestId);
+
+  /// Retrieves binary result for a completed async request.
+  Uint8List? asyncGetResult(int requestId) => _native.asyncGetResult(requestId);
+
+  /// Best-effort cancellation for an async request.
+  bool asyncCancel(int requestId) => _native.asyncCancel(requestId);
+
+  /// Frees async request resources.
+  bool asyncFree(int requestId) => _native.asyncFree(requestId);
+
+  /// Starts async stream and returns stream ID.
+  ///
+  /// Returns `null` when API is unavailable. Returns `0` on native failure.
+  int? streamStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      _native.streamStartAsync(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  /// Polls async stream status:
+  /// `0` pending, `1` ready, `2` done, `-1` error, `-2` cancelled.
+  int? streamPollAsync(int streamId) => _native.streamPollAsync(streamId);
 
   /// Gets audit events as JSON payload.
   String? getAuditEventsJson({int limit = 0}) =>

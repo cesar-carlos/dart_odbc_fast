@@ -195,6 +195,19 @@ void _handleRequest(
         );
         sendPort.send(IntResponse(request.requestId, streamId));
 
+      case StreamStartAsyncRequest():
+        final streamId = conn.streamStartAsync(
+          request.connectionId,
+          request.sql,
+          fetchSize: request.fetchSize,
+          chunkSize: request.chunkSize,
+        );
+        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+
+      case StreamPollAsyncRequest():
+        final status = conn.streamPollAsync(request.streamId);
+        sendPort.send(IntResponse(request.requestId, status ?? -1));
+
       case StreamFetchRequest():
         final result = conn.streamFetch(request.streamId);
         sendPort.send(
@@ -431,6 +444,35 @@ void _handleRequest(
       case AuditClearRequest():
         final ok = conn.clearAuditEvents();
         sendPort.send(BoolResponse(request.requestId, value: ok));
+
+      case ExecuteAsyncStartRequest():
+        final asyncRequestId = conn.executeAsyncStart(
+          request.connectionId,
+          request.sql,
+        );
+        sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
+
+      case AsyncPollRequest():
+        final status = conn.asyncPoll(request.asyncRequestId);
+        sendPort.send(IntResponse(request.requestId, status ?? -1));
+
+      case AsyncGetResultRequest():
+        final data = conn.asyncGetResult(request.asyncRequestId);
+        if (data != null) {
+          sendPort.send(QueryResponse(request.requestId, data: data));
+        } else {
+          sendPort.send(
+            QueryResponse(request.requestId, error: conn.getError()),
+          );
+        }
+
+      case AsyncCancelRequest():
+        final ok = conn.asyncCancel(request.asyncRequestId);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
+      case AsyncFreeRequest():
+        final ok = conn.asyncFree(request.asyncRequestId);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
     }
   } on Object catch (e, st) {
     _sendErrorResponse(request, sendPort, '$e\n$st');
@@ -461,6 +503,8 @@ void _sendErrorResponse(
     case SavepointReleaseRequest():
     case AuditEnableRequest():
     case AuditClearRequest():
+    case AsyncCancelRequest():
+    case AsyncFreeRequest():
       sendPort.send(BoolResponse(id, value: false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
@@ -468,6 +512,7 @@ void _sendErrorResponse(
     case CatalogTablesRequest():
     case CatalogColumnsRequest():
     case CatalogTypeInfoRequest():
+    case AsyncGetResultRequest():
       sendPort.send(QueryResponse(id, error: error));
     case BeginTransactionRequest():
     case PrepareRequest():
@@ -475,7 +520,11 @@ void _sendErrorResponse(
     case PoolGetConnectionRequest():
     case StreamStartRequest():
     case StreamStartBatchedRequest():
+    case StreamStartAsyncRequest():
     case ClearAllStatementsRequest():
+    case ExecuteAsyncStartRequest():
+    case AsyncPollRequest():
+    case StreamPollAsyncRequest():
       sendPort.send(IntResponse(id, 0));
     case StreamFetchRequest():
       sendPort.send(

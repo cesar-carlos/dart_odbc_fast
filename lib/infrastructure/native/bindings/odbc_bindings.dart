@@ -17,8 +17,34 @@ class OdbcBindings {
     _odbc_disconnect_ptr = _dylib.lookup('odbc_disconnect');
     _odbc_get_error_ptr = _dylib.lookup('odbc_get_error');
     _odbc_get_structured_error_ptr = _dylib.lookup('odbc_get_structured_error');
+    try {
+      _odbc_get_structured_error_for_connection_ptr =
+          _dylib.lookup('odbc_get_structured_error_for_connection');
+    } on Object catch (_) {
+      _odbc_get_structured_error_for_connection_ptr = null;
+    }
     _odbc_exec_query_ptr = _dylib.lookup('odbc_exec_query');
+    try {
+      _odbc_execute_async_ptr = _dylib.lookup('odbc_execute_async');
+      _odbc_async_poll_ptr = _dylib.lookup('odbc_async_poll');
+      _odbc_async_get_result_ptr = _dylib.lookup('odbc_async_get_result');
+      _odbc_async_cancel_ptr = _dylib.lookup('odbc_async_cancel');
+      _odbc_async_free_ptr = _dylib.lookup('odbc_async_free');
+    } on Object catch (_) {
+      _odbc_execute_async_ptr = null;
+      _odbc_async_poll_ptr = null;
+      _odbc_async_get_result_ptr = null;
+      _odbc_async_cancel_ptr = null;
+      _odbc_async_free_ptr = null;
+    }
     _odbc_stream_start_ptr = _dylib.lookup('odbc_stream_start');
+    try {
+      _odbc_stream_start_async_ptr = _dylib.lookup('odbc_stream_start_async');
+      _odbc_stream_poll_async_ptr = _dylib.lookup('odbc_stream_poll_async');
+    } on Object catch (_) {
+      _odbc_stream_start_async_ptr = null;
+      _odbc_stream_poll_async_ptr = null;
+    }
     _odbc_stream_fetch_ptr = _dylib.lookup('odbc_stream_fetch');
     _odbc_stream_cancel_ptr = _dylib.lookup('odbc_stream_cancel');
     _odbc_stream_close_ptr = _dylib.lookup('odbc_stream_close');
@@ -69,6 +95,12 @@ class OdbcBindings {
       _odbc_audit_clear_ptr = null;
       _odbc_audit_get_status_ptr = null;
     }
+    try {
+      _odbc_get_driver_capabilities_ptr =
+          _dylib.lookup('odbc_get_driver_capabilities');
+    } on Object catch (_) {
+      _odbc_get_driver_capabilities_ptr = null;
+    }
   }
   final ffi.DynamicLibrary _dylib;
 
@@ -83,10 +115,25 @@ class OdbcBindings {
       _odbc_get_error_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_structured_error_func>>
       _odbc_get_structured_error_ptr;
+  ffi.Pointer<
+          ffi.NativeFunction<odbc_get_structured_error_for_connection_func>>?
+      _odbc_get_structured_error_for_connection_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_exec_query_func>>
       _odbc_exec_query_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_execute_async_func>>?
+      _odbc_execute_async_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_async_poll_func>>? _odbc_async_poll_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_async_get_result_func>>?
+      _odbc_async_get_result_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_async_cancel_func>>?
+      _odbc_async_cancel_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_async_free_func>>? _odbc_async_free_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_start_func>>
       _odbc_stream_start_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_start_async_func>>?
+      _odbc_stream_start_async_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_poll_async_func>>?
+      _odbc_stream_poll_async_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_fetch_func>>
       _odbc_stream_fetch_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_cancel_func>>
@@ -154,16 +201,34 @@ class OdbcBindings {
       _odbc_audit_enable_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_audit_get_events_func>>?
       _odbc_audit_get_events_ptr;
-  ffi.Pointer<ffi.NativeFunction<odbc_audit_clear_func>>?
-      _odbc_audit_clear_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_audit_clear_func>>? _odbc_audit_clear_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_audit_get_status_func>>?
       _odbc_audit_get_status_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_get_driver_capabilities_func>>?
+      _odbc_get_driver_capabilities_ptr;
 
   bool get supportsAuditApi =>
       _odbc_audit_enable_ptr != null &&
       _odbc_audit_get_events_ptr != null &&
       _odbc_audit_clear_ptr != null &&
       _odbc_audit_get_status_ptr != null;
+
+  bool get supportsDriverCapabilitiesApi =>
+      _odbc_get_driver_capabilities_ptr != null;
+
+  bool get supportsStructuredErrorForConnection =>
+      _odbc_get_structured_error_for_connection_ptr != null;
+
+  bool get supportsAsyncExecuteApi =>
+      _odbc_execute_async_ptr != null &&
+      _odbc_async_poll_ptr != null &&
+      _odbc_async_get_result_ptr != null &&
+      _odbc_async_cancel_ptr != null &&
+      _odbc_async_free_ptr != null;
+
+  bool get supportsAsyncStreamApi =>
+      _odbc_stream_start_async_ptr != null &&
+      _odbc_stream_poll_async_ptr != null;
 
   int odbc_init() => _odbc_init_ptr.asFunction<int Function()>()();
 
@@ -204,6 +269,23 @@ class OdbcBindings {
             ffi.Pointer<ffi.Uint32>,
           )>()(buffer, bufferLen, outWritten);
 
+  int? odbc_get_structured_error_for_connection(
+    int connId,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_get_structured_error_for_connection_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connId, buffer, bufferLen, outWritten);
+  }
+
   int odbc_exec_query(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -220,6 +302,50 @@ class OdbcBindings {
             ffi.Pointer<ffi.Uint32>,
           )>()(connId, sql, outBuf, bufLen, outWritten);
 
+  int? odbc_execute_async(int connId, ffi.Pointer<Utf8> sql) {
+    final ptr = _odbc_execute_async_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<Utf8>)>()(connId, sql);
+  }
+
+  int? odbc_async_poll(int requestId, ffi.Pointer<ffi.Int32> outStatus) {
+    final ptr = _odbc_async_poll_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<ffi.Int32>)>()(
+      requestId,
+      outStatus,
+    );
+  }
+
+  int? odbc_async_get_result(
+    int requestId,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_async_get_result_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(requestId, outBuf, bufLen, outWritten);
+  }
+
+  int? odbc_async_cancel(int requestId) {
+    final ptr = _odbc_async_cancel_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int)>()(requestId);
+  }
+
+  int? odbc_async_free(int requestId) {
+    final ptr = _odbc_async_free_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int)>()(requestId);
+  }
+
   int odbc_stream_start(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -231,6 +357,31 @@ class OdbcBindings {
         sql,
         chunkSize,
       );
+
+  int? odbc_stream_start_async(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+  ) {
+    final ptr = _odbc_stream_start_async_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<Utf8>, int, int)>()(
+      connId,
+      sql,
+      fetchSize,
+      chunkSize,
+    );
+  }
+
+  int? odbc_stream_poll_async(int streamId, ffi.Pointer<ffi.Int32> outStatus) {
+    final ptr = _odbc_stream_poll_async_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<ffi.Int32>)>()(
+      streamId,
+      outStatus,
+    );
+  }
 
   int odbc_stream_fetch(
     int streamId,
@@ -321,6 +472,23 @@ class OdbcBindings {
         outBuf,
         bufferLen,
       );
+
+  int odbc_get_driver_capabilities(
+    ffi.Pointer<Utf8> connStr,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_get_driver_capabilities_ptr;
+    if (ptr == null) return -1;
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connStr, buffer, bufferLen, outWritten);
+  }
 
   int odbc_exec_query_params(
     int connId,
@@ -656,6 +824,12 @@ typedef odbc_get_structured_error_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
 );
+typedef odbc_get_structured_error_for_connection_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
 typedef odbc_exec_query_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
@@ -663,10 +837,36 @@ typedef odbc_exec_query_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
 );
+typedef odbc_execute_async_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+);
+typedef odbc_async_poll_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Int32>,
+);
+typedef odbc_async_get_result_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_async_cancel_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_async_free_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_stream_start_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
   ffi.Uint32,
+);
+typedef odbc_stream_start_async_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_poll_async_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Int32>,
 );
 typedef odbc_stream_fetch_func = ffi.Int32 Function(
   ffi.Uint32,
@@ -815,6 +1015,12 @@ typedef odbc_audit_get_events_func = ffi.Int32 Function(
 );
 typedef odbc_audit_clear_func = ffi.Int32 Function();
 typedef odbc_audit_get_status_func = ffi.Int32 Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_get_driver_capabilities_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,

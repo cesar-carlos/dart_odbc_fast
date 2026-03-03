@@ -5,9 +5,17 @@ odbc_connect_with_timeout
 odbc_disconnect
 odbc_get_error
 odbc_get_structured_error
+odbc_get_structured_error_for_connection
 odbc_exec_query
+odbc_execute_async
+odbc_async_poll
+odbc_async_get_result
+odbc_async_cancel
+odbc_async_free
 odbc_stream_start
 odbc_stream_start_batched
+odbc_stream_start_async
+odbc_stream_poll_async
 odbc_stream_fetch
 odbc_stream_cancel
 odbc_stream_close
@@ -39,6 +47,7 @@ odbc_pool_close
 odbc_bulk_insert_array
 odbc_bulk_insert_parallel
 odbc_detect_driver
+odbc_get_driver_capabilities
 odbc_audit_enable
 odbc_audit_get_events
 odbc_audit_clear

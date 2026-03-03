@@ -17,5 +17,8 @@ pub use query::{
     execute_query_with_params_and_timeout, get_global_metrics,
 };
 pub use statement::StatementHandle;
-pub use streaming::{BatchedStreamingState, StreamState, StreamingExecutor, StreamingState};
+pub use streaming::{
+    AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, StreamState, StreamingExecutor,
+    StreamingState,
+};
 pub use transaction::{IsolationLevel, Savepoint, SavepointDialect, Transaction, TransactionState};

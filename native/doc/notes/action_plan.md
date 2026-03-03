@@ -10,7 +10,7 @@
 
 ### Status Atual
 - ✅ Core engine: 100% completo
-- ✅ 47 funções FFI expostas
+- ✅ 48 funções FFI expostas
 - ✅ 8 fases do plano original concluídas
 - ⚠️ 3 refinamentos pendentes (não-bloqueantes)
 - 🔒 8 funcionalidades implementadas mas não expostas
@@ -19,7 +19,7 @@
 
 | Milestone | Prazo | Features | Esforço |
 |-----------|-------|----------|---------|
-| **M1: Enterprise Ready** | Q1 2026 | Audit + Capabilities + Tests | 1-2 semanas |
+| **M1: Enterprise Ready** | Q1 2026 | ✅ Audit + Capabilities + Tests | Concluído |
 | **M2: Async API** | Q2 2026 | Async execute/stream/cancel | 2-3 semanas |
 | **M3: Performance Boost** | Q2-Q3 2026 | Cache + Benchmarks + Reuse | Contínuo |
 | **M4: Multi-Database** | Q3-Q4 2026 | BCP + Multi-DB testing | 3-4 semanas |
@@ -65,18 +65,18 @@
   - [x] Wrapper de alto nível
   - [x] Wrapper async tipado: `AsyncOdbcAuditLogger`
 
-- [ ] **Etapa 5: Testes** (4-5 horas)
+- [x] **Etapa 5: Testes** (4-5 horas)
   - [x] Unit tests Rust (audit.rs)
   - [x] Integration tests FFI (ffi/mod.rs)
   - [x] Unit tests Dart
-  - [ ] Widget tests (se UI de audit)
-  - [ ] E2E test: full audit cycle
+  - [x] Widget tests (N/A: sem UI de audit)
+  - [x] E2E test: full audit cycle
 
-- [ ] **Etapa 6: Documentação** (1-2 horas)
+- [x] **Etapa 6: Documentação** (1-2 horas)
   - [x] Atualizar `ffi_api.md` com novas funções
   - [x] Criar exemplo em `example/audit_example.dart`
   - [x] Atualizar README com feature audit
-  - [ ] Adicionar docstrings em Dart
+  - [x] Adicionar docstrings em Dart
 
 **Arquivos a Modificar**:
 ```
@@ -98,34 +98,34 @@ example/audit_example.dart                            # Novo arquivo
 
 #### Checklist de Implementação
 
-- [ ] **Etapa 1: Expandir Detection** (3-4 horas)
-  - [ ] Implementar queries SQL para detectar capabilities
-  - [ ] Adicionar detection para PostgreSQL, MySQL
-  - [ ] Testar detection em SQL Server
-  - [ ] Adicionar `to_json()` em `DriverCapabilities`
+- [x] **Etapa 1: Expandir Detection** (3-4 horas)
+  - [x] Implementar detecção inicial de capabilities por driver (heurística via connection string)
+  - [x] Adicionar detection para PostgreSQL, MySQL
+  - [x] Testar detection em SQL Server
+  - [x] Adicionar `to_json()` em `DriverCapabilities`
 
-- [ ] **Etapa 2: FFI Function** (2-3 horas)
-  - [ ] Implementar `odbc_get_driver_capabilities(conn_id, buffer, len, out) -> c_int`
-  - [ ] Serializar `DriverCapabilities` → JSON
-  - [ ] Validação de ponteiros e buffers
-  - [ ] Adicionar export
+- [x] **Etapa 2: FFI Function** (2-3 horas)
+  - [x] Implementar `odbc_get_driver_capabilities(conn_str, buffer, len, out) -> c_int`
+  - [x] Serializar `DriverCapabilities` → JSON
+  - [x] Validação de ponteiros e buffers
+  - [x] Adicionar export
 
-- [ ] **Etapa 3: Bindings Dart** (2-3 horas)
-  - [ ] Gerar bindings FFI
-  - [ ] Criar `lib/infrastructure/native/driver_capabilities.dart`
-  - [ ] Parser JSON → `DriverCapabilities` object
-  - [ ] Enum `DatabaseType`
+- [x] **Etapa 3: Bindings Dart** (2-3 horas)
+  - [x] Gerar bindings FFI
+  - [x] Criar `lib/infrastructure/native/driver_capabilities.dart`
+  - [x] Parser JSON → `DriverCapabilities` object
+  - [ ] Enum `DatabaseType` (opcional, pode ser string)
 
-- [ ] **Etapa 4: Testes** (3-4 horas)
-  - [ ] Unit tests: Detection logic
-  - [ ] Integration tests: JSON serialization
-  - [ ] E2E tests: SQL Server, PostgreSQL (se disponível)
-  - [ ] Test: Unknown driver → defaults
+- [x] **Etapa 4: Testes** (3-4 horas)
+  - [x] Unit tests: Detection logic
+  - [x] Integration tests: JSON serialization
+  - [x] E2E tests: SQL Server, PostgreSQL (se disponível)
+  - [x] Test: Unknown driver → defaults
 
-- [ ] **Etapa 5: Documentação** (1 hora)
-  - [ ] Atualizar `ffi_api.md`
-  - [ ] Exemplo de uso adaptativo
-  - [ ] Tabela de capabilities por database
+- [x] **Etapa 5: Documentação** (1 hora)
+  - [x] Atualizar `ffi_api.md`
+  - [x] Exemplo de uso adaptativo
+  - [x] Tabela de capabilities por database
 
 **Estimativa Total**: 11-15 horas (~1.5-2 dias)
 
@@ -135,34 +135,36 @@ example/audit_example.dart                            # Novo arquivo
 
 #### Checklist de Implementação
 
-- [ ] **Etapa 1: Testes de Formato** (2-3 horas)
-  - [ ] `test_structured_error_format_stability()`
-  - [ ] `test_structured_error_sqlstate_mapping()`
-  - [ ] `test_structured_error_native_code_preservation()`
-  - [ ] `test_structured_error_serialization_roundtrip()`
+- [x] **Etapa 1: Testes de Formato** (2-3 horas)
+  - [x] `test_structured_error_format_stability()`
+  - [x] `test_structured_error_sqlstate_mapping()`
+  - [x] `test_structured_error_native_code_preservation()`
+  - [x] `test_structured_error_serialization_roundtrip()`
 
-- [ ] **Etapa 2: Testes de Isolamento** (2-3 horas)
-  - [ ] `test_structured_error_per_connection_isolation()`
-  - [ ] `test_structured_error_concurrent_access()`
-  - [ ] `test_structured_error_message_sanitization()`
-  - [ ] Resolver flakiness em parallel runs
+- [x] **Etapa 2: Testes de Isolamento** (2-3 horas)
+  - [x] `test_structured_error_per_connection_isolation()` (FFI `odbc_get_structured_error_for_connection`)
+  - [x] `test_structured_error_concurrent_access()`
+  - [x] `test_structured_error_message_sanitization()`
+  - [x] Resolver flakiness em parallel runs (testes em `structured_error_regression_test.rs`)
 
-- [ ] **Etapa 3: Testes de Edge Cases** (2 horas)
-  - [ ] `test_structured_error_buffer_too_small()`
-  - [ ] `test_structured_error_null_pointers()`
-  - [ ] `test_structured_error_empty_message()`
-  - [ ] `test_structured_error_very_long_message()`
+- [x] **Etapa 3: Testes de Edge Cases** (2 horas)
+  - [x] `test_structured_error_buffer_too_small()` (em ffi/mod.rs)
+  - [x] `test_structured_error_null_pointers()` (em ffi/mod.rs)
+  - [x] `test_structured_error_empty_message()`
+  - [x] `test_structured_error_very_long_message()`
 
-- [ ] **Etapa 4: CI/CD** (1 hora)
-  - [ ] Adicionar step de teste de structured error
-  - [ ] Configurar `--test-threads=1` se necessário
-  - [ ] Badge de coverage
+- [x] **Etapa 4: CI/CD** (1 hora)
+  - [x] Adicionar step de teste de structured error (`cargo test --workspace`)
+  - [ ] Configurar `--test-threads=1` se necessário (não necessário por ora)
+  - [ ] Badge de coverage (opcional)
 
 **Arquivos**:
 ```
 native/odbc_engine/tests/structured_error_regression_test.rs  # Novo
 native/odbc_engine/src/error/mod.rs                           # Testes adicionais
-.github/workflows/rust_tests.yml                              # CI config
+.github/workflows/ci.yml                                      # Run Rust tests
+lib/infrastructure/native/bindings/odbc_bindings.dart         # odbc_get_structured_error_for_connection
+lib/infrastructure/native/native_odbc_connection.dart         # getStructuredErrorForConnection
 ```
 
 **Estimativa Total**: 7-9 horas (~1 dia)
@@ -177,46 +179,48 @@ native/odbc_engine/src/error/mod.rs                           # Testes adicionai
 
 #### Checklist de Implementação
 
-- [ ] **Etapa 1: Design da API** (4-6 horas)
-  - [ ] Definir tipos C para callbacks
-  - [ ] Definir lifecycle de async requests
-  - [ ] Prototipar com 1 função simples
-  - [ ] Review de design
+- [x] **Etapa 1: Design da API** (4-6 horas)
+  - [x] Definir tipos C (poll-based, sem callbacks)
+  - [x] Definir lifecycle de async requests
+  - [x] Documento `native/doc/async_api_design.md`
+  - [x] Protótipo (implementado diretamente em `ffi/mod.rs`)
 
-- [ ] **Etapa 2: Request Management** (6-8 horas)
-  - [ ] Criar `AsyncRequest` struct
-  - [ ] Criar `AsyncRequestManager` em `GlobalState`
-  - [ ] Implementar `allocate_async_request_id()`
-  - [ ] Implementar tracking de requests ativas
+- [x] **Etapa 2: Request Management** (6-8 horas)
+  - [x] Criar `AsyncRequest` struct (slot/outcome)
+  - [x] Criar `AsyncRequestManager` em `GlobalState`
+  - [x] Implementar `allocate_async_request_id()`
+  - [x] Implementar tracking de requests ativas
 
-- [ ] **Etapa 3: FFI Functions** (8-10 horas)
-  - [ ] `odbc_execute_async(conn_id, sql, callback, user_data) -> request_id`
-  - [ ] `odbc_async_poll(request_id, out_status) -> c_int`
-  - [ ] `odbc_async_cancel(request_id) -> c_int`
-  - [ ] `odbc_async_get_result(request_id, buffer, len, out) -> c_int`
-  - [ ] Adicionar exports
+- [x] **Etapa 3: FFI Functions** (8-10 horas)
+  - [x] `odbc_execute_async(conn_id, sql) -> request_id` (poll-based)
+  - [x] `odbc_async_poll(request_id, out_status) -> c_int`
+  - [x] `odbc_async_cancel(request_id) -> c_int`
+  - [x] `odbc_async_get_result(request_id, buffer, len, out) -> c_int`
+  - [x] `odbc_async_free(request_id) -> c_int`
+  - [x] Adicionar exports
 
 - [ ] **Etapa 4: Background Execution** (6-8 horas)
-  - [ ] Integrar com `async_bridge::execute_async()`
-  - [ ] Implementar spawn de tasks Tokio
-  - [ ] Implementar callback invocation via FFI
-  - [ ] Handle panics em async context
+  - [x] Integrar com `async_bridge` (`spawn_blocking_task`)
+  - [x] Implementar spawn de tasks Tokio
+  - [x] Handle panics em async context
+  - [ ] Callback invocation via FFI (N/A no design poll-based)
 
 - [ ] **Etapa 5: Bindings Dart** (8-10 horas)
-  - [ ] Gerar bindings FFI
-  - [ ] Criar `OdbcAsyncConnection` wrapper
-  - [ ] Implementar `Future<T> executeAsync(String sql)`
+  - [x] Gerar bindings FFI (manual update em `odbc_bindings.dart`)
+  - [x] Wiring em `AsyncNativeOdbcConnection` (start/poll/get/cancel/free)
+  - [x] Implementar `Future<T> executeAsync(String sql)` (alto nível, poll-based)
   - [ ] Implementar `Stream<T> streamAsync(String sql)`
-  - [ ] Gerenciar callbacks via `NativeCallable`
+  - [ ] Gerenciar callbacks via `NativeCallable` (N/A no design poll-based)
 
 - [ ] **Etapa 6: Testes Completos** (10-12 horas)
-  - [ ] Unit Rust: AsyncRequest lifecycle
-  - [ ] Integration: Execute async + poll
-  - [ ] Integration: Execute async + callback
-  - [ ] E2E: 10+ ops async simultâneas
-  - [ ] E2E: Cancel async operation
-  - [ ] E2E: Error handling async
-  - [ ] Performance: Async vs sync overhead
+  - [x] Unit Rust: validações FFI básicas (invalid ID/null pointers)
+  - [x] Integration (Dart isolate fake worker): execute async + poll + get/free
+  - [ ] Integration: Execute async + callback (N/A no design poll-based)
+  - [x] E2E: 10+ ops async simultâneas
+  - [x] E2E: Cancel async operation
+  - [x] E2E: Error handling async (invalid DSN / status error path)
+  - [x] E2E: Execute async + poll + get_result
+  - [x] Performance: Async vs sync overhead
 
 - [ ] **Etapa 7: Documentação** (3-4 horas)
   - [ ] Atualizar `ffi_api.md`
@@ -232,22 +236,22 @@ native/odbc_engine/src/error/mod.rs                           # Testes adicionai
 
 #### Checklist de Implementação
 
-- [ ] **Etapa 1: Async Stream State** (4-6 horas)
-  - [ ] Estender `StreamKind` para async
-  - [ ] Implementar `AsyncStreamState`
-  - [ ] Background fetch de batches
+- [x] **Etapa 1: Async Stream State** (4-6 horas)
+  - [x] Estender `StreamKind` para async
+  - [x] Implementar `AsyncStreamState`
+  - [x] Background fetch de batches
 
-- [ ] **Etapa 2: FFI Functions** (6-8 horas)
-  - [ ] `odbc_stream_start_async(conn_id, sql, callback, user_data) -> stream_id`
-  - [ ] `odbc_stream_poll_async(stream_id, out_status) -> c_int`
-  - [ ] Reutilizar `odbc_stream_fetch()` (compatível)
-  - [ ] Reutilizar `odbc_stream_close()` (compatível)
+- [x] **Etapa 2: FFI Functions** (6-8 horas)
+  - [x] `odbc_stream_start_async(conn_id, sql, fetch_size, chunk_size) -> stream_id` (poll-based, sem callback)
+  - [x] `odbc_stream_poll_async(stream_id, out_status) -> c_int`
+  - [x] Reutilizar `odbc_stream_fetch()` (compatível)
+  - [x] Reutilizar `odbc_stream_close()` (compatível)
 
 - [ ] **Etapa 3: Bindings e Testes** (8-10 horas)
-  - [ ] Bindings Dart
-  - [ ] `Stream<T> streamAsync()`
-  - [ ] Testes completos
-  - [ ] Documentação
+  - [x] Bindings Dart
+  - [x] `Stream<T> streamAsync()`
+  - [x] Testes completos
+  - [x] Documentação
 
 **Estimativa Total**: 18-24 horas (~3-4 dias)
 
@@ -259,16 +263,16 @@ native/odbc_engine/src/error/mod.rs                           # Testes adicionai
 
 #### Checklist de Implementação
 
-- [ ] **Etapa 1: Instanciar Cache** (2-3 horas)
-  - [ ] Adicionar `MetadataCache` em `GlobalState`
-  - [ ] Configurar via env `ODBC_METADATA_CACHE_SIZE` (default: 100)
-  - [ ] Configurar TTL via env `ODBC_METADATA_CACHE_TTL_SECS` (default: 300)
+- [x] **Etapa 1: Instanciar Cache** (2-3 horas)
+  - [x] Adicionar `MetadataCache` em `GlobalState`
+  - [x] Configurar via env `ODBC_METADATA_CACHE_SIZE` (default: 100)
+  - [x] Configurar TTL via env `ODBC_METADATA_CACHE_TTL_SECS` (default: 300)
 
-- [ ] **Etapa 2: Integrar em Catalog** (3-4 horas)
-  - [ ] Modificar `odbc_catalog_columns()` para usar cache
-  - [ ] Cache key: `{conn_id}:{table_name}`
-  - [ ] Hit → retornar cached
-  - [ ] Miss → query + cache result
+- [x] **Etapa 2: Integrar em Catalog** (3-4 horas)
+  - [x] Modificar `odbc_catalog_columns()` para usar cache
+  - [x] Cache key: `{conn_id}:{table_name}`
+  - [x] Hit → retornar cached
+  - [x] Miss → query + cache result
 
 - [ ] **Etapa 3: FFI Management** (3-4 horas)
   - [ ] `odbc_metadata_cache_enable(max_size, ttl_secs) -> c_int`
@@ -276,8 +280,8 @@ native/odbc_engine/src/error/mod.rs                           # Testes adicionai
   - [ ] `odbc_metadata_cache_clear() -> c_int`
 
 - [ ] **Etapa 4: Testes e Benchmark** (4-5 horas)
-  - [ ] Test: Cache hit/miss
-  - [ ] Test: TTL expiration
+  - [x] Test: Cache hit/miss
+  - [x] Test: TTL expiration
   - [ ] Test: LRU eviction
   - [ ] Benchmark: 80%+ redução em queries repetitivos
 

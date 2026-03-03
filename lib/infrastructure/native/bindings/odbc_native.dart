@@ -39,6 +39,16 @@ class OdbcNative {
   /// True when the loaded native library exposes the audit FFI API.
   bool get supportsAuditApi => _bindings.supportsAuditApi;
 
+  /// True when the loaded native library exposes driver capabilities FFI API.
+  bool get supportsDriverCapabilitiesApi =>
+      _bindings.supportsDriverCapabilitiesApi;
+
+  /// True when the loaded native library exposes async execute FFI APIs.
+  bool get supportsAsyncExecuteApi => _bindings.supportsAsyncExecuteApi;
+
+  /// True when the loaded native library exposes async stream FFI APIs.
+  bool get supportsAsyncStreamApi => _bindings.supportsAsyncStreamApi;
+
   /// Initializes the ODBC environment.
   ///
   /// Must be called before any other operations.
@@ -62,6 +72,79 @@ class OdbcNative {
     } finally {
       malloc.free(connStrPtr);
     }
+  }
+
+  /// Starts non-blocking query execution and returns async request ID.
+  ///
+  /// Returns `null` when API is unavailable. Returns `0` on native failure.
+  int? executeAsyncStart(int connectionId, String sql) {
+    if (!_bindings.supportsAsyncExecuteApi) {
+      return null;
+    }
+    final sqlPtr = sql.toNativeUtf8();
+    try {
+      return _bindings.odbc_execute_async(
+        connectionId,
+        sqlPtr.cast<bindings.Utf8>(),
+      );
+    } finally {
+      malloc.free(sqlPtr);
+    }
+  }
+
+  /// Polls async request status.
+  ///
+  /// Status values: `0` pending, `1` ready, `-1` error, `-2` cancelled.
+  int? asyncPoll(int requestId) {
+    if (!_bindings.supportsAsyncExecuteApi) {
+      return null;
+    }
+    final outStatus = malloc<ffi.Int32>()..value = 0;
+    try {
+      final code = _bindings.odbc_async_poll(requestId, outStatus);
+      if (code != 0) {
+        return null;
+      }
+      return outStatus.value;
+    } finally {
+      malloc.free(outStatus);
+    }
+  }
+
+  /// Retrieves async query result payload for a completed request.
+  ///
+  /// Returns null on API unavailable, request not ready, or native failure.
+  Uint8List? asyncGetResult(int requestId) {
+    if (!_bindings.supportsAsyncExecuteApi) {
+      return null;
+    }
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) =>
+          _bindings.odbc_async_get_result(requestId, buf, bufLen, outWritten) ??
+          -1,
+    );
+    if (data == null || data.isEmpty) {
+      return null;
+    }
+    return data;
+  }
+
+  /// Best-effort cancellation for an async request.
+  bool asyncCancel(int requestId) {
+    if (!_bindings.supportsAsyncExecuteApi) {
+      return false;
+    }
+    final code = _bindings.odbc_async_cancel(requestId);
+    return code == 0;
+  }
+
+  /// Frees async request resources.
+  bool asyncFree(int requestId) {
+    if (!_bindings.supportsAsyncExecuteApi) {
+      return false;
+    }
+    final code = _bindings.odbc_async_free(requestId);
+    return code == 0;
   }
 
   /// Establishes a connection with a login timeout.
@@ -88,6 +171,32 @@ class OdbcNative {
   bool disconnect(int connectionId) {
     final result = _bindings.odbc_disconnect(connectionId);
     return result == 0;
+  }
+
+  /// Gets driver capabilities from connection string as UTF-8 JSON object.
+  ///
+  /// Returns null on FFI failure or when API is unavailable.
+  String? getDriverCapabilitiesJson(String connectionString) {
+    if (!_bindings.supportsDriverCapabilitiesApi) {
+      return null;
+    }
+    final connStrPtr = connectionString.toNativeUtf8();
+    try {
+      final data = callWithBuffer(
+        (buf, bufLen, outWritten) => _bindings.odbc_get_driver_capabilities(
+          connStrPtr.cast<bindings.Utf8>(),
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      );
+      if (data == null) {
+        return null;
+      }
+      return utf8.decode(data);
+    } finally {
+      malloc.free(connStrPtr);
+    }
   }
 
   /// Detects the database driver from a connection string.
@@ -201,6 +310,56 @@ class OdbcNative {
     return StructuredError.deserialize(data);
   }
 
+  /// Whether the native library exposes per-connection structured error API.
+  bool get supportsStructuredErrorForConnection =>
+      _bindings.supportsStructuredErrorForConnection;
+
+  /// Gets structured error for a specific connection (per-connection
+  /// isolation).
+  ///
+  /// When [connectionId] != 0, returns only that connection's error.
+  /// Returns null when API is unavailable, no error for this connection,
+  /// or on FFI failure.
+  StructuredError? getStructuredErrorForConnection(int connectionId) {
+    if (!_bindings.supportsStructuredErrorForConnection) {
+      return null;
+    }
+
+    var size = initialBufferSize;
+    const limit = maxBufferSize;
+    while (size <= limit) {
+      final buf = malloc<ffi.Uint8>(size);
+      final outWritten = malloc<ffi.Uint32>()..value = 0;
+      try {
+        final code = _bindings.odbc_get_structured_error_for_connection(
+          connectionId,
+          buf,
+          size,
+          outWritten,
+        );
+        if (code == null) return null;
+        if (code == 1) return null; // No structured error for this connection
+        if (code == -1) return null; // FFI error
+        if (code == -2) {
+          size *= 2;
+          continue;
+        }
+        if (code == 0) {
+          final n = outWritten.value;
+          if (n == 0) return null;
+          final data = Uint8List.fromList(buf.asTypedList(n));
+          return StructuredError.deserialize(data);
+        }
+        return null;
+      } finally {
+        malloc
+          ..free(buf)
+          ..free(outWritten);
+      }
+    }
+    return null;
+  }
+
   /// Starts a streaming query.
   ///
   /// The [connectionId] must be a valid active connection.
@@ -223,6 +382,52 @@ class OdbcNative {
       return streamId;
     } finally {
       malloc.free(sqlPtr);
+    }
+  }
+
+  /// Starts async batched streaming query execution.
+  ///
+  /// Returns stream ID (>0) on success, 0 on native failure, and null when
+  /// async stream API is unavailable.
+  int? streamStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) {
+    if (!_bindings.supportsAsyncStreamApi) {
+      return null;
+    }
+    final sqlPtr = sql.toNativeUtf8();
+    try {
+      return _bindings.odbc_stream_start_async(
+        connectionId,
+        sqlPtr.cast<bindings.Utf8>(),
+        fetchSize,
+        chunkSize,
+      );
+    } finally {
+      malloc.free(sqlPtr);
+    }
+  }
+
+  /// Polls async stream status.
+  ///
+  /// Status values: `0` pending, `1` ready, `2` done, `-1` error,
+  /// `-2` cancelled.
+  int? streamPollAsync(int streamId) {
+    if (!_bindings.supportsAsyncStreamApi) {
+      return null;
+    }
+    final outStatus = malloc<ffi.Int32>()..value = 0;
+    try {
+      final code = _bindings.odbc_stream_poll_async(streamId, outStatus);
+      if (code != 0) {
+        return null;
+      }
+      return outStatus.value;
+    } finally {
+      malloc.free(outStatus);
     }
   }
 
@@ -569,8 +774,7 @@ class OdbcNative {
     return _withUtf8Pair(
       catalog,
       schema,
-      (cPtr, sPtr) =>
-          _withConn(
+      (cPtr, sPtr) => _withConn(
         connectionId,
         (conn) => callWithBuffer(
           (buf, bufLen, outWritten) => _bindings.odbc_catalog_tables(

@@ -66,6 +66,11 @@ class AsyncNativeOdbcConnection {
         _isolateEntry = isolateEntry;
 
   static const _defaultRequestTimeout = Duration(seconds: 30);
+  static const _streamAsyncStatusPending = 0;
+  static const _streamAsyncStatusReady = 1;
+  static const _streamAsyncStatusDone = 2;
+  static const _streamAsyncStatusError = -1;
+  static const _streamAsyncStatusCancelled = -2;
 
   final Duration? _requestTimeout;
 
@@ -330,6 +335,112 @@ class AsyncNativeOdbcConnection {
       sqlState: sqlState.isNotEmpty ? sqlState : List.filled(5, 0),
       nativeCode: r.nativeCode ?? 0,
     );
+  }
+
+  /// Starts non-blocking query execution in native layer.
+  ///
+  /// Returns async request ID (>0) on success, or 0 on failure.
+  Future<int> executeAsyncStart(int connectionId, String sql) async {
+    final r = await _sendRequest<IntResponse>(
+      ExecuteAsyncStartRequest(_nextRequestId(), connectionId, sql),
+    );
+    return r.value;
+  }
+
+  /// Polls async request status.
+  ///
+  /// Status values: `0` pending, `1` ready, `-1` error, `-2` cancelled.
+  Future<int> asyncPoll(int asyncRequestId) async {
+    final r = await _sendRequest<IntResponse>(
+      AsyncPollRequest(_nextRequestId(), asyncRequestId),
+    );
+    return r.value;
+  }
+
+  /// Retrieves binary result for a completed async request.
+  ///
+  /// Returns null when request is not ready or has failed.
+  Future<Uint8List?> asyncGetResult(
+    int asyncRequestId, {
+    int? maxBufferBytes,
+  }) async {
+    final r = await _sendRequest<QueryResponse>(
+      AsyncGetResultRequest(
+        _nextRequestId(),
+        asyncRequestId,
+        maxResultBufferBytes: maxBufferBytes,
+      ),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.data;
+  }
+
+  /// Executes [sql] in non-blocking mode using native async request lifecycle.
+  ///
+  /// Flow: `start -> poll -> get_result -> free`.
+  /// Returns the binary result when execution completes successfully, or `null`
+  /// on failure/cancellation/timeout.
+  Future<Uint8List?> executeAsync(
+    int connectionId,
+    String sql, {
+    Duration pollInterval = const Duration(milliseconds: 10),
+    Duration? timeout,
+    int? maxBufferBytes,
+  }) async {
+    final requestId = await executeAsyncStart(connectionId, sql);
+    if (requestId <= 0) {
+      return null;
+    }
+
+    final effectiveTimeout =
+        timeout ?? _requestTimeout ?? _defaultRequestTimeout;
+    final deadline = DateTime.now().add(effectiveTimeout);
+
+    try {
+      while (true) {
+        final status = await asyncPoll(requestId);
+
+        switch (status) {
+          case 1: // ready
+            return asyncGetResult(
+              requestId,
+              maxBufferBytes: maxBufferBytes,
+            );
+          case 0: // pending
+            if (effectiveTimeout > Duration.zero &&
+                DateTime.now().isAfter(deadline)) {
+              await asyncCancel(requestId);
+              return null;
+            }
+            await Future<void>.delayed(pollInterval);
+          case -1: // error
+          case -2: // cancelled
+            return null;
+          default:
+            return null;
+        }
+      }
+    } finally {
+      await asyncFree(requestId);
+    }
+  }
+
+  /// Best-effort cancellation for async request.
+  Future<bool> asyncCancel(int asyncRequestId) async {
+    final r = await _sendRequest<BoolResponse>(
+      AsyncCancelRequest(_nextRequestId(), asyncRequestId),
+    );
+    return r.value;
+  }
+
+  /// Frees async request resources.
+  Future<bool> asyncFree(int asyncRequestId) async {
+    final r = await _sendRequest<BoolResponse>(
+      AsyncFreeRequest(_nextRequestId(), asyncRequestId),
+    );
+    return r.value;
   }
 
   /// Enables/disables native audit event collection in the worker.
@@ -834,6 +945,31 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  Future<int> _streamStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamStartAsyncRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+    );
+    return r.value;
+  }
+
+  Future<int> _streamPollAsync(int streamId) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamPollAsyncRequest(_nextRequestId(), streamId),
+    );
+    return r.value;
+  }
+
   Future<StreamFetchResponse> _streamFetch(int streamId) {
     return _sendRequest<StreamFetchResponse>(
       StreamFetchRequest(_nextRequestId(), streamId),
@@ -984,6 +1120,109 @@ class AsyncNativeOdbcConnection {
 
       if (buffer.length > 0) {
         yield BinaryProtocolParser.parse(buffer.toBytes());
+      }
+    } finally {
+      await _streamClose(streamId);
+    }
+  }
+
+  /// Runs [sql] using native async stream lifecycle:
+  /// `stream_start_async -> stream_poll_async -> stream_fetch -> stream_close`.
+  ///
+  /// This is a poll-based non-blocking stream path. It yields full protocol
+  /// messages as [ParsedRowBuffer] values.
+  Stream<ParsedRowBuffer> streamAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    Duration pollInterval = const Duration(milliseconds: 10),
+    int? maxBufferBytes,
+  }) async* {
+    final streamId = await _streamStartAsync(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    );
+    if (streamId == 0) {
+      final workerError = await _safeGetWorkerError();
+      throw AsyncError(
+        code: AsyncErrorCode.queryFailed,
+        message: workerError ?? 'Failed to start async stream',
+      );
+    }
+
+    var pending = BytesBuilder(copy: false);
+    final limit = maxBufferBytes;
+    try {
+      while (true) {
+        final status = await _streamPollAsync(streamId);
+        if (status == _streamAsyncStatusPending) {
+          await Future<void>.delayed(pollInterval);
+          continue;
+        }
+        if (status == _streamAsyncStatusDone) {
+          break;
+        }
+        if (status == _streamAsyncStatusError ||
+            status == _streamAsyncStatusCancelled) {
+          final workerError = await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Async stream failed with status $status',
+          );
+        }
+        if (status != _streamAsyncStatusReady) {
+          final workerError = await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Unexpected async stream status: $status',
+          );
+        }
+
+        final fetched = await _streamFetch(streamId);
+        if (!fetched.success) {
+          final workerError = fetched.error ?? await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Async stream fetch failed',
+          );
+        }
+
+        final data = fetched.data;
+        if (data != null && data.isNotEmpty) {
+          pending.add(data);
+          if (limit != null && pending.length > limit) {
+            throw const AsyncError(
+              code: AsyncErrorCode.queryFailed,
+              message: 'Streaming buffer exceeded maxBufferBytes',
+            );
+          }
+
+          while (pending.length >= BinaryProtocolParser.headerSize) {
+            final all = pending.toBytes();
+            final msgLen = BinaryProtocolParser.messageLengthFromHeader(all);
+            if (all.length < msgLen) {
+              break;
+            }
+
+            final msg = all.sublist(0, msgLen);
+            yield BinaryProtocolParser.parse(msg);
+
+            final remainder = all.sublist(msgLen);
+            pending = BytesBuilder(copy: false);
+            if (remainder.isNotEmpty) {
+              pending.add(remainder);
+            }
+          }
+        }
+      }
+
+      if (pending.length > 0) {
+        throw const FormatException(
+          'Leftover bytes after stream; expected complete protocol messages',
+        );
       }
     } finally {
       await _streamClose(streamId);

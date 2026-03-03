@@ -101,6 +101,43 @@ Executes **batch SQL** (e.g. multiple statements, stored procedures) and returns
 - **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
 - **Output format**: `[count: 4 bytes LE][foreach item: tag(1) + len(4) LE + payload]`. Tag `0` = result set (payload = standard binary protocol); tag `1` = row count (payload = 8 bytes i64 LE). All results are returned via full `SQLMoreResults` iteration (batch SQL, stored procedures, multiple statements).
 
+### Async Execute (poll-based)
+
+### `odbc_execute_async(conn_id, sql) -> unsigned int`
+
+Starts non-blocking execution and returns a `request_id`.
+
+- **Returns**: `request_id > 0` on success; `0` on failure.
+
+### `odbc_async_poll(request_id, out_status) -> int`
+
+Polls request status.
+
+- **Returns**: `0` on success; `-1` on invalid request or pointer.
+- **out_status**:
+  - `0`: pending
+  - `1`: ready (result available via `odbc_async_get_result`)
+  - `-1`: completed with error
+  - `-2`: cancelled
+
+### `odbc_async_get_result(request_id, out_buffer, buffer_len, out_written) -> int`
+
+Retrieves the binary result for a completed async request.
+
+- **Returns**: `0` on success; `-1` on error/invalid request; `-2` if buffer too small.
+
+### `odbc_async_cancel(request_id) -> int`
+
+Best-effort cancellation of a pending async request.
+
+- **Returns**: `0` on success; `-1` if request is unknown.
+
+### `odbc_async_free(request_id) -> int`
+
+Releases resources associated with an async request.
+
+- **Returns**: `0` on success; `-1` if request is unknown.
+
 ### Prepare / Execute / Cancel / Close (timeout support)
 
 Workflow: `odbc_prepare` → `odbc_execute` (possibly multiple times) → `odbc_close_statement`. Optional `odbc_cancel` to request cancellation (see limitations below).
@@ -159,7 +196,11 @@ allocating a huge buffer on the Dart side.
    batch in `BatchedStreamingState`. Memory is bounded in both Rust and Dart.
    Uses a worker thread that holds the HandleManager lock for the stream duration.
 
-Both modes use the same `odbc_stream_fetch` and `odbc_stream_close` APIs.
+3. **Async batched mode** (`odbc_stream_start_async` + `odbc_stream_poll_async`):
+   same cursor-based batching behavior as batched mode, but with explicit
+   poll-based lifecycle and non-blocking readiness check before fetch.
+
+All modes use the same `odbc_stream_fetch` and `odbc_stream_close` APIs.
 
 ### `odbc_stream_start(conn_id, sql, chunk_size) -> unsigned int`
 
@@ -177,6 +218,33 @@ batch; each batch is then chunked into `chunk_size`-byte pieces for `odbc_stream
 - **Returns**: `stream_id > 0` on success; `0` on failure.
 - **fetch_size**: rows per batch (engine-side); `0` = default (100).
 - **chunk_size**: bytes per FFI chunk; `0` = default (1024).
+
+### `odbc_stream_start_async(conn_id, sql, fetch_size, chunk_size) -> unsigned int`
+
+Starts **poll-based async batched** streaming. Execution/fetching runs in a
+background worker. Use `odbc_stream_poll_async` to observe readiness.
+
+- **Returns**: `stream_id > 0` on success; `0` on failure.
+- **fetch_size**: rows per batch (engine-side); `0` = default (100).
+- **chunk_size**: bytes per FFI chunk; `0` = default (1024).
+
+### `odbc_stream_poll_async(stream_id, out_status) -> int`
+
+Polls async stream lifecycle status.
+
+- **Returns**: `0` on success; `-1` on invalid stream or null pointer.
+- **out_status**:
+  - `0`: pending (not ready for fetch yet)
+  - `1`: ready (one or more chunks available through `odbc_stream_fetch`)
+  - `2`: done (no more data)
+  - `-1`: error
+  - `-2`: cancelled
+
+Recommended flow:
+1. `odbc_stream_start_async(...)`
+2. loop `odbc_stream_poll_async(...)`
+3. when status is `1`, call `odbc_stream_fetch(...)`
+4. when status is `2`, stop and call `odbc_stream_close(...)`
 
 ### `odbc_stream_fetch(stream_id, out_buffer, buffer_len, out_written, out_has_more) -> int`
 
@@ -199,6 +267,28 @@ buffer-mode streams (`odbc_stream_start`).
 ### `odbc_stream_close(stream_id) -> int`
 
 Releases the stream state (buffer or batched).
+
+### Dart/worker usage (poll-based async stream)
+
+```dart
+final streamId = native.streamStartAsync(connId, sql);
+if (streamId == null || streamId == 0) throw Exception(native.getError());
+
+while (true) {
+  final status = native.streamPollAsync(streamId);
+  if (status == 0) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    continue;
+  }
+  if (status == 2) break; // done
+  if (status == -1 || status == -2 || status == null) {
+    throw Exception(native.getError());
+  }
+  final chunk = native.streamFetch(streamId);
+  // decode/process chunk
+}
+native.streamClose(streamId);
+```
 
 ## Catalog / Metadata
 
@@ -363,6 +453,18 @@ otherwise they are zero. Format: `[sqlstate: 5][native_code: 4 LE][message_len: 
   - `1`: no structured error available (`out_written = 0`)
   - negative values: failure (e.g., invalid pointers/buffer issues)
 
+### `odbc_get_structured_error_for_connection(conn_id, out_buffer, buffer_len, out_written) -> int`
+
+Same binary format as `odbc_get_structured_error`, but scoped to a specific connection.
+Per-connection isolation: when `conn_id != 0`, returns only that connection's error (no global fallback).
+
+- **conn_id**: connection ID; `0` = use global fallback (same as `odbc_get_structured_error`).
+- **Return behavior**:
+  - `0`: structured error written
+  - `1`: no structured error for this connection
+  - `-1`: invalid pointers or mutex error
+  - `-2`: buffer too small
+
 ## Metrics
 
 ### `odbc_get_metrics(out_buffer, buffer_len, out_written) -> int`
@@ -392,6 +494,39 @@ Attempts to detect driver family from the connection string and writes the
 detected name to `out_buf`.
 
 - **Returns**: `1` if known driver detected; `0` if unknown (writes `"unknown"`).
+
+### `odbc_get_driver_capabilities(conn_str, buffer, buffer_len, out_written) -> int`
+
+Returns driver capabilities as a JSON object, detected heuristically from the
+connection string (no active connection required).
+
+- **conn_str**: null-terminated UTF-8 connection string.
+- **buffer**: output buffer for JSON payload (UTF-8).
+- **buffer_len**: size of buffer.
+- **out_written**: actual bytes written.
+- **Returns**: `0` on success; `-1` on error (e.g. null pointers, invalid UTF-8).
+
+**JSON schema**:
+
+```json
+{
+  "supports_prepared_statements": true,
+  "supports_batch_operations": true,
+  "supports_streaming": true,
+  "max_row_array_size": 2000,
+  "driver_name": "SQL Server",
+  "driver_version": "Unknown"
+}
+```
+
+**Capabilities by database** (heuristic from connection string):
+
+| driver_name   | max_row_array_size | supports_* |
+|---------------|--------------------|------------|
+| SQL Server    | 2000               | all true   |
+| PostgreSQL    | 2000               | all true   |
+| MySQL         | 1500               | all true   |
+| Unknown       | 1000               | all true   |
 
 ## Minimal usage example (C-style)
 
@@ -433,5 +568,18 @@ if (rc != 0) { /* read odbc_get_error (rc == -2 if buffer too small) */ }
   - prefer `odbc_stream_*` (chunked copy-out) or a larger buffer for `odbc_exec_query`.
 - Errors are stored in global state; after any non-zero return / `0` id, call:
   - `odbc_get_error(...)` or `odbc_get_structured_error(...)`.
+
+### Adaptive usage (driver capabilities)
+
+Use `odbc_get_driver_capabilities` to adapt behavior by database:
+
+```dart
+final caps = locator.nativeConnection.getDriverCapabilities(connectionString);
+if (caps != null && caps.driverName == 'PostgreSQL') {
+  // Use PostgreSQL-specific optimizations (e.g. LIMIT, array fetch)
+} else if (caps?.driverName == 'SQL Server') {
+  // Use SQL Server-specific patterns (e.g. TOP)
+}
+```
 
 

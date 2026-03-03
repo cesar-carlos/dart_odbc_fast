@@ -21,6 +21,8 @@ enum RequestType {
   closeStatement,
   streamStart,
   streamStartBatched,
+  streamStartAsync,
+  streamPollAsync,
   streamFetch,
   streamClose,
   clearAllStatements,
@@ -45,6 +47,11 @@ enum RequestType {
   auditGetEvents,
   auditGetStatus,
   auditClear,
+  executeAsyncStart,
+  asyncPoll,
+  asyncGetResult,
+  asyncCancel,
+  asyncFree,
 }
 
 /// Base class for worker requests. All subclasses must be sendable.
@@ -225,6 +232,28 @@ class StreamStartBatchedRequest extends WorkerRequest {
   final String sql;
   final int fetchSize;
   final int chunkSize;
+}
+
+/// Start low-level async batched streaming query.
+class StreamStartAsyncRequest extends WorkerRequest {
+  const StreamStartAsyncRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.fetchSize = 1000,
+    this.chunkSize = 64 * 1024,
+  }) : super(requestId, RequestType.streamStartAsync);
+  final int connectionId;
+  final String sql;
+  final int fetchSize;
+  final int chunkSize;
+}
+
+/// Poll async stream status.
+class StreamPollAsyncRequest extends WorkerRequest {
+  const StreamPollAsyncRequest(int requestId, this.streamId)
+      : super(requestId, RequestType.streamPollAsync);
+  final int streamId;
 }
 
 /// Fetch next chunk from an active stream.
@@ -415,6 +444,49 @@ class AuditGetStatusRequest extends WorkerRequest {
 class AuditClearRequest extends WorkerRequest {
   const AuditClearRequest(int requestId)
       : super(requestId, RequestType.auditClear);
+}
+
+/// Start non-blocking async execution.
+class ExecuteAsyncStartRequest extends WorkerRequest {
+  const ExecuteAsyncStartRequest(
+    int requestId,
+    this.connectionId,
+    this.sql,
+  ) : super(requestId, RequestType.executeAsyncStart);
+  final int connectionId;
+  final String sql;
+}
+
+/// Poll async request status.
+class AsyncPollRequest extends WorkerRequest {
+  const AsyncPollRequest(int requestId, this.asyncRequestId)
+      : super(requestId, RequestType.asyncPoll);
+  final int asyncRequestId;
+}
+
+/// Retrieve async request result.
+class AsyncGetResultRequest extends WorkerRequest {
+  const AsyncGetResultRequest(
+    int requestId,
+    this.asyncRequestId, {
+    this.maxResultBufferBytes,
+  }) : super(requestId, RequestType.asyncGetResult);
+  final int asyncRequestId;
+  final int? maxResultBufferBytes;
+}
+
+/// Cancel async request.
+class AsyncCancelRequest extends WorkerRequest {
+  const AsyncCancelRequest(int requestId, this.asyncRequestId)
+      : super(requestId, RequestType.asyncCancel);
+  final int asyncRequestId;
+}
+
+/// Free async request resources.
+class AsyncFreeRequest extends WorkerRequest {
+  const AsyncFreeRequest(int requestId, this.asyncRequestId)
+      : super(requestId, RequestType.asyncFree);
+  final int asyncRequestId;
 }
 
 /// Base class for worker responses. All subclasses must be sendable.

@@ -14,7 +14,7 @@ pub use engine::{
     execute_multi_result, execute_query_with_connection, execute_query_with_params, OdbcConnection,
     OdbcEnvironment,
 };
-pub use error::{OdbcError, Result};
+pub use error::{OdbcError, Result, StructuredError};
 pub use protocol::{
     decode_multi, deserialize_params, encode_multi, serialize_params, BinaryProtocolDecoder,
     ColumnInfo, DecodedResult, MultiResultItem, ParamValue,
@@ -22,9 +22,11 @@ pub use protocol::{
 
 #[cfg(feature = "ffi-tests")]
 pub use ffi::{
-    odbc_connect, odbc_connect_with_timeout, odbc_disconnect, odbc_exec_query, odbc_get_error,
-    odbc_get_structured_error, odbc_init, odbc_savepoint_create, odbc_savepoint_release,
-    odbc_savepoint_rollback,
+    odbc_async_cancel, odbc_async_free, odbc_async_get_result, odbc_async_poll, odbc_connect,
+    odbc_connect_with_timeout, odbc_disconnect, odbc_exec_query, odbc_execute_async,
+    odbc_get_error, odbc_get_structured_error, odbc_get_structured_error_for_connection, odbc_init,
+    odbc_savepoint_create, odbc_savepoint_release, odbc_savepoint_rollback,
+    odbc_stream_poll_async, odbc_stream_start_async,
 };
 
 #[cfg(feature = "test-helpers")]

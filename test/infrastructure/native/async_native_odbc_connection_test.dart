@@ -323,6 +323,152 @@ void _fakeWorkerAuditSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: supports async execute lifecycle requests.
+void _fakeWorkerAsyncExecuteSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 1234));
+      return;
+    }
+    if (message is AsyncPollRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 1)); // ready
+      return;
+    }
+    if (message is AsyncGetResultRequest) {
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([1, 2, 3])),
+      );
+      return;
+    }
+    if (message is AsyncCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: async execute stays pending for 2 polls, then ready.
+void _fakeWorkerAsyncExecuteDelayedReady(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  final pollsByRequest = <int, int>{};
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartRequest) {
+      pollsByRequest[9001] = 0;
+      mainSendPort.send(IntResponse(message.requestId, 9001));
+      return;
+    }
+    if (message is AsyncPollRequest) {
+      final count = (pollsByRequest[message.asyncRequestId] ?? 0) + 1;
+      pollsByRequest[message.asyncRequestId] = count;
+      final status = count >= 3 ? 1 : 0;
+      mainSendPort.send(IntResponse(message.requestId, status));
+      return;
+    }
+    if (message is AsyncGetResultRequest) {
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([7, 8, 9])),
+      );
+      return;
+    }
+    if (message is AsyncCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: supports async stream lifecycle requests.
+void _fakeWorkerAsyncStreamSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+
+  final payload = _createStreamTestBuffer();
+  var pollCount = 0;
+  var fetched = false;
+
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is StreamStartAsyncRequest) {
+      pollCount = 0;
+      fetched = false;
+      mainSendPort.send(IntResponse(message.requestId, 601));
+      return;
+    }
+    if (message is StreamPollAsyncRequest) {
+      pollCount++;
+      if (pollCount < 3) {
+        mainSendPort.send(IntResponse(message.requestId, 0)); // pending
+      } else if (pollCount == 3) {
+        mainSendPort.send(IntResponse(message.requestId, 1)); // ready
+      } else {
+        mainSendPort.send(IntResponse(message.requestId, 2)); // done
+      }
+      return;
+    }
+    if (message is StreamFetchRequest) {
+      if (!fetched) {
+        fetched = true;
+        mainSendPort.send(
+          StreamFetchResponse(
+            message.requestId,
+            success: true,
+            data: payload,
+            hasMore: false,
+          ),
+        );
+      } else {
+        mainSendPort.send(
+          StreamFetchResponse(
+            message.requestId,
+            success: true,
+            data: Uint8List(0),
+            hasMore: false,
+          ),
+        );
+      }
+      return;
+    }
+    if (message is StreamCloseRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
 Uint8List _createStreamTestBuffer() {
   final bytes = <int>[];
 
@@ -868,6 +1014,48 @@ void main() {
     });
   });
 
+  group('AsyncNativeOdbcConnection async execute', () {
+    test('should run async execute lifecycle via worker messages', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncExecuteSupport,
+      );
+      await async.initialize();
+
+      final requestId = await async.executeAsyncStart(1, 'SELECT 1');
+      final status = await async.asyncPoll(requestId);
+      final data = await async.asyncGetResult(requestId);
+      final cancelled = await async.asyncCancel(requestId);
+      final freed = await async.asyncFree(requestId);
+
+      expect(requestId, equals(1234));
+      expect(status, equals(1));
+      expect(data, isNotNull);
+      expect(data, isNotEmpty);
+      expect(cancelled, isTrue);
+      expect(freed, isTrue);
+
+      async.dispose();
+    });
+
+    test('executeAsync should poll until ready and return data', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncExecuteDelayedReady,
+      );
+      await async.initialize();
+
+      final data = await async.executeAsync(
+        1,
+        'SELECT 1',
+        pollInterval: const Duration(milliseconds: 1),
+        timeout: const Duration(seconds: 1),
+      );
+
+      expect(data, isNotNull);
+      expect(data, equals(Uint8List.fromList([7, 8, 9])));
+      async.dispose();
+    });
+  });
+
   group('AsyncError Integration', () {
     test('should preserve all error information across isolate boundary', () {
       const asyncError = AsyncError(
@@ -935,6 +1123,24 @@ void main() {
       expect(chunks.first.columnCount, equals(1));
       expect(chunks.first.columns.first.name, equals('id'));
       expect(chunks.first.rows.first.first, equals(1));
+    });
+  });
+
+  group('AsyncNativeOdbcConnection async stream', () {
+    test('streamAsync should poll and parse streamed native payload', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncStreamSupport,
+      );
+      await async.initialize();
+
+      final chunks = await async.streamAsync(1, 'SELECT 1').toList();
+      expect(chunks.length, equals(1));
+      expect(chunks.first.rowCount, equals(1));
+      expect(chunks.first.columnCount, equals(1));
+      expect(chunks.first.columns.first.name, equals('id'));
+      expect(chunks.first.rows.first.first, equals(1));
+
+      async.dispose();
     });
   });
 

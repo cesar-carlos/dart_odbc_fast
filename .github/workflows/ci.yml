@@ -56,6 +56,11 @@ jobs:
           cd native
           cargo build --release --verbose
 
+      - name: Run Rust tests
+        run: |
+          cd native
+          cargo test --workspace
+
       - name: Install dependencies
         run: dart pub get
 

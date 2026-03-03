@@ -42,6 +42,18 @@ where
     rt.block_on(f)
 }
 
+#[allow(dead_code)]
+pub fn spawn_blocking_task<F>(f: F) -> Result<tokio::task::JoinHandle<()>, OdbcError>
+where
+    F: FnOnce() + Send + 'static,
+{
+    let runtime = get_runtime()?;
+    let rt = runtime
+        .lock()
+        .map_err(|_| OdbcError::InternalError("Async runtime lock poisoned".to_string()))?;
+    Ok(rt.spawn_blocking(f))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -16,6 +16,15 @@ pub struct StreamingExecutor {
     chunk_size: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsyncStreamStatus {
+    Pending,
+    Ready,
+    Done,
+    Cancelled,
+    Error,
+}
+
 impl StreamingExecutor {
     pub fn new(chunk_size: usize) -> Self {
         Self { chunk_size }
@@ -329,6 +338,83 @@ impl StreamingExecutor {
             _join: Some(join),
         })
     }
+
+    /// Starts async cursor-based streaming with explicit poll support.
+    /// The fetch worker runs in background and pushes encoded batches into
+    /// an internal channel. Consumers can call `poll_status` to decide when
+    /// `fetch_next_chunk` is likely to return data.
+    pub fn start_async_stream(
+        &self,
+        handles: SharedHandleManager,
+        conn_id: u32,
+        sql: String,
+        fetch_size: usize,
+        chunk_size: usize,
+    ) -> Result<AsyncStreamingState> {
+        let fetch_size = fetch_size.max(1);
+        let chunk_size = chunk_size.max(1);
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+
+        let conn_arc = {
+            let Ok(guard) = handles.lock() else {
+                return Err(OdbcError::InternalError(
+                    "Failed to lock HandleManager".to_string(),
+                ));
+            };
+            guard
+                .get_connection(conn_id)
+                .map_err(|e| OdbcError::InternalError(format!("Invalid connection: {}", e)))?
+        };
+
+        let join = std::thread::spawn({
+            let sql = sql.clone();
+            let cancel = Arc::clone(&cancel_requested);
+            move || {
+                let Ok(conn_guard) = conn_arc.lock() else {
+                    let _ = tx.send(BatchedMessage::Error(
+                        "Failed to lock connection".to_string(),
+                    ));
+                    return;
+                };
+                let executor = StreamingExecutor::new(chunk_size);
+                match executor.execute_streaming_batched(
+                    &conn_guard,
+                    &sql,
+                    fetch_size,
+                    |batch| {
+                        tx.send(BatchedMessage::Batch(batch))
+                            .map_err(|e| OdbcError::InternalError(e.to_string()))
+                    },
+                    Some(cancel),
+                ) {
+                    Ok(()) => {
+                        let _ = tx.send(BatchedMessage::Done);
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let _ = tx.send(if msg.contains("cancelled") {
+                            BatchedMessage::Cancelled
+                        } else {
+                            BatchedMessage::Error(msg)
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(AsyncStreamingState {
+            receiver: rx,
+            current_batch: None,
+            offset: 0,
+            chunk_size,
+            done: false,
+            stream_error: None,
+            cancelled: false,
+            cancel_requested,
+            _join: Some(join),
+        })
+    }
 }
 
 pub(crate) enum BatchedMessage {
@@ -402,6 +488,146 @@ impl BatchedStreamingState {
         let chunk = b[self.offset..end].to_vec();
         self.offset = end;
 
+        Ok(Some(chunk))
+    }
+
+    pub fn has_more(&self) -> bool {
+        !self.done
+    }
+
+    #[cfg(test)]
+    fn from_receiver(receiver: mpsc::Receiver<BatchedMessage>, chunk_size: usize) -> Self {
+        Self {
+            receiver,
+            current_batch: None,
+            offset: 0,
+            chunk_size,
+            done: false,
+            stream_error: None,
+            cancelled: false,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
+            _join: None,
+        }
+    }
+}
+
+pub struct AsyncStreamingState {
+    receiver: mpsc::Receiver<BatchedMessage>,
+    current_batch: Option<Vec<u8>>,
+    offset: usize,
+    chunk_size: usize,
+    done: bool,
+    stream_error: Option<String>,
+    cancelled: bool,
+    cancel_requested: Arc<AtomicBool>,
+    _join: Option<JoinHandle<()>>,
+}
+
+impl AsyncStreamingState {
+    /// Requests cancellation of the async stream.
+    pub fn request_cancel(&self) {
+        self.cancel_requested.store(true, Ordering::Relaxed);
+    }
+
+    fn pull_next_message_nonblocking(&mut self) {
+        if self.done || self.stream_error.is_some() {
+            return;
+        }
+        if self.current_batch.is_some() && self.offset < self.current_batch_len() {
+            return;
+        }
+
+        match self.receiver.try_recv() {
+            Ok(BatchedMessage::Batch(b)) => {
+                self.current_batch = Some(b);
+                self.offset = 0;
+            }
+            Ok(BatchedMessage::Done) => {
+                self.done = true;
+            }
+            Ok(BatchedMessage::Cancelled) => {
+                self.done = true;
+                self.cancelled = true;
+            }
+            Ok(BatchedMessage::Error(m)) => {
+                self.stream_error = Some(m);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.done = true;
+            }
+        }
+    }
+
+    fn current_batch_len(&self) -> usize {
+        self.current_batch.as_ref().map_or(0, Vec::len)
+    }
+
+    /// Non-blocking poll status for async stream lifecycle.
+    pub fn poll_status(&mut self) -> AsyncStreamStatus {
+        self.pull_next_message_nonblocking();
+
+        if self.stream_error.is_some() {
+            return AsyncStreamStatus::Error;
+        }
+        if self.cancelled {
+            return AsyncStreamStatus::Cancelled;
+        }
+        if self.done {
+            return AsyncStreamStatus::Done;
+        }
+        if self.current_batch.is_some() && self.offset < self.current_batch_len() {
+            return AsyncStreamStatus::Ready;
+        }
+        AsyncStreamStatus::Pending
+    }
+
+    /// Blocking fetch used for compatibility with the existing stream fetch path.
+    /// If no batch is currently available, waits for the worker to produce one.
+    pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+        if let Some(ref msg) = self.stream_error {
+            return Err(OdbcError::InternalError(msg.clone()));
+        }
+        if self.done {
+            return Ok(None);
+        }
+
+        let batch_len = self.current_batch_len();
+        if self.current_batch.is_none() || self.offset >= batch_len {
+            match self.receiver.recv() {
+                Ok(BatchedMessage::Batch(b)) => {
+                    self.current_batch = Some(b);
+                    self.offset = 0;
+                }
+                Ok(BatchedMessage::Done) => {
+                    self.done = true;
+                    return Ok(None);
+                }
+                Ok(BatchedMessage::Cancelled) => {
+                    self.done = true;
+                    self.cancelled = true;
+                    return Ok(None);
+                }
+                Ok(BatchedMessage::Error(m)) => {
+                    self.stream_error = Some(m.clone());
+                    return Err(OdbcError::InternalError(m));
+                }
+                Err(_) => {
+                    self.done = true;
+                    return Ok(None);
+                }
+            }
+        }
+
+        let b = self.current_batch.as_ref().ok_or_else(|| {
+            OdbcError::InternalError(
+                "Async stream state corrupted: no batch available after receiver processing"
+                    .to_string(),
+            )
+        })?;
+        let end = (self.offset + self.chunk_size).min(b.len());
+        let chunk = b[self.offset..end].to_vec();
+        self.offset = end;
         Ok(Some(chunk))
     }
 
@@ -555,6 +781,38 @@ mod tests {
         let mut state = BatchedStreamingState::from_receiver(rx, 10);
         let e = state.fetch_next_chunk().unwrap_err();
         assert!(e.to_string().contains("test error"));
+    }
+
+    #[test]
+    fn test_async_streaming_state_poll_ready_then_done() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![10, 11, 12, 13]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 2);
+
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        let c1 = state.fetch_next_chunk().unwrap();
+        assert_eq!(c1, Some(vec![10, 11]));
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        let c2 = state.fetch_next_chunk().unwrap();
+        assert_eq!(c2, Some(vec![12, 13]));
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Done);
+        let c3 = state.fetch_next_chunk().unwrap();
+        assert_eq!(c3, None);
+    }
+
+    #[test]
+    fn test_async_streaming_state_poll_error() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("async test error".to_string()));
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 8);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Error);
+        let e = state.fetch_next_chunk().unwrap_err();
+        assert!(e.to_string().contains("async test error"));
     }
 
     #[test]

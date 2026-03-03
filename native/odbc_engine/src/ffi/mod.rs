@@ -8,13 +8,16 @@ use crate::engine::ArrayBinding;
 #[cfg(feature = "sqlserver-bcp")]
 use crate::engine::BulkCopyExecutor;
 use crate::engine::{
+    AsyncStreamStatus,
     execute_multi_result, execute_query_with_connection, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
-    list_tables, BatchedStreamingState, IsolationLevel, OdbcConnection, OdbcEnvironment,
-    SavepointDialect, StatementHandle, StreamState, StreamingExecutor, Transaction,
+    list_tables, AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel,
+    MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
+    StreamingExecutor, Transaction,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
+use crate::handles::SharedHandleManager;
 use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
@@ -27,14 +30,18 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uint};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
+use tokio::task::JoinHandle;
 
 /// Default rows per batch when caller passes 0 to odbc_stream_start_batched.
 pub const DEFAULT_FETCH_SIZE: c_uint = 100;
 
 /// Default bytes per FFI chunk when caller passes 0 to odbc_stream_start or odbc_stream_start_batched.
 pub const DEFAULT_CHUNK_SIZE: c_uint = 1024;
+const DEFAULT_METADATA_CACHE_SIZE: usize = 100;
+const DEFAULT_METADATA_CACHE_TTL_SECS: u64 = 300;
 
 /// Error information stored per connection to avoid race conditions
 #[derive(Debug, Clone)]
@@ -48,6 +55,7 @@ struct ConnectionError {
 enum StreamKind {
     Buffer(StreamState),
     Batched(BatchedStreamingState),
+    AsyncBatched(AsyncStreamingState),
 }
 
 impl StreamKind {
@@ -55,6 +63,7 @@ impl StreamKind {
         match self {
             StreamKind::Buffer(s) => s.fetch_next_chunk(),
             StreamKind::Batched(s) => s.fetch_next_chunk(),
+            StreamKind::AsyncBatched(s) => s.fetch_next_chunk(),
         }
     }
 
@@ -62,14 +71,238 @@ impl StreamKind {
         match self {
             StreamKind::Buffer(s) => s.has_more(),
             StreamKind::Batched(s) => s.has_more(),
+            StreamKind::AsyncBatched(s) => s.has_more(),
         }
     }
 
     fn cancel(&self) {
-        if let StreamKind::Batched(s) = self {
-            s.request_cancel();
+        match self {
+            StreamKind::Batched(s) => s.request_cancel(),
+            StreamKind::AsyncBatched(s) => s.request_cancel(),
+            StreamKind::Buffer(_) => {}
         }
     }
+
+    fn poll_status(&mut self) -> c_int {
+        match self {
+            StreamKind::AsyncBatched(s) => match s.poll_status() {
+                AsyncStreamStatus::Pending => STREAM_ASYNC_STATUS_PENDING,
+                AsyncStreamStatus::Ready => STREAM_ASYNC_STATUS_READY,
+                AsyncStreamStatus::Done => STREAM_ASYNC_STATUS_DONE,
+                AsyncStreamStatus::Cancelled => STREAM_ASYNC_STATUS_CANCELLED,
+                AsyncStreamStatus::Error => STREAM_ASYNC_STATUS_ERROR,
+            },
+            StreamKind::Buffer(s) => {
+                if s.has_more() {
+                    STREAM_ASYNC_STATUS_READY
+                } else {
+                    STREAM_ASYNC_STATUS_DONE
+                }
+            }
+            StreamKind::Batched(s) => {
+                if s.has_more() {
+                    STREAM_ASYNC_STATUS_READY
+                } else {
+                    STREAM_ASYNC_STATUS_DONE
+                }
+            }
+        }
+    }
+}
+
+/// Max concurrent async execute requests.
+const MAX_ASYNC_REQUESTS: usize = 64;
+
+/// Poll status codes for async execute.
+const ASYNC_STATUS_PENDING: c_int = 0;
+const ASYNC_STATUS_READY: c_int = 1;
+const ASYNC_STATUS_ERROR: c_int = -1;
+const ASYNC_STATUS_CANCELLED: c_int = -2;
+
+/// Poll status codes for async stream.
+const STREAM_ASYNC_STATUS_PENDING: c_int = 0;
+const STREAM_ASYNC_STATUS_READY: c_int = 1;
+const STREAM_ASYNC_STATUS_DONE: c_int = 2;
+const STREAM_ASYNC_STATUS_ERROR: c_int = -1;
+const STREAM_ASYNC_STATUS_CANCELLED: c_int = -2;
+
+enum AsyncRequestOutcome {
+    Pending,
+    Ready(Result<Vec<u8>>),
+    Cancelled,
+}
+
+struct AsyncRequestSlot {
+    conn_id: u32,
+    cancelled: AtomicBool,
+    outcome: Mutex<AsyncRequestOutcome>,
+    join_handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AsyncRequestSlot {
+    fn new(conn_id: u32) -> Self {
+        Self {
+            conn_id,
+            cancelled: AtomicBool::new(false),
+            outcome: Mutex::new(AsyncRequestOutcome::Pending),
+            join_handle: Mutex::new(None),
+        }
+    }
+
+    fn set_join_handle(&self, handle: JoinHandle<()>) {
+        if let Ok(mut h) = self.join_handle.lock() {
+            *h = Some(handle);
+        }
+    }
+
+    fn poll_status(&self) -> c_int {
+        let Ok(outcome) = self.outcome.lock() else {
+            return ASYNC_STATUS_ERROR;
+        };
+        match &*outcome {
+            AsyncRequestOutcome::Pending => ASYNC_STATUS_PENDING,
+            AsyncRequestOutcome::Ready(Ok(_)) => ASYNC_STATUS_READY,
+            AsyncRequestOutcome::Ready(Err(_)) => ASYNC_STATUS_ERROR,
+            AsyncRequestOutcome::Cancelled => ASYNC_STATUS_CANCELLED,
+        }
+    }
+}
+
+struct AsyncRequestManager {
+    next_request_id: u32,
+    requests: HashMap<u32, Arc<AsyncRequestSlot>>,
+}
+
+impl AsyncRequestManager {
+    fn new() -> Self {
+        Self {
+            next_request_id: 1,
+            requests: HashMap::new(),
+        }
+    }
+
+    fn allocate_request_id(&mut self) -> Option<u32> {
+        if self.requests.len() >= MAX_ASYNC_REQUESTS {
+            return None;
+        }
+
+        for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
+            let id = self.next_request_id;
+            self.next_request_id = self.next_request_id.wrapping_add(1);
+            if id != 0 && !self.requests.contains_key(&id) {
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    fn start_request(
+        &mut self,
+        handles: SharedHandleManager,
+        conn_id: u32,
+        sql: String,
+    ) -> Option<u32> {
+        let request_id = self.allocate_request_id()?;
+        let slot = Arc::new(AsyncRequestSlot::new(conn_id));
+        let slot_for_worker = Arc::clone(&slot);
+
+        let handle = match async_bridge::spawn_blocking_task(move || {
+            let result = std::panic::catch_unwind(|| run_async_query(handles, conn_id, &sql))
+                .unwrap_or_else(|_| {
+                    Err(OdbcError::InternalError(
+                        "Async request task panicked".to_string(),
+                    ))
+                });
+            let cancelled = slot_for_worker.cancelled.load(Ordering::SeqCst);
+            if let Ok(mut outcome) = slot_for_worker.outcome.lock() {
+                *outcome = if cancelled {
+                    AsyncRequestOutcome::Cancelled
+                } else {
+                    AsyncRequestOutcome::Ready(result)
+                };
+            }
+        }) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
+
+        slot.set_join_handle(handle);
+        self.requests.insert(request_id, slot);
+        Some(request_id)
+    }
+
+    fn poll(&self, request_id: u32) -> Option<c_int> {
+        self.requests
+            .get(&request_id)
+            .map(|slot| slot.poll_status())
+    }
+
+    fn cancel(&self, request_id: u32) -> bool {
+        let Some(slot) = self.requests.get(&request_id) else {
+            return false;
+        };
+        slot.cancelled.store(true, Ordering::SeqCst);
+        if let Ok(handle) = slot.join_handle.lock() {
+            if let Some(h) = handle.as_ref() {
+                h.abort();
+            }
+        }
+        if let Ok(mut outcome) = slot.outcome.lock() {
+            if matches!(*outcome, AsyncRequestOutcome::Pending) {
+                *outcome = AsyncRequestOutcome::Cancelled;
+            }
+        }
+        true
+    }
+
+    fn take_result(&self, request_id: u32) -> Option<(u32, Result<Vec<u8>>)> {
+        let slot = self.requests.get(&request_id)?;
+        let conn_id = slot.conn_id;
+        let Ok(mut outcome) = slot.outcome.lock() else {
+            return Some((
+                conn_id,
+                Err(OdbcError::InternalError(
+                    "Async request outcome lock poisoned".to_string(),
+                )),
+            ));
+        };
+
+        let current = std::mem::replace(&mut *outcome, AsyncRequestOutcome::Pending);
+        match current {
+            AsyncRequestOutcome::Ready(result) => Some((conn_id, result)),
+            AsyncRequestOutcome::Cancelled => Some((
+                conn_id,
+                Err(OdbcError::InternalError(
+                    "Async request cancelled".to_string(),
+                )),
+            )),
+            AsyncRequestOutcome::Pending => None,
+        }
+    }
+
+    fn free(&mut self, request_id: u32) -> bool {
+        let Some(slot) = self.requests.remove(&request_id) else {
+            return false;
+        };
+        if let Ok(mut handle) = slot.join_handle.lock() {
+            if let Some(h) = handle.take() {
+                h.abort();
+            }
+        }
+        true
+    }
+}
+
+fn run_async_query(handles: SharedHandleManager, conn_id: u32, sql: &str) -> Result<Vec<u8>> {
+    let handles_guard = handles
+        .lock()
+        .map_err(|_| OdbcError::InternalError("Failed to lock handles mutex".to_string()))?;
+    let conn_arc = handles_guard.get_connection(conn_id)?;
+    drop(handles_guard);
+    let conn_guard = conn_arc
+        .lock()
+        .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+    execute_query_with_connection(&conn_guard, sql)
 }
 
 struct GlobalState {
@@ -92,6 +325,8 @@ struct GlobalState {
     last_structured_error: Option<StructuredError>,
     // Per-connection errors (thread-safe isolation)
     connection_errors: HashMap<u32, ConnectionError>,
+    async_requests: AsyncRequestManager,
+    metadata_cache: MetadataCache,
     metrics: Arc<Metrics>,
     audit_logger: Arc<AuditLogger>,
 }
@@ -119,6 +354,14 @@ fn set_out_written_zero(out_written: *mut c_uint) {
 
 fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
     GLOBAL_STATE.get_or_init(|| {
+        let metadata_cache_size = read_env_usize(
+            "ODBC_METADATA_CACHE_SIZE",
+            DEFAULT_METADATA_CACHE_SIZE,
+        );
+        let metadata_cache_ttl_secs = read_env_u64(
+            "ODBC_METADATA_CACHE_TTL_SECS",
+            DEFAULT_METADATA_CACHE_TTL_SECS,
+        );
         Arc::new(Mutex::new(GlobalState {
             env: None,
             connections: HashMap::new(),
@@ -137,10 +380,31 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             last_error: None,
             last_structured_error: None,
             connection_errors: HashMap::new(),
+            async_requests: AsyncRequestManager::new(),
+            metadata_cache: MetadataCache::new(
+                metadata_cache_size,
+                Duration::from_secs(metadata_cache_ttl_secs),
+            ),
             metrics: Arc::new(Metrics::new()),
             audit_logger: Arc::new(AuditLogger::new(false)),
         }))
     })
+}
+
+fn read_env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+fn read_env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
 }
 
 /// Set error for a specific connection (thread-safe isolation)
@@ -200,7 +464,9 @@ fn get_connection_error(state: &GlobalState, conn_id: Option<u32>) -> String {
         .unwrap_or_else(|| "No error".to_string())
 }
 
-/// Get structured error for a specific connection, or fallback to global error
+/// Get structured error for a specific connection.
+/// When conn_id is Some(id): returns that connection's error only (no fallback).
+/// When conn_id is None: returns global last_structured_error.
 fn get_connection_structured_error(
     state: &GlobalState,
     conn_id: Option<u32>,
@@ -209,8 +475,9 @@ fn get_connection_structured_error(
         if let Some(conn_err) = state.connection_errors.get(&id) {
             return conn_err.structured.clone();
         }
+        // Per-connection isolation: do not fallback to global when asking for a specific conn
+        return None;
     }
-    // Fallback to global error
     state.last_structured_error.clone()
 }
 
@@ -771,6 +1038,52 @@ pub extern "C" fn odbc_get_structured_error(
     0
 }
 
+/// Get structured error for a specific connection.
+/// conn_id: connection ID (0 = use global fallback, same as odbc_get_structured_error)
+/// buffer: output buffer for serialized error
+/// buffer_len: buffer size in bytes
+/// out_written: actual bytes written
+/// Returns: 0 on success, 1 if no structured error for this connection, -1 on error, -2 if buffer too small
+#[no_mangle]
+pub extern "C" fn odbc_get_structured_error_for_connection(
+    conn_id: c_uint,
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    let conn_filter = if conn_id == 0 { None } else { Some(conn_id) };
+
+    let Some(structured_error) = get_connection_structured_error(&state, conn_filter) else {
+        unsafe {
+            *out_written = 0;
+        }
+        return 1;
+    };
+
+    let error_data = structured_error.serialize();
+
+    if error_data.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(error_data.as_ptr(), buffer, error_data.len());
+        *out_written = error_data.len() as c_uint;
+    }
+
+    0
+}
+
 /// Get metrics: query count, error count, uptime, latencies.
 /// Writes 40 bytes (5 u64 LE) to buffer: query_count, error_count,
 /// uptime_secs, total_latency_millis, avg_latency_millis.
@@ -1033,6 +1346,47 @@ pub extern "C" fn odbc_detect_driver(
     }
 }
 
+/// Get driver capabilities from connection string as JSON.
+/// conn_str: null-terminated UTF-8 connection string
+/// buffer: output buffer for JSON payload (UTF-8)
+/// buffer_len: size of buffer
+/// out_written: actual bytes written (excluding null terminator)
+/// Returns: 0 on success, -1 on error
+#[no_mangle]
+pub extern "C" fn odbc_get_driver_capabilities(
+    conn_str: *const c_char,
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if conn_str.is_null() || buffer.is_null() || out_written.is_null() || buffer_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+    let conn_str_rust = match unsafe { CStr::from_ptr(conn_str).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+    let caps = DriverCapabilities::detect_from_connection_string(conn_str_rust);
+    let json = match caps.to_json() {
+        Ok(s) => s,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+    let bytes = json.as_bytes();
+    let copy_len = bytes.len().min(buffer_len as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+        *out_written = copy_len as c_uint;
+    }
+    0
+}
+
 /// Execute query and return binary buffer
 /// conn_id: connection ID
 /// sql: null-terminated UTF-8 SQL query
@@ -1067,8 +1421,8 @@ pub extern "C" fn odbc_exec_query(
         return -1;
     };
 
-    let conn = match state.connections.get(&conn_id) {
-        Some(c) => c,
+    let handles = match state.connections.get(&conn_id) {
+        Some(c) => c.get_handles(),
         None => {
             drop(state);
             let Some(mut state) = try_lock_global_state() else {
@@ -1085,7 +1439,6 @@ pub extern "C" fn odbc_exec_query(
         }
     };
 
-    let handles = conn.get_handles();
     let Some(handles_guard) = handles.lock().ok() else {
         drop(state);
         let Some(mut state) = try_lock_global_state() else {
@@ -1184,6 +1537,138 @@ pub extern "C" fn odbc_exec_query(
             set_out_written_zero(out_written);
             -1
         }
+    }
+}
+
+/// Starts non-blocking query execution.
+/// Returns request_id (>0) on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_uint {
+    if sql.is_null() {
+        return 0;
+    }
+
+    let c_str = unsafe { CStr::from_ptr(sql) };
+    let sql_str = match c_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return 0,
+    };
+
+    let Some(mut state) = try_lock_global_state() else {
+        return 0;
+    };
+
+    let handles = match state.connections.get(&conn_id) {
+        Some(c) => c.get_handles(),
+        None => {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
+    };
+
+    state
+        .async_requests
+        .start_request(handles, conn_id, sql_str)
+        .unwrap_or(0)
+}
+
+/// Poll async request status.
+/// Returns 0 on success, -1 on invalid request/pointer.
+/// out_status: 0=pending, 1=ready, -1=error, -2=cancelled
+#[no_mangle]
+pub extern "C" fn odbc_async_poll(request_id: c_uint, out_status: *mut c_int) -> c_int {
+    if out_status.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    match state.async_requests.poll(request_id) {
+        Some(status) => {
+            unsafe {
+                *out_status = status;
+            }
+            0
+        }
+        None => -1,
+    }
+}
+
+/// Gets async request result into caller-provided buffer.
+/// Returns: 0 on success, -1 on error, -2 if buffer too small.
+#[no_mangle]
+pub extern "C" fn odbc_async_get_result(
+    request_id: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if out_buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(mut state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    let Some((conn_id, result)) = state.async_requests.take_result(request_id) else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    match result {
+        Ok(data) => {
+            if data.len() > buffer_len as usize {
+                set_out_written_zero(out_written);
+                return -2;
+            }
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                *out_written = data.len() as c_uint;
+            }
+            0
+        }
+        Err(e) => {
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            set_out_written_zero(out_written);
+            -1
+        }
+    }
+}
+
+/// Best-effort cancellation for async request.
+/// Returns 0 on success, -1 if request is unknown.
+#[no_mangle]
+pub extern "C" fn odbc_async_cancel(request_id: c_uint) -> c_int {
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+    if state.async_requests.cancel(request_id) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Frees async request resources.
+/// Returns 0 on success, -1 if request is unknown.
+#[no_mangle]
+pub extern "C" fn odbc_async_free(request_id: c_uint) -> c_int {
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    if state.async_requests.free(request_id) {
+        0
+    } else {
+        -1
     }
 }
 
@@ -1621,6 +2106,31 @@ pub extern "C" fn odbc_catalog_columns(
         }
     };
 
+    let cache_key = format!("{}:{}", conn_id, table_str);
+    if let Some(cached_data) = state.metadata_cache.get_payload(&cache_key) {
+        if cached_data.len() > buffer_len as usize {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!(
+                    "Buffer too small: need {} bytes, got {}",
+                    cached_data.len(),
+                    buffer_len
+                ),
+            );
+            return -2;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(cached_data.as_ptr(), out_buffer, cached_data.len());
+            *out_written = cached_data.len() as c_uint;
+        }
+        return 0;
+    }
+
     let handles = conn.get_handles();
     let Some(handles_guard) = handles.lock().ok() else {
         drop(state);
@@ -1663,6 +2173,7 @@ pub extern "C" fn odbc_catalog_columns(
     match list_columns(&conn_guard, table_str) {
         Ok(data) => {
             metrics.record_query(start.elapsed());
+            state.metadata_cache.cache_payload(&cache_key, &data);
             if data.len() > buffer_len as usize {
                 metrics.record_error();
                 drop(state);
@@ -2362,6 +2873,129 @@ pub extern "C" fn odbc_stream_start_batched(
             0
         }
     }
+}
+
+/// Start async batched stream execution. The query runs in a background worker and
+/// stream readiness is observable via `odbc_stream_poll_async`.
+/// Returns stream_id (>0) on success, 0 on error.
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_async(
+    conn_id: c_uint,
+    sql: *const c_char,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+) -> c_uint {
+    if sql.is_null() {
+        return 0;
+    }
+
+    // Safety: `sql` must be a valid null-terminated C string pointer
+    let c_str = unsafe { CStr::from_ptr(sql) };
+    let sql_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let Some(mut state) = try_lock_global_state() else {
+        return 0;
+    };
+
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            set_error(&mut state, format!("Invalid connection ID: {}", conn_id));
+            return 0;
+        }
+    };
+
+    let handles = conn.get_handles();
+    let fetch_size = if fetch_size > 0 {
+        fetch_size as usize
+    } else {
+        DEFAULT_FETCH_SIZE as usize
+    };
+    let chunk_size = if chunk_size > 0 {
+        chunk_size as usize
+    } else {
+        DEFAULT_CHUNK_SIZE as usize
+    };
+    let sql_owned = sql_str.to_string();
+
+    drop(state);
+
+    let executor = StreamingExecutor::new(chunk_size);
+    match executor.start_async_stream(handles, conn_id, sql_owned, fetch_size, chunk_size) {
+        Ok(async_state) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            let stream_id = {
+                let mut id = 0u32;
+                for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
+                    let candidate = state.next_stream_id;
+                    state.next_stream_id = state.next_stream_id.wrapping_add(1);
+                    if candidate != 0 && !state.streams.contains_key(&candidate) {
+                        id = candidate;
+                        break;
+                    }
+                }
+                if id == 0 {
+                    set_connection_error(
+                        &mut state,
+                        conn_id,
+                        "Failed to allocate stream ID".to_string(),
+                    );
+                    return 0;
+                }
+                id
+            };
+            state
+                .streams
+                .insert(stream_id, StreamKind::AsyncBatched(async_state));
+            state.stream_connections.insert(stream_id, conn_id);
+            stream_id
+        }
+        Err(e) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("odbc_stream_start_async failed: {}", e),
+            );
+            0
+        }
+    }
+}
+
+/// Poll async stream status.
+/// out_status: 0=pending, 1=ready, 2=done, -1=error, -2=cancelled
+/// Returns: 0 on success, non-zero on failure.
+#[no_mangle]
+pub extern "C" fn odbc_stream_poll_async(stream_id: c_uint, out_status: *mut c_int) -> c_int {
+    if out_status.is_null() {
+        return -1;
+    }
+
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let stream = match state.streams.get_mut(&stream_id) {
+        Some(s) => s,
+        None => {
+            set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
+            return -1;
+        }
+    };
+
+    let status = stream.poll_status();
+    // Safety: out_status checked for null above.
+    unsafe {
+        *out_status = status;
+    }
+    0
 }
 
 /// Fetch next chunk from stream
@@ -3250,6 +3884,50 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_get_driver_capabilities() {
+        let conn_str = CString::new("Driver={SQL Server};Server=localhost;Database=test;").unwrap();
+        let mut buffer = vec![0u8; 512];
+        let mut written: c_uint = 0;
+        let result = odbc_get_driver_capabilities(
+            conn_str.as_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(result, 0, "Driver capabilities should succeed");
+        assert!(written > 0, "Payload should not be empty");
+
+        let payload = &buffer[..written as usize];
+        let parsed: Value = serde_json::from_slice(payload).expect("Valid capabilities JSON");
+        assert_eq!(
+            parsed.get("driver_name").and_then(Value::as_str),
+            Some("SQL Server"),
+            "Should detect SQL Server"
+        );
+        assert!(
+            parsed
+                .get("supports_prepared_statements")
+                .and_then(Value::as_bool)
+                == Some(true),
+            "Should support prepared statements"
+        );
+    }
+
+    #[test]
+    fn test_ffi_get_driver_capabilities_null_conn_str() {
+        let mut buffer = vec![0u8; 256];
+        let mut written: c_uint = 0;
+        let result = odbc_get_driver_capabilities(
+            std::ptr::null(),
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(result, -1);
+        assert_eq!(written, 0);
+    }
+
+    #[test]
     fn test_ffi_init() {
         let result = odbc_init();
         assert_eq!(result, 0, "odbc_init should succeed");
@@ -3389,6 +4067,66 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_execute_async_invalid_conn() {
+        odbc_init();
+
+        let sql = CString::new("SELECT 1").expect("sql");
+        let request_id = odbc_execute_async(TEST_INVALID_ID, sql.as_ptr());
+        assert_eq!(
+            request_id, 0,
+            "Invalid connection should return request_id=0"
+        );
+    }
+
+    #[test]
+    fn test_ffi_async_poll_null_out_status() {
+        let result = odbc_async_poll(1, std::ptr::null_mut());
+        assert_eq!(result, -1, "Null out_status should return -1");
+    }
+
+    #[test]
+    fn test_ffi_async_poll_invalid_request_id() {
+        let mut status: c_int = 0;
+        let result = odbc_async_poll(TEST_INVALID_ID, &mut status);
+        assert_eq!(result, -1, "Invalid request_id should return -1");
+    }
+
+    #[test]
+    fn test_ffi_async_cancel_and_free_invalid_request_id() {
+        let cancel_result = odbc_async_cancel(TEST_INVALID_ID);
+        assert_eq!(cancel_result, -1, "Invalid request_id should fail cancel");
+
+        let free_result = odbc_async_free(TEST_INVALID_ID);
+        assert_eq!(free_result, -1, "Invalid request_id should fail free");
+    }
+
+    #[test]
+    fn test_ffi_async_get_result_null_pointers() {
+        let mut written: c_uint = 0;
+        let result_null_buf = odbc_async_get_result(1, std::ptr::null_mut(), 16, &mut written);
+        assert_eq!(result_null_buf, -1, "Null out_buffer should return -1");
+
+        let mut buf = vec![0u8; 16];
+        let result_null_written =
+            odbc_async_get_result(1, buf.as_mut_ptr(), 16, std::ptr::null_mut());
+        assert_eq!(result_null_written, -1, "Null out_written should return -1");
+    }
+
+    #[test]
+    fn test_ffi_async_get_result_invalid_request_id() {
+        let mut written: c_uint = 0;
+        let mut buf = vec![0u8; 16];
+        let result = odbc_async_get_result(
+            TEST_INVALID_ID,
+            buf.as_mut_ptr(),
+            buf.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(result, -1, "Invalid request_id should return -1");
+        assert_eq!(written, 0, "No bytes should be written on invalid request");
+    }
+
+    #[test]
     fn test_ffi_stream_start_null_sql() {
         odbc_init();
 
@@ -3469,6 +4207,37 @@ mod tests {
         let stream_id = odbc_stream_start_batched(TEST_INVALID_ID, sql.as_ptr(), 100, 1024);
 
         assert_eq!(stream_id, 0, "Invalid connection should return 0");
+    }
+
+    #[test]
+    fn test_ffi_stream_start_async_null_sql() {
+        odbc_init();
+
+        let stream_id = odbc_stream_start_async(1, std::ptr::null(), 100, 1024);
+        assert_eq!(stream_id, 0, "Null SQL should return 0");
+    }
+
+    #[test]
+    fn test_ffi_stream_start_async_invalid_conn() {
+        odbc_init();
+
+        let sql = CString::new("SELECT 1").unwrap();
+        let stream_id = odbc_stream_start_async(TEST_INVALID_ID, sql.as_ptr(), 100, 1024);
+        assert_eq!(stream_id, 0, "Invalid connection should return 0");
+    }
+
+    #[test]
+    fn test_ffi_stream_poll_async_null_out_status() {
+        let result = odbc_stream_poll_async(1, std::ptr::null_mut());
+        assert_eq!(result, -1, "Null out_status should return -1");
+    }
+
+    #[test]
+    fn test_ffi_stream_poll_async_invalid_stream() {
+        odbc_init();
+        let mut status: c_int = 0;
+        let result = odbc_stream_poll_async(TEST_INVALID_ID, &mut status);
+        assert_eq!(result, -1, "Invalid stream_id should return -1");
     }
 
     #[test]
@@ -3583,6 +4352,79 @@ mod tests {
                 crate::error::StructuredError::deserialize(&buffer[..written as usize]).unwrap();
             assert_eq!(structured.sqlstate, *b"0A000");
             assert_eq!(structured.native_code, CANCEL_UNSUPPORTED_NATIVE_CODE);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_ffi_get_structured_error_per_connection_isolation() {
+        with_structured_error_test_isolation(|| {
+            odbc_init();
+
+            // Inject error only for conn_id 100, leave global empty
+            let err_a = crate::error::StructuredError {
+                sqlstate: [b'4', b'2', b'S', b'0', b'2'],
+                native_code: 208,
+                message: "Table not found (conn 100)".to_string(),
+            };
+            {
+                let Some(mut state) = try_lock_global_state() else {
+                    panic!("Failed to lock global state");
+                };
+                state.last_structured_error = None;
+                state.last_error = None;
+                state.connection_errors.insert(
+                    100,
+                    ConnectionError {
+                        simple_message: err_a.message.clone(),
+                        structured: Some(err_a.clone()),
+                        timestamp: Instant::now(),
+                    },
+                );
+            }
+
+            let mut buffer = vec![0u8; 1024];
+            let mut written: c_uint = 0;
+
+            // conn 100: has error -> success
+            let r100 = odbc_get_structured_error_for_connection(
+                100,
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
+            assert_eq!(r100, 0, "conn 100 should have structured error");
+            assert!(written > 0);
+            let restored =
+                crate::error::StructuredError::deserialize(&buffer[..written as usize]).unwrap();
+            assert_eq!(restored.message, "Table not found (conn 100)");
+
+            // conn 200: no error -> isolation (no fallback to conn 100)
+            written = 0;
+            let r200 = odbc_get_structured_error_for_connection(
+                200,
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
+            assert_eq!(r200, 1, "conn 200 should have no error (isolation)");
+            assert_eq!(written, 0);
+
+            // conn_id 0: global fallback (empty) -> no error
+            written = 0;
+            let r0 = odbc_get_structured_error_for_connection(
+                0,
+                buffer.as_mut_ptr(),
+                buffer.len() as c_uint,
+                &mut written,
+            );
+            assert_eq!(r0, 1, "global should be empty");
+
+            // Cleanup: remove injected connection error
+            let Some(mut state) = try_lock_global_state() else {
+                return;
+            };
+            state.connection_errors.remove(&100);
         });
     }
 

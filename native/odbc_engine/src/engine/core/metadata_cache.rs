@@ -19,8 +19,15 @@ pub struct TableSchema {
 
 pub struct MetadataCache {
     schemas: Arc<Mutex<LruCache<String, TableSchema>>>,
+    payloads: Arc<Mutex<LruCache<String, CachedPayload>>>,
     ttl: Duration,
     max_size: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CachedPayload {
+    data: Vec<u8>,
+    cached_at: Instant,
 }
 
 impl MetadataCache {
@@ -30,6 +37,7 @@ impl MetadataCache {
         });
         Self {
             schemas: Arc::new(Mutex::new(LruCache::new(capacity))),
+            payloads: Arc::new(Mutex::new(LruCache::new(capacity))),
             ttl,
             max_size: max_size.max(1),
         }
@@ -50,6 +58,30 @@ impl MetadataCache {
     pub fn cache_schema(&self, table: &str, schema: TableSchema) {
         if let Ok(mut guard) = self.schemas.lock() {
             guard.put(table.to_string(), schema);
+        }
+    }
+
+    pub fn get_payload(&self, key: &str) -> Option<Vec<u8>> {
+        let Ok(mut guard) = self.payloads.lock() else {
+            return None;
+        };
+        let payload = guard.get(key)?.clone();
+        if payload.cached_at.elapsed() > self.ttl {
+            guard.pop(key);
+            return None;
+        }
+        Some(payload.data)
+    }
+
+    pub fn cache_payload(&self, key: &str, data: &[u8]) {
+        if let Ok(mut guard) = self.payloads.lock() {
+            guard.put(
+                key.to_string(),
+                CachedPayload {
+                    data: data.to_vec(),
+                    cached_at: Instant::now(),
+                },
+            );
         }
     }
 
@@ -111,5 +143,21 @@ mod tests {
         c.cache_schema("t1", s);
         std::thread::sleep(Duration::from_millis(10));
         assert!(c.get_schema("t1").is_none());
+    }
+
+    #[test]
+    fn test_metadata_cache_payload_cache_and_get() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        c.cache_payload("1:users", &[1, 2, 3, 4]);
+        let got = c.get_payload("1:users").expect("payload should be present");
+        assert_eq!(got, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_metadata_cache_payload_ttl_expiry() {
+        let c = MetadataCache::new(10, Duration::from_millis(1));
+        c.cache_payload("1:users", &[9, 8, 7]);
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(c.get_payload("1:users").is_none());
     }
 }
