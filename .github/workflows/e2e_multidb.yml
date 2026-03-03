@@ -154,6 +154,7 @@ jobs:
           sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
       - name: Install SQL Server ODBC
         run: |
+          sudo rm -f /usr/share/keyrings/microsoft-prod.gpg /etc/apt/sources.list.d/microsoft-prod.list
           curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
           curl -fsSL https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
           sudo apt-get update
