@@ -150,7 +150,8 @@ jobs:
       - name: Install ODBC and Oracle Instant Client ODBC
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm libaio1 unzip curl
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm unzip curl
+          sudo apt-get install -y libaio1 || sudo apt-get install -y libaio1t64
           curl -fsSL -o /tmp/ic-basiclite.zip "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-basiclite-linux.x64-23.6.0.24.10.zip"
           curl -fsSL -o /tmp/ic-odbc.zip "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-odbc-linux.x64-23.6.0.24.10.zip"
           sudo mkdir -p /opt/oracle
