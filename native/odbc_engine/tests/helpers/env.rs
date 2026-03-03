@@ -117,6 +117,36 @@ pub fn build_sqlite_conn_str(database_path: &str) -> String {
     format!("Driver={{SQLite3}};Database={};", database_path)
 }
 
+/// Build Oracle connection string from components.
+/// Driver: Oracle Instant Client ODBC.
+pub fn build_oracle_conn_str(
+    server: &str,
+    service_name: &str,
+    username: &str,
+    password: &str,
+    port: Option<u16>,
+) -> String {
+    let port_value = port.unwrap_or(1521);
+    format!(
+        "Driver={{Oracle Instant Client ODBC}};Dbq=//{}:{}/{};Uid={};Pwd={};",
+        server, port_value, service_name, username, password
+    )
+}
+
+/// Build Sybase SQL Anywhere connection string from components.
+/// Driver: SQL Anywhere 17.
+pub fn build_sybase_conn_str(
+    server_name: &str,
+    database: &str,
+    username: &str,
+    password: &str,
+) -> String {
+    format!(
+        "Driver={{SQL Anywhere 17}};ServerName={};Database={};Uid={};Pwd={};",
+        server_name, database, username, password
+    )
+}
+
 /// Get SQLite connection string for E2E tests.
 /// Env vars: SQLITE_TEST_DATABASE (path to .db file).
 /// Default: /tmp/odbc_test.db (ephemeral for CI).
@@ -150,6 +180,52 @@ pub fn get_mysql_test_dsn() -> Option<String> {
         &username,
         &password,
         port.or(Some(3306)),
+    ))
+}
+
+/// Get Oracle connection string for E2E tests.
+/// Env vars: ORACLE_TEST_SERVER, ORACLE_TEST_SERVICE_NAME, ORACLE_TEST_USER,
+/// ORACLE_TEST_PASSWORD, ORACLE_TEST_PORT.
+/// CI defaults: localhost:1521/FREEPDB1, system/OdbcTest123!
+pub fn get_oracle_test_dsn() -> Option<String> {
+    if let Some(dsn) = get_test_dsn() {
+        return Some(dsn);
+    }
+    let server = std::env::var("ORACLE_TEST_SERVER").unwrap_or_else(|_| "localhost".to_string());
+    let service_name =
+        std::env::var("ORACLE_TEST_SERVICE_NAME").unwrap_or_else(|_| "FREEPDB1".to_string());
+    let username = std::env::var("ORACLE_TEST_USER").unwrap_or_else(|_| "system".to_string());
+    let password =
+        std::env::var("ORACLE_TEST_PASSWORD").unwrap_or_else(|_| "OdbcTest123!".to_string());
+    let port = std::env::var("ORACLE_TEST_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok());
+    Some(build_oracle_conn_str(
+        &server,
+        &service_name,
+        &username,
+        &password,
+        port.or(Some(1521)),
+    ))
+}
+
+/// Get Sybase SQL Anywhere connection string for E2E tests.
+/// Env vars: SYBASE_TEST_SERVER_NAME, SYBASE_TEST_DATABASE, SYBASE_TEST_USER,
+/// SYBASE_TEST_PASSWORD.
+pub fn get_sybase_test_dsn() -> Option<String> {
+    if let Some(dsn) = get_test_dsn() {
+        return Some(dsn);
+    }
+    let server_name =
+        std::env::var("SYBASE_TEST_SERVER_NAME").unwrap_or_else(|_| "demo".to_string());
+    let database = std::env::var("SYBASE_TEST_DATABASE").unwrap_or_else(|_| "demo".to_string());
+    let username = std::env::var("SYBASE_TEST_USER").unwrap_or_else(|_| "dba".to_string());
+    let password = std::env::var("SYBASE_TEST_PASSWORD").unwrap_or_else(|_| "sql".to_string());
+    Some(build_sybase_conn_str(
+        &server_name,
+        &database,
+        &username,
+        &password,
     ))
 }
 
@@ -196,5 +272,37 @@ mod tests {
         let s = build_sqlite_conn_str("/tmp/test.db");
         assert!(s.contains("SQLite3"));
         assert!(s.contains("/tmp/test.db"));
+    }
+
+    #[test]
+    fn test_build_oracle_conn_str() {
+        let s = build_oracle_conn_str("localhost", "FREEPDB1", "system", "p", Some(1521));
+        assert!(s.contains("Oracle Instant Client ODBC"));
+        assert!(s.contains("Dbq=//localhost:1521/FREEPDB1"));
+        assert!(s.contains("Uid=system"));
+    }
+
+    #[test]
+    fn test_build_sybase_conn_str() {
+        let s = build_sybase_conn_str("demo", "demo", "dba", "sql");
+        assert!(s.contains("SQL Anywhere 17"));
+        assert!(s.contains("ServerName=demo"));
+        assert!(s.contains("Uid=dba"));
+    }
+
+    #[test]
+    fn test_get_oracle_test_dsn_returns_some() {
+        let dsn = get_oracle_test_dsn();
+        assert!(dsn.is_some());
+        let s = dsn.unwrap();
+        assert!(s.contains("Oracle") || s.contains("oracle"));
+    }
+
+    #[test]
+    fn test_get_sybase_test_dsn_returns_some() {
+        let dsn = get_sybase_test_dsn();
+        assert!(dsn.is_some());
+        let s = dsn.unwrap();
+        assert!(s.contains("SQL Anywhere") || s.contains("sybase"));
     }
 }

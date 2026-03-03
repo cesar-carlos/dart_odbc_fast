@@ -110,7 +110,7 @@ jobs:
           if [ -f /tmp/mysql-apt.deb ]; then
             echo "mysql-apt-config mysql-apt-config/select-product select mysql-tools" | sudo debconf-set-selections
             sudo DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb || sudo apt-get install -f -y
-            sudo apt-get update
+            sudo apt-get update || true
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-connector-odbc || true
           fi
           odbcinst -q -d || true
@@ -118,6 +118,69 @@ jobs:
         env:
           ENABLE_E2E_TESTS: "1"
           ODBC_TEST_DSN: "Driver={MySQL ODBC 8.0 Driver};Server=localhost;Port=3306;Database=odbc_test;User=root;Password=mysql;"
+        run: cd native && cargo test e2e_multi_db -- --nocapture
+
+  e2e-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    continue-on-error: true
+    services:
+      oracle:
+        image: gvenzl/oracle-xe:21-slim-faststart
+        ports:
+          - 1521:1521
+        env:
+          ORACLE_PASSWORD: "OdbcTest123!"
+        options: >-
+          --health-cmd "timeout 1 bash -c '</dev/tcp/localhost/1521' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+      - name: Install ODBC and Oracle Instant Client ODBC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm libaio1 unzip curl
+          curl -fsSL -o /tmp/ic-basiclite.zip "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-basiclite-linux.x64-23.6.0.24.10.zip"
+          curl -fsSL -o /tmp/ic-odbc.zip "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-odbc-linux.x64-23.6.0.24.10.zip"
+          sudo mkdir -p /opt/oracle
+          sudo unzip -oq /tmp/ic-basiclite.zip -d /opt/oracle
+          sudo unzip -oq /tmp/ic-odbc.zip -d /opt/oracle
+          echo "/opt/oracle/instantclient_23_6" | sudo tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null
+          sudo ldconfig
+          printf "[Oracle Instant Client ODBC]\nDescription=Oracle Instant Client ODBC\nDriver=/opt/oracle/instantclient_23_6/libsqora.so.23.1\nSetup=/opt/oracle/instantclient_23_6/libsqorasb23.so\nFileUsage=1\n" | sudo tee -a /etc/odbcinst.ini > /dev/null
+          odbcinst -q -d || true
+      - name: Wait for Oracle
+        run: |
+          for i in $(seq 1 45); do
+            if (echo > /dev/tcp/localhost/1521) 2>/dev/null; then
+              echo "Oracle listener is reachable"
+              exit 0
+            fi
+            sleep 4
+          done
+          echo "Oracle service did not become ready in time"
+          exit 1
+      - name: Run E2E (Oracle)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DB: "oracle"
+          ORACLE_TEST_SERVER: "localhost"
+          ORACLE_TEST_PORT: "1521"
+          ORACLE_TEST_SERVICE_NAME: "XEPDB1"
+          ORACLE_TEST_USER: "system"
+          ORACLE_TEST_PASSWORD: "OdbcTest123!"
+          LD_LIBRARY_PATH: "/opt/oracle/instantclient_23_6"
         run: cd native && cargo test e2e_multi_db -- --nocapture
 
   e2e-mssql:
@@ -158,7 +221,7 @@ jobs:
           curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
           curl -fsSL https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
           sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql17
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 || sudo ACCEPT_EULA=Y apt-get install -y msodbcsql17
       - name: Wait for SQL Server
         run: |
           for i in $(seq 1 30); do
@@ -169,11 +232,11 @@ jobs:
       - name: Run E2E (SQL Server)
         env:
           ENABLE_E2E_TESTS: "1"
-          ODBC_TEST_DSN: "Driver={ODBC Driver 17 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;"
+          ODBC_TEST_DSN: "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;Encrypt=no;"
         run: cd native && cargo test e2e_multi_db -- --nocapture
       - name: Run BCP fallback E2E (sqlserver-bcp)
         env:
           ENABLE_E2E_TESTS: "1"
-          ODBC_TEST_DSN: "Driver={ODBC Driver 17 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;"
+          ODBC_TEST_DSN: "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;Encrypt=no;"
           BCP_E2E_ROWS: "1000"
         run: cd native && cargo test --features sqlserver-bcp e2e_bcp -- --nocapture

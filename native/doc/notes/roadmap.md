@@ -675,7 +675,7 @@ impl BulkCopyExecutor {
 - Driver capabilities detection
 
 **Critérios de Aceite**:
-- [x] 5 bancos testados em CI/CD
+- [ ] 5 bancos testados em CI/CD (job Oracle adicionada em CI; aguardando run verde para fechar)
 - [x] 80%+ testes passam em todos os bancos
 - [x] Documentação de quirks por banco
 - [x] Exemplos de connection strings
@@ -844,7 +844,7 @@ impl BulkCopyExecutor {
 ### 9.4 Fase 12 (BCP + Multi-DB)
 
 - [x] BCP nativo 2x+ mais rápido que ArrayBinding
-- [ ] 5 bancos testados em CI/CD (atual: 4 — SQL Server, PostgreSQL, MySQL, SQLite; 5º: Oracle/Sybase opcional)
+- [ ] 5 bancos testados em CI/CD (Oracle job adicionada em `e2e_multidb.yml`, ainda opcional/`continue-on-error` até estabilidade)
 - [x] 80%+ testes passam em todos os bancos (3 testes multi-db: connect/select/DDL)
 - [x] Documentação cross-database (`native/doc/cross_database.md`)
 
@@ -853,6 +853,10 @@ impl BulkCopyExecutor {
 >
 > Doc cross-database (2026-03-03): connection strings, quirks (DROP TABLE,
 > savepoints), feature matrix, CI matrix, driver capabilities.
+>
+> Atualização (2026-03-03): adicionada job `e2e-oracle` no workflow
+> `e2e_multidb.yml` + suporte `ODBC_TEST_DB=oracle|sybase` nos helpers E2E.
+> Critério de 5 bancos permanece aberto até run consistente em CI.
 
 ---
 

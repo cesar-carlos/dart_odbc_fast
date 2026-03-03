@@ -1,13 +1,18 @@
-//! E2E basic tests that run against any configured database (SQL Server, PostgreSQL, MySQL).
+//! E2E basic tests that run against any configured database
+//! (SQL Server, PostgreSQL, MySQL, SQLite, Oracle, Sybase).
 //!
 //! Set ENABLE_E2E_TESTS=1 and one of:
 //! - ODBC_TEST_DSN (full connection string)
 //! - ODBC_TEST_DB=postgres with POSTGRES_TEST_* (or docker defaults)
 //! - ODBC_TEST_DB=mysql with MYSQL_TEST_* (or docker defaults)
+//! - ODBC_TEST_DB=oracle with ORACLE_TEST_* (optional)
+//! - ODBC_TEST_DB=sybase with SYBASE_TEST_* (optional)
 //! - SQLSERVER_TEST_* (or defaults)
 
 mod helpers;
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, sql_drop_table_if_exists};
+use helpers::e2e::{
+    get_connection_and_db_type, should_run_e2e_tests, sql_drop_table_if_exists, DatabaseType,
+};
 use odbc_engine::engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
@@ -57,7 +62,13 @@ fn test_multi_db_select_one() {
         .expect("get_connection");
     let odbc_conn = conn_arc.lock().expect("lock");
 
-    let buffer = execute_query_with_connection(odbc_conn.connection(), "SELECT 1 AS value")
+    let select_one_sql = if db_type == DatabaseType::Oracle {
+        "SELECT 1 AS value FROM DUAL"
+    } else {
+        "SELECT 1 AS value"
+    };
+
+    let buffer = execute_query_with_connection(odbc_conn.connection(), select_one_sql)
         .expect("Failed to execute SELECT 1");
     let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode result");
 

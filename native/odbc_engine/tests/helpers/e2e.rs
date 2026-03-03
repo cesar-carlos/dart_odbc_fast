@@ -1,8 +1,8 @@
 /// Helper functions for E2E tests.
 /// Provides utilities to check whether E2E tests can run (connection available).
 use super::env::{
-    get_mysql_test_dsn, get_postgresql_test_dsn, get_sqlite_test_dsn, get_sqlserver_test_dsn,
-    get_test_dsn,
+    get_mysql_test_dsn, get_oracle_test_dsn, get_postgresql_test_dsn, get_sqlite_test_dsn,
+    get_sqlserver_test_dsn, get_sybase_test_dsn, get_test_dsn,
 };
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 use odbc_engine::test_helpers::load_dotenv;
@@ -69,7 +69,8 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
 }
 
 /// Gets the connection string and detected database type.
-/// Uses ODBC_TEST_DSN if set; otherwise ODBC_TEST_DB (postgres|mysql) or SQL Server defaults.
+/// Uses ODBC_TEST_DSN if set; otherwise ODBC_TEST_DB
+/// (postgres|mysql|sqlite|oracle|sybase) or SQL Server defaults.
 #[allow(dead_code)]
 pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
     load_dotenv();
@@ -94,6 +95,14 @@ pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
         Some("sqlite") => {
             let s = get_sqlite_test_dsn()?;
             (s, DatabaseType::SQLite)
+        }
+        Some("oracle") => {
+            let s = get_oracle_test_dsn()?;
+            (s, DatabaseType::Oracle)
+        }
+        Some("sybase") => {
+            let s = get_sybase_test_dsn()?;
+            (s, DatabaseType::Sybase)
         }
         _ => {
             let s = get_sqlserver_test_dsn()?;
@@ -167,6 +176,12 @@ pub fn sql_drop_table_if_exists(table_name: &str, db_type: DatabaseType) -> Stri
             format!(
                 "IF OBJECT_ID(N'{}', N'U') IS NOT NULL DROP TABLE {}",
                 table_name, table_name
+            )
+        }
+        DatabaseType::Oracle => {
+            format!(
+                "BEGIN EXECUTE IMMEDIATE 'DROP TABLE {}'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;",
+                table_name
             )
         }
         _ => format!("DROP TABLE IF EXISTS {}", table_name),

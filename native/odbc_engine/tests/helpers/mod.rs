@@ -8,7 +8,8 @@ pub use e2e::{
 };
 #[allow(unused_imports)]
 pub use env::{
-    build_mysql_conn_str, build_postgresql_conn_str, build_sqlite_conn_str,
-    build_sqlserver_conn_str, get_mysql_test_dsn, get_postgresql_test_dsn, get_sqlite_test_dsn,
-    get_sqlserver_test_dsn, get_test_dsn,
+    build_mysql_conn_str, build_oracle_conn_str, build_postgresql_conn_str, build_sqlite_conn_str,
+    build_sqlserver_conn_str, build_sybase_conn_str, get_mysql_test_dsn, get_oracle_test_dsn,
+    get_postgresql_test_dsn, get_sqlite_test_dsn, get_sqlserver_test_dsn, get_sybase_test_dsn,
+    get_test_dsn,
 };

@@ -12,7 +12,7 @@ The ODBC engine supports multiple databases via ODBC drivers. This document desc
 | PostgreSQL | ✅ | PostgreSQL Unicode | Full support |
 | MySQL | ⚠️ | MySQL ODBC 8.0 Driver | `continue-on-error` in CI (driver setup) |
 | SQLite | ✅ | SQLite3 (libsqliteodbc) | File-based, no server; full support |
-| Oracle | ❌ | Oracle ODBC | Optional, not in CI |
+| Oracle | ⚠️ | Oracle Instant Client ODBC | CI job added as optional (`continue-on-error`) |
 | Sybase SQL Anywhere | ❌ | SQL Anywhere | Optional, not in CI |
 
 ---
@@ -58,6 +58,17 @@ Driver={SQLite3};Database=/tmp/odbc_test.db;
 **Environment variables**: `ODBC_TEST_DSN` or `ODBC_TEST_DB=sqlite` with `SQLITE_TEST_DATABASE` (default `/tmp/odbc_test.db`).
 
 **Note**: Requires `libsqliteodbc` on Linux. No server; file-based database.
+
+### Oracle
+
+```text
+Driver={Oracle Instant Client ODBC};Dbq=//localhost:1521/XEPDB1;Uid=system;Pwd=YourPassword;
+```
+
+**Environment variables**: `ODBC_TEST_DSN` or `ODBC_TEST_DB=oracle` with
+`ORACLE_TEST_SERVER`, `ORACLE_TEST_PORT` (default 1521),
+`ORACLE_TEST_SERVICE_NAME` (default `FREEPDB1`),
+`ORACLE_TEST_USER`, `ORACLE_TEST_PASSWORD`.
 
 ---
 
@@ -111,6 +122,7 @@ The `e2e_multidb.yml` workflow runs E2E tests against:
 2. **PostgreSQL** (postgres:16-alpine, odbc-postgresql)
 3. **MySQL** (mysql:8.0, mysql-connector-odbc) — `continue-on-error: true`
 4. **SQL Server** (mcr.microsoft.com/mssql/server:2022, msodbcsql17)
+5. **Oracle** (gvenzl/oracle-xe + Oracle Instant Client ODBC) — `continue-on-error: true`
 
 Run locally:
 
@@ -144,14 +156,17 @@ Detection is heuristic (connection string substring). See `engine/core/driver_ca
 
 ---
 
-## 5th Database (Future)
+## 5th Database (Progress)
 
-To reach 5 bancos in CI, add **Oracle** or **Sybase SQL Anywhere**:
+To reach 5 bancos in CI with strict pass criteria:
 
-- **Oracle**: Requires Oracle Instant Client + ODBC driver; licensing considerations for CI. Connection string format: `Driver={Oracle ODBC Driver};Dbq=//host:port/sid;Uid=user;Pwd=pass;`
+- **Oracle**: Job scaffold is now in `e2e_multidb.yml` (optional). Promote to required after consistent green runs.
 - **Sybase SQL Anywhere**: Docker image available; driver `SQL Anywhere 17`. Connection string: `Driver={SQL Anywhere 17};ServerName=...;Database=...;Uid=...;Pwd=...;`
 
-Add `get_oracle_test_dsn()` / `get_sybase_test_dsn()` in `helpers/env.rs`, extend `get_connection_and_db_type` for `ODBC_TEST_DB=oracle|sybase`, and add a CI job in `e2e_multidb.yml`.
+Implemented:
+- `get_oracle_test_dsn()` and `get_sybase_test_dsn()` in `helpers/env.rs`
+- `ODBC_TEST_DB=oracle|sybase` routing in `get_connection_and_db_type()`
+- Oracle-safe SQL in `e2e_multi_db_basic_test.rs` (`SELECT ... FROM DUAL`, Oracle drop guard)
 
 ---
 
