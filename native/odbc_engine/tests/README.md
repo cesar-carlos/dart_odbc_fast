@@ -66,12 +66,15 @@ Tests for protocol version management:
 ## Running Tests
 
 ### From project root:
-```powershell
+```bash
 # Run native tests (debug build)
-.\scripts\test_native.ps1
+python scripts/test_native.py
 
 # Run with release build
-.\scripts\test_native.ps1 -Release
+python scripts/test_native.py --release
+
+# Run only FFI tests
+python scripts/test_native.py --ffi-only
 ```
 
 ### From `native/odbc_engine`:
@@ -231,14 +234,14 @@ fn test_my_scenario() {
 
 To generate coverage (HTML + LCOV) with [cargo-tarpaulin](https://github.com/xd009642/tarpaulin):
 
-```powershell
-.\scripts\run_coverage.ps1
+```bash
+python native/odbc_engine/scripts/run_coverage.py
 ```
 
 If `cargo-tarpaulin` is not installed, run:
 
-```powershell
-.\scripts\run_coverage.ps1 -InstallTools
+```bash
+python native/odbc_engine/scripts/run_coverage.py --install-tools
 ```
 
 Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.

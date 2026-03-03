@@ -1,4 +1,4 @@
-﻿# BUILD.md - Build and Development
+# BUILD.md - Build and Development
 
 Practical guide to prepare the environment, compile the Rust engine, and validate the Dart package.
 
@@ -71,6 +71,32 @@ dart run ffigen -v info
 ```
 
 Config file: `ffigen.yaml`
+
+## Helper Scripts (Cross-Platform)
+
+Python scripts are provided for common development tasks and work on Windows, Linux, and macOS:
+
+```bash
+# Build Rust + FFI bindings
+python scripts/build.py
+
+# Run all tests (build Rust first)
+python scripts/test_all.py
+
+# Run only unit tests
+python scripts/test_unit.py
+
+# Run native Rust tests
+python scripts/test_native.py
+
+# Validate everything
+python scripts/validate_all.py
+
+# Quick artifact check
+python scripts/validate_all.py --artifacts-only
+```
+
+For detailed usage and all available scripts, see [scripts/README.md](../scripts/README.md).
 
 ## Tests
 

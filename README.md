@@ -434,17 +434,13 @@ cd ..
 dart test
 ```
 
-Windows helper script:
-
-```powershell
-.\scripts\build.ps1
-```
-
-Linux helper script:
+Cross-platform Python helper script:
 
 ```bash
-./scripts/build.sh
+python scripts/build.py
 ```
+
+For more script options, see [scripts/README.md](scripts/README.md)
 
 ## Testing
 

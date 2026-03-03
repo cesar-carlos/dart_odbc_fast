@@ -54,10 +54,10 @@ git tag -a v1.1.0 -m "Release v1.1.0"
 git push origin v1.1.0
 ```
 
-PowerShell helper (validates pubspec/changelog before tagging):
+Python helper (validates pubspec/changelog before tagging):
 
-```powershell
-.\scripts\create_release.ps1 1.1.0
+```bash
+python scripts/create_release.py 1.1.0
 ```
 
 ## References

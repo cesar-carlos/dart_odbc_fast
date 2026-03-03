@@ -100,10 +100,10 @@ git push origin vX.Y.Z
 dart pub publish
 ```
 
-PowerShell helper (repo root):
+Python helper (cross-platform):
 
-```powershell
-.\scripts\create_release.ps1 1.1.0
+```bash
+python scripts/create_release.py 1.1.0
 ```
 
 This helper validates tag format, validates `pubspec.yaml` and `CHANGELOG.md`, then creates and pushes the tag.
