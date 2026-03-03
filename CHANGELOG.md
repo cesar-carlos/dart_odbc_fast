@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - _None_
+
+## [1.1.1] - 2026-03-03
+
+### Changed
+- Documentation updates and release automation alignment
 
 ## [1.1.0] - 2026-02-19
 
