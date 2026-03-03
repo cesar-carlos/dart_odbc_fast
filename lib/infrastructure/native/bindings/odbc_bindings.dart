@@ -107,6 +107,18 @@ class OdbcBindings {
     } on Object catch (_) {
       _odbc_get_driver_capabilities_ptr = null;
     }
+    try {
+      _odbc_metadata_cache_enable_ptr =
+          _dylib.lookup('odbc_metadata_cache_enable');
+      _odbc_metadata_cache_stats_ptr =
+          _dylib.lookup('odbc_metadata_cache_stats');
+      _odbc_metadata_cache_clear_ptr =
+          _dylib.lookup('odbc_metadata_cache_clear');
+    } on Object catch (_) {
+      _odbc_metadata_cache_enable_ptr = null;
+      _odbc_metadata_cache_stats_ptr = null;
+      _odbc_metadata_cache_clear_ptr = null;
+    }
   }
   final ffi.DynamicLibrary _dylib;
 
@@ -223,6 +235,12 @@ class OdbcBindings {
       _odbc_audit_get_status_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_get_driver_capabilities_func>>?
       _odbc_get_driver_capabilities_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_enable_func>>?
+      _odbc_metadata_cache_enable_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_stats_func>>?
+      _odbc_metadata_cache_stats_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_clear_func>>?
+      _odbc_metadata_cache_clear_ptr;
 
   bool get supportsAuditApi =>
       _odbc_audit_enable_ptr != null &&
@@ -232,6 +250,11 @@ class OdbcBindings {
 
   bool get supportsDriverCapabilitiesApi =>
       _odbc_get_driver_capabilities_ptr != null;
+
+  bool get supportsMetadataCacheApi =>
+      _odbc_metadata_cache_enable_ptr != null &&
+      _odbc_metadata_cache_stats_ptr != null &&
+      _odbc_metadata_cache_clear_ptr != null;
 
   bool get supportsStructuredErrorForConnection =>
       _odbc_get_structured_error_for_connection_ptr != null;
@@ -876,6 +899,43 @@ class OdbcBindings {
       outWritten,
     );
   }
+
+  int odbc_metadata_cache_enable(int maxEntries, int ttlSeconds) {
+    final ptr = _odbc_metadata_cache_enable_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<int Function(int, int)>()(maxEntries, ttlSeconds);
+  }
+
+  int odbc_metadata_cache_stats(
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_metadata_cache_stats_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(
+      buffer,
+      bufferLen,
+      outWritten,
+    );
+  }
+
+  int odbc_metadata_cache_clear() {
+    final ptr = _odbc_metadata_cache_clear_ptr;
+    if (ptr == null) {
+      return -1;
+    }
+    return ptr.asFunction<int Function()>()();
+  }
 }
 
 typedef odbc_init_func = ffi.Int32 Function();
@@ -1116,5 +1176,15 @@ typedef odbc_get_driver_capabilities_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
 );
+typedef odbc_metadata_cache_enable_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_metadata_cache_stats_func = ffi.Int32 Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_metadata_cache_clear_func = ffi.Int32 Function();
 
 final class Utf8 extends ffi.Opaque {}

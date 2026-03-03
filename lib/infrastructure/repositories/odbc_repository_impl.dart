@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/connection.dart';
@@ -667,6 +668,35 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   List<ParamValue> _toParamValues(List<dynamic> params) =>
       paramValuesFromObjects(params);
+
+  Map<String, Object?>? _decodeJsonMap(String payload) {
+    final decoded = jsonDecode(payload);
+    if (decoded is! Map<String, dynamic>) {
+      return null;
+    }
+    return decoded.map<String, Object?>(
+      MapEntry<String, Object?>.new,
+    );
+  }
+
+  List<Map<String, Object?>>? _decodeJsonMapList(String payload) {
+    final decoded = jsonDecode(payload);
+    if (decoded is! List<dynamic>) {
+      return null;
+    }
+    final items = <Map<String, Object?>>[];
+    for (final item in decoded) {
+      if (item is! Map<String, dynamic>) {
+        return null;
+      }
+      items.add(
+        item.map<String, Object?>(
+          MapEntry<String, Object?>.new,
+        ),
+      );
+    }
+    return items;
+  }
 
   @override
   Future<Result<int>> beginTransaction(
@@ -1933,6 +1963,684 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     } on Exception catch (e) {
       return Failure<PreparedStatementMetrics, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Map<String, String>>> getVersion() async {
+    try {
+      final version = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getVersion()
+          : (_native as NativeOdbcConnection).getVersion();
+      if (version == null ||
+          (version['api'] ?? '').isEmpty && (version['abi'] ?? '').isEmpty) {
+        return await _convertNativeErrorToFailure<Map<String, String>>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to get native engine version',
+        );
+      }
+      return Success(version);
+    } on Exception catch (e) {
+      return Failure<Map<String, String>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> validateConnectionString(String connectionString) async {
+    if (connectionString.trim().isEmpty) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Connection string cannot be empty'),
+      );
+    }
+    try {
+      final validationError = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .validateConnectionString(connectionString)
+          : (_native as NativeOdbcConnection)
+              .validateConnectionString(connectionString);
+      if (validationError == null || validationError.trim().isEmpty) {
+        return const Success(unit);
+      }
+      return Failure<Unit, OdbcError>(
+        ValidationError(message: validationError),
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        ValidationError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getDriverCapabilities(
+    String connectionString,
+  ) async {
+    if (connectionString.trim().isEmpty) {
+      return const Failure<Map<String, Object?>, OdbcError>(
+        ValidationError(message: 'Connection string cannot be empty'),
+      );
+    }
+    try {
+      final payload = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .getDriverCapabilitiesJson(connectionString)
+          : (_native as NativeOdbcConnection)
+              .getDriverCapabilitiesJson(connectionString);
+
+      if (payload == null || payload.isEmpty) {
+        return await _convertNativeErrorToFailure<Map<String, Object?>>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Driver capabilities API is unavailable',
+        );
+      }
+
+      final decoded = _decodeJsonMap(payload);
+      if (decoded == null) {
+        return const Failure<Map<String, Object?>, OdbcError>(
+          QueryError(message: 'Invalid driver capabilities payload format'),
+        );
+      }
+      return Success(decoded);
+    } on FormatException catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: 'Invalid driver capabilities JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> setAuditEnabled({required bool enabled}) async {
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).setAuditEnabled(
+              enabled: enabled,
+            )
+          : (_native as NativeOdbcConnection).setAuditEnabled(enabled: enabled);
+      if (ok) {
+        return const Success(unit);
+      }
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to update audit state',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getAuditStatus() async {
+    try {
+      final payload = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getAuditStatusJson()
+          : (_native as NativeOdbcConnection).getAuditStatusJson();
+      if (payload == null || payload.isEmpty) {
+        return await _convertNativeErrorToFailure<Map<String, Object?>>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to read audit status',
+        );
+      }
+      final decoded = _decodeJsonMap(payload);
+      if (decoded == null) {
+        return const Failure<Map<String, Object?>, OdbcError>(
+          QueryError(message: 'Invalid audit status payload format'),
+        );
+      }
+      return Success(decoded);
+    } on FormatException catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: 'Invalid audit status JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({
+    int limit = 0,
+  }) async {
+    try {
+      final payload = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).getAuditEventsJson(
+              limit: limit,
+            )
+          : (_native as NativeOdbcConnection).getAuditEventsJson(limit: limit);
+      if (payload == null || payload.isEmpty) {
+        return await _convertNativeErrorToFailure<List<Map<String, Object?>>>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to read audit events',
+        );
+      }
+      final decoded = _decodeJsonMapList(payload);
+      if (decoded == null) {
+        return const Failure<List<Map<String, Object?>>, OdbcError>(
+          QueryError(message: 'Invalid audit events payload format'),
+        );
+      }
+      return Success(decoded);
+    } on FormatException catch (e) {
+      return Failure<List<Map<String, Object?>>, OdbcError>(
+        QueryError(message: 'Invalid audit events JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<List<Map<String, Object?>>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> clearAuditEvents() async {
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).clearAuditEvents()
+          : (_native as NativeOdbcConnection).clearAuditEvents();
+      if (ok) {
+        return const Success(unit);
+      }
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to clear audit events',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) async {
+    try {
+      Map<String, Object?>? decoded;
+      if (_isAsync) {
+        final payload = await (_native as AsyncNativeOdbcConnection)
+            .poolGetStateJson(poolId);
+        if (payload == null || payload.isEmpty) {
+          return await _convertNativeErrorToFailure<Map<String, Object?>>(
+            errorFactory: ({required message, sqlState, nativeCode}) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to get detailed pool state',
+          );
+        }
+        decoded = _decodeJsonMap(payload);
+      } else {
+        final payload =
+            (_native as NativeOdbcConnection).poolGetStateJson(poolId);
+        if (payload == null || payload.isEmpty) {
+          return await _convertNativeErrorToFailure<Map<String, Object?>>(
+            errorFactory: ({required message, sqlState, nativeCode}) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to get detailed pool state',
+          );
+        }
+        decoded = payload.map<String, Object?>(
+          MapEntry<String, Object?>.new,
+        );
+      }
+      if (decoded == null) {
+        return const Failure<Map<String, Object?>, OdbcError>(
+          QueryError(message: 'Invalid detailed pool state payload format'),
+        );
+      }
+      return Success(decoded);
+    } on FormatException catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: 'Invalid detailed pool state JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) async {
+    if (maxEntries <= 0 || ttlSeconds <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(
+          message: 'maxEntries and ttlSeconds must be greater than zero',
+        ),
+      );
+    }
+
+    if (!_isAsync &&
+        !(_native as NativeOdbcConnection).supportsMetadataCacheApi) {
+      return const Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(
+          message: 'Metadata cache API is not available in native runtime',
+        ),
+      );
+    }
+
+    try {
+      final enabled = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).metadataCacheEnable(
+              maxEntries: maxEntries,
+              ttlSeconds: ttlSeconds,
+            )
+          : (_native as NativeOdbcConnection).metadataCacheEnable(
+              maxEntries: maxEntries,
+              ttlSeconds: ttlSeconds,
+            );
+
+      if (enabled) {
+        return const Success(unit);
+      }
+
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to enable metadata cache',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> metadataCacheStats() async {
+    if (!_isAsync &&
+        !(_native as NativeOdbcConnection).supportsMetadataCacheApi) {
+      return const Failure<Map<String, Object?>, OdbcError>(
+        UnsupportedFeatureError(
+          message: 'Metadata cache API is not available in native runtime',
+        ),
+      );
+    }
+
+    try {
+      final payload = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .getMetadataCacheStatsJson()
+          : (_native as NativeOdbcConnection).getMetadataCacheStatsJson();
+
+      if (payload == null || payload.isEmpty) {
+        return await _convertNativeErrorToFailure<Map<String, Object?>>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to read metadata cache stats',
+        );
+      }
+
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) {
+        return const Failure<Map<String, Object?>, OdbcError>(
+          QueryError(message: 'Invalid metadata cache stats payload format'),
+        );
+      }
+
+      return Success(
+        decoded.map<String, Object?>(
+          MapEntry<String, Object?>.new,
+        ),
+      );
+    } on FormatException catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: 'Invalid metadata cache stats JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> clearMetadataCache() async {
+    if (!_isAsync &&
+        !(_native as NativeOdbcConnection).supportsMetadataCacheApi) {
+      return const Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(
+          message: 'Metadata cache API is not available in native runtime',
+        ),
+      );
+    }
+
+    try {
+      final cleared = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).clearMetadataCache()
+          : (_native as NativeOdbcConnection).clearMetadataCache();
+
+      if (cleared) {
+        return const Success(unit);
+      }
+
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to clear metadata cache',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> cancelStream(int streamId) async {
+    if (streamId <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Invalid stream ID'),
+      );
+    }
+
+    try {
+      final cancelled = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).streamCancel(streamId)
+          : (_native as NativeOdbcConnection).streamCancel(streamId);
+
+      if (cancelled) {
+        return const Success(unit);
+      }
+
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to cancel stream',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        UnsupportedFeatureError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    try {
+      final requestId = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).executeAsyncStart(
+              nativeId,
+              sql,
+            )
+          : (_native as NativeOdbcConnection).executeAsyncStart(nativeId, sql);
+      final resolved = requestId ?? 0;
+      if (resolved > 0) {
+        return Success(resolved);
+      }
+      return await _convertNativeErrorToFailure<int>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to start async request',
+      );
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<int>> asyncPoll(int requestId) async {
+    if (requestId <= 0) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Invalid async request ID'),
+      );
+    }
+
+    try {
+      final status = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).asyncPoll(requestId)
+          : (_native as NativeOdbcConnection).asyncPoll(requestId);
+      final resolved = status ?? -1;
+      return Success(resolved);
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<QueryResult>> asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+  }) async {
+    if (requestId <= 0) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid async request ID'),
+      );
+    }
+
+    try {
+      final data = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).asyncGetResult(
+              requestId,
+              maxBufferBytes: maxBufferBytes,
+            )
+          : (_native as NativeOdbcConnection).asyncGetResult(requestId);
+      final parsed = _parseBufferToQueryResult(data);
+      if (parsed == null) {
+        return await _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Async result is unavailable',
+        );
+      }
+      return Success(parsed);
+    } on Exception catch (e) {
+      return Failure<QueryResult, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> asyncCancel(int requestId) async {
+    if (requestId <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Invalid async request ID'),
+      );
+    }
+
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).asyncCancel(requestId)
+          : (_native as NativeOdbcConnection).asyncCancel(requestId);
+      if (ok) {
+        return const Success(unit);
+      }
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) => QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to cancel async request',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> asyncFree(int requestId) async {
+    if (requestId <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Invalid async request ID'),
+      );
+    }
+
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).asyncFree(requestId)
+          : (_native as NativeOdbcConnection).asyncFree(requestId);
+      if (ok) {
+        return const Success(unit);
+      }
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) => QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to free async request',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<int>> streamStartAsync(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    try {
+      final streamId = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).streamStartAsync(
+              nativeId,
+              sql,
+              fetchSize: fetchSize,
+              chunkSize: chunkSize,
+            )
+          : (_native as NativeOdbcConnection).streamStartAsync(
+              nativeId,
+              sql,
+              fetchSize: fetchSize,
+              chunkSize: chunkSize,
+            );
+      final resolved = streamId ?? 0;
+      if (resolved > 0) {
+        return Success(resolved);
+      }
+      return await _convertNativeErrorToFailure<int>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            UnsupportedFeatureError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to start async stream',
+      );
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<int>> streamPollAsync(int streamId) async {
+    if (streamId <= 0) {
+      return const Failure<int, OdbcError>(
+        ValidationError(message: 'Invalid stream ID'),
+      );
+    }
+
+    try {
+      final status = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).streamPollAsync(
+              streamId,
+            )
+          : (_native as NativeOdbcConnection).streamPollAsync(streamId);
+      final resolved = status ?? -1;
+      return Success(resolved);
+    } on Exception catch (e) {
+      return Failure<int, OdbcError>(
         QueryError(message: e.toString()),
       );
     }

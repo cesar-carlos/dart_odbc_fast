@@ -347,6 +347,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) async {
+    return _telemetry.inOperation(
+      'ODBC.poolGetStateDetailed',
+      () => _service.poolGetStateDetailed(poolId),
+    );
+  }
+
+  @override
   Future<Result<void>> poolClose(int poolId) async {
     return _telemetry.inOperation(
       'ODBC.poolClose',
@@ -423,6 +431,176 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.getPreparedStatementsMetrics',
       _service.getPreparedStatementsMetrics,
+    );
+  }
+
+  @override
+  Future<Result<Map<String, String>>> getVersion() async {
+    return _telemetry.inOperation(
+      'ODBC.getVersion',
+      _service.getVersion,
+    );
+  }
+
+  @override
+  Future<Result<void>> validateConnectionString(String connectionString) async {
+    return _telemetry.inOperation(
+      'ODBC.validateConnectionString',
+      () => _service.validateConnectionString(connectionString),
+    );
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getDriverCapabilities(
+    String connectionString,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.getDriverCapabilities',
+      () => _service.getDriverCapabilities(connectionString),
+    );
+  }
+
+  @override
+  Future<Result<void>> setAuditEnabled({required bool enabled}) async {
+    return _telemetry.inOperation(
+      'ODBC.setAuditEnabled',
+      () => _service.setAuditEnabled(enabled: enabled),
+    );
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getAuditStatus() async {
+    return _telemetry.inOperation(
+      'ODBC.getAuditStatus',
+      _service.getAuditStatus,
+    );
+  }
+
+  @override
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({
+    int limit = 0,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.getAuditEvents',
+      () => _service.getAuditEvents(limit: limit),
+    );
+  }
+
+  @override
+  Future<Result<void>> clearAuditEvents() async {
+    return _telemetry.inOperation(
+      'ODBC.clearAuditEvents',
+      _service.clearAuditEvents,
+    );
+  }
+
+  @override
+  Future<Result<void>> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.metadataCacheEnable',
+      () => _service.metadataCacheEnable(
+        maxEntries: maxEntries,
+        ttlSeconds: ttlSeconds,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> metadataCacheStats() async {
+    return _telemetry.inOperation(
+      'ODBC.metadataCacheStats',
+      _service.metadataCacheStats,
+    );
+  }
+
+  @override
+  Future<Result<void>> clearMetadataCache() async {
+    return _telemetry.inOperation(
+      'ODBC.clearMetadataCache',
+      _service.clearMetadataCache,
+    );
+  }
+
+  @override
+  Future<Result<void>> cancelStream(int streamId) async {
+    return _telemetry.inOperation(
+      'ODBC.cancelStream',
+      () => _service.cancelStream(streamId),
+    );
+  }
+
+  @override
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql) async {
+    return _telemetry.inOperation(
+      'ODBC.executeAsyncStart',
+      () => _service.executeAsyncStart(connectionId, sql),
+    );
+  }
+
+  @override
+  Future<Result<int>> asyncPoll(int requestId) async {
+    return _telemetry.inOperation(
+      'ODBC.asyncPoll',
+      () => _service.asyncPoll(requestId),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.asyncGetResult',
+      () => _service.asyncGetResult(
+        requestId,
+        maxBufferBytes: maxBufferBytes,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void>> asyncCancel(int requestId) async {
+    return _telemetry.inOperation(
+      'ODBC.asyncCancel',
+      () => _service.asyncCancel(requestId),
+    );
+  }
+
+  @override
+  Future<Result<void>> asyncFree(int requestId) async {
+    return _telemetry.inOperation(
+      'ODBC.asyncFree',
+      () => _service.asyncFree(requestId),
+    );
+  }
+
+  @override
+  Future<Result<int>> streamStartAsync(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.streamStartAsync',
+      () => _service.streamStartAsync(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<int>> streamPollAsync(int streamId) async {
+    return _telemetry.inOperation(
+      'ODBC.streamPollAsync',
+      () => _service.streamPollAsync(streamId),
     );
   }
 

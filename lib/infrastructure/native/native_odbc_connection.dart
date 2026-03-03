@@ -89,6 +89,12 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   String? detectDriver(String connectionString) =>
       _native.detectDriver(connectionString);
 
+  /// Validates connection string format without opening a connection.
+  ///
+  /// Returns null when valid; otherwise a human-readable validation message.
+  String? validateConnectionString(String connectionString) =>
+      _native.validateConnectionString(connectionString);
+
   /// Whether the loaded native library supports driver capabilities FFI API.
   bool get supportsDriverCapabilitiesApi =>
       _native.supportsDriverCapabilitiesApi;
@@ -97,6 +103,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// API is unavailable or invalid.
   DriverCapabilities? getDriverCapabilities(String connectionString) =>
       OdbcDriverCapabilities(_native).getCapabilities(connectionString);
+
+  /// Returns driver capabilities payload as JSON, or null on failure.
+  String? getDriverCapabilitiesJson(String connectionString) =>
+      _native.getDriverCapabilitiesJson(connectionString);
 
   /// Gets the last error message from the native engine.
   ///
@@ -134,12 +144,31 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Whether the loaded native library supports async stream FFI endpoints.
   bool get supportsAsyncStreamApi => _native.supportsAsyncStreamApi;
 
+  /// Whether the loaded native library supports metadata cache FFI endpoints.
+  bool get supportsMetadataCacheApi => _native.supportsMetadataCacheApi;
+
   /// Enables/disables native audit event collection.
   bool setAuditEnabled({required bool enabled}) =>
       _native.setAuditEnabled(enabled: enabled);
 
   /// Clears in-memory native audit events.
   bool clearAuditEvents() => _native.clearAuditEvents();
+
+  /// Enables metadata cache in native engine.
+  bool metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) =>
+      _native.metadataCacheEnable(
+        maxEntries: maxEntries,
+        ttlSeconds: ttlSeconds,
+      );
+
+  /// Returns metadata cache stats JSON payload.
+  String? getMetadataCacheStatsJson() => _native.metadataCacheStatsJson();
+
+  /// Clears metadata cache entries.
+  bool clearMetadataCache() => _native.metadataCacheClear();
 
   /// Starts non-blocking query execution and returns async request ID.
   int? executeAsyncStart(int connectionId, String sql) =>
@@ -453,6 +482,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ({int size, int idle})? poolGetState(int poolId) =>
       _native.poolGetState(poolId);
 
+  /// Returns pool state telemetry payload as JSON, or null on failure.
+  Map<String, dynamic>? poolGetStateJson(int poolId) =>
+      _native.poolGetStateJson(poolId);
+
   @override
   bool poolSetSize(int poolId, int newMaxSize) =>
       _native.poolSetSize(poolId, newMaxSize);
@@ -559,6 +592,9 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Fetches the next chunk for a low-level native stream.
   bindings.StreamFetchResult streamFetch(int streamId) =>
       _native.streamFetch(streamId);
+
+  /// Requests cancellation for a low-level native stream.
+  bool streamCancel(int streamId) => _native.streamCancel(streamId);
 
   /// Closes a low-level native stream.
   bool streamClose(int streamId) => _native.streamClose(streamId);

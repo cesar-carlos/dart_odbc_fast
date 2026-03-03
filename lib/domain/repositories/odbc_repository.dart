@@ -282,6 +282,9 @@ abstract class IOdbcRepository {
   /// Returns [PoolState] containing pool size and idle connection count.
   Future<Result<PoolState>> poolGetState(int poolId);
 
+  /// Gets detailed pool telemetry payload.
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
+
   /// Closes the connection pool and releases all connections.
   ///
   /// The [poolId] must be a valid pool created with [poolCreate].
@@ -340,6 +343,77 @@ abstract class IOdbcRepository {
   /// Returns [PreparedStatementMetrics] containing cache hit rate,
   /// total executions, and other statistics.
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
+
+  /// Returns engine version payload (`api` and `abi`).
+  Future<Result<Map<String, String>>> getVersion();
+
+  /// Validates connection string format without opening a connection.
+  ///
+  /// Returns success when valid, or `ValidationError` with reason when invalid.
+  Future<Result<Unit>> validateConnectionString(String connectionString);
+
+  /// Returns driver capability payload for [connectionString].
+  Future<Result<Map<String, Object?>>> getDriverCapabilities(
+    String connectionString,
+  );
+
+  /// Enables/disables native audit collection.
+  Future<Result<Unit>> setAuditEnabled({required bool enabled});
+
+  /// Returns current native audit status as key/value payload.
+  Future<Result<Map<String, Object?>>> getAuditStatus();
+
+  /// Returns native audit events payload.
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({int limit = 0});
+
+  /// Clears all native audit events.
+  Future<Result<Unit>> clearAuditEvents();
+
+  /// Enables or reconfigures metadata cache.
+  ///
+  /// [maxEntries] and [ttlSeconds] must be greater than zero.
+  Future<Result<Unit>> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  });
+
+  /// Returns metadata cache statistics as a JSON-like map.
+  Future<Result<Map<String, Object?>>> metadataCacheStats();
+
+  /// Clears all metadata cache entries.
+  Future<Result<Unit>> clearMetadataCache();
+
+  /// Attempts to cancel an active low-level stream by [streamId].
+  Future<Result<Unit>> cancelStream(int streamId);
+
+  /// Starts async query request lifecycle and returns request ID.
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql);
+
+  /// Polls async query request status.
+  Future<Result<int>> asyncPoll(int requestId);
+
+  /// Retrieves async query result payload and parses it as [QueryResult].
+  Future<Result<QueryResult>> asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+  });
+
+  /// Requests cancellation of async query request.
+  Future<Result<Unit>> asyncCancel(int requestId);
+
+  /// Frees async query request resources.
+  Future<Result<Unit>> asyncFree(int requestId);
+
+  /// Starts async stream lifecycle and returns stream ID.
+  Future<Result<int>> streamStartAsync(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  });
+
+  /// Polls async stream status.
+  Future<Result<int>> streamPollAsync(int streamId);
 
   /// Detects the database driver from a connection string.
   ///

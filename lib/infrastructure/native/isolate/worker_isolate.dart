@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -43,6 +44,34 @@ void _handleRequest(
       case InitializeRequest():
         final ok = conn.initialize();
         sendPort.send(InitializeResponse(request.requestId, success: ok));
+
+      case ValidateConnectionStringRequest():
+        final validationError = conn.validateConnectionString(
+          request.connectionString,
+        );
+        sendPort.send(
+          ValidateConnectionStringResponse(
+            request.requestId,
+            isValid: validationError == null,
+            errorMessage: validationError,
+          ),
+        );
+
+      case GetDriverCapabilitiesRequest():
+        final payload =
+            conn.getDriverCapabilitiesJson(request.connectionString);
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(request.requestId, payload: payload),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
 
       case ConnectRequest():
         try {
@@ -220,6 +249,10 @@ void _handleRequest(
           ),
         );
 
+      case StreamCancelRequest():
+        final ok = conn.streamCancel(request.streamId);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
       case StreamCloseRequest():
         final ok = conn.streamClose(request.streamId);
         sendPort.send(BoolResponse(request.requestId, value: ok));
@@ -256,6 +289,24 @@ void _handleRequest(
         } else {
           sendPort.send(
             PoolStateResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case PoolGetStateJsonRequest():
+        final payload = conn.poolGetStateJson(request.poolId);
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              payload: jsonEncode(payload),
+            ),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
               request.requestId,
               error: conn.getError(),
             ),
@@ -358,6 +409,32 @@ void _handleRequest(
             error: cleared ? null : conn.getError(),
           ),
         );
+
+      case MetadataCacheEnableRequest():
+        final ok = conn.metadataCacheEnable(
+          maxEntries: request.maxEntries,
+          ttlSeconds: request.ttlSeconds,
+        );
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
+      case MetadataCacheStatsRequest():
+        final payload = conn.getMetadataCacheStatsJson();
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(request.requestId, payload: payload),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case MetadataCacheClearRequest():
+        final ok = conn.clearMetadataCache();
+        sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case CatalogTablesRequest():
         final data = conn.catalogTables(
@@ -506,6 +583,14 @@ void _sendErrorResponse(
   switch (request) {
     case InitializeRequest():
       sendPort.send(InitializeResponse(id, success: false));
+    case ValidateConnectionStringRequest():
+      sendPort.send(
+        ValidateConnectionStringResponse(
+          id,
+          isValid: false,
+          errorMessage: error,
+        ),
+      );
     case ConnectRequest():
       sendPort.send(ConnectResponse(id, 0, error: error));
     case DisconnectRequest():
@@ -524,6 +609,9 @@ void _sendErrorResponse(
     case AuditClearRequest():
     case AsyncCancelRequest():
     case AsyncFreeRequest():
+    case StreamCancelRequest():
+    case MetadataCacheEnableRequest():
+    case MetadataCacheClearRequest():
       sendPort.send(BoolResponse(id, value: false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
@@ -560,6 +648,9 @@ void _sendErrorResponse(
       sendPort.send(IntResponse(id, -1));
     case PoolGetStateRequest():
       sendPort.send(PoolStateResponse(id, error: error));
+    case GetDriverCapabilitiesRequest():
+    case PoolGetStateJsonRequest():
+      sendPort.send(AuditPayloadResponse(id, error: error));
     case GetVersionRequest():
       sendPort.send(VersionResponse(id));
     case GetMetricsRequest():
@@ -572,6 +663,7 @@ void _sendErrorResponse(
       sendPort.send(DetectDriverResponse(id, null));
     case AuditGetEventsRequest():
     case AuditGetStatusRequest():
+    case MetadataCacheStatsRequest():
       sendPort.send(AuditPayloadResponse(id, error: error));
     case GetCacheMetricsRequest():
       sendPort.send(CacheMetricsResponse(id, error: error));

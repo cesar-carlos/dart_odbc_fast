@@ -49,6 +49,9 @@ class OdbcNative {
   /// True when the loaded native library exposes async stream FFI APIs.
   bool get supportsAsyncStreamApi => _bindings.supportsAsyncStreamApi;
 
+  /// True when the loaded native library exposes metadata cache FFI APIs.
+  bool get supportsMetadataCacheApi => _bindings.supportsMetadataCacheApi;
+
   /// Initializes the ODBC environment.
   ///
   /// Must be called before any other operations.
@@ -814,6 +817,42 @@ class OdbcNative {
   /// Returns true on success, false on failure.
   bool clearStatementCache() {
     final code = _bindings.odbc_clear_statement_cache();
+    return code == 0;
+  }
+
+  /// Enables or reconfigures metadata cache in native engine.
+  ///
+  /// [maxEntries] and [ttlSeconds] must be greater than zero.
+  /// Returns true on success.
+  bool metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) {
+    final code = _bindings.odbc_metadata_cache_enable(maxEntries, ttlSeconds);
+    return code == 0;
+  }
+
+  /// Returns metadata cache statistics as JSON payload.
+  ///
+  /// Example keys: `hits`, `misses`, `size`, `max_size`, `ttl_secs`.
+  /// Returns null on failure.
+  String? metadataCacheStatsJson() {
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) =>
+          _bindings.odbc_metadata_cache_stats(buf, bufLen, outWritten),
+      initialSize: 128,
+    );
+    if (data == null || data.isEmpty) {
+      return null;
+    }
+    return utf8.decode(data);
+  }
+
+  /// Clears all metadata cache entries.
+  ///
+  /// Returns true on success.
+  bool metadataCacheClear() {
+    final code = _bindings.odbc_metadata_cache_clear();
     return code == 0;
   }
 

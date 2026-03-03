@@ -170,5 +170,173 @@ void main() {
         },
       );
     });
+
+    test('metadataCacheEnable validates maxEntries and ttlSeconds', () async {
+      final result = await repository.metadataCacheEnable(
+        maxEntries: 0,
+        ttlSeconds: 0,
+      );
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'maxEntries and ttlSeconds must be greater than zero',
+          );
+        },
+      );
+    });
+
+    test('cancelStream validates invalid streamId', () async {
+      final result = await repository.cancelStream(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect((e as ValidationError).message, 'Invalid stream ID');
+        },
+      );
+    });
+
+    test('validateConnectionString validates empty connection string',
+        () async {
+      final result = await repository.validateConnectionString('');
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Connection string cannot be empty',
+          );
+        },
+      );
+    });
+
+    test('getDriverCapabilities validates empty connection string', () async {
+      final result = await repository.getDriverCapabilities('');
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Connection string cannot be empty',
+          );
+        },
+      );
+    });
+
+    test('executeAsyncStart validates invalid connectionId', () async {
+      final result =
+          await repository.executeAsyncStart('invalid-id', 'SELECT 1');
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid connection ID',
+          );
+        },
+      );
+    });
+
+    test('asyncPoll validates invalid requestId', () async {
+      final result = await repository.asyncPoll(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid async request ID',
+          );
+        },
+      );
+    });
+
+    test('asyncGetResult validates invalid requestId', () async {
+      final result = await repository.asyncGetResult(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid async request ID',
+          );
+        },
+      );
+    });
+
+    test('asyncCancel validates invalid requestId', () async {
+      final result = await repository.asyncCancel(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid async request ID',
+          );
+        },
+      );
+    });
+
+    test('asyncFree validates invalid requestId', () async {
+      final result = await repository.asyncFree(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid async request ID',
+          );
+        },
+      );
+    });
+
+    test('streamStartAsync validates invalid connectionId', () async {
+      final result =
+          await repository.streamStartAsync('invalid-id', 'SELECT 1');
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid connection ID',
+          );
+        },
+      );
+    });
+
+    test('streamPollAsync validates invalid streamId', () async {
+      final result = await repository.streamPollAsync(0);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Invalid stream ID',
+          );
+        },
+      );
+    });
   });
 }

@@ -7,22 +7,15 @@ import 'dart:io';
 
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/di/service_locator.dart';
-import 'package:odbc_fast/domain/entities/connection.dart';
-import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
-import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
-import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/entities/query_result.dart';
-import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart'
     show loadOdbcLibraryFromPath;
-import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
 
 import '../../helpers/load_env.dart';
+import '../../helpers/mock_odbc_repository.dart';
 
 void main() {
   loadTestEnv();
@@ -256,6 +249,142 @@ void main() {
       expect(mockRepo.clearStatementCacheCalled, isTrue);
     });
 
+    test('MetadataCacheEnable operation', () async {
+      await service.initialize();
+      final result = await service.metadataCacheEnable(
+        maxEntries: 128,
+        ttlSeconds: 60,
+      );
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.metadataCacheEnableCalled, isTrue);
+    });
+
+    test('MetadataCacheStats operation', () async {
+      await service.initialize();
+      final result = await service.metadataCacheStats();
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.metadataCacheStatsCalled, isTrue);
+      final payload = result.getOrNull();
+      expect(payload, isNotNull);
+      expect(payload!['hits'], equals(0));
+      expect(payload['ttl_secs'], equals(0));
+    });
+
+    test('ClearMetadataCache operation', () async {
+      await service.initialize();
+      final result = await service.clearMetadataCache();
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.clearMetadataCacheCalled, isTrue);
+    });
+
+    test('CancelStream operation', () async {
+      await service.initialize();
+      final result = await service.cancelStream(1);
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.cancelStreamCalled, isTrue);
+    });
+
+    test('GetVersion operation', () async {
+      await service.initialize();
+      final result = await service.getVersion();
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.getVersionCalled, isTrue);
+      final payload = result.getOrNull();
+      expect(payload, isNotNull);
+      expect(payload!['api'], equals('0.1.0'));
+      expect(payload['abi'], equals('1.0.0'));
+    });
+
+    test('ValidateConnectionString operation (valid)', () async {
+      await service.initialize();
+      final result = await service.validateConnectionString('DSN=Mock');
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.validateConnectionStringCalled, isTrue);
+    });
+
+    test('ValidateConnectionString operation (invalid)', () async {
+      await service.initialize();
+      final result = await service.validateConnectionString('');
+      expect(result.isSuccess(), isFalse);
+    });
+
+    test('GetDriverCapabilities operation', () async {
+      await service.initialize();
+      final result = await service.getDriverCapabilities('DSN=Mock');
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.getDriverCapabilitiesCalled, isTrue);
+      final payload = result.getOrNull();
+      expect(payload, isNotNull);
+      expect(payload!['driver_name'], equals('mock'));
+    });
+
+    test('Audit operations', () async {
+      await service.initialize();
+      final enable = await service.setAuditEnabled(enabled: true);
+      expect(enable.isSuccess(), isTrue);
+      expect(mockRepo.setAuditEnabledCalled, isTrue);
+
+      final status = await service.getAuditStatus();
+      expect(status.isSuccess(), isTrue);
+      expect(mockRepo.getAuditStatusCalled, isTrue);
+      expect(status.getOrNull()!['enabled'], isTrue);
+
+      final events = await service.getAuditEvents(limit: 10);
+      expect(events.isSuccess(), isTrue);
+      expect(mockRepo.getAuditEventsCalled, isTrue);
+
+      final clear = await service.clearAuditEvents();
+      expect(clear.isSuccess(), isTrue);
+      expect(mockRepo.clearAuditEventsCalled, isTrue);
+    });
+
+    test('PoolGetStateDetailed operation', () async {
+      await service.initialize();
+      final result = await service.poolGetStateDetailed(1);
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.poolGetStateDetailedCalled, isTrue);
+      final payload = result.getOrNull();
+      expect(payload, isNotNull);
+      expect(payload!['max_size'], equals(4));
+    });
+
+    test('Async query lifecycle operations', () async {
+      await service.initialize();
+      final start = await service.executeAsyncStart('conn-1', 'SELECT 1');
+      expect(start.isSuccess(), isTrue);
+      expect(mockRepo.executeAsyncStartCalled, isTrue);
+
+      final poll = await service.asyncPoll(1);
+      expect(poll.isSuccess(), isTrue);
+      expect(mockRepo.asyncPollCalled, isTrue);
+      expect(poll.getOrNull(), equals(1));
+
+      final result = await service.asyncGetResult(1);
+      expect(result.isSuccess(), isTrue);
+      expect(mockRepo.asyncGetResultCalled, isTrue);
+      expect(result.getOrNull()!.rowCount, equals(1));
+
+      final cancel = await service.asyncCancel(1);
+      expect(cancel.isSuccess(), isTrue);
+      expect(mockRepo.asyncCancelCalled, isTrue);
+
+      final free = await service.asyncFree(1);
+      expect(free.isSuccess(), isTrue);
+      expect(mockRepo.asyncFreeCalled, isTrue);
+    });
+
+    test('Async stream lifecycle operations', () async {
+      await service.initialize();
+      final start = await service.streamStartAsync('conn-1', 'SELECT 1');
+      expect(start.isSuccess(), isTrue);
+      expect(mockRepo.streamStartAsyncCalled, isTrue);
+
+      final poll = await service.streamPollAsync(1);
+      expect(poll.isSuccess(), isTrue);
+      expect(mockRepo.streamPollAsyncCalled, isTrue);
+      expect(poll.getOrNull(), equals(1));
+    });
+
     test('StatementOptions functionality - timeout override', () async {
       await service.initialize();
       final result = await service.executePrepared(
@@ -442,464 +571,4 @@ void main() {
     },
     skip: runningOnCi ? 'Disabled in CI workflow (integration/e2e)' : null,
   );
-}
-
-/// Mock ODBC repository for testing.
-class MockOdbcRepository implements IOdbcRepository {
-  Connection _connection = Connection(
-    id: 'test-connection',
-    connectionString: 'init',
-    createdAt: DateTime.now(),
-  );
-
-  bool initializeCalled = false;
-  bool connectCalled = false;
-  bool disconnectCalled = false;
-  bool executeQueryCalled = false;
-  bool streamQueryCalled = false;
-  bool executeQueryParamsCalled = false;
-  bool executeQueryNamedCalled = false;
-  bool executeQueryMultiFullCalled = false;
-  bool beginTransactionCalled = false;
-  bool commitTransactionCalled = false;
-  bool rollbackTransactionCalled = false;
-  bool clearStatementCacheCalled = false;
-  bool prepareNamedCalled = false;
-  bool executePreparedNamedCalled = false;
-  int _queryCount = 0;
-
-  @override
-  Future<Result<Unit>> initialize() async {
-    initializeCalled = true;
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Connection>> connect(
-    String connectionString, {
-    ConnectionOptions? options,
-  }) async {
-    connectCalled = true;
-    _connection = Connection(
-      id: 'test-connection-2',
-      connectionString: connectionString,
-      createdAt: DateTime.now(),
-    );
-    return Success(_connection);
-  }
-
-  @override
-  Future<Result<Unit>> disconnect(String connectionId) async {
-    disconnectCalled = true;
-    if (connectionId == _connection.id) {
-      _connection = Connection(
-        id: '',
-        connectionString: '',
-        createdAt: DateTime.now(),
-      );
-      return const Success(unit);
-    }
-    return const Failure(
-      ConnectionError(message: 'Connection ID does not match'),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> executeQuery(
-    String connectionId,
-    String sql,
-  ) async {
-    executeQueryCalled = true;
-    _queryCount++;
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Alice'],
-          [2, 'Bob'],
-        ],
-        rowCount: 2,
-      ),
-    );
-  }
-
-  @override
-  Stream<Result<QueryResult>> streamQuery(
-    String connectionId,
-    String sql,
-  ) async* {
-    streamQueryCalled = true;
-    _queryCount++;
-    yield const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Alice'],
-        ],
-        rowCount: 1,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) async {
-    executeQueryParamsCalled = true;
-    _queryCount++;
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Charlie'],
-        ],
-        rowCount: 1,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> executeQueryNamed(
-    String connectionId,
-    String sql,
-    Map<String, Object?> namedParams,
-  ) async {
-    executeQueryNamedCalled = true;
-    _queryCount++;
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Charlie'],
-        ],
-        rowCount: 1,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<int>> prepare(
-    String connectionId,
-    String sql, {
-    int timeoutMs = 0,
-  }) async {
-    return const Success(1);
-  }
-
-  @override
-  Future<Result<int>> prepareNamed(
-    String connectionId,
-    String sql, {
-    int timeoutMs = 0,
-  }) async {
-    prepareNamedCalled = true;
-    return const Success(2);
-  }
-
-  @override
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [],
-        rowCount: 0,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> executePreparedNamed(
-    String connectionId,
-    int stmtId,
-    Map<String, Object?> namedParams,
-    StatementOptions? options,
-  ) async {
-    executePreparedNamedCalled = true;
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Charlie'],
-        ],
-        rowCount: 1,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<Unit>> closeStatement(String connectionId, int stmtId) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Unit>> cancelStatement(String connectionId, int stmtId) async {
-    return const Failure(
-      UnsupportedFeatureError(
-        message: 'Statement cancellation is not supported',
-      ),
-    );
-  }
-
-  @override
-  Future<Result<int>> beginTransaction(
-    String connectionId,
-    IsolationLevel isolationLevel,
-  ) async {
-    beginTransactionCalled = true;
-    return const Success(1);
-  }
-
-  @override
-  Future<Result<Unit>> commitTransaction(
-    String connectionId,
-    int txnId,
-  ) async {
-    commitTransactionCalled = true;
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Unit>> rollbackTransaction(
-    String connectionId,
-    int txnId,
-  ) async {
-    rollbackTransactionCalled = true;
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Unit>> createSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  ) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Unit>> rollbackToSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  ) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<Unit>> releaseSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  ) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<QueryResult>> executeQueryMulti(
-    String connectionId,
-    String sql,
-  ) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [
-          [1, 'Dave'],
-        ],
-        rowCount: 1,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResultMulti>> executeQueryMultiFull(
-    String connectionId,
-    String sql,
-  ) async {
-    executeQueryMultiFullCalled = true;
-    return const Success(
-      QueryResultMulti(
-        items: [
-          QueryResultMultiItem.resultSet(
-            QueryResult(
-              columns: ['id', 'name'],
-              rows: [
-                [1, 'Dave'],
-              ],
-              rowCount: 1,
-            ),
-          ),
-          QueryResultMultiItem.rowCount(1),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> catalogTables(
-    String connectionId, {
-    String catalog = '',
-    String schema = '',
-  }) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [],
-        rowCount: 0,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> catalogColumns(
-    String connectionId,
-    String table,
-  ) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [],
-        rowCount: 0,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResult>> catalogTypeInfo(
-    String connectionId,
-  ) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'name'],
-        rows: [],
-        rowCount: 0,
-      ),
-    );
-  }
-
-  @override
-  Future<Result<int>> poolCreate(
-    String connectionString,
-    int maxSize,
-  ) async {
-    return const Success(1);
-  }
-
-  @override
-  Future<Result<Connection>> poolGetConnection(
-    int poolId,
-  ) async {
-    return Success(
-      Connection(
-        id: 'pooled',
-        connectionString: 'pool',
-        createdAt: DateTime.now(),
-      ),
-    );
-  }
-
-  @override
-  Future<Result<Unit>> poolReleaseConnection(
-    String connectionId,
-  ) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<bool>> poolHealthCheck(int poolId) async {
-    return const Success(true);
-  }
-
-  @override
-  Future<Result<PoolState>> poolGetState(int poolId) async {
-    return const Success(PoolState(size: 1, idle: 0));
-  }
-
-  @override
-  Future<Result<Unit>> poolClose(int poolId) async {
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<int>> bulkInsert(
-    String connectionId,
-    String table,
-    List<String> columns,
-    List<int> dataBuffer,
-    int rowCount,
-  ) async {
-    return const Success(0);
-  }
-
-  @override
-  Future<Result<int>> bulkInsertParallel(
-    int poolId,
-    String table,
-    List<String> columns,
-    List<int> dataBuffer,
-    int rowCount, {
-    int parallelism = 0,
-  }) async {
-    return const Success(0);
-  }
-
-  @override
-  Future<Result<OdbcMetrics>> getMetrics() async {
-    return Success(
-      OdbcMetrics(
-        queryCount: _queryCount,
-        errorCount: 0,
-        uptimeSecs: 10,
-        totalLatencyMillis: 100,
-        avgLatencyMillis: 25,
-      ),
-    );
-  }
-
-  @override
-  bool isInitialized() {
-    return _connection.id.isNotEmpty;
-  }
-
-  @override
-  Future<Result<Unit>> clearStatementCache() async {
-    clearStatementCacheCalled = true;
-    return const Success(unit);
-  }
-
-  @override
-  Future<Result<PreparedStatementMetrics>>
-      getPreparedStatementsMetrics() async {
-    return const Success(
-      PreparedStatementMetrics(
-        cacheSize: 0,
-        cacheMaxSize: 100,
-        cacheHits: 0,
-        cacheMisses: 0,
-        totalPrepares: 0,
-        totalExecutions: 0,
-        memoryUsageBytes: 0,
-        avgExecutionsPerStmt: 0,
-      ),
-    );
-  }
-
-  @override
-  Future<String?> detectDriver(String connectionString) async {
-    return 'mock';
-  }
-
-  void dispose() {
-    _connection = Connection(
-      id: '',
-      connectionString: '',
-      createdAt: DateTime.now(),
-    );
-  }
 }

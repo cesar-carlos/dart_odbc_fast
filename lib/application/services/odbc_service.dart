@@ -146,6 +146,8 @@ abstract class IOdbcService {
 
   Future<Result<PoolState>> poolGetState(int poolId);
 
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
+
   Future<Result<void>> poolClose(int poolId);
 
   Future<Result<int>> bulkInsert(
@@ -172,6 +174,55 @@ abstract class IOdbcService {
   Future<Result<void>> clearStatementCache();
 
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
+
+  Future<Result<Map<String, String>>> getVersion();
+
+  Future<Result<void>> validateConnectionString(String connectionString);
+
+  Future<Result<Map<String, Object?>>> getDriverCapabilities(
+    String connectionString,
+  );
+
+  Future<Result<void>> setAuditEnabled({required bool enabled});
+
+  Future<Result<Map<String, Object?>>> getAuditStatus();
+
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({int limit = 0});
+
+  Future<Result<void>> clearAuditEvents();
+
+  Future<Result<void>> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  });
+
+  Future<Result<Map<String, Object?>>> metadataCacheStats();
+
+  Future<Result<void>> clearMetadataCache();
+
+  Future<Result<void>> cancelStream(int streamId);
+
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql);
+
+  Future<Result<int>> asyncPoll(int requestId);
+
+  Future<Result<QueryResult>> asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+  });
+
+  Future<Result<void>> asyncCancel(int requestId);
+
+  Future<Result<void>> asyncFree(int requestId);
+
+  Future<Result<int>> streamStartAsync(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  });
+
+  Future<Result<int>> streamPollAsync(int streamId);
 
   Future<String?> detectDriver(String connectionString);
 
@@ -459,6 +510,11 @@ class OdbcService implements IOdbcService {
   }
 
   @override
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) async {
+    return _repository.poolGetStateDetailed(poolId);
+  }
+
+  @override
   Future<Result<void>> poolClose(int poolId) async {
     return _repository.poolClose(poolId);
   }
@@ -518,6 +574,122 @@ class OdbcService implements IOdbcService {
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async {
     return _repository.getPreparedStatementsMetrics();
+  }
+
+  @override
+  Future<Result<Map<String, String>>> getVersion() async {
+    return _repository.getVersion();
+  }
+
+  @override
+  Future<Result<void>> validateConnectionString(String connectionString) async {
+    return _repository.validateConnectionString(connectionString);
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getDriverCapabilities(
+    String connectionString,
+  ) async {
+    return _repository.getDriverCapabilities(connectionString);
+  }
+
+  @override
+  Future<Result<void>> setAuditEnabled({required bool enabled}) async {
+    return _repository.setAuditEnabled(enabled: enabled);
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> getAuditStatus() async {
+    return _repository.getAuditStatus();
+  }
+
+  @override
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({
+    int limit = 0,
+  }) async {
+    return _repository.getAuditEvents(limit: limit);
+  }
+
+  @override
+  Future<Result<void>> clearAuditEvents() async {
+    return _repository.clearAuditEvents();
+  }
+
+  @override
+  Future<Result<void>> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) async {
+    return _repository.metadataCacheEnable(
+      maxEntries: maxEntries,
+      ttlSeconds: ttlSeconds,
+    );
+  }
+
+  @override
+  Future<Result<Map<String, Object?>>> metadataCacheStats() async {
+    return _repository.metadataCacheStats();
+  }
+
+  @override
+  Future<Result<void>> clearMetadataCache() async {
+    return _repository.clearMetadataCache();
+  }
+
+  @override
+  Future<Result<void>> cancelStream(int streamId) async {
+    return _repository.cancelStream(streamId);
+  }
+
+  @override
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql) async {
+    return _repository.executeAsyncStart(connectionId, sql);
+  }
+
+  @override
+  Future<Result<int>> asyncPoll(int requestId) async {
+    return _repository.asyncPoll(requestId);
+  }
+
+  @override
+  Future<Result<QueryResult>> asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+  }) async {
+    return _repository.asyncGetResult(
+      requestId,
+      maxBufferBytes: maxBufferBytes,
+    );
+  }
+
+  @override
+  Future<Result<void>> asyncCancel(int requestId) async {
+    return _repository.asyncCancel(requestId);
+  }
+
+  @override
+  Future<Result<void>> asyncFree(int requestId) async {
+    return _repository.asyncFree(requestId);
+  }
+
+  @override
+  Future<Result<int>> streamStartAsync(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    return _repository.streamStartAsync(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    );
+  }
+
+  @override
+  Future<Result<int>> streamPollAsync(int streamId) async {
+    return _repository.streamPollAsync(streamId);
   }
 
   @override

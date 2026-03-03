@@ -321,6 +321,30 @@ class AsyncNativeOdbcConnection {
     return r.driverName;
   }
 
+  /// Validates connection string format without opening a connection.
+  ///
+  /// Returns null when valid; otherwise a human-readable validation message.
+  Future<String?> validateConnectionString(String connectionString) async {
+    final r = await _sendRequest<ValidateConnectionStringResponse>(
+      ValidateConnectionStringRequest(_nextRequestId(), connectionString),
+    );
+    if (r.isValid) {
+      return null;
+    }
+    return r.errorMessage ?? 'Invalid connection string';
+  }
+
+  /// Returns driver capabilities payload as JSON, or null on failure.
+  Future<String?> getDriverCapabilitiesJson(String connectionString) async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      GetDriverCapabilitiesRequest(_nextRequestId(), connectionString),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
+  }
+
   /// Returns the last structured error (message, SQLSTATE, native code), or
   /// `null` if there is no error.
   Future<StructuredError?> getStructuredError() async {
@@ -818,6 +842,17 @@ class AsyncNativeOdbcConnection {
     return (size: r.size!, idle: r.idle ?? 0);
   }
 
+  /// Returns detailed pool state payload as JSON, or null on failure.
+  Future<String?> poolGetStateJson(int poolId) async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      PoolGetStateJsonRequest(_nextRequestId(), poolId),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
+  }
+
   /// Resizes pool [poolId] to [newMaxSize] in the worker.
   Future<bool> poolSetSize(int poolId, int newMaxSize) async {
     final r = await _sendRequest<BoolResponse>(
@@ -928,6 +963,40 @@ class AsyncNativeOdbcConnection {
     return r.error == null;
   }
 
+  /// Enables metadata cache in the worker.
+  Future<bool> metadataCacheEnable({
+    required int maxEntries,
+    required int ttlSeconds,
+  }) async {
+    final r = await _sendRequest<BoolResponse>(
+      MetadataCacheEnableRequest(
+        _nextRequestId(),
+        maxEntries: maxEntries,
+        ttlSeconds: ttlSeconds,
+      ),
+    );
+    return r.value;
+  }
+
+  /// Returns metadata cache stats as JSON payload, or null on failure.
+  Future<String?> getMetadataCacheStatsJson() async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      MetadataCacheStatsRequest(_nextRequestId()),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
+  }
+
+  /// Clears metadata cache entries in the worker.
+  Future<bool> clearMetadataCache() async {
+    final r = await _sendRequest<BoolResponse>(
+      MetadataCacheClearRequest(_nextRequestId()),
+    );
+    return r.value;
+  }
+
   Future<int> _streamStart(
     int connectionId,
     String sql, {
@@ -980,11 +1049,31 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  /// Starts low-level async stream lifecycle and returns stream ID.
+  Future<int> streamStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async {
+    return _streamStartAsync(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    );
+  }
+
   Future<int> _streamPollAsync(int streamId) async {
     final r = await _sendRequest<IntResponse>(
       StreamPollAsyncRequest(_nextRequestId(), streamId),
     );
     return r.value;
+  }
+
+  /// Polls low-level async stream status.
+  Future<int> streamPollAsync(int streamId) async {
+    return _streamPollAsync(streamId);
   }
 
   Future<StreamFetchResponse> _streamFetch(int streamId) {
@@ -996,6 +1085,14 @@ class AsyncNativeOdbcConnection {
   Future<bool> _streamClose(int streamId) async {
     final r = await _sendRequest<BoolResponse>(
       StreamCloseRequest(_nextRequestId(), streamId),
+    );
+    return r.value;
+  }
+
+  /// Cancels an active low-level native stream in the worker.
+  Future<bool> streamCancel(int streamId) async {
+    final r = await _sendRequest<BoolResponse>(
+      StreamCancelRequest(_nextRequestId(), streamId),
     );
     return r.value;
   }

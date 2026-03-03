@@ -5,6 +5,8 @@ import 'dart:typed_data';
 /// All values must be sendable across isolate boundaries.
 enum RequestType {
   initialize,
+  validateConnectionString,
+  getDriverCapabilities,
   connect,
   disconnect,
   executeQueryParams,
@@ -24,6 +26,7 @@ enum RequestType {
   streamStartAsync,
   streamPollAsync,
   streamFetch,
+  streamCancel,
   streamClose,
   clearAllStatements,
   poolCreate,
@@ -31,6 +34,7 @@ enum RequestType {
   poolReleaseConnection,
   poolHealthCheck,
   poolGetState,
+  poolGetStateJson,
   poolSetSize,
   poolClose,
   bulkInsertArray,
@@ -39,6 +43,9 @@ enum RequestType {
   getMetrics,
   getCacheMetrics,
   clearCache,
+  metadataCacheEnable,
+  metadataCacheStats,
+  metadataCacheClear,
   catalogTables,
   catalogColumns,
   catalogTypeInfo,
@@ -67,6 +74,20 @@ sealed class WorkerRequest {
 class InitializeRequest extends WorkerRequest {
   const InitializeRequest(int requestId)
       : super(requestId, RequestType.initialize);
+}
+
+/// Validate connection string without connecting.
+class ValidateConnectionStringRequest extends WorkerRequest {
+  const ValidateConnectionStringRequest(int requestId, this.connectionString)
+      : super(requestId, RequestType.validateConnectionString);
+  final String connectionString;
+}
+
+/// Get driver capabilities JSON payload from connection string.
+class GetDriverCapabilitiesRequest extends WorkerRequest {
+  const GetDriverCapabilitiesRequest(int requestId, this.connectionString)
+      : super(requestId, RequestType.getDriverCapabilities);
+  final String connectionString;
 }
 
 /// Establish database connection.
@@ -265,6 +286,13 @@ class StreamFetchRequest extends WorkerRequest {
   final int streamId;
 }
 
+/// Cancel active stream.
+class StreamCancelRequest extends WorkerRequest {
+  const StreamCancelRequest(int requestId, this.streamId)
+      : super(requestId, RequestType.streamCancel);
+  final int streamId;
+}
+
 /// Close active stream.
 class StreamCloseRequest extends WorkerRequest {
   const StreamCloseRequest(int requestId, this.streamId)
@@ -314,6 +342,13 @@ class PoolHealthCheckRequest extends WorkerRequest {
 class PoolGetStateRequest extends WorkerRequest {
   const PoolGetStateRequest(int requestId, this.poolId)
       : super(requestId, RequestType.poolGetState);
+  final int poolId;
+}
+
+/// Get detailed pool state JSON payload.
+class PoolGetStateJsonRequest extends WorkerRequest {
+  const PoolGetStateJsonRequest(int requestId, this.poolId)
+      : super(requestId, RequestType.poolGetStateJson);
   final int poolId;
 }
 
@@ -388,6 +423,30 @@ class GetCacheMetricsRequest extends WorkerRequest {
 class ClearCacheRequest extends WorkerRequest {
   const ClearCacheRequest(int requestId)
       : super(requestId, RequestType.clearCache);
+}
+
+/// Enable/reconfigure metadata cache.
+class MetadataCacheEnableRequest extends WorkerRequest {
+  const MetadataCacheEnableRequest(
+    int requestId, {
+    required this.maxEntries,
+    required this.ttlSeconds,
+  }) : super(requestId, RequestType.metadataCacheEnable);
+
+  final int maxEntries;
+  final int ttlSeconds;
+}
+
+/// Get metadata cache stats as JSON payload.
+class MetadataCacheStatsRequest extends WorkerRequest {
+  const MetadataCacheStatsRequest(int requestId)
+      : super(requestId, RequestType.metadataCacheStats);
+}
+
+/// Clear metadata cache entries.
+class MetadataCacheClearRequest extends WorkerRequest {
+  const MetadataCacheClearRequest(int requestId)
+      : super(requestId, RequestType.metadataCacheClear);
 }
 
 /// Catalog tables.
@@ -640,6 +699,18 @@ class AuditPayloadResponse extends WorkerResponse {
   const AuditPayloadResponse(super.requestId, {this.payload, this.error});
   final String? payload;
   final String? error;
+}
+
+/// Response for connection string validation.
+class ValidateConnectionStringResponse extends WorkerResponse {
+  const ValidateConnectionStringResponse(
+    super.requestId, {
+    required this.isValid,
+    this.errorMessage,
+  });
+
+  final bool isValid;
+  final String? errorMessage;
 }
 
 /// Response for stream fetch operation.
