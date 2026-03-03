@@ -120,6 +120,12 @@ abstract class OdbcConnectionBackend {
   /// Returns a record with pool size and idle count, or null on failure.
   ({int size, int idle})? poolGetState(int poolId);
 
+  /// Resizes the pool by recreating it with [newMaxSize].
+  ///
+  /// All connections must be released before resize.
+  /// Returns true on success, false on failure.
+  bool poolSetSize(int poolId, int newMaxSize);
+
   /// Closes the connection pool and releases all connections.
   ///
   /// The [poolId] must be a valid pool identifier.

@@ -262,6 +262,10 @@ void _handleRequest(
           );
         }
 
+      case PoolSetSizeRequest():
+        final ok = conn.poolSetSize(request.poolId, request.newMaxSize);
+        sendPort.send(BoolResponse(request.requestId, value: ok));
+
       case PoolCloseRequest():
         final ok = conn.poolClose(request.poolId);
         sendPort.send(BoolResponse(request.requestId, value: ok));
@@ -285,6 +289,20 @@ void _handleRequest(
           request.parallelism,
         );
         sendPort.send(IntResponse(request.requestId, rows));
+
+      case GetVersionRequest():
+        final v = conn.getVersion();
+        if (v != null) {
+          sendPort.send(
+            VersionResponse(
+              request.requestId,
+              api: v['api'] ?? '',
+              abi: v['abi'] ?? '',
+            ),
+          );
+        } else {
+          sendPort.send(VersionResponse(request.requestId));
+        }
 
       case GetMetricsRequest():
         final m = conn.getMetrics();
@@ -495,6 +513,7 @@ void _sendErrorResponse(
     case CloseStatementRequest():
     case PoolReleaseConnectionRequest():
     case PoolHealthCheckRequest():
+    case PoolSetSizeRequest():
     case PoolCloseRequest():
     case CommitTransactionRequest():
     case RollbackTransactionRequest():
@@ -541,6 +560,8 @@ void _sendErrorResponse(
       sendPort.send(IntResponse(id, -1));
     case PoolGetStateRequest():
       sendPort.send(PoolStateResponse(id, error: error));
+    case GetVersionRequest():
+      sendPort.send(VersionResponse(id));
     case GetMetricsRequest():
       sendPort.send(MetricsResponse(id, error: error));
     case GetErrorRequest():

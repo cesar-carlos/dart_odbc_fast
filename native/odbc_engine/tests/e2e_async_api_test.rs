@@ -42,8 +42,10 @@ fn test_async_query_returns_same_as_sync() {
     let odbc_conn = conn_arc.lock().unwrap();
 
     let sql = "SELECT 1 AS col, 'test' AS str";
-    let result1 = execute_query_with_connection(&odbc_conn, sql).expect("First query failed");
-    let result2 = execute_query_with_connection(&odbc_conn, sql).expect("Second query failed");
+    let result1 =
+        execute_query_with_connection(odbc_conn.connection(), sql).expect("First query failed");
+    let result2 =
+        execute_query_with_connection(odbc_conn.connection(), sql).expect("Second query failed");
 
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
@@ -86,8 +88,8 @@ fn test_async_connection_lifecycle() {
         .expect("Failed to get ODBC connection handle");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let buffer =
-        execute_query_with_connection(&odbc_conn, "SELECT 1").expect("Failed to execute SELECT 1");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), "SELECT 1")
+        .expect("Failed to execute SELECT 1");
     assert!(!buffer.is_empty(), "Result should not be empty");
 
     drop(handles_guard);
@@ -299,7 +301,11 @@ fn test_async_ffi_10_plus_concurrent_e2e() {
         let sql = format!("SELECT {} AS id, 'row{}' AS label", i + 1, i);
         let sql_c = CString::new(sql).expect("sql cstring");
         let req_id = odbc_execute_async(conn_id, sql_c.as_ptr());
-        assert!(req_id > 0, "odbc_execute_async[{}] should return request_id", i);
+        assert!(
+            req_id > 0,
+            "odbc_execute_async[{}] should return request_id",
+            i
+        );
         request_ids.push(req_id);
     }
 
@@ -339,21 +345,15 @@ fn test_async_ffi_10_plus_concurrent_e2e() {
 
     for (i, &req_id) in request_ids.iter().enumerate() {
         assert_eq!(
-            statuses[i],
-            ASYNC_STATUS_READY,
+            statuses[i], ASYNC_STATUS_READY,
             "Request {} should be READY, got {}",
-            i,
-            statuses[i]
+            i, statuses[i]
         );
 
         let mut out = vec![0u8; 64 * 1024];
         let mut written: c_uint = 0;
-        let get_rc = odbc_async_get_result(
-            req_id,
-            out.as_mut_ptr(),
-            out.len() as c_uint,
-            &mut written,
-        );
+        let get_rc =
+            odbc_async_get_result(req_id, out.as_mut_ptr(), out.len() as c_uint, &mut written);
         assert_eq!(get_rc, 0, "odbc_async_get_result[{}] should succeed", i);
         assert!(written > 0, "Result[{}] payload should not be empty", i);
 
@@ -408,7 +408,11 @@ fn test_async_vs_sync_overhead_e2e() {
             &mut written,
         );
         assert_eq!(rc, 0, "odbc_exec_query[{}] should succeed", i);
-        assert!(written > 0, "sync result[{}] payload should not be empty", i);
+        assert!(
+            written > 0,
+            "sync result[{}] payload should not be empty",
+            i
+        );
     }
     let sync_elapsed = sync_start.elapsed();
 
@@ -447,7 +451,11 @@ fn test_async_vs_sync_overhead_e2e() {
             &mut written,
         );
         assert_eq!(get_rc, 0, "odbc_async_get_result[{}] should succeed", i);
-        assert!(written > 0, "async result[{}] payload should not be empty", i);
+        assert!(
+            written > 0,
+            "async result[{}] payload should not be empty",
+            i
+        );
 
         assert_eq!(
             odbc_async_free(request_id),

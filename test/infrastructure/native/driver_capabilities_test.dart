@@ -3,6 +3,47 @@ import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('DatabaseType', () {
+    test('fromDriverName detects SQL Server', () {
+      expect(DatabaseType.fromDriverName('SQL Server'), DatabaseType.sqlServer);
+      expect(DatabaseType.fromDriverName('sqlserver'), DatabaseType.sqlServer);
+      expect(DatabaseType.fromDriverName('MSSQL'), DatabaseType.sqlServer);
+    });
+
+    test('fromDriverName detects PostgreSQL', () {
+      expect(
+        DatabaseType.fromDriverName('PostgreSQL'),
+        DatabaseType.postgresql,
+      );
+      expect(DatabaseType.fromDriverName('postgres'), DatabaseType.postgresql);
+    });
+
+    test('fromDriverName detects MySQL', () {
+      expect(DatabaseType.fromDriverName('MySQL'), DatabaseType.mysql);
+      expect(DatabaseType.fromDriverName('mysql'), DatabaseType.mysql);
+    });
+
+    test('fromDriverName detects SQLite', () {
+      expect(DatabaseType.fromDriverName('SQLite'), DatabaseType.sqlite);
+      expect(DatabaseType.fromDriverName('sqlite'), DatabaseType.sqlite);
+    });
+
+    test('fromDriverName detects Oracle', () {
+      expect(DatabaseType.fromDriverName('Oracle'), DatabaseType.oracle);
+      expect(DatabaseType.fromDriverName('oracle'), DatabaseType.oracle);
+    });
+
+    test('fromDriverName detects Sybase', () {
+      expect(DatabaseType.fromDriverName('Sybase'), DatabaseType.sybase);
+      expect(DatabaseType.fromDriverName('sybase'), DatabaseType.sybase);
+    });
+
+    test('fromDriverName returns unknown for unrecognized driver', () {
+      expect(DatabaseType.fromDriverName('Unknown'), DatabaseType.unknown);
+      expect(DatabaseType.fromDriverName(''), DatabaseType.unknown);
+    });
+  });
+
   group('DriverCapabilities', () {
     test('fromJson parses expected fields', () {
       final caps = DriverCapabilities.fromJson(<String, Object?>{
@@ -20,6 +61,7 @@ void main() {
       expect(caps.maxRowArraySize, 2000);
       expect(caps.driverName, 'PostgreSQL');
       expect(caps.driverVersion, '15.0');
+      expect(caps.databaseType, DatabaseType.postgresql);
     });
 
     test('fromJson uses defaults for missing fields', () {
@@ -31,6 +73,7 @@ void main() {
       expect(caps.maxRowArraySize, 1000);
       expect(caps.driverName, 'Unknown');
       expect(caps.driverVersion, 'Unknown');
+      expect(caps.databaseType, DatabaseType.unknown);
     });
   });
 
@@ -49,6 +92,7 @@ void main() {
 
       expect(caps, isNotNull);
       expect(caps!.driverName, 'SQL Server');
+      expect(caps.databaseType, DatabaseType.sqlServer);
       expect(caps.supportsPreparedStatements, isTrue);
     });
 
@@ -66,6 +110,7 @@ void main() {
 
       expect(caps, isNotNull);
       expect(caps!.driverName, 'Unknown');
+      expect(caps.databaseType, DatabaseType.unknown);
       expect(caps.supportsPreparedStatements, isTrue);
       expect(caps.maxRowArraySize, 1000);
     });

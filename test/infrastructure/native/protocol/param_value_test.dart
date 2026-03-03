@@ -116,40 +116,41 @@ void main() {
       expect(
         () => paramValuesFromObjects([custom]),
         throwsA(
-          isA<ArgumentError>()
-              .having(
-                (e) => e.message,
-                'message',
-                contains('ParamValue wrapper'),
-              ),
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('ParamValue wrapper'),
+          ),
         ),
       );
     });
 
     test('List<String> throws ArgumentError', () {
       expect(
-        () => paramValuesFromObjects([['a', 'b']]),
+        () => paramValuesFromObjects([
+          ['a', 'b'],
+        ]),
         throwsA(
-          isA<ArgumentError>()
-              .having(
-                (e) => e.message,
-                'message',
-                contains('Unsupported parameter type'),
-              ),
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('Unsupported parameter type'),
+          ),
         ),
       );
     });
 
     test('Map throws ArgumentError', () {
       expect(
-        () => paramValuesFromObjects([{'key': 'value'}]),
+        () => paramValuesFromObjects([
+          {'key': 'value'},
+        ]),
         throwsA(
-          isA<ArgumentError>()
-              .having(
-                (e) => e.message,
-                'message',
-                contains('Unsupported parameter type'),
-              ),
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('Unsupported parameter type'),
+          ),
         ),
       );
     });

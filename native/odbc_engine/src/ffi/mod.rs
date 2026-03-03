@@ -8,12 +8,11 @@ use crate::engine::ArrayBinding;
 #[cfg(feature = "sqlserver-bcp")]
 use crate::engine::BulkCopyExecutor;
 use crate::engine::{
-    AsyncStreamStatus,
-    execute_multi_result, execute_query_with_connection, execute_query_with_params,
+    execute_multi_result, execute_query_with_cached_connection, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
-    list_tables, AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel,
-    MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
-    StreamingExecutor, Transaction,
+    list_tables, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, DriverCapabilities,
+    IsolationLevel, MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect,
+    StatementHandle, StreamState, StreamingExecutor, Transaction,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -26,6 +25,7 @@ use crate::protocol::{
     BulkInsertPayload, ParamValue,
 };
 use crate::security::AuditLogger;
+use log::LevelFilter;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -299,15 +299,18 @@ fn run_async_query(handles: SharedHandleManager, conn_id: u32, sql: &str) -> Res
         .map_err(|_| OdbcError::InternalError("Failed to lock handles mutex".to_string()))?;
     let conn_arc = handles_guard.get_connection(conn_id)?;
     drop(handles_guard);
-    let conn_guard = conn_arc
+    let mut conn_guard = conn_arc
         .lock()
         .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-    execute_query_with_connection(&conn_guard, sql)
+    execute_query_with_cached_connection(&mut conn_guard, sql)
 }
 
 struct GlobalState {
     env: Option<Arc<Mutex<OdbcEnvironment>>>,
     connections: HashMap<u32, OdbcConnection>,
+    /// Connection strings for native BCP path (conn_id -> conn_str).
+    #[cfg(feature = "sqlserver-bcp")]
+    connection_strings: HashMap<u32, String>,
     transactions: HashMap<u32, Transaction>,
     statements: HashMap<u32, StatementHandle>,
     streams: HashMap<u32, StreamKind>,
@@ -354,10 +357,8 @@ fn set_out_written_zero(out_written: *mut c_uint) {
 
 fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
     GLOBAL_STATE.get_or_init(|| {
-        let metadata_cache_size = read_env_usize(
-            "ODBC_METADATA_CACHE_SIZE",
-            DEFAULT_METADATA_CACHE_SIZE,
-        );
+        let metadata_cache_size =
+            read_env_usize("ODBC_METADATA_CACHE_SIZE", DEFAULT_METADATA_CACHE_SIZE);
         let metadata_cache_ttl_secs = read_env_u64(
             "ODBC_METADATA_CACHE_TTL_SECS",
             DEFAULT_METADATA_CACHE_TTL_SECS,
@@ -365,6 +366,8 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
         Arc::new(Mutex::new(GlobalState {
             env: None,
             connections: HashMap::new(),
+            #[cfg(feature = "sqlserver-bcp")]
+            connection_strings: HashMap::new(),
             transactions: HashMap::new(),
             statements: HashMap::new(),
             streams: HashMap::new(),
@@ -560,6 +563,153 @@ pub extern "C" fn odbc_init() -> c_int {
     }
 }
 
+/// Set log level for the native engine (0=Off, 1=Error, 2=Warn, 3=Info, 4=Debug).
+///
+/// Affects the `log` crate's max level filter. A logger (e.g. env_logger) must be
+/// initialized by the host for output to appear. Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn odbc_set_log_level(level: c_int) -> c_int {
+    let filter = match level {
+        0 => LevelFilter::Off,
+        1 => LevelFilter::Error,
+        2 => LevelFilter::Warn,
+        3 => LevelFilter::Info,
+        4 => LevelFilter::Debug,
+        5 => LevelFilter::Trace,
+        _ => LevelFilter::Off,
+    };
+    log::set_max_level(filter);
+    0
+}
+
+/// Returns engine version as JSON for client compatibility checks.
+///
+/// Output format: `{"api":"0.1.0","abi":"1.0.0"}` (UTF-8).
+/// - **api**: package version from Cargo.toml.
+/// - **abi**: FFI contract version; bump on breaking changes.
+///
+/// Returns: 0 on success; -1 if buffer or out_written is null; -2 if buffer too small.
+#[no_mangle]
+pub extern "C" fn odbc_get_version(
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    const API_VERSION: &str = env!("CARGO_PKG_VERSION");
+    const ABI_VERSION: &str = "1.0.0";
+
+    let json = format!(r#"{{"api":"{}","abi":"{}"}}"#, API_VERSION, ABI_VERSION);
+    let bytes = json.as_bytes();
+
+    if bytes.len() > buffer_len as usize {
+        unsafe { *out_written = 0 };
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *out_written = bytes.len() as c_uint;
+    }
+    0
+}
+
+/// Validates connection string format without connecting.
+///
+/// Checks: non-empty, valid UTF-8, at least one key=value pair, balanced braces.
+/// Does not verify driver availability or server reachability.
+/// Returns: 0 if valid; -1 if invalid (error message written to error_buffer).
+#[no_mangle]
+pub extern "C" fn odbc_validate_connection_string(
+    conn_str: *const c_char,
+    error_buffer: *mut u8,
+    error_buffer_len: c_uint,
+) -> c_int {
+    if conn_str.is_null() {
+        return -1;
+    }
+
+    let s = unsafe { CStr::from_ptr(conn_str) };
+    let conn_str_rust = match s.to_str() {
+        Ok(x) => x.trim(),
+        Err(_) => {
+            if !error_buffer.is_null() && error_buffer_len > 0 {
+                let msg = b"Invalid UTF-8";
+                let n = msg.len().min(error_buffer_len as usize - 1);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(msg.as_ptr(), error_buffer, n);
+                    *error_buffer.add(n) = 0;
+                }
+            }
+            return -1;
+        }
+    };
+
+    let err = validate_connection_string_format(conn_str_rust);
+
+    if let Some(msg) = err {
+        if error_buffer.is_null() || error_buffer_len == 0 {
+            return -1;
+        }
+        let bytes = msg.as_bytes();
+        let needed = bytes.len() + 1;
+        if (error_buffer_len as usize) < needed {
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), error_buffer, bytes.len());
+            *error_buffer.add(bytes.len()) = 0;
+        }
+        return -1;
+    }
+
+    0
+}
+
+fn validate_connection_string_format(s: &str) -> Option<String> {
+    if s.is_empty() {
+        return Some("Connection string is empty".to_string());
+    }
+    if s.contains('\0') {
+        return Some("Connection string contains null byte".to_string());
+    }
+    let mut brace_depth = 0u32;
+    for ch in s.chars() {
+        match ch {
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    if brace_depth != 0 {
+        return Some("Unbalanced braces in connection string".to_string());
+    }
+    let parts: Vec<&str> = s
+        .split(';')
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return Some("No key=value pairs found".to_string());
+    }
+    let mut has_valid_pair = false;
+    for part in &parts {
+        if let Some((key, _)) = part.split_once('=') {
+            if !key.trim().is_empty() {
+                has_valid_pair = true;
+                break;
+            }
+        }
+    }
+    if !has_valid_pair {
+        return Some("No valid key=value pairs (need DSN= or Driver= etc.)".to_string());
+    }
+    None
+}
+
 /// Connect to database
 /// conn_str: null-terminated UTF-8 connection string
 /// Returns: connection ID (>0) on success, 0 on failure
@@ -601,6 +751,10 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
         Ok(conn) => {
             let conn_id = conn.get_connection_id();
             state.connections.insert(conn_id, conn);
+            #[cfg(feature = "sqlserver-bcp")]
+            state
+                .connection_strings
+                .insert(conn_id, conn_str_rust.to_string());
             state.audit_logger.log_connection(conn_id, conn_str_rust);
             conn_id
         }
@@ -659,6 +813,10 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
         Ok(conn) => {
             let conn_id = conn.get_connection_id();
             state.connections.insert(conn_id, conn);
+            #[cfg(feature = "sqlserver-bcp")]
+            state
+                .connection_strings
+                .insert(conn_id, conn_str_rust.to_string());
             state.audit_logger.log_connection(conn_id, conn_str_rust);
             conn_id
         }
@@ -680,6 +838,9 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
     let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
+
+    #[cfg(feature = "sqlserver-bcp")]
+    let _ = state.connection_strings.remove(&conn_id);
 
     if let Some(conn) = state.connections.remove(&conn_id) {
         let txns_to_rollback: Vec<u32> = state
@@ -1243,6 +1404,96 @@ pub extern "C" fn odbc_audit_get_status(
     0
 }
 
+// ============================================================================
+// Metadata Cache Management
+// ============================================================================
+
+/// Enable or reconfigure the metadata cache.
+///
+/// # Parameters
+/// - `max_size`: maximum number of entries per cache (schemas and payloads)
+/// - `ttl_secs`: time-to-live in seconds for cached entries
+///
+/// # Returns
+/// 0 on success, -1 on failure
+#[no_mangle]
+pub extern "C" fn odbc_metadata_cache_enable(max_size: c_uint, ttl_secs: c_uint) -> c_int {
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let new_cache = crate::engine::core::metadata_cache::MetadataCache::new(
+        max_size as usize,
+        std::time::Duration::from_secs(ttl_secs as u64),
+    );
+    state.metadata_cache = new_cache;
+    0
+}
+
+/// Get metadata cache statistics as JSON.
+///
+/// Returns JSON with: `max_size`, `ttl_secs`, `schema_entries`, `payload_entries`
+///
+/// # Returns
+/// 0 on success, -1 on error, -2 if buffer too small
+#[no_mangle]
+pub extern "C" fn odbc_metadata_cache_stats(
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    if buffer_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    let stats = state.metadata_cache.stats();
+    drop(state);
+
+    let data = match serde_json::to_vec(&stats) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+
+    if data.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
+        *out_written = data.len() as c_uint;
+    }
+
+    0
+}
+
+/// Clear all entries from the metadata cache.
+///
+/// # Returns
+/// 0 on success, -1 on failure
+#[no_mangle]
+pub extern "C" fn odbc_metadata_cache_clear() -> c_int {
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    state.metadata_cache.clear();
+    0
+}
+
 /// Get prepared statement cache metrics.
 /// Writes 64 bytes to buffer:
 /// cache_size(u64), cache_max_size(u64), cache_hits(u64), cache_misses(u64),
@@ -1466,7 +1717,7 @@ pub extern "C" fn odbc_exec_query(
     };
     drop(handles_guard);
 
-    let conn_guard = match conn_arc.lock() {
+    let mut conn_guard = match conn_arc.lock() {
         Ok(g) => g,
         Err(_) => {
             drop(state);
@@ -1485,7 +1736,7 @@ pub extern "C" fn odbc_exec_query(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    match execute_query_with_connection(&conn_guard, sql_str) {
+    match execute_query_with_cached_connection(&mut conn_guard, sql_str) {
         Ok(data) => {
             let elapsed = start.elapsed();
             if data.len() > buf_len as usize {
@@ -1745,7 +1996,7 @@ pub extern "C" fn odbc_exec_query_params(
     };
     drop(handles_guard);
 
-    let conn_guard = match conn_arc.lock() {
+    let mut conn_guard = match conn_arc.lock() {
         Ok(g) => g,
         Err(_) => {
             drop(state);
@@ -1761,7 +2012,7 @@ pub extern "C" fn odbc_exec_query_params(
     let start = Instant::now();
 
     let result = if params_buffer.is_null() || params_len == 0 {
-        execute_query_with_connection(&conn_guard, sql_str)
+        execute_query_with_cached_connection(&mut conn_guard, sql_str)
     } else {
         let params_slice =
             unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
@@ -1777,7 +2028,7 @@ pub extern "C" fn odbc_exec_query_params(
                 return -1;
             }
         };
-        execute_query_with_params(&conn_guard, sql_str, &params)
+        execute_query_with_params(conn_guard.connection(), sql_str, &params)
     };
 
     match result {
@@ -1903,7 +2154,7 @@ pub extern "C" fn odbc_exec_query_multi(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    match execute_multi_result(&conn_guard, sql_str) {
+    match execute_multi_result(conn_guard.connection(), sql_str) {
         Ok(data) => {
             let elapsed = start.elapsed();
             if data.len() > buffer_len as usize {
@@ -2027,7 +2278,7 @@ pub extern "C" fn odbc_catalog_tables(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    match list_tables(&conn_guard, cat_ref, sch_ref) {
+    match list_tables(conn_guard.connection(), cat_ref, sch_ref) {
         Ok(data) => {
             metrics.record_query(start.elapsed());
             if data.len() > buffer_len as usize {
@@ -2170,7 +2421,7 @@ pub extern "C" fn odbc_catalog_columns(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    match list_columns(&conn_guard, table_str) {
+    match list_columns(conn_guard.connection(), table_str) {
         Ok(data) => {
             metrics.record_query(start.elapsed());
             state.metadata_cache.cache_payload(&cache_key, &data);
@@ -2281,7 +2532,7 @@ pub extern "C" fn odbc_catalog_type_info(
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
 
-    match get_type_info(&conn_guard) {
+    match get_type_info(conn_guard.connection()) {
         Ok(data) => {
             metrics.record_query(start.elapsed());
             if data.len() > buffer_len as usize {
@@ -2495,7 +2746,7 @@ pub extern "C" fn odbc_execute(
         };
 
         execute_query_with_params_and_timeout(
-            &conn_guard,
+            conn_guard.connection(),
             &sql_str,
             &params,
             timeout_sec,
@@ -2718,10 +2969,10 @@ pub extern "C" fn odbc_stream_start(
 
     let executor = StreamingExecutor::new(chunk_size);
     let stream_state = if let Some(threshold) = spill_threshold_mb {
-        executor.execute_streaming_with_spill(&conn_guard, sql_str, Some(threshold))
+        executor.execute_streaming_with_spill(conn_guard.connection(), sql_str, Some(threshold))
     } else {
         executor
-            .execute_streaming(&conn_guard, sql_str)
+            .execute_streaming(conn_guard.connection(), sql_str)
             .map(crate::engine::StreamState::InMemory)
     };
     match stream_state {
@@ -3341,6 +3592,126 @@ pub extern "C" fn odbc_pool_get_state(
     0
 }
 
+/// Get pool state as JSON (detailed metrics for monitoring).
+///
+/// Writes UTF-8 JSON into `buffer`. Format:
+/// ```json
+/// {
+///   "total_connections": 10,
+///   "idle_connections": 8,
+///   "active_connections": 2,
+///   "max_size": 10,
+///   "wait_count": 0,
+///   "wait_time_ms": 0,
+///   "max_wait_time_ms": 0,
+///   "avg_wait_time_ms": 0
+/// }
+/// ```
+///
+/// `wait_*` fields are reserved for future instrumentation (r2d2 does not expose them).
+/// Returns: 0 on success; -1 on error; -2 if buffer too small.
+#[no_mangle]
+pub extern "C" fn odbc_pool_get_state_json(
+    pool_id: c_uint,
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let pool = match state.pools.get(&pool_id) {
+        Some(p) => p,
+        None => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+
+    let pool_state = pool.state();
+    let total = pool_state.size;
+    let idle = pool_state.idle;
+    let active = total.saturating_sub(idle);
+    let max_size = pool.max_size();
+
+    let json = format!(
+        r#"{{"total_connections":{},"idle_connections":{},"active_connections":{},"max_size":{},"wait_count":0,"wait_time_ms":0,"max_wait_time_ms":0,"avg_wait_time_ms":0}}"#,
+        total, idle, active, max_size
+    );
+
+    let bytes = json.as_bytes();
+    let needed = bytes.len() + 1;
+
+    if (buffer_len as usize) < needed {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *buffer.add(bytes.len()) = 0;
+        *out_written = bytes.len() as c_uint;
+    }
+
+    0
+}
+
+/// Resize pool by recreating it with new max_size.
+///
+/// All connections must be released before resize. Returns -1 if pool has
+/// checked-out connections or on error. r2d2 does not support in-place resize;
+/// the pool is recreated with the same connection string.
+#[no_mangle]
+pub extern "C" fn odbc_pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c_int {
+    if new_max_size == 0 {
+        return -1;
+    }
+
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let conn_str = {
+        let pool = match state.pools.get(&pool_id) {
+            Some(p) => p,
+            None => {
+                set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+                return -1;
+            }
+        };
+        let has_checked_out = state
+            .pooled_connections
+            .values()
+            .any(|(pid, _)| *pid == pool_id);
+        if has_checked_out {
+            set_error(
+                &mut state,
+                "Cannot resize pool while connections are checked out".to_string(),
+            );
+            return -1;
+        }
+        pool.connection_string().to_string()
+    };
+
+    state.pools.remove(&pool_id);
+
+    match ConnectionPool::new(&conn_str, new_max_size) {
+        Ok(pool) => {
+            state.pools.insert(pool_id, Arc::new(pool));
+            0
+        }
+        Err(e) => {
+            set_error(&mut state, format!("odbc_pool_set_size failed: {}", e));
+            -1
+        }
+    }
+}
+
 /// Close and remove pool.
 /// RAII: rolls back and restores autocommit on checked-out connections before close.
 /// Releases all checked-out connections and closes their statements.
@@ -3450,7 +3821,12 @@ pub extern "C" fn odbc_bulk_insert_array(
         }
     };
 
-    match bulk_insert_payload(&conn_guard, &payload) {
+    #[cfg(feature = "sqlserver-bcp")]
+    let conn_str = state.connection_strings.get(&conn_id).map(String::as_str);
+    #[cfg(not(feature = "sqlserver-bcp"))]
+    let conn_str: Option<&str> = None;
+
+    match bulk_insert_payload(conn_guard.connection(), &payload, conn_str) {
         Ok(total) => {
             unsafe {
                 *rows_inserted = total as c_uint;
@@ -3466,18 +3842,20 @@ pub extern "C" fn odbc_bulk_insert_array(
 }
 
 /// Bulk insert using BulkCopyExecutor when sqlserver-bcp is enabled, else ArrayBinding.
-/// Provides transparent fallback; BulkCopyExecutor uses ArrayBinding internally until native BCP is added.
+/// conn_str: when Some, enables native BCP attempt for SQL Server (requires pre-connect SQL_COPT_SS_BCP).
 fn bulk_insert_payload(
     conn: &odbc_api::Connection<'static>,
     payload: &BulkInsertPayload,
+    conn_str: Option<&str>,
 ) -> Result<usize> {
     #[cfg(feature = "sqlserver-bcp")]
     {
         let bcp = BulkCopyExecutor::new(1000);
-        bcp.bulk_copy_from_payload(conn, payload)
+        bcp.bulk_copy_from_payload(conn, payload, conn_str)
     }
     #[cfg(not(feature = "sqlserver-bcp"))]
     {
+        let _ = conn_str;
         ArrayBinding::default().bulk_insert_generic(conn, payload)
     }
 }
@@ -3591,6 +3969,7 @@ fn bulk_insert_parallel_with_pool(
         return Ok(0);
     }
 
+    let conn_str = pool.connection_string();
     let ranges = row_chunk_ranges(row_count, parallelism);
     let results: Vec<Result<usize>> = ranges
         .into_par_iter()
@@ -3598,7 +3977,7 @@ fn bulk_insert_parallel_with_pool(
             let pooled = pool.get()?;
             let odbc_conn = pooled.get_connection();
             let chunk = slice_payload_rows(payload, start, end)?;
-            bulk_insert_payload(odbc_conn, &chunk)
+            bulk_insert_payload(odbc_conn, &chunk, Some(conn_str))
         })
         .collect();
 
@@ -3883,6 +4262,112 @@ mod tests {
         );
     }
 
+    // =========================================================================
+    // Metadata Cache FFI Tests
+    // =========================================================================
+
+    #[test]
+    fn test_ffi_metadata_cache_enable() {
+        odbc_init();
+
+        let result = odbc_metadata_cache_enable(200, 600);
+        assert_eq!(result, 0, "Metadata cache enable should succeed");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_enable_zero_values() {
+        odbc_init();
+
+        // Zero values should be clamped to minimum (1)
+        let result = odbc_metadata_cache_enable(0, 0);
+        assert_eq!(result, 0, "Metadata cache enable with zeros should succeed");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_stats() {
+        odbc_init();
+        // Note: Using unique values to verify the enable call worked
+        let expected_max_size = 150;
+        let expected_ttl = 450;
+        odbc_metadata_cache_enable(expected_max_size, expected_ttl);
+
+        let mut buffer = vec![0u8; 512];
+        let mut written: c_uint = 0;
+        let result =
+            odbc_metadata_cache_stats(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+        assert_eq!(result, 0, "Metadata cache stats should succeed");
+        assert!(written > 0, "Stats payload should not be empty");
+
+        let payload = &buffer[..written as usize];
+        let parsed: Value = serde_json::from_slice(payload).expect("Valid stats JSON payload");
+
+        // Verify JSON structure contains all expected fields
+        let max_size = parsed.get("max_size").and_then(Value::as_u64);
+        let ttl_secs = parsed.get("ttl_secs").and_then(Value::as_u64);
+        assert!(max_size.is_some(), "Stats should contain max_size");
+        assert!(ttl_secs.is_some(), "Stats should contain ttl_secs");
+        assert!(
+            parsed
+                .get("schema_entries")
+                .and_then(Value::as_u64)
+                .is_some(),
+            "Stats should contain schema_entries"
+        );
+        assert!(
+            parsed
+                .get("payload_entries")
+                .and_then(Value::as_u64)
+                .is_some(),
+            "Stats should contain payload_entries"
+        );
+
+        // Verify values are reasonable (positive integers)
+        assert!(max_size.unwrap() > 0, "max_size should be positive");
+        assert!(ttl_secs.unwrap() > 0, "ttl_secs should be positive");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_stats_null_buffer() {
+        odbc_init();
+
+        let mut written: c_uint = 0;
+        let result = odbc_metadata_cache_stats(std::ptr::null_mut(), 512, &mut written);
+        assert_eq!(result, -1, "Null buffer should return -1");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_stats_null_out_written() {
+        odbc_init();
+
+        let mut buffer = vec![0u8; 512];
+        let result = odbc_metadata_cache_stats(
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(result, -1, "Null out_written should return -1");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_stats_buffer_too_small() {
+        odbc_init();
+
+        let mut buffer = vec![0u8; 1]; // Too small
+        let mut written: c_uint = 0;
+        let result =
+            odbc_metadata_cache_stats(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+        assert_eq!(result, -2, "Too small buffer should return -2");
+    }
+
+    #[test]
+    fn test_ffi_metadata_cache_clear() {
+        odbc_init();
+        odbc_metadata_cache_enable(50, 120);
+
+        let result = odbc_metadata_cache_clear();
+        assert_eq!(result, 0, "Metadata cache clear should succeed");
+    }
+
     #[test]
     fn test_ffi_get_driver_capabilities() {
         let conn_str = CString::new("Driver={SQL Server};Server=localhost;Database=test;").unwrap();
@@ -3928,6 +4413,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_set_log_level() {
+        let result = odbc_set_log_level(0);
+        assert_eq!(result, 0);
+        assert_eq!(odbc_set_log_level(1), 0);
+        assert_eq!(odbc_set_log_level(2), 0);
+        assert_eq!(odbc_set_log_level(3), 0);
+        assert_eq!(odbc_set_log_level(4), 0);
+        assert_eq!(odbc_set_log_level(5), 0);
+        assert_eq!(odbc_set_log_level(99), 0);
+    }
+
+    #[test]
     fn test_ffi_init() {
         let result = odbc_init();
         assert_eq!(result, 0, "odbc_init should succeed");
@@ -3957,6 +4454,41 @@ mod tests {
 
         let conn_id = odbc_connect(std::ptr::null());
         assert_eq!(conn_id, 0, "Connect with null pointer should fail");
+    }
+
+    #[test]
+    fn test_ffi_validate_connection_string() {
+        let mut buf = [0u8; 256];
+
+        let empty = CString::new("").unwrap();
+        let r = odbc_validate_connection_string(empty.as_ptr(), buf.as_mut_ptr(), 256);
+        assert_eq!(r, -1);
+        assert!(
+            std::str::from_utf8(&buf[..buf.iter().position(|&b| b == 0).unwrap_or(0)])
+                .unwrap()
+                .contains("empty")
+        );
+
+        let dsn = CString::new("DSN=MyDsn").unwrap();
+        let r = odbc_validate_connection_string(dsn.as_ptr(), buf.as_mut_ptr(), 256);
+        assert_eq!(r, 0);
+
+        let driver = CString::new("Driver={SQL Server};Server=localhost;").unwrap();
+        let r = odbc_validate_connection_string(driver.as_ptr(), buf.as_mut_ptr(), 256);
+        assert_eq!(r, 0);
+
+        let unbalanced = CString::new("DSN=test;PWD={unclosed").unwrap();
+        let r = odbc_validate_connection_string(unbalanced.as_ptr(), buf.as_mut_ptr(), 256);
+        assert_eq!(r, -1);
+        assert!(
+            std::str::from_utf8(&buf[..buf.iter().position(|&b| b == 0).unwrap_or(0)])
+                .unwrap()
+                .contains("brace")
+        );
+
+        let no_pairs = CString::new(";;;").unwrap();
+        let r = odbc_validate_connection_string(no_pairs.as_ptr(), buf.as_mut_ptr(), 256);
+        assert_eq!(r, -1);
     }
 
     #[test]
@@ -4715,6 +5247,51 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_pool_get_state_json_null_buffer() {
+        odbc_init();
+
+        let mut out: c_uint = 0;
+        let result = odbc_pool_get_state_json(1, std::ptr::null_mut(), 256, &mut out);
+        assert_eq!(result, -1, "Null buffer should return -1");
+    }
+
+    #[test]
+    fn test_ffi_pool_get_state_json_null_out_written() {
+        odbc_init();
+
+        let mut buf = [0u8; 256];
+        let result = odbc_pool_get_state_json(1, buf.as_mut_ptr(), 256, std::ptr::null_mut());
+        assert_eq!(result, -1, "Null out_written should return -1");
+    }
+
+    #[test]
+    fn test_ffi_pool_get_state_json_invalid_pool_id() {
+        odbc_init();
+
+        let mut buf = [0u8; 256];
+        let mut out: c_uint = 0;
+        let result = odbc_pool_get_state_json(TEST_INVALID_ID, buf.as_mut_ptr(), 256, &mut out);
+        assert_eq!(result, -1, "Invalid pool ID should return -1");
+        assert_eq!(out, 0, "out_written should be 0 on error");
+    }
+
+    #[test]
+    fn test_ffi_pool_set_size_zero_rejected() {
+        odbc_init();
+
+        let result = odbc_pool_set_size(1, 0);
+        assert_eq!(result, -1, "new_max_size 0 should return -1");
+    }
+
+    #[test]
+    fn test_ffi_pool_set_size_invalid_pool_id() {
+        odbc_init();
+
+        let result = odbc_pool_set_size(TEST_INVALID_ID, 5);
+        assert_eq!(result, -1, "Invalid pool ID should return -1");
+    }
+
+    #[test]
     fn test_ffi_pool_close_invalid_pool_id() {
         odbc_init();
 
@@ -5121,6 +5698,76 @@ mod tests {
 
         let pr = odbc_pool_release_connection(pooled_id);
         assert_eq!(pr, 0);
+
+        let cr = odbc_pool_close(pool_id);
+        assert_eq!(cr, 0);
+    }
+
+    #[test]
+    fn test_ffi_pool_get_state_json_workflow() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
+        assert!(pool_id > 0);
+
+        let mut buf = [0u8; 512];
+        let mut out: c_uint = 0;
+        let r = odbc_pool_get_state_json(pool_id, buf.as_mut_ptr(), 512, &mut out);
+        assert_eq!(r, 0, "odbc_pool_get_state_json should succeed");
+        assert!(out > 0, "out_written should be positive");
+
+        let json_str = std::str::from_utf8(&buf[..out as usize]).unwrap();
+        assert!(json_str.contains("total_connections"));
+        assert!(json_str.contains("idle_connections"));
+        assert!(json_str.contains("active_connections"));
+        assert!(json_str.contains("max_size"));
+
+        let mut small_buf = [0u8; 8];
+        let mut small_out: c_uint = 0;
+        let r_small = odbc_pool_get_state_json(pool_id, small_buf.as_mut_ptr(), 8, &mut small_out);
+        assert_eq!(r_small, -2, "Buffer too small should return -2");
+        assert_eq!(small_out, 0);
+
+        let cr = odbc_pool_close(pool_id);
+        assert_eq!(cr, 0);
+    }
+
+    #[test]
+    fn test_ffi_pool_set_size_workflow() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
+        assert!(pool_id > 0);
+
+        let pooled_id = odbc_pool_get_connection(pool_id);
+        assert!(pooled_id > 0);
+        let r_with_conn = odbc_pool_set_size(pool_id, 5);
+        assert_eq!(
+            r_with_conn, -1,
+            "Resize with checked-out connection should fail"
+        );
+
+        let pr = odbc_pool_release_connection(pooled_id);
+        assert_eq!(pr, 0);
+
+        let r_ok = odbc_pool_set_size(pool_id, 5);
+        assert_eq!(r_ok, 0, "Resize after release should succeed");
+
+        let mut size: c_uint = 0;
+        let mut idle: c_uint = 0;
+        let sr = odbc_pool_get_state(pool_id, &mut size, &mut idle);
+        assert_eq!(sr, 0);
+        assert_eq!(size, 5, "Pool max_size should be 5 after resize");
 
         let cr = odbc_pool_close(pool_id);
         assert_eq!(cr, 0);
@@ -5778,6 +6425,81 @@ mod tests {
         );
         assert_eq!(result, 0, "Execute with timeout should succeed");
         assert!(written > 0);
+
+        let _ = odbc_close_statement(stmt_id);
+        let _ = odbc_disconnect(conn_id);
+    }
+
+    #[test]
+    fn test_ffi_timeout_override_short_fails() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN + ENABLE_E2E_TESTS not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
+
+        // SQL Server: WAITFOR DELAY waits 3 seconds
+        let sql = CString::new("WAITFOR DELAY '00:00:03'").unwrap();
+        let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 30000);
+        assert!(stmt_id > 0);
+
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            1000,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_ne!(
+            result, 0,
+            "Execute with 1s timeout should fail for 3s query"
+        );
+
+        let _ = odbc_close_statement(stmt_id);
+        let _ = odbc_disconnect(conn_id);
+    }
+
+    #[test]
+    fn test_ffi_timeout_override_sufficient_succeeds() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN + ENABLE_E2E_TESTS not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
+
+        let sql = CString::new("WAITFOR DELAY '00:00:01'").unwrap();
+        let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 0);
+        assert!(stmt_id > 0);
+
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            5000,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(
+            result, 0,
+            "Execute with 5s timeout should succeed for 1s query"
+        );
 
         let _ = odbc_close_statement(stmt_id);
         let _ = odbc_disconnect(conn_id);

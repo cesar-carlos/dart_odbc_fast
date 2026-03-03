@@ -21,6 +21,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [advanced_entities_demo.dart](advanced_entities_demo.dart): `RetryHelper`, `RetryOptions`, `PreparedStatementConfig`, `StatementOptions`, and schema metadata entities.
 - [simple_demo.dart](simple_demo.dart): low-level API with `connectWithTimeout`, structured errors, `TransactionHandle`, `CatalogQuery`, prepared statements, and result parsing.
 - [async_demo.dart](async_demo.dart): async API with `AsyncNativeOdbcConnection` (`requestTimeout` + `autoRecoverOnWorkerCrash`).
+- [execute_async_demo.dart](execute_async_demo.dart): raw `executeAsync` and `streamAsync` for non-blocking single-query and streaming.
 - [async_service_locator_demo.dart](async_service_locator_demo.dart): async mode using `ServiceLocator` (`useAsync: true`) and `OdbcService`.
 - [named_parameters_demo.dart](named_parameters_demo.dart): named params with `@name` and `:name`, including prepared statement reuse.
 - [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti`.

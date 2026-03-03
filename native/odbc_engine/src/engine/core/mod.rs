@@ -12,6 +12,8 @@ pub mod pipeline;
 pub mod prepared_cache;
 pub mod protocol_engine;
 pub mod security_layer;
+#[cfg(all(feature = "sqlserver-bcp", windows))]
+pub mod sqlserver_bcp;
 
 pub use array_binding::ArrayBinding;
 pub use batch_executor::{BatchExecutor, BatchParam, BatchQuery};

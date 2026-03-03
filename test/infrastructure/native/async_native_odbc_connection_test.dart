@@ -447,7 +447,6 @@ void _fakeWorkerAsyncStreamSupport(SendPort mainSendPort) {
             message.requestId,
             success: true,
             data: payload,
-            hasMore: false,
           ),
         );
       } else {
@@ -456,7 +455,6 @@ void _fakeWorkerAsyncStreamSupport(SendPort mainSendPort) {
             message.requestId,
             success: true,
             data: Uint8List(0),
-            hasMore: false,
           ),
         );
       }

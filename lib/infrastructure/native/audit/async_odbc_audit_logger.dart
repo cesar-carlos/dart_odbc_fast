@@ -7,10 +7,10 @@ import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 class AsyncOdbcAuditLogger {
   /// Creates async typed logger bound to [connection].
   AsyncOdbcAuditLogger(AsyncNativeOdbcConnection connection)
-    : _setEnabled = connection.setAuditEnabled,
-      _clear = connection.clearAuditEvents,
-      _getEventsJson = connection.getAuditEventsJson,
-      _getStatusJson = connection.getAuditStatusJson;
+      : _setEnabled = connection.setAuditEnabled,
+        _clear = connection.clearAuditEvents,
+        _getEventsJson = connection.getAuditEventsJson,
+        _getStatusJson = connection.getAuditStatusJson;
 
   /// Creates an instance with injected delegates for tests.
   AsyncOdbcAuditLogger.forTesting({
@@ -18,10 +18,10 @@ class AsyncOdbcAuditLogger {
     required Future<bool> Function() clear,
     required Future<String?> Function({int limit}) getEventsJson,
     required Future<String?> Function() getStatusJson,
-  }) : _setEnabled = setEnabled,
-       _clear = clear,
-       _getEventsJson = getEventsJson,
-       _getStatusJson = getStatusJson;
+  })  : _setEnabled = setEnabled,
+        _clear = clear,
+        _getEventsJson = getEventsJson,
+        _getStatusJson = getStatusJson;
 
   final Future<bool> Function({required bool enabled}) _setEnabled;
   final Future<bool> Function() _clear;

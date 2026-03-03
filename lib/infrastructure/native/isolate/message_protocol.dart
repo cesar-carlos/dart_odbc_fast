@@ -31,9 +31,11 @@ enum RequestType {
   poolReleaseConnection,
   poolHealthCheck,
   poolGetState,
+  poolSetSize,
   poolClose,
   bulkInsertArray,
   bulkInsertParallel,
+  getVersion,
   getMetrics,
   getCacheMetrics,
   clearCache,
@@ -315,6 +317,14 @@ class PoolGetStateRequest extends WorkerRequest {
   final int poolId;
 }
 
+/// Resize pool.
+class PoolSetSizeRequest extends WorkerRequest {
+  const PoolSetSizeRequest(int requestId, this.poolId, this.newMaxSize)
+      : super(requestId, RequestType.poolSetSize);
+  final int poolId;
+  final int newMaxSize;
+}
+
 /// Close pool.
 class PoolCloseRequest extends WorkerRequest {
   const PoolCloseRequest(int requestId, this.poolId)
@@ -354,6 +364,12 @@ class BulkInsertParallelRequest extends WorkerRequest {
   final List<String> columns;
   final Uint8List dataBuffer;
   final int parallelism;
+}
+
+/// Get engine version (api + abi).
+class GetVersionRequest extends WorkerRequest {
+  const GetVersionRequest(int requestId)
+      : super(requestId, RequestType.getVersion);
 }
 
 /// Get metrics.
@@ -583,6 +599,13 @@ class CacheMetricsResponse extends WorkerResponse {
 class ClearCacheResponse extends WorkerResponse {
   const ClearCacheResponse(super.requestId, {this.error});
   final String? error;
+}
+
+/// Response for engine version.
+class VersionResponse extends WorkerResponse {
+  const VersionResponse(super.requestId, {this.api = '', this.abi = ''});
+  final String api;
+  final String abi;
 }
 
 /// Response for getError.

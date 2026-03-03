@@ -9,6 +9,9 @@ pragma_once = true
 [export]
 include = [
     "odbc_init",
+    "odbc_set_log_level",
+    "odbc_get_version",
+    "odbc_validate_connection_string",
     "odbc_connect",
     "odbc_connect_with_timeout",
     "odbc_disconnect",
@@ -53,6 +56,8 @@ include = [
     "odbc_pool_release_connection",
     "odbc_pool_health_check",
     "odbc_pool_get_state",
+    "odbc_pool_get_state_json",
+    "odbc_pool_set_size",
     "odbc_pool_close",
     "odbc_bulk_insert_array",
     "odbc_bulk_insert_parallel",

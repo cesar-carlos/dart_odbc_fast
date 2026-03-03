@@ -818,6 +818,14 @@ class AsyncNativeOdbcConnection {
     return (size: r.size!, idle: r.idle ?? 0);
   }
 
+  /// Resizes pool [poolId] to [newMaxSize] in the worker.
+  Future<bool> poolSetSize(int poolId, int newMaxSize) async {
+    final r = await _sendRequest<BoolResponse>(
+      PoolSetSizeRequest(_nextRequestId(), poolId, newMaxSize),
+    );
+    return r.value;
+  }
+
   /// Closes pool [poolId] in the worker.
   Future<bool> poolClose(int poolId) async {
     final r = await _sendRequest<BoolResponse>(
@@ -868,6 +876,15 @@ class AsyncNativeOdbcConnection {
       ),
     );
     return r.value;
+  }
+
+  /// Returns engine version (api + abi) for compatibility checks.
+  Future<Map<String, String>?> getVersion() async {
+    final r = await _sendRequest<VersionResponse>(
+      GetVersionRequest(_nextRequestId()),
+    );
+    if (r.api.isEmpty && r.abi.isEmpty) return null;
+    return {'api': r.api, 'abi': r.abi};
   }
 
   /// Returns ODBC metrics from the worker (query count, errors, latency, etc.).

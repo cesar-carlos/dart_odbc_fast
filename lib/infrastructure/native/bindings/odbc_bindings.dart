@@ -7,6 +7,10 @@ import 'dart:ffi' as ffi;
 class OdbcBindings {
   OdbcBindings(this._dylib) {
     _odbc_init_ptr = _dylib.lookup('odbc_init');
+    _odbc_set_log_level_ptr = _dylib.lookup('odbc_set_log_level');
+    _odbc_get_version_ptr = _dylib.lookup('odbc_get_version');
+    _odbc_validate_connection_string_ptr =
+        _dylib.lookup('odbc_validate_connection_string');
     _odbc_connect_ptr = _dylib.lookup('odbc_connect');
     try {
       _odbc_connect_with_timeout_ptr =
@@ -80,6 +84,8 @@ class OdbcBindings {
         _dylib.lookup('odbc_pool_release_connection');
     _odbc_pool_health_check_ptr = _dylib.lookup('odbc_pool_health_check');
     _odbc_pool_get_state_ptr = _dylib.lookup('odbc_pool_get_state');
+    _odbc_pool_get_state_json_ptr = _dylib.lookup('odbc_pool_get_state_json');
+    _odbc_pool_set_size_ptr = _dylib.lookup('odbc_pool_set_size');
     _odbc_pool_close_ptr = _dylib.lookup('odbc_pool_close');
     _odbc_bulk_insert_array_ptr = _dylib.lookup('odbc_bulk_insert_array');
     _odbc_bulk_insert_parallel_ptr = _dylib.lookup('odbc_bulk_insert_parallel');
@@ -105,6 +111,13 @@ class OdbcBindings {
   final ffi.DynamicLibrary _dylib;
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_init_func>> _odbc_init_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_set_log_level_func>>
+      _odbc_set_log_level_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_get_version_func>>
+      _odbc_get_version_ptr;
+  late final ffi
+      .Pointer<ffi.NativeFunction<odbc_validate_connection_string_func>>
+      _odbc_validate_connection_string_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_connect_func>>
       _odbc_connect_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_connect_with_timeout_func>>?
@@ -189,6 +202,10 @@ class OdbcBindings {
       _odbc_pool_health_check_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_pool_get_state_func>>
       _odbc_pool_get_state_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_pool_get_state_json_func>>
+      _odbc_pool_get_state_json_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_pool_set_size_func>>
+      _odbc_pool_set_size_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_pool_close_func>>
       _odbc_pool_close_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_bulk_insert_array_func>>
@@ -231,6 +248,37 @@ class OdbcBindings {
       _odbc_stream_poll_async_ptr != null;
 
   int odbc_init() => _odbc_init_ptr.asFunction<int Function()>()();
+
+  int odbc_set_log_level(int level) =>
+      _odbc_set_log_level_ptr.asFunction<int Function(int)>()(level);
+
+  int odbc_get_version(
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _odbc_get_version_ptr.asFunction<
+          int Function(
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>()(buffer, bufferLen, outWritten);
+
+  int odbc_validate_connection_string(
+    ffi.Pointer<Utf8> connStr,
+    ffi.Pointer<ffi.Uint8> errorBuffer,
+    int errorBufferLen,
+  ) =>
+      _odbc_validate_connection_string_ptr.asFunction<
+          int Function(
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+          )>()(
+        connStr,
+        errorBuffer,
+        errorBufferLen,
+      );
 
   int odbc_connect(ffi.Pointer<Utf8> connStr) =>
       _odbc_connect_ptr.asFunction<int Function(ffi.Pointer<Utf8>)>()(connStr);
@@ -681,6 +729,28 @@ class OdbcBindings {
         outIdle,
       );
 
+  int odbc_pool_get_state_json(
+    int poolId,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _odbc_pool_get_state_json_ptr.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>()(
+        poolId,
+        buffer,
+        bufferLen,
+        outWritten,
+      );
+
+  int odbc_pool_set_size(int poolId, int newMaxSize) => _odbc_pool_set_size_ptr
+      .asFunction<int Function(int, int)>()(poolId, newMaxSize);
+
   int odbc_pool_close(int poolId) =>
       _odbc_pool_close_ptr.asFunction<int Function(int)>()(poolId);
 
@@ -809,6 +879,17 @@ class OdbcBindings {
 }
 
 typedef odbc_init_func = ffi.Int32 Function();
+typedef odbc_set_log_level_func = ffi.Int32 Function(ffi.Int32);
+typedef odbc_get_version_func = ffi.Int32 Function(
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_validate_connection_string_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+);
 typedef odbc_connect_func = ffi.Uint32 Function(ffi.Pointer<Utf8>);
 typedef odbc_connect_with_timeout_func = ffi.Uint32 Function(
   ffi.Pointer<Utf8>,
@@ -984,6 +1065,16 @@ typedef odbc_pool_get_state_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
   ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_pool_get_state_json_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_pool_set_size_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Uint32,
 );
 typedef odbc_pool_close_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_bulk_insert_array_func = ffi.Int32 Function(

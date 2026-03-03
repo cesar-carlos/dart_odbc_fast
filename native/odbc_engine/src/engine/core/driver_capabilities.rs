@@ -40,6 +40,14 @@ impl DriverCapabilities {
                 driver_name: "MySQL".to_string(),
                 driver_version: "Unknown".to_string(),
             },
+            "sqlite" => Self {
+                supports_prepared_statements: true,
+                supports_batch_operations: true,
+                supports_streaming: true,
+                max_row_array_size: 1000,
+                driver_name: "SQLite".to_string(),
+                driver_version: "Unknown".to_string(),
+            },
             _ => Self::default(),
         }
     }
@@ -54,6 +62,9 @@ impl DriverCapabilities {
         }
         if lower.contains("mysql") {
             return Self::from_driver_name("mysql");
+        }
+        if lower.contains("sqlite") {
+            return Self::from_driver_name("sqlite");
         }
         Self::default()
     }

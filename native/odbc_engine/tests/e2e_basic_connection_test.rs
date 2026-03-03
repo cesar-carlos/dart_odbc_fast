@@ -75,8 +75,8 @@ fn test_basic_select_one() {
     // Execute simple query
     let sql = "SELECT 1 AS value";
     println!("Executing: {}", sql);
-    let buffer =
-        execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute SELECT 1");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute SELECT 1");
     println!("✓ Query executed successfully");
 
     // Decode result
@@ -136,7 +136,7 @@ fn test_multiple_queries_same_connection() {
         let sql = format!("SELECT {} AS value", i);
         println!("Executing query {}: {}", i, sql);
 
-        let buffer = execute_query_with_connection(&odbc_conn, &sql)
+        let buffer = execute_query_with_connection(odbc_conn.connection(), &sql)
             .unwrap_or_else(|_| panic!("Failed to execute query {}", i));
 
         let decoded = BinaryProtocolDecoder::parse(&buffer)
@@ -190,7 +190,7 @@ fn test_reconnect() {
         .expect("Failed to get ODBC connection handle");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let buffer = execute_query_with_connection(&odbc_conn, "SELECT 1 AS value")
+    let buffer = execute_query_with_connection(odbc_conn.connection(), "SELECT 1 AS value")
         .expect("Failed to execute query on first connection");
 
     drop(handles_guard);
@@ -219,7 +219,7 @@ fn test_reconnect() {
         .expect("Failed to get ODBC connection handle");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let buffer = execute_query_with_connection(&odbc_conn, "SELECT 2 AS value")
+    let buffer = execute_query_with_connection(odbc_conn.connection(), "SELECT 2 AS value")
         .expect("Failed to execute query on second connection");
 
     drop(handles_guard);
@@ -272,8 +272,8 @@ fn test_database_info() {
     // Query SQL Server version
     println!("\n--- Querying SQL Server version ---");
     let sql = "SELECT @@VERSION AS server_version";
-    let buffer =
-        execute_query_with_connection(&odbc_conn, sql).expect("Failed to query SQL Server version");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to query SQL Server version");
 
     let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode version result");
 
@@ -291,8 +291,8 @@ fn test_database_info() {
     // Query database name
     println!("\n--- Querying current database ---");
     let sql = "SELECT DB_NAME() AS database_name";
-    let buffer =
-        execute_query_with_connection(&odbc_conn, sql).expect("Failed to query database name");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to query database name");
 
     let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode database result");
 

@@ -38,7 +38,7 @@ ENABLE_E2E_TESTS=1 cargo test --tests -- --ignored
 **Arquivo**: `.env` na raiz do projeto
 
 ```bash
-# ODBC DSN para testes
+# ODBC DSN para testes (ou use ODBC_TEST_DB para multi-banco)
 ODBC_TEST_DSN=Driver={SQL Server Native Client 11.0};Server=localhost;Database=test;UID=sa;PWD=password;
 
 # Habilitar E2E tests
@@ -49,7 +49,13 @@ SQLSERVER_TEST_SERVER=localhost
 SQLSERVER_TEST_DATABASE=test
 SQLSERVER_TEST_USER=sa
 SQLSERVER_TEST_PASSWORD=password
+
+# Multi-banco: ODBC_TEST_DB=postgres|mysql|sqlite
+# ODBC_TEST_DB=sqlite
+# SQLITE_TEST_DATABASE=/tmp/odbc_test.db
 ```
+
+Para PostgreSQL, MySQL e SQLite, veja `native/doc/cross_database.md`.
 
 ### 3. Ferramentas Necessárias
 
@@ -898,6 +904,8 @@ export ODBC_TEST_DSN="Driver={SQL Server};Server=localhost;..."
 - [`ffi_api.md`](./ffi_api.md) - Referência completa de todas as 47 funções FFI
 - [`ffi_conventions.md`](./ffi_conventions.md) - Padrões de return codes, IDs, buffers
 - [`data_paths.md`](./data_paths.md) - Como dados fluem internamente
+- [`cross_database.md`](./cross_database.md) - Connection strings, quirks, multi-banco
+- [`performance_comparison.md`](./performance_comparison.md) - Benchmarks e recomendações
 - [`unexposed_features.md`](./notes/unexposed_features.md) - Features prontas para expor
 
 ### Documentação Externa
@@ -1094,6 +1102,7 @@ Você agora tem:
 
 - 📖 Consulte [`action_plan.md`](./notes/action_plan.md) para checklists detalhados
 - 📖 Consulte [`ffi_api.md`](./ffi_api.md) para exemplos de código
+- 📖 Consulte [`cross_database.md`](./cross_database.md) para setup multi-banco
 - 📖 Consulte [`unexposed_features.md`](./notes/unexposed_features.md) para features prontas
 
 ---
@@ -1104,6 +1113,6 @@ Você agora tem:
 
 ---
 
-**Última atualização**: 2026-03-02  
+**Última atualização**: 2026-03-03  
 **Autor**: ODBC Fast Team  
 **Feedback**: Bem-vindo! Melhore este doc conforme aprende.

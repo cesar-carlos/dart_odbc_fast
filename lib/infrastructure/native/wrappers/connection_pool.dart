@@ -49,6 +49,12 @@ class ConnectionPool {
   /// Returns a record with pool size and idle count, or null on failure.
   ({int size, int idle})? getState() => _backend.poolGetState(_poolId);
 
+  /// Resizes the pool by recreating it with [newMaxSize].
+  ///
+  /// All connections must be released before resize.
+  /// Returns true on success, false on failure.
+  bool setSize(int newMaxSize) => _backend.poolSetSize(_poolId, newMaxSize);
+
   /// Closes the connection pool and releases all connections.
   ///
   /// Returns true on success, false on failure.

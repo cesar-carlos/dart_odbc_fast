@@ -1,6 +1,9 @@
 /// Helper functions for E2E tests.
 /// Provides utilities to check whether E2E tests can run (connection available).
-use super::env::get_sqlserver_test_dsn;
+use super::env::{
+    get_mysql_test_dsn, get_postgresql_test_dsn, get_sqlite_test_dsn, get_sqlserver_test_dsn,
+    get_test_dsn,
+};
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 use odbc_engine::test_helpers::load_dotenv;
 
@@ -21,14 +24,12 @@ pub enum DatabaseType {
 pub fn detect_database_type(conn_str: &str) -> DatabaseType {
     let conn_lower = conn_str.to_lowercase();
 
-    // SQL Server - several possible drivers.
-    if conn_lower.contains("sql server")
-        || conn_lower.contains("driver={odbc driver")
-        || (conn_lower.contains("server=")
-            && conn_lower.contains("database=")
-            && !conn_lower.contains("sql anywhere"))
-    {
-        return DatabaseType::SqlServer;
+    // Check driver-specific strings first (before generic server= database=).
+    if conn_lower.contains("postgresql") {
+        return DatabaseType::PostgreSQL;
+    }
+    if conn_lower.contains("mysql") {
+        return DatabaseType::MySQL;
     }
 
     // Sybase Anywhere.
@@ -39,14 +40,14 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
         return DatabaseType::Sybase;
     }
 
-    // PostgreSQL.
-    if conn_lower.contains("postgresql") {
-        return DatabaseType::PostgreSQL;
-    }
-
-    // MySQL.
-    if conn_lower.contains("mysql") {
-        return DatabaseType::MySQL;
+    // SQL Server - several possible drivers.
+    if conn_lower.contains("sql server")
+        || conn_lower.contains("driver={odbc driver")
+        || (conn_lower.contains("server=")
+            && conn_lower.contains("database=")
+            && !conn_lower.contains("sql anywhere"))
+    {
+        return DatabaseType::SqlServer;
     }
 
     // Oracle.
@@ -68,53 +69,70 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
 }
 
 /// Gets the connection string and detected database type.
+/// Uses ODBC_TEST_DSN if set; otherwise ODBC_TEST_DB (postgres|mysql) or SQL Server defaults.
 #[allow(dead_code)]
 pub fn get_connection_and_db_type() -> Option<(String, DatabaseType)> {
     load_dotenv();
 
-    let conn_str = get_sqlserver_test_dsn()?;
-    let db_type = detect_database_type(&conn_str);
+    if let Some(dsn) = get_test_dsn() {
+        return Some((dsn.clone(), detect_database_type(&dsn)));
+    }
 
+    let db = std::env::var("ODBC_TEST_DB")
+        .ok()
+        .as_deref()
+        .map(str::to_lowercase);
+    let (conn_str, db_type) = match db.as_deref() {
+        Some("postgres") | Some("postgresql") => {
+            let s = get_postgresql_test_dsn()?;
+            (s, DatabaseType::PostgreSQL)
+        }
+        Some("mysql") => {
+            let s = get_mysql_test_dsn()?;
+            (s, DatabaseType::MySQL)
+        }
+        Some("sqlite") => {
+            let s = get_sqlite_test_dsn()?;
+            (s, DatabaseType::SQLite)
+        }
+        _ => {
+            let s = get_sqlserver_test_dsn()?;
+            (s, DatabaseType::SqlServer)
+        }
+    };
     Some((conn_str, db_type))
 }
 
 /// Checks whether an E2E database connection can be established.
 /// Returns `true` when the connection is available and working.
+/// Uses ODBC_TEST_DSN, ODBC_TEST_DB, or SQL Server defaults.
 #[allow(dead_code)] // Test helper API; used by e2e tests when ODBC is configured
 pub fn can_connect_to_sqlserver() -> bool {
-    // Load variables from .env.
     load_dotenv();
 
-    // Verify whether connection string is available.
-    let conn_str = match get_sqlserver_test_dsn() {
-        Some(s) => s,
-        None => {
-            return false;
-        }
+    let (conn_str, db_type) = match get_connection_and_db_type() {
+        Some(pair) => pair,
+        None => return false,
     };
 
-    // Try to initialize ODBC environment.
     let env = OdbcEnvironment::new();
     if env.init().is_err() {
         return false;
     }
 
-    // Try to connect to database.
     let handles = env.get_handles();
     match OdbcConnection::connect(handles, &conn_str) {
         Ok(conn) => {
-            // Connected successfully, disconnect and return true.
             let _ = conn.disconnect();
-            let db_type = detect_database_type(&conn_str);
             eprintln!(
-                "[OK] Connection successful with: {} (detected as {:?})",
-                conn_str, db_type
+                "[OK] Connection successful with {:?} (detected from connection string)",
+                db_type
             );
             true
         }
         Err(e) => {
             eprintln!("[ERROR] Connection failed: {:?}", e);
-            eprintln!("  Connection string: {}", conn_str);
+            eprintln!("  Database type: {:?}", db_type);
             false
         }
     }
@@ -139,6 +157,20 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
     }
 
     false
+}
+
+/// Returns SQL to drop a table idempotently (no error if table does not exist).
+#[allow(dead_code)]
+pub fn sql_drop_table_if_exists(table_name: &str, db_type: DatabaseType) -> String {
+    match db_type {
+        DatabaseType::SqlServer => {
+            format!(
+                "IF OBJECT_ID(N'{}', N'U') IS NOT NULL DROP TABLE {}",
+                table_name, table_name
+            )
+        }
+        _ => format!("DROP TABLE IF EXISTS {}", table_name),
+    }
 }
 
 /// Checks whether E2E tests should run.

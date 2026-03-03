@@ -36,8 +36,10 @@ definir trilha segura para statement handle reuse.
 ### Limites atuais
 
 - Reuse real de handle ainda nao ocorre (cache nao guarda handle ODBC ativo).
-- Timeout override ainda nao e aplicado de ponta a ponta em todos os fluxos.
-- Faltam testes de enforcement real de timeout (query lenta/longa).
+- Timeout override aplicado em odbc_execute (precedencia documentada, testes E2E).
+- Modo opt-in (`statement-handle-reuse`) agora inclui LRU de metadados SQL
+  (hits/misses/evictions) e invalidacao defensiva em acesso mutavel da conexao,
+  sem `unsafe` e sem armazenar handle preparado vivo.
 
 ## Decisao de Arquitetura
 
@@ -76,11 +78,11 @@ definir trilha segura para statement handle reuse.
 
 ### 1) Timeout Override (obrigatorio para fechar Fase 2)
 
-- [ ] `odbc_execute` usa timeout efetivo conforme precedencia documentada.
-- [ ] `timeout_override_ms = 0` mantem comportamento legado.
-- [ ] Timeout e aplicado no statement antes da chamada de execucao.
-- [ ] Erros de timeout retornam codigo/estrutura consistente no contrato FFI.
-- [ ] `ffi_api.md` atualizado com precedencia e exemplos.
+- [x] `odbc_execute` usa timeout efetivo conforme precedencia documentada.
+- [x] `timeout_override_ms = 0` mantem comportamento legado.
+- [x] Timeout e aplicado no statement antes da chamada de execucao (via odbc-api).
+- [x] Erros de timeout retornam codigo/estrutura consistente no contrato FFI.
+- [x] `ffi_api.md` atualizado com precedencia e exemplos.
 
 **Testes minimos**:
 - Unit: calculo de `effective_timeout`.
@@ -90,11 +92,26 @@ definir trilha segura para statement handle reuse.
 
 ### 2) Statement Handle Reuse (fora da Fase 2, mas com DoD definido)
 
-- [ ] Feature flag funcional e default desligado.
-- [ ] Reuse comprovado em hit de SQL equivalente.
+- [x] Feature flag funcional e default desligado.
+- [x] CachedConnection wrapper integrado (infraestrutura pronta).
+- [ ] Reuse comprovado em hit de SQL equivalente (bloqueado: ver Bloqueador Ouroboros abaixo).
 - [ ] Eviction libera recursos sem leak.
-- [ ] Sem regressao funcional nos testes existentes.
+- [x] Sem regressao funcional nos testes existentes.
 - [ ] Benchmark com ganho claro em carga repetitiva.
+
+#### Bloqueador Ouroboros (tentativa documentada)
+
+Foi feita tentativa de implementar cache LRU real com `ouroboros::self_referencing`:
+
+- `Prepared<StatementImpl<'_>>` tem lifetime ligado a `Connection`; armazenar no mesmo struct
+  cria tipo auto-referencial.
+- Com ouroboros, o cache com `#[borrows(conn)]` funciona para `execute_query_no_params`.
+- O problema: `connection_mut()` e `with_connection_mut()` precisam de `&mut Connection` para
+  transações (set_autocommit, commit, rollback). Enquanto o cache mantém borrows de conn,
+  o borrow checker não permite `&mut conn`. Mesmo após `cache.clear()`, o tipo do campo
+  ainda declara borrow de conn; o checker não entende que `None` libera o borrow.
+- Alternativas futuras: odbc-api expor handles owned, ou `unsafe` com extensão de lifetime
+  controlada.
 
 ## Matriz de Testes por Entrega
 
@@ -125,11 +142,11 @@ definir trilha segura para statement handle reuse.
 Fase 2 so pode ser marcada como concluida quando todos os itens abaixo
 estiverem verdadeiros:
 
-- [ ] Timeout override implementado e validado por testes de enforcement real.
-- [ ] Documentacao FFI atualizada e revisada.
-- [ ] Sem regressao nos testes existentes do escopo tocado.
-- [ ] Limitacao de statement reuse mantida explicitamente documentada como
-      "otimizacao de fase seguinte".
+- [x] Timeout override implementado e validado por testes de enforcement real (e2e_timeout_test).
+- [x] Documentacao FFI atualizada e revisada (ffi_api.md: timeout_override, statement reuse limitacao).
+- [x] Sem regressao nos testes existentes do escopo tocado.
+- [x] Limitacao de statement reuse mantida explicitamente documentada como
+      "otimizacao de fase seguinte" (ffi_api.md, performance_comparison.md).
 
 ## Proximos Passos (apos Fase 2)
 
@@ -149,6 +166,10 @@ cargo test --tests
 
 # E2E (quando DSN configurado)
 ENABLE_E2E_TESTS=1 cargo test --tests -- --ignored
+
+# Benchmark repetitivo (compara feature on/off)
+ENABLE_E2E_TESTS=1 cargo test test_statement_reuse_repetitive_benchmark -- --ignored --nocapture
+ENABLE_E2E_TESTS=1 cargo test test_statement_reuse_repetitive_benchmark --features statement-handle-reuse -- --ignored --nocapture
 ```
 
 ## Conclusao

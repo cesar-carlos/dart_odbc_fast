@@ -1,6 +1,7 @@
 use super::prepared_cache::PreparedStatementCache;
 use crate::engine::cell_reader::read_cell_bytes;
 use crate::error::{OdbcError, Result};
+use crate::handles::CachedConnection;
 use crate::observability::{Metrics, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::{
@@ -162,6 +163,53 @@ impl ExecutionEngine {
         } else {
             Ok(RowBufferEncoder::encode(&row_buffer))
         };
+
+        let latency = start_time.elapsed();
+        self.metrics.record_query(latency);
+
+        if let Some(span) = self.tracer.finish_span(span_id) {
+            if let Some(duration) = span.duration() {
+                log::debug!("Query completed in {}ms", duration.as_millis());
+            }
+        }
+
+        if result.is_err() {
+            self.metrics.record_error();
+            if let Err(ref e) = result {
+                self.audit_logger.log_error(None, &e.to_string());
+            }
+        }
+
+        result
+    }
+
+    /// Execute query using cached connection (reuses prepared statements when feature enabled).
+    pub fn execute_query_cached(
+        &self,
+        cached: &mut CachedConnection,
+        sql: &str,
+    ) -> Result<Vec<u8>> {
+        use std::time::Instant;
+
+        let start_time = Instant::now();
+        let span_id = self.tracer.start_span(sql.to_string());
+        let mut metadata = HashMap::new();
+        metadata.insert("span_id".to_string(), span_id.to_string());
+        self.logger.log_query(Level::Info, sql, &metadata);
+
+        let optimized_sql = if let Ok(active) = self.active_plugin.lock() {
+            if let Some(ref plugin) = *active {
+                plugin.optimize_query(sql)
+            } else {
+                sql.to_string()
+            }
+        } else {
+            sql.to_string()
+        };
+
+        self.prepared_cache.get_or_insert(&optimized_sql);
+
+        let result = cached.execute_query_no_params(&optimized_sql);
 
         let latency = start_time.elapsed();
         self.metrics.record_query(latency);

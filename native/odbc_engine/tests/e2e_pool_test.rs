@@ -1,6 +1,7 @@
 /// E2E tests for ConnectionPool with real SQL Server connection
-use odbc_engine::pool::ConnectionPool;
+use odbc_engine::pool::{ConnectionPool, PoolOptions};
 use std::sync::Arc;
+use std::time::Duration;
 
 mod helpers;
 use helpers::e2e::should_run_e2e_tests;
@@ -427,6 +428,48 @@ fn test_pool_concurrent_access() {
     assert!(state.idle <= state.size, "Idle should not exceed size");
 
     println!("✅ Concurrent access test PASSED");
+}
+
+/// E2E test: pool eviction when max_lifetime is exceeded.
+/// Connection held past max_lifetime is evicted on return; next get() creates fresh connection.
+#[test]
+fn test_pool_eviction_max_lifetime() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let options = PoolOptions {
+        max_lifetime: Some(Duration::from_secs(2)),
+        ..PoolOptions::default()
+    };
+    let pool = ConnectionPool::new_with_options(&conn_str, 2, options)
+        .expect("Failed to create pool with max_lifetime");
+
+    // Get connection, use it, hold past max_lifetime
+    let wrapper1 = pool.get().expect("Failed to get connection 1");
+    {
+        let conn = wrapper1.get_connection();
+        let mut stmt = conn.prepare("SELECT 1 AS value").expect("Prepare");
+        let cursor = stmt.execute(()).expect("Execute");
+        assert!(cursor.is_some(), "Query should succeed");
+    }
+    std::thread::sleep(Duration::from_secs(3));
+    drop(wrapper1);
+
+    // Connection was evicted on return (exceeded max_lifetime).
+    // Next get() should succeed with a fresh connection.
+    let wrapper2 = pool.get().expect("Failed to get connection after eviction");
+    {
+        let conn = wrapper2.get_connection();
+        let mut stmt = conn.prepare("SELECT 2 AS value").expect("Prepare");
+        let cursor = stmt.execute(()).expect("Execute");
+        assert!(cursor.is_some(), "Query should succeed after eviction");
+    }
+    drop(wrapper2);
+
+    println!("✅ Pool eviction (max_lifetime) test PASSED");
 }
 
 /// Stress test: many concurrent checkout/release cycles (Fase 5).

@@ -1,5 +1,6 @@
 use super::execution_engine::ExecutionEngine;
 use crate::error::{OdbcError, Result};
+use crate::handles::CachedConnection;
 use crate::observability::Metrics;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
@@ -60,6 +61,16 @@ impl QueryPipeline {
     pub fn execute_direct(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         let plan = self.parse_sql(sql)?;
         self.execute(conn, plan)
+    }
+
+    /// Execute SQL using cached connection (enables prepared-statement reuse when feature on).
+    pub fn execute_direct_cached(
+        &self,
+        cached: &mut CachedConnection,
+        sql: &str,
+    ) -> Result<Vec<u8>> {
+        self.parse_sql(sql)?;
+        self.execution_engine.execute_query_cached(cached, sql)
     }
 
     pub fn execute_with_params(

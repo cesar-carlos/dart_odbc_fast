@@ -56,6 +56,16 @@ jobs:
           cd native
           cargo build --release --verbose
 
+      - name: Build benchmarks
+        run: |
+          cd native
+          cargo build --release --benches
+
+      - name: Build with sqlserver-bcp feature
+        run: |
+          cd native
+          cargo build --release --features sqlserver-bcp
+
       - name: Run Rust tests
         run: |
           cd native
@@ -110,6 +120,13 @@ jobs:
           cd native
           cargo install --locked cargo-tarpaulin
           cargo tarpaulin -p odbc_engine --lib --out Html --out Lcov --output-dir coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: native/coverage/lcov.info
+          flags: rust
+          name: rust-coverage
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

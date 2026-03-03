@@ -29,6 +29,7 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   bool poolHealthCheckResult = true;
   ({int size, int idle})? poolGetStateResult = (size: 5, idle: 3);
   bool poolCloseResult = true;
+  bool poolSetSizeResult = true;
   int bulkInsertParallelResult = 10;
 
   @override
@@ -41,8 +42,7 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   bool createSavepoint(int txnId, String name) => createSavepointResult;
 
   @override
-  bool rollbackToSavepoint(int txnId, String name) =>
-      rollbackToSavepointResult;
+  bool rollbackToSavepoint(int txnId, String name) => rollbackToSavepointResult;
 
   @override
   bool releaseSavepoint(int txnId, String name) => releaseSavepointResult;
@@ -85,8 +85,7 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   int poolGetConnection(int poolId) => poolGetConnectionResult;
 
   @override
-  bool poolReleaseConnection(int connectionId) =>
-      poolReleaseConnectionResult;
+  bool poolReleaseConnection(int connectionId) => poolReleaseConnectionResult;
 
   @override
   bool poolHealthCheck(int poolId) => poolHealthCheckResult;
@@ -96,6 +95,9 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
 
   @override
   bool poolClose(int poolId) => poolCloseResult;
+
+  @override
+  bool poolSetSize(int poolId, int newMaxSize) => poolSetSizeResult;
 
   @override
   int bulkInsertParallel(

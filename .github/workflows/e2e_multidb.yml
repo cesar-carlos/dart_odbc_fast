@@ -1,0 +1,178 @@
+# E2E tests against PostgreSQL, MySQL, SQL Server, and SQLite.
+# Runs on workflow_dispatch or push to main when native/** changes.
+
+name: E2E Multi-DB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "native/**"
+      - "docker/**"
+      - ".github/workflows/e2e_multidb.yml"
+
+jobs:
+  e2e-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+      - name: Install ODBC and SQLite driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm libsqliteodbc
+          odbcinst -q -d || true
+      - name: Run E2E (SQLite)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DB: "sqlite"
+          SQLITE_TEST_DATABASE: "/tmp/odbc_test.db"
+        run: cd native && cargo test e2e_multi_db -- --nocapture
+
+  e2e-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: odbc_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+      - name: Install ODBC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm odbc-postgresql
+      - name: Run E2E (PostgreSQL)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DSN: "Driver={PostgreSQL Unicode};Server=localhost;Port=5432;Database=odbc_test;Uid=postgres;Pwd=postgres;"
+        run: cd native && cargo test e2e_multi_db -- --nocapture
+
+  e2e-mysql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    services:
+      mysql:
+        image: mysql:8.0
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: odbc_test
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -u root -pmysql"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+      - name: Install ODBC and MySQL driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm wget
+          wget -q "https://dev.mysql.com/get/mysql-apt-config_0.8.29-1_all.deb" -O /tmp/mysql-apt.deb || true
+          if [ -f /tmp/mysql-apt.deb ]; then
+            echo "mysql-apt-config mysql-apt-config/select-product select mysql-tools" | sudo debconf-set-selections
+            sudo DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb || sudo apt-get install -f -y
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-connector-odbc || true
+          fi
+          odbcinst -q -d || true
+      - name: Run E2E (MySQL)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DSN: "Driver={MySQL ODBC 8.0 Driver};Server=localhost;Port=3306;Database=odbc_test;User=root;Password=mysql;"
+        run: cd native && cargo test e2e_multi_db -- --nocapture
+
+  e2e-mssql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        ports:
+          - 1433:1433
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "OdbcTest123!"
+          MSSQL_PID: "Developer"
+        options: >-
+          --health-cmd "timeout 1 bash -c '</dev/tcp/localhost/1433' || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 20s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+      - name: Install ODBC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+      - name: Install SQL Server ODBC
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql17
+      - name: Wait for SQL Server
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/1433) 2>/dev/null; then sleep 5; echo "Ready"; exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Run E2E (SQL Server)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DSN: "Driver={ODBC Driver 17 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;"
+        run: cd native && cargo test e2e_multi_db -- --nocapture
+      - name: Run BCP fallback E2E (sqlserver-bcp)
+        env:
+          ENABLE_E2E_TESTS: "1"
+          ODBC_TEST_DSN: "Driver={ODBC Driver 17 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;"
+          BCP_E2E_ROWS: "1000"
+        run: cd native && cargo test --features sqlserver-bcp e2e_bcp -- --nocapture

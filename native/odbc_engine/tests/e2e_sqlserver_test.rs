@@ -94,7 +94,8 @@ fn test_e2e_sqlserver_integer_types() {
         32767 AS smallint_val,
         255 AS tinyint_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -176,7 +177,8 @@ fn test_e2e_sqlserver_decimal_types() {
         3.14159265359 AS float_val,
         2.71828 AS real_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -231,7 +233,8 @@ fn test_e2e_sqlserver_string_types() {
         'Fixed' AS char_val,
         N'FixedUnicode' AS nchar_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -302,7 +305,8 @@ fn test_e2e_sqlserver_date_time_types() {
         CAST('2024-01-15 14:30:00.123' AS DATETIME2) AS datetime2_val,
         CAST('14:30:00' AS TIME) AS time_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -357,7 +361,8 @@ fn test_e2e_sqlserver_null_values() {
         NULL AS null_date,
         42 AS not_null_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -425,7 +430,8 @@ fn test_e2e_sqlserver_multiple_rows() {
     ) AS numbers
     ORDER BY id";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -504,7 +510,8 @@ fn test_e2e_sqlserver_aggregate_functions() {
         SELECT 50
     ) AS numbers";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -601,7 +608,8 @@ fn test_e2e_sqlserver_complex_query() {
     WHERE a.value >= 2
     ORDER BY a.id";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -694,7 +702,8 @@ fn test_e2e_sqlserver_binary_types() {
         CAST(0x576F726C64 AS VARBINARY(5)) AS varbinary_val,
         CAST(0x54657374496D616765 AS VARBINARY(MAX)) AS image_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -767,7 +776,8 @@ fn test_e2e_sqlserver_binary_with_null() {
         NULL AS null_binary,
         CAST(0x48656C6C6F AS BINARY(5)) AS not_null_binary";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -830,7 +840,8 @@ fn test_e2e_sqlserver_bit_and_money_types() {
         CAST(1234.5678 AS MONEY) AS money_val,
         CAST(-9876.5432 AS MONEY) AS money_negative";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 
@@ -918,7 +929,8 @@ fn test_e2e_sqlserver_text_type() {
         CAST('This is a TEXT type test with some content' AS TEXT) AS text_val,
         CAST('Large text content for TEXT type validation' AS VARCHAR(MAX)) AS varchar_max_val";
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     drop(handles_guard);
 

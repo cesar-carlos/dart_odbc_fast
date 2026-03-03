@@ -13,6 +13,32 @@ Initializes the async runtime and the ODBC environment.
 
 - **Returns**: `0` on success; non‑zero on failure.
 
+### `odbc_set_log_level(level: int) -> int`
+
+Sets the log level for the native engine. Affects the `log` crate's max level filter.
+A logger (e.g. env_logger) must be initialized by the host for output to appear.
+
+- **level**: `0`=Off, `1`=Error, `2`=Warn, `3`=Info, `4`=Debug, `5`=Trace. Other values map to Off.
+- **Returns**: `0` on success.
+
+### `odbc_get_version(buffer, buffer_len, out_written) -> int`
+
+Returns engine version as JSON for client compatibility checks.
+
+- **Output**: UTF‑8 JSON `{"api":"0.1.0","abi":"1.0.0"}`.
+  - **api**: package version from Cargo.toml.
+  - **abi**: FFI contract version; bump on breaking changes.
+- **Returns**: `0` on success; `-1` if buffer or out_written is null; `-2` if buffer too small.
+
+### `odbc_validate_connection_string(conn_str, error_buffer, error_buffer_len) -> int`
+
+Validates connection string format without connecting. Checks: non-empty, valid UTF-8,
+at least one key=value pair, balanced braces. Does not verify driver availability
+or server reachability.
+
+- **Returns**: `0` if valid; `-1` if invalid (error message written to `error_buffer`).
+- **error_buffer**: optional; if null or too small, returns -1 without writing.
+
 ### `odbc_connect(conn_str: *const c_char) -> unsigned int`
 
 Creates a new ODBC connection and stores it in global state.
@@ -157,8 +183,10 @@ Executes a prepared statement. Same output contract as `odbc_exec_query` / `odbc
 
 - **Returns**: `0` on success; `-1` on error; `-2` if output buffer too small.
 - **params_buffer** / **params_len**: Serialized `ParamValue` array; use `NULL` / `0` for no parameters.
-- **timeout_override_ms**: `0` keeps the timeout configured in `odbc_prepare`; non-zero
-  overrides timeout for this execution.
+- **timeout_override_ms**: Precedence rule:
+  - `0` → use timeout from `odbc_prepare` (or none if prepare used `0`).
+  - `> 0` → override: use this value (in ms); minimum effective is 1 second.
+- **Example**: `odbc_prepare(..., 30000)` + `odbc_execute(..., 2000, ...)` → 2 s timeout for this execution.
 - **fetch_size**: optional execution fetch hint (`0` = default behavior).
 
 #### `odbc_cancel(stmt_id) -> int`
@@ -178,6 +206,8 @@ Closes the prepared statement and releases resources. **Returns**: `0` on succes
 Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
+
+**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU metadata tracking per connection. **Limitation**: Full handle reuse is blocked by lifetime constraints in `odbc-api`; current implementation is passthrough with ~8% overhead. Keep default OFF until real reuse is implemented. See `native/doc/notes/statement_reuse_and_timeout.md`.
 
 ## Streaming (chunked copy-out over FFI)
 
@@ -404,6 +434,34 @@ Writes pool state:
 
 - `out_size`: total connections
 - `out_idle`: idle connections
+
+### `odbc_pool_get_state_json(pool_id, buffer, buffer_len, out_written) -> int`
+
+Writes pool state as UTF-8 JSON into `buffer`. Returns `0` on success; `-1` on error; `-2` if buffer too small.
+
+JSON format:
+
+```json
+{
+  "total_connections": 10,
+  "idle_connections": 8,
+  "active_connections": 2,
+  "max_size": 10,
+  "wait_count": 0,
+  "wait_time_ms": 0,
+  "max_wait_time_ms": 0,
+  "avg_wait_time_ms": 0
+}
+```
+
+`wait_*` fields are reserved for future instrumentation (r2d2 does not expose them).
+
+### `odbc_pool_set_size(pool_id, new_max_size) -> int`
+
+Resizes the pool by recreating it with the new max size. All connections must be
+released before resize. Returns `0` on success; `-1` on error (invalid pool,
+connections checked out, or pool creation failed). r2d2 does not support in-place
+resize; the pool is recreated with the same connection string.
 
 ### `odbc_pool_close(pool_id) -> int`
 

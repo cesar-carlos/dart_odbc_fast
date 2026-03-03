@@ -73,11 +73,13 @@ void main() {
     });
 
     test('flush returns batch and clears buffer', () {
-      buffer.addTrace(Trace(
-        traceId: 't1',
-        name: 'op',
-        startTime: DateTime.now(),
-      ),);
+      buffer.addTrace(
+        Trace(
+          traceId: 't1',
+          name: 'op',
+          startTime: DateTime.now(),
+        ),
+      );
       final batch = buffer.flush();
       expect(batch.traces.length, 1);
       expect(batch.traces[0].traceId, 't1');
@@ -92,11 +94,13 @@ void main() {
 
     test('addTrace returns true when batchSize reached', () {
       for (var i = 0; i < 5; i++) {
-        final shouldFlush = buffer.addTrace(Trace(
-          traceId: 't$i',
-          name: 'op',
-          startTime: DateTime.now(),
-        ),);
+        final shouldFlush = buffer.addTrace(
+          Trace(
+            traceId: 't$i',
+            name: 'op',
+            startTime: DateTime.now(),
+          ),
+        );
         if (i == 4) {
           expect(shouldFlush, true);
         }

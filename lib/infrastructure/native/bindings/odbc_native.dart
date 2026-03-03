@@ -58,6 +58,64 @@ class OdbcNative {
     return result == 0;
   }
 
+  /// Sets the native engine log level (0=Off, 1=Error, 2=Warn, 3=Info, 4=Debug,
+  /// 5=Trace). A logger must be initialized by the host for output to appear.
+  void setLogLevel(int level) {
+    _bindings.odbc_set_log_level(level);
+  }
+
+  /// Returns engine version (api + abi) for client compatibility checks.
+  ///
+  /// Example: `{"api": "0.1.0", "abi": "1.0.0"}`.
+  /// Returns null on failure.
+  Map<String, String>? getVersion() {
+    const bufSize = 128;
+    final buf = malloc<ffi.Uint8>(bufSize);
+    final outWritten = malloc<ffi.Uint32>();
+    try {
+      final code = _bindings.odbc_get_version(buf, bufSize, outWritten);
+      if (code != 0) return null;
+      final n = outWritten.value;
+      if (n == 0) return null;
+      final json = utf8.decode(buf.asTypedList(n));
+      final decoded = jsonDecode(json) as Map<String, dynamic>;
+      return {
+        'api': decoded['api'] as String? ?? '',
+        'abi': decoded['abi'] as String? ?? '',
+      };
+    } on Object catch (_) {
+      return null;
+    } finally {
+      malloc
+        ..free(buf)
+        ..free(outWritten);
+    }
+  }
+
+  /// Validates connection string format without connecting.
+  ///
+  /// Returns null if valid; error message if invalid (empty, bad UTF-8,
+  /// no key=value pairs, unbalanced braces).
+  String? validateConnectionString(String connectionString) {
+    final connStrPtr = connectionString.toNativeUtf8();
+    final errorBuf = malloc<ffi.Uint8>(256);
+    try {
+      final code = _bindings.odbc_validate_connection_string(
+        connStrPtr.cast<bindings.Utf8>(),
+        errorBuf,
+        256,
+      );
+      if (code == 0) return null;
+      final len = errorBuf.asTypedList(256).indexOf(0);
+      if (len <= 0) return 'Invalid connection string';
+      return utf8.decode(errorBuf.asTypedList(len));
+    } finally {
+      malloc
+        ..free(connStrPtr)
+        ..free(errorBuf);
+    }
+  }
+
   /// Establishes a new database connection.
   ///
   /// The [connectionString] should be a valid ODBC connection string
@@ -1043,6 +1101,35 @@ class OdbcNative {
         ..free(outSize)
         ..free(outIdle);
     }
+  }
+
+  /// Gets pool state as JSON (detailed metrics for monitoring).
+  ///
+  /// Returns a map with keys: total_connections, idle_connections,
+  /// active_connections, max_size, wait_count, wait_time_ms,
+  /// max_wait_time_ms, avg_wait_time_ms. Returns null on failure.
+  Map<String, dynamic>? poolGetStateJson(int poolId) {
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) =>
+          _bindings.odbc_pool_get_state_json(poolId, buf, bufLen, outWritten),
+      initialSize: 256,
+    );
+    if (data == null || data.isEmpty) return null;
+    try {
+      final json = utf8.decode(data);
+      return jsonDecode(json) as Map<String, dynamic>;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Resizes the pool by recreating it with [newMaxSize].
+  ///
+  /// All connections must be released before resize. Returns true on success,
+  /// false on failure (invalid pool, connections checked out, or pool creation
+  /// failed).
+  bool poolSetSize(int poolId, int newMaxSize) {
+    return _bindings.odbc_pool_set_size(poolId, newMaxSize) == 0;
   }
 
   /// Closes the connection pool and releases all connections.

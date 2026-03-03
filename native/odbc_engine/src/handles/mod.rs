@@ -1,11 +1,15 @@
+mod cached_connection;
+
+pub use cached_connection::CachedConnection;
+
 use crate::error::{OdbcError, Result};
 use odbc_api::{Connection, ConnectionOptions, Environment};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Shared connection handle. Allows releasing the HandleManager lock quickly
-/// while holding a per-connection lock for the duration of use.
-pub type SharedConnection = Arc<Mutex<Connection<'static>>>;
+/// Shared connection handle. Wraps Connection with optional prepared-statement cache.
+/// Use `CachedConnection::connection()` when raw Connection access is needed.
+pub type SharedConnection = Arc<Mutex<CachedConnection>>;
 
 /// Max attempts when allocating connection ID to avoid collision after wrap-around.
 const MAX_CONN_ID_ALLOC_ATTEMPTS: u32 = 1000;
@@ -84,8 +88,10 @@ impl HandleManager {
             ));
         }
 
-        self.connections
-            .insert(conn_id, Arc::new(Mutex::new(connection)));
+        self.connections.insert(
+            conn_id,
+            Arc::new(Mutex::new(CachedConnection::new(connection))),
+        );
         Ok(conn_id)
     }
 
@@ -108,7 +114,7 @@ impl HandleManager {
         let guard = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        f(&guard)
+        f(guard.connection())
     }
 
     pub fn remove_connection(&mut self, conn_id: u32) -> Result<()> {

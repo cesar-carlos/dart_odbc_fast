@@ -1,5 +1,6 @@
 use crate::engine::core::QueryPipeline;
 use crate::error::Result;
+use crate::handles::CachedConnection;
 use crate::observability::Metrics;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
@@ -15,6 +16,14 @@ pub fn get_global_metrics() -> Arc<Metrics> {
 
 pub fn execute_query_with_connection(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
     PIPELINE.execute_direct(conn, sql)
+}
+
+/// Execute SQL using cached connection (enables prepared-statement reuse when feature on).
+pub fn execute_query_with_cached_connection(
+    cached: &mut CachedConnection,
+    sql: &str,
+) -> Result<Vec<u8>> {
+    PIPELINE.execute_direct_cached(cached, sql)
 }
 
 pub fn execute_query_with_params(

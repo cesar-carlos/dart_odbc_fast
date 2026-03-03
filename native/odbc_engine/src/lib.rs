@@ -25,8 +25,8 @@ pub use ffi::{
     odbc_async_cancel, odbc_async_free, odbc_async_get_result, odbc_async_poll, odbc_connect,
     odbc_connect_with_timeout, odbc_disconnect, odbc_exec_query, odbc_execute_async,
     odbc_get_error, odbc_get_structured_error, odbc_get_structured_error_for_connection, odbc_init,
-    odbc_savepoint_create, odbc_savepoint_release, odbc_savepoint_rollback,
-    odbc_stream_poll_async, odbc_stream_start_async,
+    odbc_savepoint_create, odbc_savepoint_release, odbc_savepoint_rollback, odbc_stream_poll_async,
+    odbc_stream_start_async,
 };
 
 #[cfg(feature = "test-helpers")]

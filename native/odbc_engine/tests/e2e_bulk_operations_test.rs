@@ -368,9 +368,11 @@ fn test_e2e_bulk_read_all_rows() {
     let start = Instant::now();
 
     use odbc_engine::execute_query_with_connection;
-    let buffer =
-        execute_query_with_connection(&odbc_conn, "SELECT * FROM odbc_bulk_test ORDER BY id")
-            .expect("Failed to read rows");
+    let buffer = execute_query_with_connection(
+        odbc_conn.connection(),
+        "SELECT * FROM odbc_bulk_test ORDER BY id",
+    )
+    .expect("Failed to read rows");
 
     let read_duration = start.elapsed();
 
@@ -744,8 +746,11 @@ fn test_e2e_bulk_array_binding() {
     let elapsed = start.elapsed();
 
     assert_eq!(inserted, N, "Expected {} rows inserted", N);
-    let buf = execute_query_with_connection(&odbc_conn, "SELECT COUNT(*) AS c FROM odbc_ab_test")
-        .expect("SELECT COUNT");
+    let buf = execute_query_with_connection(
+        odbc_conn.connection(),
+        "SELECT COUNT(*) AS c FROM odbc_ab_test",
+    )
+    .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(dec.rows[0][0].as_ref().unwrap());
     assert_eq!(count as usize, N);
@@ -884,9 +889,11 @@ fn test_e2e_bulk_insert_generic() {
     let elapsed = start.elapsed();
 
     assert_eq!(inserted, N, "Expected {} rows inserted", N);
-    let buf =
-        execute_query_with_connection(&odbc_conn, "SELECT COUNT(*) AS c FROM odbc_bi_gen_test")
-            .expect("SELECT COUNT");
+    let buf = execute_query_with_connection(
+        odbc_conn.connection(),
+        "SELECT COUNT(*) AS c FROM odbc_bi_gen_test",
+    )
+    .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(dec.rows[0][0].as_ref().unwrap());
     assert_eq!(count as usize, N);

@@ -90,7 +90,7 @@ impl Transaction {
                 .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
             h.get_connection(conn_id)?
         };
-        let conn = conn_arc
+        let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
 
@@ -101,11 +101,14 @@ impl Transaction {
             "SET TRANSACTION ISOLATION LEVEL {}",
             isolation_level.to_sql_keyword()
         );
-        conn.execute(&sql, (), None)
+        conn.connection()
+            .execute(&sql, (), None)
             .map(|_| ())
             .map_err(OdbcError::from)?;
 
-        conn.set_autocommit(false).map_err(OdbcError::from)?;
+        conn.connection_mut()
+            .set_autocommit(false)
+            .map_err(OdbcError::from)?;
 
         Ok(Self {
             handles,
@@ -137,11 +140,13 @@ impl Transaction {
             })?;
             h.get_connection(self.conn_id)?
         };
-        let conn = conn_arc
+        let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.commit().map_err(OdbcError::from)?;
-        conn.set_autocommit(true).map_err(OdbcError::from)?;
+        conn.connection_mut().commit().map_err(OdbcError::from)?;
+        conn.connection_mut()
+            .set_autocommit(true)
+            .map_err(OdbcError::from)?;
 
         *s = TransactionState::Committed;
         Ok(())
@@ -164,11 +169,13 @@ impl Transaction {
             })?;
             h.get_connection(self.conn_id)?
         };
-        let conn = conn_arc
+        let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.rollback().map_err(OdbcError::from)?;
-        conn.set_autocommit(true).map_err(OdbcError::from)?;
+        conn.connection_mut().rollback().map_err(OdbcError::from)?;
+        conn.connection_mut()
+            .set_autocommit(true)
+            .map_err(OdbcError::from)?;
 
         *s = TransactionState::RolledBack;
         Ok(())
@@ -219,7 +226,8 @@ impl Transaction {
         let conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.execute(sql, (), None)
+        conn.connection()
+            .execute(sql, (), None)
             .map(|_| ())
             .map_err(OdbcError::from)
     }
@@ -271,9 +279,9 @@ impl Drop for Transaction {
             log::warn!("Transaction dropped without commit - auto-rollback");
             if let Ok(h) = self.handles.lock() {
                 if let Ok(conn_arc) = h.get_connection(self.conn_id) {
-                    if let Ok(conn) = conn_arc.lock() {
-                        let _ = conn.rollback();
-                        let _ = conn.set_autocommit(true);
+                    if let Ok(mut conn) = conn_arc.lock() {
+                        let _ = conn.connection_mut().rollback();
+                        let _ = conn.connection_mut().set_autocommit(true);
                     }
                 }
             }

@@ -454,6 +454,10 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
       _native.poolGetState(poolId);
 
   @override
+  bool poolSetSize(int poolId, int newMaxSize) =>
+      _native.poolSetSize(poolId, newMaxSize);
+
+  @override
   bool poolClose(int poolId) => _native.poolClose(poolId);
 
   /// Performs a bulk insert operation.
@@ -503,6 +507,9 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   ///
   /// Returns [OdbcMetrics] containing query counts, error counts,
   /// uptime, and latency information, or null on failure.
+  /// Returns engine version (api + abi) for compatibility checks.
+  Map<String, String>? getVersion() => _native.getVersion();
+
   OdbcMetrics? getMetrics() {
     final metrics = _native.getMetrics();
     if (metrics == null) {

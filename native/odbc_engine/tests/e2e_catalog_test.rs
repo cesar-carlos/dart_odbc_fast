@@ -28,7 +28,7 @@ fn test_catalog_list_tables() {
         .expect("odbc");
     let odbc = conn_arc.lock().unwrap();
 
-    let buf = list_tables(&odbc, None, None).expect("list_tables");
+    let buf = list_tables(odbc.connection(), None, None).expect("list_tables");
     drop(guard);
     conn.disconnect().expect("disconnect");
 
@@ -58,7 +58,8 @@ fn test_catalog_list_tables_schema_filter() {
         .expect("odbc");
     let odbc = conn_arc.lock().unwrap();
 
-    let buf = list_tables(&odbc, None, Some("INFORMATION_SCHEMA")).expect("list_tables");
+    let buf =
+        list_tables(odbc.connection(), None, Some("INFORMATION_SCHEMA")).expect("list_tables");
     drop(guard);
     conn.disconnect().expect("disconnect");
 
@@ -89,20 +90,20 @@ fn test_catalog_list_columns() {
 
     // Create a test table to list columns from
     execute_query_with_connection(
-        &odbc,
+        odbc.connection(),
         "IF OBJECT_ID('dbo.odbc_catalog_test', 'U') IS NOT NULL DROP TABLE dbo.odbc_catalog_test",
     )
     .ok();
     execute_query_with_connection(
-        &odbc,
+        odbc.connection(),
         "CREATE TABLE dbo.odbc_catalog_test (id INT PRIMARY KEY, name VARCHAR(50), age INT)",
     )
     .expect("create table");
 
-    let buf = list_columns(&odbc, "dbo.odbc_catalog_test").expect("list_columns");
+    let buf = list_columns(odbc.connection(), "dbo.odbc_catalog_test").expect("list_columns");
 
     // Clean up
-    execute_query_with_connection(&odbc, "DROP TABLE dbo.odbc_catalog_test").ok();
+    execute_query_with_connection(odbc.connection(), "DROP TABLE dbo.odbc_catalog_test").ok();
 
     drop(guard);
     conn.disconnect().expect("disconnect");
@@ -133,7 +134,7 @@ fn test_catalog_list_columns_table_only() {
         .expect("odbc");
     let odbc = conn_arc.lock().unwrap();
 
-    let buf = list_columns(&odbc, "TABLES").expect("list_columns");
+    let buf = list_columns(odbc.connection(), "TABLES").expect("list_columns");
     drop(guard);
     conn.disconnect().expect("disconnect");
 
@@ -162,7 +163,7 @@ fn test_catalog_get_type_info() {
         .expect("odbc");
     let odbc = conn_arc.lock().unwrap();
 
-    let buf = get_type_info(&odbc).expect("get_type_info");
+    let buf = get_type_info(odbc.connection()).expect("get_type_info");
     drop(guard);
     conn.disconnect().expect("disconnect");
 

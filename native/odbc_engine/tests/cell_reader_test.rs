@@ -23,7 +23,7 @@ fn execute_and_decode(sql: &str) -> Result<DecodedResult, Box<dyn std::error::Er
     };
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let buffer = execute_query_with_connection(&odbc_conn, sql)?;
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)?;
     conn.disconnect()?;
 
     let decoded = BinaryProtocolDecoder::parse(&buffer)?;

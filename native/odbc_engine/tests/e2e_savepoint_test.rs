@@ -51,28 +51,28 @@ fn test_savepoint_create_and_rollback() {
                 "IF OBJECT_ID(N'sp_test', N'U') IS NOT NULL DROP TABLE sp_test",
             );
         }
-        execute_query_with_connection(&c, "CREATE TABLE sp_test (id INT)").unwrap();
+        execute_query_with_connection(c.connection(), "CREATE TABLE sp_test (id INT)").unwrap();
     }
 
     conn.with_transaction_with_dialect(IsolationLevel::ReadCommitted, dialect, |txn| {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (1)")?;
+        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (1)")?;
         drop(h);
 
         let sp = Savepoint::create(txn, "sp1")?;
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (2)")?;
+        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (2)")?;
         drop(h);
 
         sp.rollback_to()?;
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "INSERT INTO sp_test VALUES (3)")?;
+        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (3)")?;
         Ok::<(), odbc_engine::OdbcError>(())
     })
     .expect("with_transaction failed");
@@ -81,7 +81,7 @@ fn test_savepoint_create_and_rollback() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELECT id FROM sp_test ORDER BY id").unwrap()
+        execute_query_with_connection(c.connection(), "SELECT id FROM sp_test ORDER BY id").unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     assert_eq!(
@@ -95,7 +95,7 @@ fn test_savepoint_create_and_rollback() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "DROP TABLE sp_test");
+        let _ = execute_query_with_connection(c.connection(), "DROP TABLE sp_test");
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -128,7 +128,7 @@ fn test_savepoint_release() {
                 "IF OBJECT_ID(N'sp_rel_test', N'U') IS NOT NULL DROP TABLE sp_rel_test",
             );
         }
-        execute_query_with_connection(&c, "CREATE TABLE sp_rel_test (id INT)").unwrap();
+        execute_query_with_connection(c.connection(), "CREATE TABLE sp_rel_test (id INT)").unwrap();
     }
 
     conn.with_transaction_with_dialect(IsolationLevel::ReadCommitted, dialect, |txn| {
@@ -142,7 +142,7 @@ fn test_savepoint_release() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "DROP TABLE sp_rel_test");
+        let _ = execute_query_with_connection(c.connection(), "DROP TABLE sp_rel_test");
     }
     conn.disconnect().expect("Disconnect failed");
 }

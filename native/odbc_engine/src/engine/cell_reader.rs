@@ -76,7 +76,7 @@ fn read_i64_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
+    use crate::engine::{execute_query_with_cached_connection, OdbcConnection, OdbcEnvironment};
     use crate::test_helpers::load_dotenv;
 
     #[test]
@@ -140,11 +140,11 @@ mod tests {
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 42 AS value";
-        let buffer =
-            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+        let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
+            .expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -172,11 +172,11 @@ mod tests {
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 'test' AS value";
-        let buffer =
-            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+        let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
+            .expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -204,11 +204,11 @@ mod tests {
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT NULL AS value";
-        let buffer =
-            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+        let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
+            .expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =
@@ -237,11 +237,11 @@ mod tests {
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = conn_arc.lock().unwrap();
 
         let sql = "SELECT 9223372036854775807 AS value";
-        let buffer =
-            execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+        let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
+            .expect("Failed to execute query");
         conn.disconnect().expect("Failed to disconnect");
 
         let decoded =

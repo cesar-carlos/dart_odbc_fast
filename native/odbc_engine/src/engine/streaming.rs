@@ -302,7 +302,7 @@ impl StreamingExecutor {
                 };
                 let executor = StreamingExecutor::new(chunk_size);
                 match executor.execute_streaming_batched(
-                    &conn_guard,
+                    conn_guard.connection(),
                     &sql,
                     fetch_size,
                     |batch| {
@@ -379,7 +379,7 @@ impl StreamingExecutor {
                 };
                 let executor = StreamingExecutor::new(chunk_size);
                 match executor.execute_streaming_batched(
-                    &conn_guard,
+                    conn_guard.connection(),
                     &sql,
                     fetch_size,
                     |batch| {

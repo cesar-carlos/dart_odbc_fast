@@ -217,17 +217,42 @@ pub struct ConnectionPool {
     test_on_check_out: bool,
 }
 
+/// Options for pool creation (eviction, timeouts).
+#[derive(Clone, Default)]
+pub struct PoolOptions {
+    /// Idle connections are closed after this duration.
+    pub idle_timeout: Option<Duration>,
+    /// Connections are closed when they exceed this lifetime (checked on return).
+    pub max_lifetime: Option<Duration>,
+}
+
 impl ConnectionPool {
     pub fn new(connection_string: &str, max_size: u32) -> Result<Self> {
+        Self::new_with_options(connection_string, max_size, PoolOptions::default())
+    }
+
+    /// Create a pool with eviction options for testing or tuning.
+    pub fn new_with_options(
+        connection_string: &str,
+        max_size: u32,
+        options: PoolOptions,
+    ) -> Result<Self> {
         let config = PoolConfig::from_connection_string(connection_string);
         let manager = OdbcConnectionManager::new(
             &config.sanitized_connection_string,
             &config.health_check_query,
         )?;
-        let pool = Pool::builder()
+        let mut builder = Pool::builder()
             .max_size(max_size)
             .connection_timeout(Duration::from_secs(30))
-            .test_on_check_out(config.test_on_check_out)
+            .test_on_check_out(config.test_on_check_out);
+        if let Some(d) = options.idle_timeout {
+            builder = builder.idle_timeout(Some(d));
+        }
+        if let Some(d) = options.max_lifetime {
+            builder = builder.max_lifetime(Some(d));
+        }
+        let pool = builder
             .build(manager)
             .map_err(|e| OdbcError::PoolError(format!("Pool creation failed: {}", e)))?;
 

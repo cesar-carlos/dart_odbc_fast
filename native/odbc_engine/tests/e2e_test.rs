@@ -40,7 +40,8 @@ fn test_e2e_select_5() {
 
     // Execute query: SELECT 5 AS value
     let sql = "SELECT 5 AS value";
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     // Drop guard before disconnect
     drop(handles_guard);
@@ -140,7 +141,8 @@ fn test_e2e_select_5_multiple_columns() {
 
     // Execute query: SELECT 5 AS num, 'test' AS text
     let sql = "SELECT 5 AS num, 'test' AS text";
-    let buffer = execute_query_with_connection(&odbc_conn, sql).expect("Failed to execute query");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute query");
 
     // Drop guard before disconnect
     drop(handles_guard);

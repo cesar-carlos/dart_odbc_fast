@@ -21,14 +21,17 @@ fn test_structured_error_preserves_sqlstate() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "CREATE TABLE diag_test (id INT PRIMARY KEY)")
-            .expect("create");
+        execute_query_with_connection(
+            c.connection(),
+            "CREATE TABLE diag_test (id INT PRIMARY KEY)",
+        )
+        .expect("create");
     }
     {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO diag_test VALUES (1)")
+        execute_query_with_connection(c.connection(), "INSERT INTO diag_test VALUES (1)")
             .expect("insert first");
     }
 
@@ -36,7 +39,7 @@ fn test_structured_error_preserves_sqlstate() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO diag_test VALUES (1)")
+        execute_query_with_connection(c.connection(), "INSERT INTO diag_test VALUES (1)")
     };
     assert!(result.is_err(), "duplicate insert must fail");
 
@@ -55,7 +58,7 @@ fn test_structured_error_preserves_sqlstate() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE diag_test").expect("drop");
+        execute_query_with_connection(c.connection(), "DROP TABLE diag_test").expect("drop");
     }
     conn.disconnect().expect("disconnect");
 }
@@ -107,7 +110,7 @@ fn test_structured_error_syntax_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELEKT * FROM invalid_syntax")
+        execute_query_with_connection(c.connection(), "SELEKT * FROM invalid_syntax")
     };
     assert!(result.is_err(), "syntax error must fail");
 
@@ -149,7 +152,7 @@ fn test_structured_error_table_not_found() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELECT * FROM nonexistent_table_xyz_12345")
+        execute_query_with_connection(c.connection(), "SELECT * FROM nonexistent_table_xyz_12345")
     };
     assert!(result.is_err(), "query on nonexistent table must fail");
 
@@ -186,14 +189,15 @@ fn test_structured_error_column_not_found() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "CREATE TABLE col_test (id INT)").expect("create");
+        execute_query_with_connection(c.connection(), "CREATE TABLE col_test (id INT)")
+            .expect("create");
     }
 
     let result = {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELECT nonexistent_column FROM col_test")
+        execute_query_with_connection(c.connection(), "SELECT nonexistent_column FROM col_test")
     };
     assert!(result.is_err(), "query with invalid column must fail");
 
@@ -213,7 +217,7 @@ fn test_structured_error_column_not_found() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE col_test").expect("drop");
+        execute_query_with_connection(c.connection(), "DROP TABLE col_test").expect("drop");
     }
     conn.disconnect().expect("disconnect");
 }
@@ -236,14 +240,18 @@ fn test_structured_error_type_mismatch() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "CREATE TABLE type_test (id INT)").expect("create");
+        execute_query_with_connection(c.connection(), "CREATE TABLE type_test (id INT)")
+            .expect("create");
     }
 
     let result = {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO type_test VALUES ('not_a_number')")
+        execute_query_with_connection(
+            c.connection(),
+            "INSERT INTO type_test VALUES ('not_a_number')",
+        )
     };
     assert!(result.is_err(), "type mismatch insert must fail");
 
@@ -263,7 +271,7 @@ fn test_structured_error_type_mismatch() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE type_test").expect("drop");
+        execute_query_with_connection(c.connection(), "DROP TABLE type_test").expect("drop");
     }
     conn.disconnect().expect("disconnect");
 }
@@ -286,7 +294,7 @@ fn test_structured_error_null_constraint_violation() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "CREATE TABLE null_test (id INT NOT NULL)")
+        execute_query_with_connection(c.connection(), "CREATE TABLE null_test (id INT NOT NULL)")
             .expect("create");
     }
 
@@ -294,7 +302,7 @@ fn test_structured_error_null_constraint_violation() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO null_test VALUES (NULL)")
+        execute_query_with_connection(c.connection(), "INSERT INTO null_test VALUES (NULL)")
     };
     assert!(result.is_err(), "NULL constraint violation must fail");
 
@@ -314,7 +322,7 @@ fn test_structured_error_null_constraint_violation() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE null_test").expect("drop");
+        execute_query_with_connection(c.connection(), "DROP TABLE null_test").expect("drop");
     }
     conn.disconnect().expect("disconnect");
 }

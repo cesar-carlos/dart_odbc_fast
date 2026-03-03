@@ -42,11 +42,11 @@ fn test_transaction_commit() {
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
         let _ = execute_query_with_connection(
-            &c,
+            c.connection(),
             &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
         );
         execute_query_with_connection(
-            &c,
+            c.connection(),
             &format!("CREATE TABLE {TBL} (id INT, value VARCHAR(50))"),
         )
         .unwrap();
@@ -59,8 +59,11 @@ fn test_transaction_commit() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (1, 'test')"))
-            .unwrap();
+        execute_query_with_connection(
+            c.connection(),
+            &format!("INSERT INTO {TBL} VALUES (1, 'test')"),
+        )
+        .unwrap();
     }
     txn.commit().expect("Commit failed");
 
@@ -68,7 +71,11 @@ fn test_transaction_commit() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
+        execute_query_with_connection(
+            c.connection(),
+            &format!("SELECT COUNT(*) AS cnt FROM {TBL}"),
+        )
+        .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -78,7 +85,7 @@ fn test_transaction_commit() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("DROP TABLE {TBL}")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -104,10 +111,11 @@ fn test_transaction_rollback() {
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
         let _ = execute_query_with_connection(
-            &c,
+            c.connection(),
             &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
         );
-        execute_query_with_connection(&c, &format!("CREATE TABLE {TBL} (id INT)")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("CREATE TABLE {TBL} (id INT)"))
+            .unwrap();
     }
 
     {
@@ -118,7 +126,8 @@ fn test_transaction_rollback() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (1)")).unwrap();
+            execute_query_with_connection(c.connection(), &format!("INSERT INTO {TBL} VALUES (1)"))
+                .unwrap();
         }
         txn.rollback().expect("Rollback failed");
     }
@@ -127,7 +136,11 @@ fn test_transaction_rollback() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
+        execute_query_with_connection(
+            c.connection(),
+            &format!("SELECT COUNT(*) AS cnt FROM {TBL}"),
+        )
+        .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -137,7 +150,7 @@ fn test_transaction_rollback() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("DROP TABLE {TBL}")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -163,19 +176,22 @@ fn test_transaction_auto_rollback_on_error() {
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
         let _ = execute_query_with_connection(
-            &c,
+            c.connection(),
             &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
         );
-        execute_query_with_connection(&c, &format!("CREATE TABLE {TBL} (id INT PRIMARY KEY)"))
-            .unwrap();
+        execute_query_with_connection(
+            c.connection(),
+            &format!("CREATE TABLE {TBL} (id INT PRIMARY KEY)"),
+        )
+        .unwrap();
     }
 
     let result = conn.with_transaction(IsolationLevel::ReadCommitted, |_txn| {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
-        execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
+        execute_query_with_connection(c.connection(), &format!("INSERT INTO {TBL} VALUES (1)"))?;
+        execute_query_with_connection(c.connection(), &format!("INSERT INTO {TBL} VALUES (1)"))?;
         Ok::<(), odbc_engine::OdbcError>(())
     });
     assert!(result.is_err());
@@ -184,7 +200,11 @@ fn test_transaction_auto_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("SELECT COUNT(*) AS cnt FROM {TBL}")).unwrap()
+        execute_query_with_connection(
+            c.connection(),
+            &format!("SELECT COUNT(*) AS cnt FROM {TBL}"),
+        )
+        .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -194,7 +214,7 @@ fn test_transaction_auto_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("DROP TABLE {TBL}")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -224,10 +244,11 @@ fn test_savepoint() {
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
         let _ = execute_query_with_connection(
-            &c,
+            c.connection(),
             &format!("IF OBJECT_ID(N'{TBL}', N'U') IS NOT NULL DROP TABLE {TBL}"),
         );
-        execute_query_with_connection(&c, &format!("CREATE TABLE {TBL} (id INT)")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("CREATE TABLE {TBL} (id INT)"))
+            .unwrap();
     }
 
     conn.with_transaction(IsolationLevel::ReadCommitted, |txn| {
@@ -235,7 +256,10 @@ fn test_savepoint() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (1)"))?;
+            execute_query_with_connection(
+                c.connection(),
+                &format!("INSERT INTO {TBL} VALUES (1)"),
+            )?;
         }
 
         if use_save_transaction_syntax {
@@ -244,7 +268,10 @@ fn test_savepoint() {
                 let h = handles.lock().unwrap();
                 let conn_arc = h.get_connection(conn_id).unwrap();
                 let c = conn_arc.lock().unwrap();
-                execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (2)"))?;
+                execute_query_with_connection(
+                    c.connection(),
+                    &format!("INSERT INTO {TBL} VALUES (2)"),
+                )?;
             }
             txn.execute_sql("ROLLBACK TRANSACTION sp1")?;
         } else {
@@ -253,7 +280,10 @@ fn test_savepoint() {
                 let h = handles.lock().unwrap();
                 let conn_arc = h.get_connection(conn_id).unwrap();
                 let c = conn_arc.lock().unwrap();
-                execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (2)"))?;
+                execute_query_with_connection(
+                    c.connection(),
+                    &format!("INSERT INTO {TBL} VALUES (2)"),
+                )?;
             }
             sp.rollback_to()?;
         }
@@ -262,7 +292,10 @@ fn test_savepoint() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            execute_query_with_connection(&c, &format!("INSERT INTO {TBL} VALUES (3)"))?;
+            execute_query_with_connection(
+                c.connection(),
+                &format!("INSERT INTO {TBL} VALUES (3)"),
+            )?;
         }
         Ok::<(), odbc_engine::OdbcError>(())
     })
@@ -272,7 +305,8 @@ fn test_savepoint() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("SELECT id FROM {TBL} ORDER BY id")).unwrap()
+        execute_query_with_connection(c.connection(), &format!("SELECT id FROM {TBL} ORDER BY id"))
+            .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     assert_eq!(decoded.row_count, 2, "expected rows 1 and 3, not 2");
@@ -283,7 +317,7 @@ fn test_savepoint() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, &format!("DROP TABLE {TBL}")).unwrap();
+        execute_query_with_connection(c.connection(), &format!("DROP TABLE {TBL}")).unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -306,15 +340,22 @@ fn test_with_transaction_commit_on_success() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "DROP TABLE IF EXISTS txn_cov_commit_test");
-        execute_query_with_connection(&c, "CREATE TABLE txn_cov_commit_test (id INT)").unwrap();
+        let _ = execute_query_with_connection(
+            c.connection(),
+            "DROP TABLE IF EXISTS txn_cov_commit_test",
+        );
+        execute_query_with_connection(c.connection(), "CREATE TABLE txn_cov_commit_test (id INT)")
+            .unwrap();
     }
 
     let result = conn.with_transaction(IsolationLevel::ReadCommitted, |_| {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO txn_cov_commit_test VALUES (1)")?;
+        execute_query_with_connection(
+            c.connection(),
+            "INSERT INTO txn_cov_commit_test VALUES (1)",
+        )?;
         Ok(())
     });
     assert!(result.is_ok());
@@ -323,8 +364,11 @@ fn test_with_transaction_commit_on_success() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELECT COUNT(*) AS cnt FROM txn_cov_commit_test")
-            .unwrap()
+        execute_query_with_connection(
+            c.connection(),
+            "SELECT COUNT(*) AS cnt FROM txn_cov_commit_test",
+        )
+        .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -334,7 +378,7 @@ fn test_with_transaction_commit_on_success() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE txn_cov_commit_test").unwrap();
+        execute_query_with_connection(c.connection(), "DROP TABLE txn_cov_commit_test").unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }
@@ -357,9 +401,12 @@ fn test_with_transaction_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(&c, "DROP TABLE IF EXISTS txn_cov_rollback_test");
+        let _ = execute_query_with_connection(
+            c.connection(),
+            "DROP TABLE IF EXISTS txn_cov_rollback_test",
+        );
         execute_query_with_connection(
-            &c,
+            c.connection(),
             "CREATE TABLE txn_cov_rollback_test (id INT PRIMARY KEY)",
         )
         .unwrap();
@@ -369,8 +416,14 @@ fn test_with_transaction_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "INSERT INTO txn_cov_rollback_test VALUES (1)")?;
-        execute_query_with_connection(&c, "INSERT INTO txn_cov_rollback_test VALUES (1)")?;
+        execute_query_with_connection(
+            c.connection(),
+            "INSERT INTO txn_cov_rollback_test VALUES (1)",
+        )?;
+        execute_query_with_connection(
+            c.connection(),
+            "INSERT INTO txn_cov_rollback_test VALUES (1)",
+        )?;
         Ok::<(), odbc_engine::OdbcError>(())
     });
     assert!(result.is_err());
@@ -379,8 +432,11 @@ fn test_with_transaction_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "SELECT COUNT(*) AS cnt FROM txn_cov_rollback_test")
-            .unwrap()
+        execute_query_with_connection(
+            c.connection(),
+            "SELECT COUNT(*) AS cnt FROM txn_cov_rollback_test",
+        )
+        .unwrap()
     };
     let decoded = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(decoded.rows[0][0].as_ref().unwrap());
@@ -390,7 +446,7 @@ fn test_with_transaction_rollback_on_error() {
         let h = handles.lock().unwrap();
         let conn_arc = h.get_connection(conn_id).unwrap();
         let c = conn_arc.lock().unwrap();
-        execute_query_with_connection(&c, "DROP TABLE txn_cov_rollback_test").unwrap();
+        execute_query_with_connection(c.connection(), "DROP TABLE txn_cov_rollback_test").unwrap();
     }
     conn.disconnect().expect("Disconnect failed");
 }

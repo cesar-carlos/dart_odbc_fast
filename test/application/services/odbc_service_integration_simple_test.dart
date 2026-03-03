@@ -405,13 +405,11 @@ void main() {
           }
 
           final connResultA = await locator!.syncService.connect(dsn!);
-          final connA =
-              connResultA.getOrElse(
+          final connA = connResultA.getOrElse(
             (_) => throw Exception('Failed to connect A'),
           );
           final connResultB = await locator!.syncService.connect(dsn!);
-          final connB =
-              connResultB.getOrElse(
+          final connB = connResultB.getOrElse(
             (_) => throw Exception('Failed to connect B'),
           );
 
