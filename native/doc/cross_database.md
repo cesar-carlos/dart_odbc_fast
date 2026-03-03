@@ -12,7 +12,7 @@ The ODBC engine supports multiple databases via ODBC drivers. This document desc
 | PostgreSQL | ✅ | PostgreSQL Unicode | Full support |
 | MySQL | ⚠️ | MySQL ODBC 8.0 Driver | `continue-on-error` in CI (driver setup) |
 | SQLite | ✅ | SQLite3 (libsqliteodbc) | File-based, no server; full support |
-| Oracle | ⚠️ | Oracle Instant Client ODBC | CI job added as optional (`continue-on-error`) |
+| Oracle | ✅ | Oracle Instant Client ODBC | CI job active (`continue-on-error` for stabilization) |
 | Sybase SQL Anywhere | ❌ | SQL Anywhere | Optional, not in CI |
 
 ---
@@ -156,11 +156,12 @@ Detection is heuristic (connection string substring). See `engine/core/driver_ca
 
 ---
 
-## 5th Database (Progress)
+## 5th Database (Status)
 
-To reach 5 bancos in CI with strict pass criteria:
+5 bancos em CI já foram validados na execução `22641867638`:
 
-- **Oracle**: Job scaffold is now in `e2e_multidb.yml` (optional). Promote to required after consistent green runs.
+- **Oracle**: Job ativa e validada; próximo passo é remover `continue-on-error`
+  após janela curta de estabilidade.
 - **Sybase SQL Anywhere**: Docker image available; driver `SQL Anywhere 17`. Connection string: `Driver={SQL Anywhere 17};ServerName=...;Database=...;Uid=...;Pwd=...;`
 
 Implemented:
