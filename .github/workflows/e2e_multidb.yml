@@ -123,7 +123,6 @@ jobs:
   e2e-oracle:
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    continue-on-error: true
     services:
       oracle:
         image: gvenzl/oracle-xe:21-slim-faststart
