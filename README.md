@@ -22,6 +22,9 @@
 - Connection pooling
 - Transactions and savepoints
 - Bulk insert payload builder and parallel bulk insert via pool
+- Connection string validation, driver capabilities, and runtime version APIs
+- Audit API and metadata cache controls
+- Async query/stream lifecycle controls (`executeAsyncStart/asyncPoll/...`)
 - Structured errors (SQLSTATE/native code)
 - Runtime metrics and telemetry hooks
 
@@ -37,9 +40,13 @@
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`
 - Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
-- Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolClose`
+- Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolGetStateDetailed`, `poolClose`
 - Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with fallback when `parallelism <= 1`)
-- Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`
+- Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`, `getVersion`, `validateConnectionString`, `getDriverCapabilities`
+- Metadata cache: `metadataCacheEnable`, `metadataCacheStats`, `clearMetadataCache`
+- Stream cancellation: `cancelStream`
+- Audit: `setAuditEnabled`, `getAuditStatus`, `getAuditEvents`, `clearAuditEvents`
+- Async lifecycle: `executeAsyncStart`, `asyncPoll`, `asyncGetResult`, `asyncCancel`, `asyncFree`, `streamStartAsync`, `streamPollAsync`
 
 ### Statement cancellation status
 
@@ -265,6 +272,8 @@ dart run example/multi_result_demo.dart
 dart run example/streaming_demo.dart
 dart run example/pool_demo.dart
 dart run example/savepoint_demo.dart
+dart run example/audit_example.dart
+dart run example/execute_async_demo.dart
 dart run example/telemetry_demo.dart
 dart run example/otel_repository_demo.dart
 ```
@@ -274,10 +283,16 @@ Coverage-oriented examples:
 - `example/service_api_coverage_demo.dart`: exercises service methods that are
   less visible in quick-start docs (`executeQueryParams`, `prepare`,
   `executePrepared`, `cancelStatement`, `closeStatement`, pool APIs,
-  `bulkInsert`).
+  `bulkInsert`, `getVersion`, `validateConnectionString`,
+  `getDriverCapabilities`, metadata cache controls, audit API, async
+  request/stream lifecycle).
 - `example/advanced_entities_demo.dart`: demonstrates exported advanced types
   and helpers (`RetryHelper`, `RetryOptions`, `PreparedStatementConfig`,
   `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).
+- `example/audit_example.dart`: dedicated audit wrapper demo with
+  enable/status/events/clear flow.
+- `example/execute_async_demo.dart`: low-level async execution and streaming
+  via worker isolate using raw payload parsing.
 - `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
   telemetry service/buffer usage plus OTLP repository initialization.
 

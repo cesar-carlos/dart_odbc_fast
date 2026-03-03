@@ -35,6 +35,7 @@ Future<void> main() async {
     await _demoPrepareExecuteClose(service, conn.id);
     await _demoTransactionRollbackAndRelease(service, conn.id);
     await _demoBulkInsert(service, conn.id);
+    await _demoExtendedServiceEndpoints(service, conn.id, dsn);
     await _demoPoolApi(service, dsn);
   } finally {
     final disc = await service.disconnect(conn.id);
@@ -165,8 +166,7 @@ Future<void> _demoBulkInsert(
       .table('service_api_coverage_table')
       .addColumn('id', BulkColumnType.i32)
       .addColumn('name', BulkColumnType.text, maxLen: 100)
-      .addRow([1001, 'bulk-one'])
-      .addRow([1002, 'bulk-two']);
+      .addRow([1001, 'bulk-one']).addRow([1002, 'bulk-two']);
 
   final payload = builder.build();
   final result = await service.bulkInsert(
@@ -181,6 +181,143 @@ Future<void> _demoBulkInsert(
     (rows) => AppLogger.info('bulkInsert rows=$rows'),
     (e) => AppLogger.warning('bulkInsert failed: $e'),
   );
+}
+
+Future<void> _demoExtendedServiceEndpoints(
+  OdbcService service,
+  String connectionId,
+  String dsn,
+) async {
+  final version = await service.getVersion();
+  version.fold(
+    (v) => AppLogger.info('getVersion api=${v['api']} abi=${v['abi']}'),
+    (e) => AppLogger.warning('getVersion failed: $e'),
+  );
+
+  final validate = await service.validateConnectionString(dsn);
+  validate.fold(
+    (_) => AppLogger.info('validateConnectionString OK'),
+    (e) => AppLogger.warning('validateConnectionString failed: $e'),
+  );
+
+  final caps = await service.getDriverCapabilities(dsn);
+  caps.fold(
+    (c) => AppLogger.info(
+      'getDriverCapabilities driver=${c['driver_name']} '
+      'streaming=${c['supports_streaming']}',
+    ),
+    (e) => AppLogger.warning('getDriverCapabilities failed: $e'),
+  );
+
+  final auditEnable = await service.setAuditEnabled(enabled: true);
+  auditEnable.fold(
+    (_) => AppLogger.info('setAuditEnabled OK'),
+    (e) => AppLogger.warning('setAuditEnabled unavailable: $e'),
+  );
+
+  final auditStatus = await service.getAuditStatus();
+  auditStatus.fold(
+    (s) => AppLogger.info(
+      'getAuditStatus enabled=${s['enabled']} '
+      'eventCount=${s['event_count']}',
+    ),
+    (e) => AppLogger.warning('getAuditStatus unavailable: $e'),
+  );
+
+  final auditEvents = await service.getAuditEvents(limit: 5);
+  auditEvents.fold(
+    (events) => AppLogger.info('getAuditEvents count=${events.length}'),
+    (e) => AppLogger.warning('getAuditEvents unavailable: $e'),
+  );
+
+  final clearAudit = await service.clearAuditEvents();
+  clearAudit.fold(
+    (_) => AppLogger.info('clearAuditEvents OK'),
+    (e) => AppLogger.warning('clearAuditEvents unavailable: $e'),
+  );
+
+  final cacheEnable = await service.metadataCacheEnable(
+    maxEntries: 128,
+    ttlSeconds: 300,
+  );
+  cacheEnable.fold(
+    (_) => AppLogger.info('metadataCacheEnable OK'),
+    (e) => AppLogger.warning('metadataCacheEnable unavailable: $e'),
+  );
+
+  final cacheStats = await service.metadataCacheStats();
+  cacheStats.fold(
+    (stats) => AppLogger.info(
+      'metadataCacheStats hits=${stats['hits']} misses=${stats['misses']}',
+    ),
+    (e) => AppLogger.warning('metadataCacheStats unavailable: $e'),
+  );
+
+  final clearCache = await service.clearMetadataCache();
+  clearCache.fold(
+    (_) => AppLogger.info('clearMetadataCache OK'),
+    (e) => AppLogger.warning('clearMetadataCache unavailable: $e'),
+  );
+
+  final asyncStart = await service.executeAsyncStart(
+    connectionId,
+    'SELECT 1 AS async_value',
+  );
+
+  await asyncStart.fold((requestId) async {
+    AppLogger.info('executeAsyncStart requestId=$requestId');
+
+    final poll = await service.asyncPoll(requestId);
+    poll.fold(
+      (status) => AppLogger.info('asyncPoll status=$status'),
+      (e) => AppLogger.warning('asyncPoll failed: $e'),
+    );
+
+    final asyncResult = await service.asyncGetResult(requestId);
+    asyncResult.fold(
+      (r) => AppLogger.info('asyncGetResult rows=${r.rowCount}'),
+      (e) => AppLogger.warning('asyncGetResult failed: $e'),
+    );
+
+    final asyncCancel = await service.asyncCancel(requestId);
+    asyncCancel.fold(
+      (_) => AppLogger.info('asyncCancel OK'),
+      (e) => AppLogger.warning('asyncCancel unavailable: $e'),
+    );
+
+    final asyncFree = await service.asyncFree(requestId);
+    asyncFree.fold(
+      (_) => AppLogger.info('asyncFree OK'),
+      (e) => AppLogger.warning('asyncFree unavailable: $e'),
+    );
+  }, (e) async {
+    AppLogger.warning('executeAsyncStart unavailable: $e');
+  });
+
+  final streamStart = await service.streamStartAsync(
+    connectionId,
+    'SELECT 1 AS stream_value',
+    fetchSize: 64,
+    chunkSize: 8 * 1024,
+  );
+
+  await streamStart.fold((streamId) async {
+    AppLogger.info('streamStartAsync streamId=$streamId');
+
+    final streamPoll = await service.streamPollAsync(streamId);
+    streamPoll.fold(
+      (status) => AppLogger.info('streamPollAsync status=$status'),
+      (e) => AppLogger.warning('streamPollAsync failed: $e'),
+    );
+
+    final cancelStream = await service.cancelStream(streamId);
+    cancelStream.fold(
+      (_) => AppLogger.info('cancelStream OK'),
+      (e) => AppLogger.warning('cancelStream unavailable: $e'),
+    );
+  }, (e) async {
+    AppLogger.warning('streamStartAsync unavailable: $e');
+  });
 }
 
 Future<void> _demoPoolApi(OdbcService service, String dsn) async {
@@ -203,6 +340,15 @@ Future<void> _demoPoolApi(OdbcService service, String dsn) async {
     (e) => AppLogger.warning('poolGetState failed: $e'),
   );
 
+  final detailed = await service.poolGetStateDetailed(poolId);
+  detailed.fold(
+    (d) => AppLogger.info(
+      'poolGetStateDetailed total=${d['total_connections']} '
+      'idle=${d['idle_connections']}',
+    ),
+    (e) => AppLogger.warning('poolGetStateDetailed unavailable: $e'),
+  );
+
   final pooledConnResult = await service.poolGetConnection(poolId);
   final pooledConn = pooledConnResult.getOrNull();
   if (pooledConn != null) {
@@ -219,8 +365,7 @@ Future<void> _demoPoolApi(OdbcService service, String dsn) async {
         .table('service_api_coverage_table')
         .addColumn('id', BulkColumnType.i32)
         .addColumn('name', BulkColumnType.text, maxLen: 100)
-        .addRow([2001, 'parallel-one'])
-        .addRow([2002, 'parallel-two']);
+        .addRow([2001, 'parallel-one']).addRow([2002, 'parallel-two']);
 
     final parallel = await service.bulkInsertParallel(
       poolId,
