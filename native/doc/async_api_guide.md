@@ -1,7 +1,7 @@
 # Async API Guide
 
 > **User-facing guide** for non-blocking ODBC operations.  
-> **Complementa**: `async_api_design.md` (design técnico), `ffi_api.md` (FFI reference)
+> **Complementa**: `ffi_api.md` (FFI reference)
 
 ---
 
@@ -196,4 +196,3 @@ async.dispose();
 ## Referências
 
 - `ffi_api.md` — funções FFI `odbc_execute_async`, `odbc_async_poll`, `odbc_stream_start_async`
-- `async_api_design.md` — design técnico e lifecycle

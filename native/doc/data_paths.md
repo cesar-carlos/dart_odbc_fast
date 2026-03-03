@@ -150,7 +150,7 @@ These are implemented in Rust and used by the engine/FFI:
   - `engine::core::BulkCopyExecutor` is functional when feature `sqlserver-bcp` is enabled.
   - Uses `bulk_copy_from_payload` with ArrayBinding internally; native bcp_* can be added later.
   - FFI uses `bulk_insert_payload` helper: BulkCopyExecutor when feature on, ArrayBinding when off.
-  - Research: `native/doc/notes/bcp_research.md` (F4.1 Etapa 1).
+  - Compatibility notes: `native/doc/bcp_dll_compatibility.md`.
 - **FFI pooled connections**:
   - Pooled connections are tracked separately from `odbc_connect` connections.
   - `odbc_exec_query` / `odbc_exec_query_params` / `odbc_exec_query_multi` still operate on

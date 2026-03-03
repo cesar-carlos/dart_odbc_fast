@@ -207,7 +207,7 @@ Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
 
-**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU metadata tracking per connection. **Limitation**: Full handle reuse is blocked by lifetime constraints in `odbc-api`; current implementation is passthrough with ~8% overhead. Keep default OFF until real reuse is implemented. See `native/doc/notes/statement_reuse_and_timeout.md`.
+**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU metadata tracking per connection. **Limitation**: Full handle reuse is blocked by lifetime constraints in `odbc-api`; current implementation is passthrough with ~8% overhead. Keep default OFF until real reuse is implemented. See `native/doc/notes/remaining_implementation.md`.
 
 ## Streaming (chunked copy-out over FFI)
 

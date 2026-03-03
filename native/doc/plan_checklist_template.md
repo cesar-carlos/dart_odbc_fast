@@ -51,7 +51,7 @@ Use este template ao criar qualquer novo plano em `native/doc` ou
 - [ ] `ffi_api.md` atualizado (se contrato FFI mudou).
 - [ ] `ffi_conventions.md` atualizado (se convenções mudaram).
 - [ ] Docs de uso/exemplos atualizados.
-- [ ] `notes/roadmap.md` atualizado com resumo final (1-2 parágrafos).
+- [ ] `notes/remaining_implementation.md` atualizado com status final.
 
 ---
 
@@ -63,7 +63,7 @@ Use este template ao criar qualquer novo plano em `native/doc` ou
 - [ ] Arquivo do plano removido de `native/doc/` ou `native/doc/notes/`.
 - [ ] Links/referências atualizados após remoção em:
   - [ ] `native/doc/README.md`
-  - [ ] `native/doc/notes/roadmap.md`
+  - [ ] `native/doc/notes/remaining_implementation.md`
   - [ ] `native/doc/getting_started_with_implementation.md`
   - [ ] Outros documentos que citavam o plano
 - [ ] Nenhum link quebrado restante para o plano removido.
