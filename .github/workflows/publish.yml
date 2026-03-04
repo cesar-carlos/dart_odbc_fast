@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v1.1.1)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -11,19 +17,20 @@ permissions:
 
 jobs:
   validate-metadata:
-    # Publish only stable tags (vX.Y.Z). Pre-release tags are intentionally skipped.
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Validate tag/pubspec/changelog
         shell: bash
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
 
           if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid stable publish tag: ${TAG}. Use vX.Y.Z."
@@ -47,7 +54,7 @@ jobs:
           fi
 
   wait-for-release-assets:
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name, '-') }}
     needs: validate-metadata
     runs-on: ubuntu-latest
     steps:
@@ -55,9 +62,9 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
           URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
 
           for attempt in $(seq 1 30); do
@@ -77,9 +84,26 @@ jobs:
           exit 1
 
   publish:
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name, '-') }}
     needs: wait-for-release-assets
+    runs-on: ubuntu-latest
     permissions:
       id-token: write # Required for OIDC authentication
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
-    secrets: inherit
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Publish - dry run
+        run: dart pub publish --dry-run
+
+      - name: Publish to pub.dev
+        run: dart pub publish -f
