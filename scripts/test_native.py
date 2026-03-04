@@ -83,13 +83,13 @@ def main():
         print_error("ERROR: Cargo not found. Install Rust from https://rustup.rs/")
         return 1
 
-    cmd = ["cargo", "test", "--lib"]
+    cmd = ["cargo", "test", "--lib", "--", "--test-threads=1"]
 
     if args.ffi_only:
-        cmd.append("ffi::tests")
+        cmd.insert(-2, "ffi::tests")  # before "--"
 
     if args.release:
-        cmd.append("--release")
+        cmd.insert(2, "--release")  # cargo test --release --lib
 
     cmd_str = " ".join(cmd)
     print_step(f"Running: {cmd_str}")

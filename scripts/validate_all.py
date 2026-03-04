@@ -143,7 +143,10 @@ def main():
         step += 1
 
         print_step(f"[{step}/{total_steps}] Rust: cargo test --lib")
-        exit_code, _ = run_command(["cargo", "test", "--lib"], cwd=odbc_engine_dir)
+        exit_code, _ = run_command(
+            ["cargo", "test", "--lib", "--", "--test-threads=1"],
+            cwd=odbc_engine_dir,
+        )
         if exit_code == 0:
             print_success("  OK")
         else:

@@ -1,5 +1,4 @@
 .env
-.env.example
 analysis_report.txt
 analysis_report_final.txt
 benchmarks/
@@ -7,9 +6,6 @@ tool/
 .github/
 /native/
 doc/m*.md
-doc/BUILD.md
-.cursor/
-*.plan.md
 build/
 coverage/
 test/my_test/

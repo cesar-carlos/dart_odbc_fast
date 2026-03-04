@@ -15,6 +15,7 @@ Tests cover the main areas of the crate:
 ## Test Categories
 
 ### FFI Tests (`ffi::tests` in `src/ffi/mod.rs`)
+
 These tests validate the C FFI layer that Dart uses to communicate with the Rust engine. They test:
 
 - **Buffer management**: Pre-allocated buffer APIs
@@ -25,12 +26,15 @@ These tests validate the C FFI layer that Dart uses to communicate with the Rust
 - **Streaming**: Streaming query lifecycle
 
 **Key characteristics:**
+
 - Tests use the same buffer-based API that Dart FFI uses
 - Validates pointer safety and buffer boundaries
 - Ensures error messages are correctly propagated
 - Tests edge cases (null pointers, invalid IDs, buffer overflows)
+- **Require `--test-threads=1`** when run in parallel (shared global state)
 
 ### Error Handling Tests (`error::tests` in `src/error/mod.rs`)
+
 Tests for the error handling system:
 
 - Error variant creation and formatting
@@ -40,6 +44,7 @@ Tests for the error handling system:
 - Error properties extraction
 
 ### Protocol Tests (`protocol::*::tests`)
+
 Tests for the binary protocol implementation:
 
 - **Types**: ODBC type conversions, SQL type mapping
@@ -49,6 +54,7 @@ Tests for the binary protocol implementation:
 - Multi-column/row support
 
 ### Security Tests (`security::*::tests`)
+
 Tests for security-related modules:
 
 - **secure_buffer**: Buffer creation and manipulation, zeroization on drop (ZeroizeOnDrop), Unicode and binary data, memory safety
@@ -56,6 +62,7 @@ Tests for security-related modules:
 - **secret_manager**: Secret and SecretManager store/retrieve/remove/clear, missing-key error
 
 ### Version Tests (`versioning::protocol_version::tests`)
+
 Tests for protocol version management:
 
 - Version compatibility checks
@@ -66,6 +73,7 @@ Tests for protocol version management:
 ## Running Tests
 
 ### From project root:
+
 ```bash
 # Run native tests (debug build)
 python scripts/test_native.py
@@ -80,14 +88,14 @@ python scripts/test_native.py --ffi-only
 ### From `native/odbc_engine`:
 
 ```powershell
-# All tests
-cargo test --all-targets
+# All tests (serial to avoid FFI global state races)
+cargo test --all-targets -- --test-threads=1
 
 # Only FFI unit tests (fast)
-cargo test --lib ffi::tests
+cargo test --lib ffi::tests -- --test-threads=1
 
 # With output
-cargo test --all-targets -- --nocapture
+cargo test --all-targets -- --test-threads=1 --nocapture
 ```
 
 ### Lib unit tests that require ODBC (when DSN is set)
@@ -136,6 +144,7 @@ configured or when E2E is disabled (so local runs/CI can stay green without DB).
 The test suite supports running E2E tests against multiple database systems (SQL Server, Sybase, PostgreSQL, MySQL, Oracle) through a unified architecture.
 
 **Key Features:**
+
 - **Automatic database detection** from connection string
 - **Conditional test skipping** for database-specific tests
 - **SQL compatibility** prioritizing ANSI SQL standards
@@ -143,11 +152,11 @@ The test suite supports running E2E tests against multiple database systems (SQL
 
 **Database type validation (helpers in `helpers::e2e`):**
 
-| Helper | Usage |
-|--------|-------|
-| `detect_database_type(conn_str)` | Infers `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) from the connection string. |
+| Helper                                     | Usage                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `detect_database_type(conn_str)`           | Infers `DatabaseType` (SqlServer, Sybase, PostgreSQL, MySQL, Oracle, Unknown) from the connection string.                                                                                                                                                                                                                                                 |
 | `is_database_type(expected: DatabaseType)` | Returns `true` only when the connected database (via `ODBC_TEST_DSN` / `get_sqlserver_test_dsn()`) matches the expected type. Otherwise prints `"[WARN] Skipping test: requires X, but connected to Y"` and returns `false`. Use this at the start of database-specific tests (for example: `if !is_database_type(DatabaseType::SqlServer) { return; }`). |
-| `get_connection_and_db_type()` | Returns `Option<(String, DatabaseType)>` (connection string + detected type). Useful to adapt DDL/SQL per database (for example: `e2e_bulk_operations_test`). |
+| `get_connection_and_db_type()`             | Returns `Option<(String, DatabaseType)>` (connection string + detected type). Useful to adapt DDL/SQL per database (for example: `e2e_bulk_operations_test`).                                                                                                                                                                                             |
 
 Example in a SQL Server-specific test:
 
@@ -159,12 +168,15 @@ if !is_database_type(DatabaseType::SqlServer) { return; }
 ```
 
 **Quick Start:**
+
 1. Configure your database connection in `.env`:
+
    ```ini
    ODBC_TEST_DSN=Driver={SQL Anywhere 16};Host=localhost;Port=2650;ServerName=VL;DatabaseName=VL;UID=dba;PWD=sql;
    ```
 
 2. Run tests:
+
    ```powershell
    cd native\odbc_engine
    cargo test
@@ -196,6 +208,7 @@ if !is_database_type(DatabaseType::SqlServer) { return; }
 ## CI/CD
 
 In CI pipelines:
+
 1. Always run FFI tests (fast, no setup)
 2. Optionally run integration tests if DSN configured
 3. FFI tests catch most API contract issues before Dart tests
@@ -203,20 +216,22 @@ In CI pipelines:
 ## Adding New Tests
 
 ### For FFI functions:
+
 Add tests to `src/ffi/mod.rs` in the `#[cfg(test)] mod tests` block:
 
 ```rust
 #[test]
 fn test_my_ffi_function() {
     odbc_init();
-    
+
     let result = my_ffi_function(...);
-    
+
     assert_eq!(result, expected);
 }
 ```
 
 ### For integration scenarios:
+
 Create a new file in `tests/` folder:
 
 ```rust
@@ -249,11 +264,13 @@ Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.
 ## Debugging
 
 To see detailed output:
+
 ```bash
 cargo test --lib ffi::tests -- --nocapture
 ```
 
 To run with logging:
+
 ```bash
 RUST_LOG=debug cargo test --lib ffi::tests
 ```

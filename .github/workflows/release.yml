@@ -125,7 +125,7 @@ jobs:
       - name: Rust tests (lib only)
         run: |
           cd native
-          cargo test -p odbc_engine --lib
+          cargo test -p odbc_engine --lib -- --test-threads=1
 
   build-binaries:
     needs: verify
