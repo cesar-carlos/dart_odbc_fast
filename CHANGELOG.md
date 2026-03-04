@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - _None_
 
+## [1.1.2] - 2026-03-03
+
+### Added
+- `workflow_dispatch` support in publish workflow for manual pub.dev publishing
+
 ## [1.1.1] - 2026-03-03
 
 ### Changed
