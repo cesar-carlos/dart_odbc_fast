@@ -4726,9 +4726,12 @@ mod tests {
     /// Invalid ID used in tests (shared). Prefer `next_test_invalid_id()` when asserting on error message to avoid conflicts under parallel test runs.
     const TEST_INVALID_ID: u32 = TEST_INVALID_ID_BASE;
 
-    /// Returns a unique invalid ID per call. Use in tests that assert on get_last_error() content so parallel runs don't overwrite the global error with the same ID.
+    /// Returns a unique invalid ID per call.
+    /// Starts at BASE+1 to never collide with TEST_INVALID_ID.
+    /// Use in tests that assert on get_last_error() content so parallel runs
+    /// don't overwrite the global error with the same ID.
     fn next_test_invalid_id() -> u32 {
-        static NEXT: AtomicU32 = AtomicU32::new(TEST_INVALID_ID_BASE);
+        static NEXT: AtomicU32 = AtomicU32::new(TEST_INVALID_ID_BASE.wrapping_add(1));
         NEXT.fetch_add(1, Ordering::SeqCst)
     }
 
