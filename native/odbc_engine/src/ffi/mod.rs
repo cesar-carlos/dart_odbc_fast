@@ -28,8 +28,10 @@ use crate::protocol::{
 use crate::security::AuditLogger;
 use log::LevelFilter;
 use rayon::prelude::*;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -281,6 +283,17 @@ impl AsyncRequestManager {
         }
     }
 
+    fn restore_result(&self, request_id: u32, result: Result<Vec<u8>>) -> bool {
+        let Some(slot) = self.requests.get(&request_id) else {
+            return false;
+        };
+        let Ok(mut outcome) = slot.outcome.lock() else {
+            return false;
+        };
+        *outcome = AsyncRequestOutcome::Ready(result);
+        true
+    }
+
     fn free(&mut self, request_id: u32) -> bool {
         let Some(slot) = self.requests.remove(&request_id) else {
             return false;
@@ -316,6 +329,8 @@ struct GlobalState {
     statements: HashMap<u32, StatementHandle>,
     streams: HashMap<u32, StreamKind>,
     stream_connections: HashMap<u32, u32>, // Map stream_id -> conn_id
+    pending_stream_chunks: HashMap<u32, PendingStreamChunk>,
+    pending_result_buffers: HashMap<PendingResultKey, PendingResultBuffer>,
     pools: HashMap<u32, Arc<ConnectionPool>>,
     pooled_connections: HashMap<u32, (u32, PooledConnectionWrapper)>, // pooled_conn_id -> (pool_id, wrapper)
     pooled_free_ids: HashMap<u32, Vec<u32>>, // pool_id -> reusable pooled connection IDs
@@ -335,8 +350,42 @@ struct GlobalState {
     audit_logger: Arc<AuditLogger>,
 }
 
+struct PendingStreamChunk {
+    data: Vec<u8>,
+    has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PendingResultKey {
+    ExecQuery {
+        conn_id: u32,
+        sql_hash: u64,
+    },
+    ExecQueryParams {
+        conn_id: u32,
+        sql_hash: u64,
+        params_hash: u64,
+    },
+    ExecQueryMulti {
+        conn_id: u32,
+        sql_hash: u64,
+    },
+    Execute {
+        stmt_id: u32,
+        params_hash: u64,
+        timeout_override_ms: u32,
+        fetch_size: u32,
+    },
+}
+
+struct PendingResultBuffer {
+    data: Vec<u8>,
+    created_at: Instant,
+}
+
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
 const CANCEL_UNSUPPORTED_NATIVE_CODE: i32 = 5001;
+const PENDING_RESULT_TTL: Duration = Duration::from_secs(2);
 
 /// FFI return codes (Fase 1 - padronizacao). Documented for consistency; literals used at call sites.
 #[allow(dead_code)]
@@ -356,6 +405,76 @@ fn set_out_written_zero(out_written: *mut c_uint) {
     }
 }
 
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn try_write_pending_result(
+    state: &mut GlobalState,
+    key: &PendingResultKey,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+    conn_id_for_error: Option<u32>,
+) -> Option<c_int> {
+    let entry = state.pending_result_buffers.remove(key)?;
+    if entry.created_at.elapsed() > PENDING_RESULT_TTL {
+        return None;
+    }
+
+    if entry.data.len() > buffer_len as usize {
+        state.pending_result_buffers.insert(key.clone(), entry);
+        if let Some(conn_id) = conn_id_for_error {
+            set_connection_error(
+                state,
+                conn_id,
+                format!(
+                    "Buffer too small: need {} bytes, got {}",
+                    state
+                        .pending_result_buffers
+                        .get(key)
+                        .map(|e| e.data.len())
+                        .unwrap_or(0),
+                    buffer_len
+                ),
+            );
+        } else {
+            set_error(
+                state,
+                format!(
+                    "Buffer too small: need {} bytes, got {}",
+                    state
+                        .pending_result_buffers
+                        .get(key)
+                        .map(|e| e.data.len())
+                        .unwrap_or(0),
+                    buffer_len
+                ),
+            );
+        }
+        set_out_written_zero(out_written);
+        return Some(-2);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(entry.data.as_ptr(), out_buffer, entry.data.len());
+        *out_written = entry.data.len() as c_uint;
+    }
+    Some(0)
+}
+
+fn stash_pending_result(state: &mut GlobalState, key: PendingResultKey, data: Vec<u8>) {
+    state.pending_result_buffers.insert(
+        key,
+        PendingResultBuffer {
+            data,
+            created_at: Instant::now(),
+        },
+    );
+}
+
 fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
     GLOBAL_STATE.get_or_init(|| {
         let metadata_cache_size =
@@ -373,6 +492,8 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             statements: HashMap::new(),
             streams: HashMap::new(),
             stream_connections: HashMap::new(),
+            pending_stream_chunks: HashMap::new(),
+            pending_result_buffers: HashMap::new(),
             pools: HashMap::new(),
             pooled_connections: HashMap::new(),
             pooled_free_ids: HashMap::new(),
@@ -861,9 +982,21 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
             .filter(|(_, s)| s.conn_id() == conn_id)
             .map(|(id, _)| *id)
             .collect();
-        for stmt_id in stmts_to_drop {
-            state.statements.remove(&stmt_id);
+        for stmt_id in &stmts_to_drop {
+            state.statements.remove(stmt_id);
         }
+        state.pending_result_buffers.retain(|key, _| match key {
+            PendingResultKey::ExecQuery {
+                conn_id: key_conn, ..
+            } => *key_conn != conn_id,
+            PendingResultKey::ExecQueryParams {
+                conn_id: key_conn, ..
+            } => *key_conn != conn_id,
+            PendingResultKey::ExecQueryMulti {
+                conn_id: key_conn, ..
+            } => *key_conn != conn_id,
+            PendingResultKey::Execute { stmt_id, .. } => !stmts_to_drop.contains(stmt_id),
+        });
         match conn.disconnect() {
             Ok(_) => {
                 // Remove connection error when disconnecting
@@ -1603,7 +1736,7 @@ pub extern "C" fn odbc_detect_driver(
 /// buffer: output buffer for JSON payload (UTF-8)
 /// buffer_len: size of buffer
 /// out_written: actual bytes written (excluding null terminator)
-/// Returns: 0 on success, -1 on error
+/// Returns: 0 on success, -1 on error, -2 if buffer too small
 #[no_mangle]
 pub extern "C" fn odbc_get_driver_capabilities(
     conn_str: *const c_char,
@@ -1631,10 +1764,13 @@ pub extern "C" fn odbc_get_driver_capabilities(
         }
     };
     let bytes = json.as_bytes();
-    let copy_len = bytes.len().min(buffer_len as usize);
+    if bytes.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
-        *out_written = copy_len as c_uint;
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *out_written = bytes.len() as c_uint;
     }
     0
 }
@@ -1668,7 +1804,7 @@ pub extern "C" fn odbc_exec_query(
         }
     };
 
-    let Some(state) = try_lock_global_state() else {
+    let Some(mut state) = try_lock_global_state() else {
         set_out_written_zero(out_written);
         return -1;
     };
@@ -1736,25 +1872,32 @@ pub extern "C" fn odbc_exec_query(
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
+    let pending_key = PendingResultKey::ExecQuery {
+        conn_id,
+        sql_hash: hash_bytes(sql_str.as_bytes()),
+    };
+    if let Some(code) = try_write_pending_result(
+        &mut state,
+        &pending_key,
+        out_buf,
+        buf_len,
+        out_written,
+        Some(conn_id),
+    ) {
+        return code;
+    }
 
     match execute_query_with_cached_connection(&mut conn_guard, sql_str) {
         Ok(data) => {
             let elapsed = start.elapsed();
+            let data_len = data.len();
             if data.len() > buf_len as usize {
                 metrics.record_error();
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    set_out_written_zero(out_written);
-                    return -1;
-                };
+                stash_pending_result(&mut state, pending_key, data);
                 set_connection_error(
                     &mut state,
                     conn_id,
-                    format!(
-                        "Buffer too small: need {} bytes, got {}",
-                        data.len(),
-                        buf_len
-                    ),
+                    format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
                 );
                 set_out_written_zero(out_written);
                 return -2;
@@ -1878,6 +2021,7 @@ pub extern "C" fn odbc_async_get_result(
     match result {
         Ok(data) => {
             if data.len() > buffer_len as usize {
+                let _ = state.async_requests.restore_result(request_id, Ok(data));
                 set_out_written_zero(out_written);
                 return -2;
             }
@@ -1953,7 +2097,7 @@ pub extern "C" fn odbc_exec_query_params(
         Err(_) => return -1,
     };
 
-    let Some(state) = try_lock_global_state() else {
+    let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
 
@@ -2011,6 +2155,27 @@ pub extern "C" fn odbc_exec_query_params(
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
+    let params_hash = if params_buffer.is_null() || params_len == 0 {
+        0
+    } else {
+        let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+        hash_bytes(raw)
+    };
+    let pending_key = PendingResultKey::ExecQueryParams {
+        conn_id,
+        sql_hash: hash_bytes(sql_str.as_bytes()),
+        params_hash,
+    };
+    if let Some(code) = try_write_pending_result(
+        &mut state,
+        &pending_key,
+        out_buffer,
+        buffer_len,
+        out_written,
+        Some(conn_id),
+    ) {
+        return code;
+    }
 
     let result = if params_buffer.is_null() || params_len == 0 {
         execute_query_with_cached_connection(&mut conn_guard, sql_str)
@@ -2035,19 +2200,16 @@ pub extern "C" fn odbc_exec_query_params(
     match result {
         Ok(data) => {
             let elapsed = start.elapsed();
+            let data_len = data.len();
             if data.len() > buffer_len as usize {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
+                stash_pending_result(&mut state, pending_key, data);
                 set_connection_error(
-                    &mut s,
+                    &mut state,
                     conn_id,
                     format!(
                         "Buffer too small: need {} bytes, got {}",
-                        data.len(),
-                        buffer_len
+                        data_len, buffer_len
                     ),
                 );
                 return -2;
@@ -2096,7 +2258,7 @@ pub extern "C" fn odbc_exec_query_multi(
         Err(_) => return -1,
     };
 
-    let Some(state) = try_lock_global_state() else {
+    let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
 
@@ -2154,23 +2316,34 @@ pub extern "C" fn odbc_exec_query_multi(
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
+    let pending_key = PendingResultKey::ExecQueryMulti {
+        conn_id,
+        sql_hash: hash_bytes(sql_str.as_bytes()),
+    };
+    if let Some(code) = try_write_pending_result(
+        &mut state,
+        &pending_key,
+        out_buffer,
+        buffer_len,
+        out_written,
+        Some(conn_id),
+    ) {
+        return code;
+    }
 
     match execute_multi_result(conn_guard.connection(), sql_str) {
         Ok(data) => {
             let elapsed = start.elapsed();
+            let data_len = data.len();
             if data.len() > buffer_len as usize {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
+                stash_pending_result(&mut state, pending_key, data);
                 set_connection_error(
-                    &mut s,
+                    &mut state,
                     conn_id,
                     format!(
                         "Buffer too small: need {} bytes, got {}",
-                        data.len(),
-                        buffer_len
+                        data_len, buffer_len
                     ),
                 );
                 return -2;
@@ -3039,7 +3212,7 @@ pub extern "C" fn odbc_execute(
         return -1;
     }
 
-    let Some(state) = try_lock_global_state() else {
+    let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
 
@@ -3075,6 +3248,28 @@ pub extern "C" fn odbc_execute(
 
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
+    let params_hash = if params_buffer.is_null() || params_len == 0 {
+        0
+    } else {
+        let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+        hash_bytes(raw)
+    };
+    let pending_key = PendingResultKey::Execute {
+        stmt_id,
+        params_hash,
+        timeout_override_ms,
+        fetch_size,
+    };
+    if let Some(code) = try_write_pending_result(
+        &mut state,
+        &pending_key,
+        out_buffer,
+        buffer_len,
+        out_written,
+        Some(conn_id),
+    ) {
+        return code;
+    }
 
     let timeout_sec = if timeout_override_ms > 0 {
         Some(((timeout_override_ms as usize) / 1000).max(1))
@@ -3155,19 +3350,16 @@ pub extern "C" fn odbc_execute(
     match result {
         Ok(data) => {
             let elapsed = start.elapsed();
+            let data_len = data.len();
             if data.len() > buffer_len as usize {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
+                stash_pending_result(&mut state, pending_key, data);
                 set_connection_error(
-                    &mut s,
+                    &mut state,
                     conn_id,
                     format!(
                         "Buffer too small: need {} bytes, got {}",
-                        data.len(),
-                        buffer_len
+                        data_len, buffer_len
                     ),
                 );
                 return -2;
@@ -3239,6 +3431,12 @@ pub extern "C" fn odbc_close_statement(stmt_id: c_uint) -> c_int {
     };
 
     if state.statements.remove(&stmt_id).is_some() {
+        state.pending_result_buffers.retain(|key, _| match key {
+            PendingResultKey::Execute {
+                stmt_id: key_stmt, ..
+            } => *key_stmt != stmt_id,
+            _ => true,
+        });
         0
     } else {
         set_error(&mut state, format!("Invalid statement ID: {}", stmt_id));
@@ -3255,6 +3453,9 @@ pub extern "C" fn odbc_clear_all_statements() -> c_int {
     };
 
     state.statements.clear();
+    state
+        .pending_result_buffers
+        .retain(|key, _| !matches!(key, PendingResultKey::Execute { .. }));
     0
 }
 
@@ -3653,6 +3854,49 @@ pub extern "C" fn odbc_stream_fetch(
 
     let stream_conn_id = state.stream_connections.get(&stream_id).copied();
 
+    if let Some(needed_len) = state
+        .pending_stream_chunks
+        .get(&stream_id)
+        .map(|pending| pending.data.len())
+    {
+        if needed_len > buf_len as usize {
+            if let Some(conn_id) = stream_conn_id {
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        needed_len, buf_len
+                    ),
+                );
+            } else {
+                set_error(
+                    &mut state,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        needed_len, buf_len
+                    ),
+                );
+            }
+            return -2;
+        }
+
+        let pending = state
+            .pending_stream_chunks
+            .remove(&stream_id)
+            .expect("pending stream chunk exists");
+        // Keep has_more from the original fetch that produced this chunk.
+        // This preserves stream semantics across buffer-resize retries.
+        let has_more_value = pending.has_more;
+        let written_len = pending.data.len();
+        unsafe {
+            std::ptr::copy_nonoverlapping(pending.data.as_ptr(), out_buf, written_len);
+            *out_written = written_len as c_uint;
+            *has_more = if has_more_value { 1 } else { 0 };
+        }
+        return 0;
+    }
+
     let stream = match state.streams.get_mut(&stream_id) {
         Some(s) => s,
         None => {
@@ -3663,25 +3907,26 @@ pub extern "C" fn odbc_stream_fetch(
 
     match stream.fetch_next_chunk() {
         Ok(Some(data)) => {
+            let has_more_value = stream.has_more();
+            let data_len = data.len();
             if data.len() > buf_len as usize {
+                state.pending_stream_chunks.insert(
+                    stream_id,
+                    PendingStreamChunk {
+                        data,
+                        has_more: has_more_value,
+                    },
+                );
                 if let Some(conn_id) = stream_conn_id {
                     set_connection_error(
                         &mut state,
                         conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buf_len
-                        ),
+                        format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
                     );
                 } else {
                     set_error(
                         &mut state,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buf_len
-                        ),
+                        format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
                     );
                 }
                 return -2;
@@ -3692,7 +3937,7 @@ pub extern "C" fn odbc_stream_fetch(
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), out_buf, data.len());
                 *out_written = data.len() as c_uint;
-                *has_more = if stream.has_more() { 1 } else { 0 };
+                *has_more = if has_more_value { 1 } else { 0 };
             }
 
             0
@@ -3753,6 +3998,7 @@ pub extern "C" fn odbc_stream_close(stream_id: c_uint) -> c_int {
 
     if state.streams.remove(&stream_id).is_some() {
         state.stream_connections.remove(&stream_id);
+        state.pending_stream_chunks.remove(&stream_id);
         0
     } else {
         set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
@@ -4778,6 +5024,21 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_get_driver_capabilities_buffer_too_small() {
+        let conn_str = CString::new("Driver={SQL Server};Server=localhost;Database=test;").unwrap();
+        let mut buffer = vec![0u8; 8];
+        let mut written: c_uint = 123;
+        let result = odbc_get_driver_capabilities(
+            conn_str.as_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(result, -2, "Too small buffer should return -2");
+        assert_eq!(written, 0, "written should be reset on buffer-too-small");
+    }
+
+    #[test]
     fn test_ffi_get_driver_capabilities_null_conn_str() {
         let mut buffer = vec![0u8; 256];
         let mut written: c_uint = 0;
@@ -5035,6 +5296,49 @@ mod tests {
         );
         assert_eq!(result, -1, "Invalid request_id should return -1");
         assert_eq!(written, 0, "No bytes should be written on invalid request");
+    }
+
+    #[test]
+    fn test_ffi_async_get_result_retry_after_buffer_too_small_preserves_data() {
+        odbc_init();
+
+        let request_id: u32 = next_test_invalid_id();
+        let payload = vec![7u8; 2048];
+        let slot = Arc::new(AsyncRequestSlot {
+            conn_id: 0,
+            cancelled: AtomicBool::new(false),
+            outcome: Mutex::new(AsyncRequestOutcome::Ready(Ok(payload.clone()))),
+            join_handle: Mutex::new(None),
+        });
+
+        {
+            let Some(mut state) = try_lock_global_state() else {
+                panic!("Failed to lock global state");
+            };
+            state.async_requests.requests.insert(request_id, slot);
+        }
+
+        let mut small_buf = vec![0u8; 128];
+        let mut written: c_uint = 0;
+        let first = odbc_async_get_result(
+            request_id,
+            small_buf.as_mut_ptr(),
+            small_buf.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(first, -2, "First call should report buffer too small");
+        assert_eq!(written, 0);
+
+        let mut big_buf = vec![0u8; 4096];
+        let second = odbc_async_get_result(
+            request_id,
+            big_buf.as_mut_ptr(),
+            big_buf.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(second, 0, "Retry with larger buffer should succeed");
+        assert_eq!(written as usize, payload.len());
+        assert_eq!(&big_buf[..payload.len()], payload.as_slice());
     }
 
     #[test]
@@ -6061,6 +6365,68 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_stream_fetch_retry_preserves_chunk_after_buffer_too_small() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
+
+        let large_literal = "X".repeat(3000);
+        let sql_text = format!("SELECT '{}' AS large_text", large_literal);
+        let sql = CString::new(sql_text).unwrap();
+
+        // Use large chunk_size so first fetch chunk is larger than tiny buffer.
+        let stream_id = odbc_stream_start(conn_id, sql.as_ptr(), 8192);
+        assert!(stream_id > 0);
+
+        let mut small_buffer = vec![0u8; 1024];
+        let mut written: c_uint = 0;
+        let mut has_more: u8 = 1;
+        let small_result = odbc_stream_fetch(
+            stream_id,
+            small_buffer.as_mut_ptr(),
+            small_buffer.len() as c_uint,
+            &mut written,
+            &mut has_more,
+        );
+        assert_eq!(small_result, -2, "Expected buffer-too-small on first fetch");
+        assert_eq!(written, 0);
+
+        let mut larger_buffer = vec![0u8; 8192];
+        let retry_result = odbc_stream_fetch(
+            stream_id,
+            larger_buffer.as_mut_ptr(),
+            larger_buffer.len() as c_uint,
+            &mut written,
+            &mut has_more,
+        );
+        assert_eq!(retry_result, 0, "Retry with larger buffer should succeed");
+        assert!(written > 0, "Retry must return preserved chunk bytes");
+
+        while has_more != 0 {
+            let next = odbc_stream_fetch(
+                stream_id,
+                larger_buffer.as_mut_ptr(),
+                larger_buffer.len() as c_uint,
+                &mut written,
+                &mut has_more,
+            );
+            assert_eq!(next, 0, "Subsequent fetches should succeed");
+        }
+
+        let sr = odbc_stream_close(stream_id);
+        assert_eq!(sr, 0);
+
+        let dr = odbc_disconnect(conn_id);
+        assert_eq!(dr, 0);
+    }
+
+    #[test]
     fn test_ffi_pool_workflow() {
         let Some(dsn) = ffi_test_dsn() else {
             eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
@@ -6803,6 +7169,77 @@ mod tests {
             &mut written,
         );
         assert_eq!(result, 0, "Execute with timeout should succeed");
+        assert!(written > 0);
+
+        let _ = odbc_close_statement(stmt_id);
+        let _ = odbc_disconnect(conn_id);
+    }
+
+    #[test]
+    fn test_ffi_execute_retry_after_buffer_too_small_does_not_reexecute_side_effect_sql() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).expect("valid DSN");
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
+
+        // SQL Server local temp table is scoped to this connection and dropped on disconnect.
+        let create_sql =
+            CString::new("CREATE TABLE #ffi_exec_retry_guard (id INT PRIMARY KEY)").unwrap();
+        let mut setup_buf = vec![0u8; 1024];
+        let mut setup_written: c_uint = 0;
+        let create_result = odbc_exec_query(
+            conn_id,
+            create_sql.as_ptr(),
+            setup_buf.as_mut_ptr(),
+            setup_buf.len() as c_uint,
+            &mut setup_written,
+        );
+        assert_eq!(create_result, 0, "Temp table setup should succeed");
+
+        // If execute gets retried by re-running SQL after -2, this INSERT will fail
+        // with duplicate key on the second call.
+        let sql = CString::new(
+            "INSERT INTO #ffi_exec_retry_guard (id) VALUES (42); SELECT REPLICATE('X', 6000) AS payload",
+        )
+        .unwrap();
+        let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 0);
+        assert!(stmt_id > 0, "Prepare should succeed");
+
+        let mut small_buffer = vec![0u8; 512];
+        let mut written: c_uint = 0;
+        let first = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            small_buffer.as_mut_ptr(),
+            small_buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(first, -2, "First execute should report buffer too small");
+        assert_eq!(written, 0, "No bytes should be written on -2");
+
+        let mut larger_buffer = vec![0u8; 16 * 1024];
+        let second = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            larger_buffer.as_mut_ptr(),
+            larger_buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(
+            second, 0,
+            "Retry must succeed by delivering pending payload without re-executing SQL",
+        );
         assert!(written > 0);
 
         let _ = odbc_close_statement(stmt_id);
