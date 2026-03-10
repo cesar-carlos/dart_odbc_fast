@@ -16,6 +16,8 @@ void main() {
   group('Streaming queries integration tests', () {
     late NativeOdbcConnection native;
     var connId = 0;
+    late String streamingTableName;
+    late String emptyTableName;
 
     setUpAll(() async {
       final dsn = getTestEnv('ODBC_TEST_DSN') ?? getTestEnv('ODBC_DSN');
@@ -23,6 +25,10 @@ void main() {
         print('Skipping integration tests: ODBC_TEST_DSN not set');
         return;
       }
+
+      final runSuffix = DateTime.now().microsecondsSinceEpoch;
+      streamingTableName = 'streaming_test_$runSuffix';
+      emptyTableName = 'empty_table_$runSuffix';
 
       native = NativeOdbcConnection();
       final initResult = native.initialize();
@@ -36,11 +42,11 @@ void main() {
       }
 
       // Create test table
-      const createTableSql = '''
-        IF OBJECT_ID('streaming_test', 'U') IS NOT NULL
-          DROP TABLE streaming_test;
+      final createTableSql = '''
+        IF OBJECT_ID('$streamingTableName', 'U') IS NOT NULL
+          DROP TABLE $streamingTableName;
 
-        CREATE TABLE streaming_test (
+        CREATE TABLE $streamingTableName (
           id INT IDENTITY(1,1) PRIMARY KEY,
           name NVARCHAR(100) NOT NULL,
           value DECIMAL(10,2)
@@ -61,8 +67,8 @@ void main() {
       native.closeStatement(createStmt);
 
       // Insert test data
-      const insertSql =
-          'INSERT INTO streaming_test (name, value) VALUES (?, ?)';
+      final insertSql =
+          'INSERT INTO $streamingTableName (name, value) VALUES (?, ?)';
       for (var i = 1; i <= 100; i++) {
         final insertStmt = native.prepare(connId, insertSql);
         if (insertStmt != 0) {
@@ -83,12 +89,24 @@ void main() {
 
     tearDownAll(() {
       if (connId != 0) {
+        final dropSql = '''
+          IF OBJECT_ID('$streamingTableName', 'U') IS NOT NULL
+            DROP TABLE $streamingTableName;
+          IF OBJECT_ID('$emptyTableName', 'U') IS NOT NULL
+            DROP TABLE $emptyTableName;
+        ''';
+        final dropStmt = native.prepare(connId, dropSql);
+        if (dropStmt != 0) {
+          native
+            ..executePrepared(dropStmt, const <ParamValue>[], 0, 1000)
+            ..closeStatement(dropStmt);
+        }
         native.disconnect(connId);
       }
     });
 
     test('streamQueryBatched returns data in chunks', () async {
-      const selectSql = 'SELECT id, name, value FROM streaming_test';
+      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
       var totalRows = 0;
       var chunkCount = 0;
@@ -112,7 +130,7 @@ void main() {
     });
 
     test('streamQuery with custom chunk size works', () async {
-      const selectSql = 'SELECT id, name, value FROM streaming_test';
+      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
       var totalRows = 0;
       var chunkCount = 0;
@@ -134,28 +152,31 @@ void main() {
 
     test('streamQueryBatched with large fetchSize returns fewer chunks',
         () async {
-      const selectSql = 'SELECT id, name, value FROM streaming_test';
+      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
       var chunkCount = 0;
+      var totalRows = 0;
       final stream = native.streamQueryBatched(
         connId,
         selectSql,
         fetchSize: 100,
       );
 
-      await for (final _ in stream) {
+      await for (final chunk in stream) {
         chunkCount++;
+        totalRows += chunk.rowCount;
       }
 
-      expect(chunkCount, 1);
+      expect(totalRows, 100);
+      expect(chunkCount, inInclusiveRange(1, 2));
     });
 
     test('Streaming query handles empty result set', () async {
-      const createEmptyTableSql = '''
-        IF OBJECT_ID('empty_table', 'U') IS NOT NULL
-          DROP TABLE empty_table;
+      final createEmptyTableSql = '''
+        IF OBJECT_ID('$emptyTableName', 'U') IS NOT NULL
+          DROP TABLE $emptyTableName;
 
-        CREATE TABLE empty_table (
+        CREATE TABLE $emptyTableName (
           id INT IDENTITY(1,1) PRIMARY KEY,
           name NVARCHAR(100)
         )
@@ -174,7 +195,7 @@ void main() {
 
       native.closeStatement(createStmt);
 
-      const selectSql = 'SELECT * FROM empty_table';
+      final selectSql = 'SELECT * FROM $emptyTableName';
 
       var rowCount = 0;
       final stream = native.streamQueryBatched(
@@ -191,7 +212,7 @@ void main() {
     });
 
     test('Streaming query with WHERE clause filters results', () async {
-      const selectSql = 'SELECT * FROM streaming_test WHERE id <= 50';
+      final selectSql = 'SELECT * FROM $streamingTableName WHERE id <= 50';
 
       var totalRows = 0;
       final stream = native.streamQueryBatched(

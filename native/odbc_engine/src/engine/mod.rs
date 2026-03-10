@@ -8,7 +8,9 @@ pub mod statement;
 pub mod streaming;
 pub mod transaction;
 
-pub use catalog::{get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables};
+pub use catalog::{
+    get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
+};
 pub use connection::OdbcConnection;
 pub use core::*;
 pub use environment::OdbcEnvironment;
