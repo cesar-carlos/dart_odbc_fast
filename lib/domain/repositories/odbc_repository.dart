@@ -251,6 +251,30 @@ abstract class IOdbcRepository {
   /// Returns metadata about data types supported by the database.
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId);
 
+  /// Queries the database catalog for primary key information.
+  ///
+  /// Returns metadata about primary keys for the specified [table].
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  );
+
+  /// Queries the database catalog for foreign key information.
+  ///
+  /// Returns metadata about foreign keys for the specified [table].
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  );
+
+  /// Queries the database catalog for index information.
+  ///
+  /// Returns metadata about indexes for the specified [table].
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  );
+
   /// Creates a new connection pool.
   ///
   /// The [connectionString] is used to establish connections in the pool.

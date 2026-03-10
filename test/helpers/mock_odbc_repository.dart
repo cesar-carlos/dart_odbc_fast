@@ -370,6 +370,48 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [],
+        rowCount: 0,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [],
+        rowCount: 0,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  ) async {
+    return const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [],
+        rowCount: 0,
+      ),
+    );
+  }
+
+  @override
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize,

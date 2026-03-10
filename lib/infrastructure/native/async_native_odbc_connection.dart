@@ -800,6 +800,39 @@ class AsyncNativeOdbcConnection {
     return r.data;
   }
 
+  Future<Uint8List?> catalogPrimaryKeys(
+    int connectionId,
+    String table,
+  ) async {
+    final r = await _sendRequest<QueryResponse>(
+      CatalogPrimaryKeysRequest(_nextRequestId(), connectionId, table),
+    );
+    if (r.error != null) return null;
+    return r.data;
+  }
+
+  Future<Uint8List?> catalogForeignKeys(
+    int connectionId,
+    String table,
+  ) async {
+    final r = await _sendRequest<QueryResponse>(
+      CatalogForeignKeysRequest(_nextRequestId(), connectionId, table),
+    );
+    if (r.error != null) return null;
+    return r.data;
+  }
+
+  Future<Uint8List?> catalogIndexes(
+    int connectionId,
+    String table,
+  ) async {
+    final r = await _sendRequest<QueryResponse>(
+      CatalogIndexesRequest(_nextRequestId(), connectionId, table),
+    );
+    if (r.error != null) return null;
+    return r.data;
+  }
+
   /// Creates a connection pool in the worker. Returns pool ID on success.
   Future<int> poolCreate(String connectionString, int maxSize) async {
     final r = await _sendRequest<IntResponse>(

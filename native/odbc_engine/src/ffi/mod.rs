@@ -10,9 +10,10 @@ use crate::engine::BulkCopyExecutor;
 use crate::engine::{
     execute_multi_result, execute_query_with_cached_connection, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
-    list_tables, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, DriverCapabilities,
-    IsolationLevel, MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect,
-    StatementHandle, StreamState, StreamingExecutor, Transaction,
+    list_foreign_keys, list_indexes, list_primary_keys, list_tables, AsyncStreamStatus,
+    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, MetadataCache,
+    OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
+    StreamingExecutor, Transaction,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -2533,6 +2534,384 @@ pub extern "C" fn odbc_catalog_type_info(
     let start = Instant::now();
 
     match get_type_info(conn_guard.connection()) {
+        Ok(data) => {
+            metrics.record_query(start.elapsed());
+            if data.len() > buffer_len as usize {
+                metrics.record_error();
+                drop(state);
+                let Some(mut s) = try_lock_global_state() else {
+                    return -1;
+                };
+                set_connection_error(
+                    &mut s,
+                    conn_id,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        data.len(),
+                        buffer_len
+                    ),
+                );
+                return -2;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                *out_written = data.len() as c_uint;
+            }
+            0
+        }
+        Err(e) => {
+            metrics.record_error();
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_structured_error(&mut s, conn_id, e.to_structured());
+            -1
+        }
+    }
+}
+
+/// Catalog: list primary keys for a table. Uses INFORMATION_SCHEMA.
+/// table: table name, or "schema.table".
+/// Returns: 0 on success, -1 on error, -2 if buffer too small.
+/// Result columns: TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, CONSTRAINT_NAME
+#[no_mangle]
+pub extern "C" fn odbc_catalog_primary_keys(
+    conn_id: c_uint,
+    table: *const c_char,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if table.is_null() || out_buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return -1;
+        }
+    };
+
+    let c_str = unsafe { CStr::from_ptr(table) };
+    let table_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Invalid table name (UTF-8)".to_string());
+            return -1;
+        }
+    };
+
+    let handles = conn.get_handles();
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let conn_arc = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
+            return -1;
+        }
+    };
+    drop(handles_guard);
+
+    let conn_guard = match conn_arc.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
+            return -1;
+        }
+    };
+
+    let metrics = Arc::clone(&state.metrics);
+    let start = Instant::now();
+
+    match list_primary_keys(conn_guard.connection(), table_str) {
+        Ok(data) => {
+            metrics.record_query(start.elapsed());
+            if data.len() > buffer_len as usize {
+                metrics.record_error();
+                drop(state);
+                let Some(mut s) = try_lock_global_state() else {
+                    return -1;
+                };
+                set_connection_error(
+                    &mut s,
+                    conn_id,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        data.len(),
+                        buffer_len
+                    ),
+                );
+                return -2;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                *out_written = data.len() as c_uint;
+            }
+            0
+        }
+        Err(e) => {
+            metrics.record_error();
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_structured_error(&mut s, conn_id, e.to_structured());
+            -1
+        }
+    }
+}
+
+/// Catalog: list foreign keys for a table. Uses INFORMATION_SCHEMA.
+/// table: table name, or "schema.table".
+/// Returns: 0 on success, -1 on error, -2 if buffer too small.
+/// Result columns: CONSTRAINT_NAME, FROM_TABLE, FROM_COLUMN, TO_TABLE, TO_COLUMN, UPDATE_RULE, DELETE_RULE
+#[no_mangle]
+pub extern "C" fn odbc_catalog_foreign_keys(
+    conn_id: c_uint,
+    table: *const c_char,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if table.is_null() || out_buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return -1;
+        }
+    };
+
+    let c_str = unsafe { CStr::from_ptr(table) };
+    let table_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Invalid table name (UTF-8)".to_string());
+            return -1;
+        }
+    };
+
+    let handles = conn.get_handles();
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let conn_arc = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
+            return -1;
+        }
+    };
+    drop(handles_guard);
+
+    let conn_guard = match conn_arc.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
+            return -1;
+        }
+    };
+
+    let metrics = Arc::clone(&state.metrics);
+    let start = Instant::now();
+
+    match list_foreign_keys(conn_guard.connection(), table_str) {
+        Ok(data) => {
+            metrics.record_query(start.elapsed());
+            if data.len() > buffer_len as usize {
+                metrics.record_error();
+                drop(state);
+                let Some(mut s) = try_lock_global_state() else {
+                    return -1;
+                };
+                set_connection_error(
+                    &mut s,
+                    conn_id,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        data.len(),
+                        buffer_len
+                    ),
+                );
+                return -2;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                *out_written = data.len() as c_uint;
+            }
+            0
+        }
+        Err(e) => {
+            metrics.record_error();
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_structured_error(&mut s, conn_id, e.to_structured());
+            -1
+        }
+    }
+}
+
+/// Catalog: list indexes for a table. Uses INFORMATION_SCHEMA.
+/// table: table name, or "schema.table".
+/// Returns: 0 on success, -1 on error, -2 if buffer too small.
+/// Result columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, IS_UNIQUE, IS_PRIMARY, ORDINAL_POSITION
+#[no_mangle]
+pub extern "C" fn odbc_catalog_indexes(
+    conn_id: c_uint,
+    table: *const c_char,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if table.is_null() || out_buffer.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let Some(state) = try_lock_global_state() else {
+        return -1;
+    };
+
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(
+                &mut s,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return -1;
+        }
+    };
+
+    let c_str = unsafe { CStr::from_ptr(table) };
+    let table_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Invalid table name (UTF-8)".to_string());
+            return -1;
+        }
+    };
+
+    let handles = conn.get_handles();
+    let Some(handles_guard) = handles.lock().ok() else {
+        drop(state);
+        let Some(mut s) = try_lock_global_state() else {
+            return -1;
+        };
+        set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
+        return -1;
+    };
+
+    let conn_arc = match handles_guard.get_connection(conn_id) {
+        Ok(c) => c,
+        Err(e) => {
+            drop(handles_guard);
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
+            return -1;
+        }
+    };
+    drop(handles_guard);
+
+    let conn_guard = match conn_arc.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            drop(state);
+            let Some(mut s) = try_lock_global_state() else {
+                return -1;
+            };
+            set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
+            return -1;
+        }
+    };
+
+    let metrics = Arc::clone(&state.metrics);
+    let start = Instant::now();
+
+    match list_indexes(conn_guard.connection(), table_str) {
         Ok(data) => {
             metrics.record_query(start.elapsed());
             if data.len() > buffer_len as usize {

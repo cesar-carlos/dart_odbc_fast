@@ -96,6 +96,27 @@ abstract class OdbcConnectionBackend {
   /// Returns binary result data on success, null on failure.
   Uint8List? catalogTypeInfo(int connectionId);
 
+  /// Queries the database catalog for primary key information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query.
+  /// Returns binary result data on success, null on failure.
+  Uint8List? catalogPrimaryKeys(int connectionId, String table);
+
+  /// Queries the database catalog for foreign key information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query.
+  /// Returns binary result data on success, null on failure.
+  Uint8List? catalogForeignKeys(int connectionId, String table);
+
+  /// Queries the database catalog for index information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query.
+  /// Returns binary result data on success, null on failure.
+  Uint8List? catalogIndexes(int connectionId, String table);
+
   /// Gets a connection from the pool.
   ///
   /// The [poolId] must be a valid pool identifier.

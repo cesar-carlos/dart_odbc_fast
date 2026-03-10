@@ -28,6 +28,22 @@
 - Structured errors (SQLSTATE/native code)
 - Runtime metrics and telemetry hooks
 
+## Type Mapping
+
+**Implemented input parameter types** (Dart → Database):
+- `null`, `int` (32/64-bit auto), `String`, `List<int>` (binary)
+- Canonical mappings: `bool` → Int(1|0), `double` → Decimal(string), `DateTime` → ISO8601 string
+
+**Implemented result types** (Database → Dart):
+- String (UTF-8), Int32, Int64
+- Nullability preserved
+
+**Planned (not yet implemented)**:
+- Explicit SQL typing API (`SqlDataType`)
+- Output parameters (SQL Server, Oracle)
+
+See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed reference and roadmap.
+
 ## API coverage (implemented)
 
 ### High-level service (`OdbcService`)
@@ -37,7 +53,7 @@
 - Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
-- Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`
+- Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`, `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
 - Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
 - Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolGetStateDetailed`, `poolClose`

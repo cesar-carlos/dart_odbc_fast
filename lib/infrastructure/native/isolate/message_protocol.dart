@@ -49,6 +49,9 @@ enum RequestType {
   catalogTables,
   catalogColumns,
   catalogTypeInfo,
+  catalogPrimaryKeys,
+  catalogForeignKeys,
+  catalogIndexes,
   getError,
   getStructuredError,
   detectDriver,
@@ -475,6 +478,30 @@ class CatalogTypeInfoRequest extends WorkerRequest {
   const CatalogTypeInfoRequest(int requestId, this.connectionId)
       : super(requestId, RequestType.catalogTypeInfo);
   final int connectionId;
+}
+
+/// Catalog primary keys.
+class CatalogPrimaryKeysRequest extends WorkerRequest {
+  const CatalogPrimaryKeysRequest(int requestId, this.connectionId, this.table)
+      : super(requestId, RequestType.catalogPrimaryKeys);
+  final int connectionId;
+  final String table;
+}
+
+/// Catalog foreign keys.
+class CatalogForeignKeysRequest extends WorkerRequest {
+  const CatalogForeignKeysRequest(int requestId, this.connectionId, this.table)
+      : super(requestId, RequestType.catalogForeignKeys);
+  final int connectionId;
+  final String table;
+}
+
+/// Catalog indexes.
+class CatalogIndexesRequest extends WorkerRequest {
+  const CatalogIndexesRequest(int requestId, this.connectionId, this.table)
+      : super(requestId, RequestType.catalogIndexes);
+  final int connectionId;
+  final String table;
 }
 
 /// Get last error message.

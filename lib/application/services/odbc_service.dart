@@ -133,6 +133,21 @@ abstract class IOdbcService {
 
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId);
 
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  );
+
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  );
+
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  );
+
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize,
@@ -477,6 +492,30 @@ class OdbcService implements IOdbcService {
     String connectionId,
   ) async {
     return _repository.catalogTypeInfo(connectionId);
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return _repository.catalogPrimaryKeys(connectionId, table);
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return _repository.catalogForeignKeys(connectionId, table);
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  ) async {
+    return _repository.catalogIndexes(connectionId, table);
   }
 
   @override

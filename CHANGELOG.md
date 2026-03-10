@@ -9,11 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- _None_
+- Schema reflection API for primary keys, foreign keys, and indexes:
+  - `catalogPrimaryKeys(connectionId, table)` - Lists primary keys for a table
+  - `catalogForeignKeys(connectionId, table)` - Lists foreign keys for a table
+  - `catalogIndexes(connectionId, table)` - Lists indexes for a table (PRIMARY KEY and UNIQUE constraints)
+- FFI exports: `odbc_catalog_primary_keys`, `odbc_catalog_foreign_keys`, `odbc_catalog_indexes`
+- Full implementation from Rust engine → FFI → Dart bindings → Repository → Service
+- Type mapping documentation consolidated:
+  - Added "Type Mapping" section to README with implemented vs planned status
+  - `doc/notes/TYPE_MAPPING.md` updated with verified implementation status
+  - `columnar_protocol.dart` marked as experimental/not used
+- Example: `example/catalog_reflection_demo.dart`
 
 ### Changed
 
 - _None_
+
+### Removed
+
+- Orphaned `native/telemetry/` directory (not compiled in workspace; actual implementation is in `native/odbc_engine/src/observability/telemetry/`)
 
 ### Fixed
 

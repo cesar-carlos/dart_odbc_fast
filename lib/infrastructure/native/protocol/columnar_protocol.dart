@@ -1,5 +1,14 @@
 import 'dart:typed_data';
 
+/// **EXPERIMENTAL / NOT USED**
+///
+/// This file implements a columnar protocol parser (version 2) with optional
+/// compression, but the Rust engine does not emit this format yet.
+///
+/// Current production code uses `binary_protocol.dart` (version 1) exclusively.
+///
+/// This file is kept for future implementation but is currently orphaned code.
+
 /// Metadata for a single column in a columnar format result.
 ///
 /// Contains column name, ODBC type, compression information, and column data.

@@ -447,6 +447,18 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   Uint8List? catalogTypeInfo(int connectionId) =>
       _native.catalogTypeInfo(connectionId);
 
+  @override
+  Uint8List? catalogPrimaryKeys(int connectionId, String table) =>
+      _native.catalogPrimaryKeys(connectionId, table);
+
+  @override
+  Uint8List? catalogForeignKeys(int connectionId, String table) =>
+      _native.catalogForeignKeys(connectionId, table);
+
+  @override
+  Uint8List? catalogIndexes(int connectionId, String table) =>
+      _native.catalogIndexes(connectionId, table);
+
   /// Creates a new connection pool.
   ///
   /// The [connectionString] is used to establish connections in the pool.

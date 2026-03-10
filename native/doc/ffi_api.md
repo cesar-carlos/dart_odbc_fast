@@ -374,6 +374,40 @@ info; not full ODBC `SQLGetTypeInfo`).
 - **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
 - **Output**: Standard binary protocol (single column: `type_name`).
 
+### `odbc_catalog_primary_keys(conn_id, table, out_buffer, buffer_len, out_written) -> int`
+
+Lists primary keys for a table from `INFORMATION_SCHEMA`.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
+- **table**: UTF‑8 null‑terminated. Use `"TABLE_NAME"` or `"schema.TABLE_NAME"`.
+- **Output**: Standard binary protocol (columns: TABLE_NAME, COLUMN_NAME, 
+  ORDINAL_POSITION, CONSTRAINT_NAME).
+- **Query**: Joins `TABLE_CONSTRAINTS` and `KEY_COLUMN_USAGE` where `CONSTRAINT_TYPE = 'PRIMARY KEY'`.
+
+### `odbc_catalog_foreign_keys(conn_id, table, out_buffer, buffer_len, out_written) -> int`
+
+Lists foreign keys for a table from `INFORMATION_SCHEMA`.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
+- **table**: UTF‑8 null‑terminated. Use `"TABLE_NAME"` or `"schema.TABLE_NAME"`.
+- **Output**: Standard binary protocol (columns: CONSTRAINT_NAME, FROM_TABLE, 
+  FROM_COLUMN, TO_TABLE, TO_COLUMN, UPDATE_RULE, DELETE_RULE).
+- **Query**: Joins `REFERENTIAL_CONSTRAINTS` and `KEY_COLUMN_USAGE` to resolve 
+  FK references.
+
+### `odbc_catalog_indexes(conn_id, table, out_buffer, buffer_len, out_written) -> int`
+
+Lists indexes for a table from `INFORMATION_SCHEMA`.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
+- **table**: UTF‑8 null‑terminated. Use `"TABLE_NAME"` or `"schema.TABLE_NAME"`.
+- **Output**: Standard binary protocol (columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, 
+  IS_UNIQUE, IS_PRIMARY, ORDINAL_POSITION).
+- **Query**: Returns indexes derived from `TABLE_CONSTRAINTS` (PRIMARY KEY and UNIQUE 
+  constraints). Does not include non-unique indexes created outside of constraints.
+- **Note**: Full index metadata (including non-unique indexes) requires database-specific 
+  queries (e.g., `sys.indexes` for SQL Server, `pg_indexes` for PostgreSQL).
+
 ## Transactions
 
 Transactions are implemented with:

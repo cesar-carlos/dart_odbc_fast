@@ -9,24 +9,21 @@ Consolidated backlog of items not yet included in implemented scope.
 
 | Item                               | Status               | Priority |
 | ---------------------------------- | -------------------- | -------- |
-| Schema reflection (PK/FK/Indexes)  | Open                 | High     |
+| ~~Schema reflection (PK/FK/Indexes)~~ | ✅ **Implemented (2026-03-10)** | ~~High~~ |
 | Output parameters by driver/plugin | Out of current scope | Medium   |
 
-## 1. Schema reflection (PK/FK/Indexes)
+## ~~1. Schema reflection (PK/FK/Indexes)~~ — ✅ IMPLEMENTED
 
-### Current state
+**Implemented on**: 2026-03-10
 
-- Basic catalog support exists (tables/columns/types)
-- Domain entities for PK/FK/Indexes already exist
+### Implementation summary
 
-### Missing implementation
+- ✅ Rust: `list_primary_keys`, `list_foreign_keys`, `list_indexes` in `catalog.rs`
+- ✅ FFI: `odbc_catalog_primary_keys`, `odbc_catalog_foreign_keys`, `odbc_catalog_indexes`
+- ✅ Dart: Full binding → Repository → Service chain
+- ✅ Example: `example/catalog_reflection_demo.dart`
 
-1. Rust functions to list PK/FK/Indexes
-2. Matching FFI exposure
-3. Dart repository/service methods
-4. Integration tests with real database
-
-## 2. Output parameters by driver/plugin
+## 1. Output parameters by driver/plugin
 
 ### Current state
 

@@ -24,6 +24,9 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   Uint8List? catalogTablesResult;
   Uint8List? catalogColumnsResult;
   Uint8List? catalogTypeInfoResult;
+  Uint8List? catalogPrimaryKeysResult;
+  Uint8List? catalogForeignKeysResult;
+  Uint8List? catalogIndexesResult;
   int poolGetConnectionResult = 1;
   bool poolReleaseConnectionResult = true;
   bool poolHealthCheckResult = true;
@@ -80,6 +83,18 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
 
   @override
   Uint8List? catalogTypeInfo(int connectionId) => catalogTypeInfoResult;
+
+  @override
+  Uint8List? catalogPrimaryKeys(int connectionId, String table) =>
+      catalogPrimaryKeysResult;
+
+  @override
+  Uint8List? catalogForeignKeys(int connectionId, String table) =>
+      catalogForeignKeysResult;
+
+  @override
+  Uint8List? catalogIndexes(int connectionId, String table) =>
+      catalogIndexesResult;
 
   @override
   int poolGetConnection(int poolId) => poolGetConnectionResult;

@@ -1,9 +1,11 @@
 # Type Mapping Strategy
 
-Canonical reference for data type mapping in `odbc_fast`.
+**Canonical reference** for data type mapping in `odbc_fast`.
 
-> Note: `doc/notes/` contains working documents. Some sections describe planned
-> work that is not implemented yet.
+> **Note**: This is a working document in `doc/notes/`. Some sections describe planned
+> work that is not implemented yet. Implementation status is clearly marked below.
+
+**Last verified**: 2026-03-10
 
 This document separates:
 1. What is implemented today
@@ -42,7 +44,18 @@ No silent `toString()` fallback for unsupported types.
 
 ### Result decoding (native -> Dart)
 
-Rust internal mapping exists:
+**Current implementation** uses binary protocol (version 1):
+
+Dart parser reference:
+- `lib/infrastructure/native/protocol/binary_protocol.dart`
+
+Supported ODBC type codes in binary protocol:
+- Type 1: String (UTF-8)
+- Type 2: Int32 (little-endian)
+- Type 3: Int64 (little-endian)
+- Default: String (fallback)
+
+Rust internal mapping:
 - `odbc_api::DataType -> SQL type code`
 - `SQL type code -> OdbcType`
 - `OdbcType -> Dart type conversion`
@@ -58,6 +71,11 @@ Driver-specific type mapping exists via plugins:
 
 Driver detection also recognizes `mysql`, `mongodb`, and `sqlite`, but these
 currently use the generic mapping path (no dedicated plugin file yet).
+
+**Future protocol** (not implemented):
+- `lib/infrastructure/native/protocol/columnar_protocol.dart` exists but is not
+  used by the engine. This is prepared for a future columnar format (version 2)
+  with optional compression, but the Rust side does not emit this format yet.
 
 ## Bulk insert nullability
 

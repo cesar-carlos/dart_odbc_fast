@@ -67,6 +67,9 @@ class OdbcBindings {
     _odbc_catalog_tables_ptr = _dylib.lookup('odbc_catalog_tables');
     _odbc_catalog_columns_ptr = _dylib.lookup('odbc_catalog_columns');
     _odbc_catalog_type_info_ptr = _dylib.lookup('odbc_catalog_type_info');
+    _odbc_catalog_primary_keys_ptr = _dylib.lookup('odbc_catalog_primary_keys');
+    _odbc_catalog_foreign_keys_ptr = _dylib.lookup('odbc_catalog_foreign_keys');
+    _odbc_catalog_indexes_ptr = _dylib.lookup('odbc_catalog_indexes');
     _odbc_prepare_ptr = _dylib.lookup('odbc_prepare');
     _odbc_execute_ptr = _dylib.lookup('odbc_execute');
     _odbc_cancel_ptr = _dylib.lookup('odbc_cancel');
@@ -193,6 +196,12 @@ class OdbcBindings {
       _odbc_catalog_columns_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_type_info_func>>
       _odbc_catalog_type_info_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_primary_keys_func>>
+      _odbc_catalog_primary_keys_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_foreign_keys_func>>
+      _odbc_catalog_foreign_keys_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_indexes_func>>
+      _odbc_catalog_indexes_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_prepare_func>>
       _odbc_prepare_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_execute_func>>
@@ -653,6 +662,54 @@ class OdbcBindings {
             ffi.Pointer<ffi.Uint32>,
           )>()(connId, outBuffer, bufferLen, outWritten);
 
+  int odbc_catalog_primary_keys(
+    int connId,
+    ffi.Pointer<Utf8> table,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _odbc_catalog_primary_keys_ptr.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>()(connId, table, outBuffer, bufferLen, outWritten);
+
+  int odbc_catalog_foreign_keys(
+    int connId,
+    ffi.Pointer<Utf8> table,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _odbc_catalog_foreign_keys_ptr.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>()(connId, table, outBuffer, bufferLen, outWritten);
+
+  int odbc_catalog_indexes(
+    int connId,
+    ffi.Pointer<Utf8> table,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _odbc_catalog_indexes_ptr.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>()(connId, table, outBuffer, bufferLen, outWritten);
+
   int odbc_prepare(int connId, ffi.Pointer<Utf8> sql, int timeoutMs) =>
       _odbc_prepare_ptr.asFunction<int Function(int, ffi.Pointer<Utf8>, int)>()(
         connId,
@@ -1086,6 +1143,27 @@ typedef odbc_catalog_columns_func = ffi.Int32 Function(
 );
 typedef odbc_catalog_type_info_func = ffi.Int32 Function(
   ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_catalog_primary_keys_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_catalog_foreign_keys_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_catalog_indexes_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,

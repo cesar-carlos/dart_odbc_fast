@@ -304,6 +304,39 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.catalogPrimaryKeys',
+      () => _service.catalogPrimaryKeys(connectionId, table),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.catalogForeignKeys',
+      () => _service.catalogForeignKeys(connectionId, table),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.catalogIndexes',
+      () => _service.catalogIndexes(connectionId, table),
+    );
+  }
+
+  @override
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize,

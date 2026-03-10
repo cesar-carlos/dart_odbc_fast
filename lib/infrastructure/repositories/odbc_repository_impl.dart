@@ -1496,6 +1496,161 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
+  Future<Result<QueryResult>> catalogPrimaryKeys(
+    String connectionId,
+    String table,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+    try {
+      final buf = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .catalogPrimaryKeys(nativeId, table)
+          : (_native as NativeOdbcConnection)
+              .catalogPrimaryKeys(nativeId, table);
+
+      final qr = _parseBufferToQueryResult(buf);
+      if (qr == null) {
+        return await _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to list catalog primary keys',
+        );
+      }
+      return Success(qr);
+    } on Exception catch (e) {
+      return _convertNativeErrorToFailure<QueryResult>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: e.toString(),
+      );
+    }
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogForeignKeys(
+    String connectionId,
+    String table,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+    try {
+      final buf = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .catalogForeignKeys(nativeId, table)
+          : (_native as NativeOdbcConnection)
+              .catalogForeignKeys(nativeId, table);
+
+      final qr = _parseBufferToQueryResult(buf);
+      if (qr == null) {
+        return await _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to list catalog foreign keys',
+        );
+      }
+      return Success(qr);
+    } on Exception catch (e) {
+      return _convertNativeErrorToFailure<QueryResult>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: e.toString(),
+      );
+    }
+  }
+
+  @override
+  Future<Result<QueryResult>> catalogIndexes(
+    String connectionId,
+    String table,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+    try {
+      final buf = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .catalogIndexes(nativeId, table)
+          : (_native as NativeOdbcConnection).catalogIndexes(nativeId, table);
+
+      final qr = _parseBufferToQueryResult(buf);
+      if (qr == null) {
+        return await _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Failed to list catalog indexes',
+        );
+      }
+      return Success(qr);
+    } on Exception catch (e) {
+      return _convertNativeErrorToFailure<QueryResult>(
+        errorFactory: ({
+          required message,
+          sqlState,
+          nativeCode,
+        }) =>
+            QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: e.toString(),
+      );
+    }
+  }
+
+  @override
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize,

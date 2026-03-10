@@ -924,6 +924,74 @@ class OdbcNative {
     );
   }
 
+  /// Queries the database catalog for primary key information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query primary keys for.
+  ///
+  /// Returns binary result data on success, null on failure.
+  /// Result columns: TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, CONSTRAINT_NAME
+  Uint8List? catalogPrimaryKeys(int connectionId, String table) {
+    return _withSql(
+      table,
+      (tablePtr) => callWithBuffer(
+        (buf, bufLen, outWritten) => _bindings.odbc_catalog_primary_keys(
+          connectionId,
+          tablePtr,
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      ),
+    );
+  }
+
+  /// Queries the database catalog for foreign key information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query foreign keys for.
+  ///
+  /// Returns binary result data on success, null on failure.
+  /// Result columns: CONSTRAINT_NAME, FROM_TABLE, FROM_COLUMN, TO_TABLE,
+  /// TO_COLUMN, UPDATE_RULE, DELETE_RULE
+  Uint8List? catalogForeignKeys(int connectionId, String table) {
+    return _withSql(
+      table,
+      (tablePtr) => callWithBuffer(
+        (buf, bufLen, outWritten) => _bindings.odbc_catalog_foreign_keys(
+          connectionId,
+          tablePtr,
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      ),
+    );
+  }
+
+  /// Queries the database catalog for index information.
+  ///
+  /// The [connectionId] must be a valid active connection.
+  /// The [table] is the table name to query indexes for.
+  ///
+  /// Returns binary result data on success, null on failure.
+  /// Result columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, IS_UNIQUE,
+  /// IS_PRIMARY, ORDINAL_POSITION
+  Uint8List? catalogIndexes(int connectionId, String table) {
+    return _withSql(
+      table,
+      (tablePtr) => callWithBuffer(
+        (buf, bufLen, outWritten) => _bindings.odbc_catalog_indexes(
+          connectionId,
+          tablePtr,
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      ),
+    );
+  }
+
   /// Prepares a SQL statement for execution.
   ///
   /// The [connectionId] must be a valid active connection.

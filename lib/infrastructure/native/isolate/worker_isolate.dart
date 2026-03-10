@@ -479,6 +479,51 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
+      case CatalogPrimaryKeysRequest():
+        final data = conn.catalogPrimaryKeys(
+          request.connectionId,
+          request.table,
+        );
+        if (data != null) {
+          sendPort.send(QueryResponse(request.requestId, data: data));
+        } else {
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog primary keys failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
+        }
+
+      case CatalogForeignKeysRequest():
+        final data = conn.catalogForeignKeys(
+          request.connectionId,
+          request.table,
+        );
+        if (data != null) {
+          sendPort.send(QueryResponse(request.requestId, data: data));
+        } else {
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog foreign keys failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
+        }
+
+      case CatalogIndexesRequest():
+        final data = conn.catalogIndexes(
+          request.connectionId,
+          request.table,
+        );
+        if (data != null) {
+          sendPort.send(QueryResponse(request.requestId, data: data));
+        } else {
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Catalog indexes failed (native returned no data; check connection/driver state)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
+        }
+
       case GetErrorRequest():
         final msg = conn.getError();
         sendPort.send(GetErrorResponse(request.requestId, msg));
@@ -619,6 +664,9 @@ void _sendErrorResponse(
     case CatalogTablesRequest():
     case CatalogColumnsRequest():
     case CatalogTypeInfoRequest():
+    case CatalogPrimaryKeysRequest():
+    case CatalogForeignKeysRequest():
+    case CatalogIndexesRequest():
     case AsyncGetResultRequest():
       sendPort.send(QueryResponse(id, error: error));
     case BeginTransactionRequest():
