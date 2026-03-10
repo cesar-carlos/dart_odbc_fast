@@ -105,36 +105,31 @@ void _validateValueForColumn(
 
 List<int> _u32Le(int v) {
   final buffer = Uint8List(4);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setUint32(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setUint32(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _i32Le(int v) {
   final buffer = Uint8List(4);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setInt32(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setInt32(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _i64Le(int v) {
   final buffer = Uint8List(8);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setInt64(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setInt64(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _u16Le(int v) {
   final buffer = Uint8List(2);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setUint16(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setUint16(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _i16Le(int v) {
   final buffer = Uint8List(2);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setInt16(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setInt16(0, v, _littleEndian);
   return buffer;
 }
 

@@ -9,17 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Schema reflection API for primary keys, foreign keys, and indexes:
-  - `catalogPrimaryKeys(connectionId, table)` - Lists primary keys for a table
-  - `catalogForeignKeys(connectionId, table)` - Lists foreign keys for a table
-  - `catalogIndexes(connectionId, table)` - Lists indexes for a table (PRIMARY KEY and UNIQUE constraints)
-- FFI exports: `odbc_catalog_primary_keys`, `odbc_catalog_foreign_keys`, `odbc_catalog_indexes`
-- Full implementation from Rust engine → FFI → Dart bindings → Repository → Service
-- Type mapping documentation consolidated:
-  - Added "Type Mapping" section to README with implemented vs planned status
-  - `doc/notes/TYPE_MAPPING.md` updated with verified implementation status
-  - `columnar_protocol.dart` marked as experimental/not used
-- Example: `example/catalog_reflection_demo.dart`
+- _None_
 
 ### Changed
 
@@ -27,11 +17,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Orphaned `native/telemetry/` directory (not compiled in workspace; actual implementation is in `native/odbc_engine/src/observability/telemetry/`)
+- _None_
 
 ### Fixed
 
 - _None_
+
+## [1.2.0] - 2026-03-10
+
+### Added
+
+- Schema reflection API for primary keys, foreign keys, and indexes:
+  - `catalogPrimaryKeys(connectionId, table)` - Lists primary keys for a table
+  - `catalogForeignKeys(connectionId, table)` - Lists foreign keys for a table
+  - `catalogIndexes(connectionId, table)` - Lists indexes for a table
+    (PRIMARY KEY and UNIQUE constraints)
+- FFI exports: `odbc_catalog_primary_keys`, `odbc_catalog_foreign_keys`,
+  `odbc_catalog_indexes`
+- Full implementation from Rust engine -> FFI -> Dart bindings -> Repository ->
+  Service
+- Type mapping documentation consolidated:
+  - Added "Type Mapping" section to README with implemented vs planned status
+  - `doc/notes/TYPE_MAPPING.md` updated with verified implementation status
+  - `columnar_protocol.dart` marked as experimental/not used
+- Example: `example/catalog_reflection_demo.dart`
+- Experimental typed parameter prototype:
+  - `SqlDataType`, `SqlTypedValue`, and `typedParam(...)`
+- Protocol performance benchmark suite:
+  - `test/performance/protocol_performance_test.dart`
+
+### Changed
+
+- Reliability/performance hardening completed:
+  - fail-fast nullability and per-type validation in `BulkInsertBuilder.addRow()`
+  - text validation by character and UTF-8 byte length
+  - canonical `double` mapping to fixed-scale decimal string
+  - `DateTime` year range validation (`1..9999`)
+  - complex unsupported-type error message construction via `StringBuffer`
+- Documentation cleanup:
+  - removed completed execution plans from `doc/notes/`
+  - added `Validation examples` section in root `README.md`
+
+### Removed
+
+- Orphaned `native/telemetry/` directory (not compiled in workspace; actual
+  implementation is in `native/odbc_engine/src/observability/telemetry/`)
+
+### Fixed
+
+- Streaming integration stability and cleanup:
+  - unique dynamic test tables and safer assertions
+- CI reliability:
+  - Rust fmt alignment and test thread safety adjustments
 
 ## [1.1.2] - 2026-03-03
 
@@ -288,7 +325,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.1...v1.0.2

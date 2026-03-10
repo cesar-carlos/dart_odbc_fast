@@ -14,22 +14,19 @@ const int _maxDateTimeYear = 9999;
 
 List<int> _u32Le(int v) {
   final buffer = Uint8List(4);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setUint32(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setUint32(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _i32Le(int v) {
   final buffer = Uint8List(4);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setInt32(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setInt32(0, v, _littleEndian);
   return buffer;
 }
 
 List<int> _i64Le(int v) {
   final buffer = Uint8List(8);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setInt64(0, v, _littleEndian);
+  ByteData.view(buffer.buffer).setInt64(0, v, _littleEndian);
   return buffer;
 }
 
@@ -64,6 +61,18 @@ String _unsupportedParameterTypeMessage(Object value) {
 class SqlDataType {
   const SqlDataType._(this.kind, {this.length, this.precision, this.scale});
 
+  factory SqlDataType.decimal({int? precision, int? scale}) =>
+      SqlDataType._('decimal', precision: precision, scale: scale);
+
+  factory SqlDataType.varChar({int? length}) =>
+      SqlDataType._('varchar', length: length);
+
+  factory SqlDataType.nVarChar({int? length}) =>
+      SqlDataType._('nvarchar', length: length);
+
+  factory SqlDataType.varBinary({int? length}) =>
+      SqlDataType._('varbinary', length: length);
+
   /// Semantic SQL kind used for validation and conversion.
   final String kind;
 
@@ -82,18 +91,6 @@ class SqlDataType {
   static const SqlDataType date = SqlDataType._('date');
   static const SqlDataType time = SqlDataType._('time');
   static const SqlDataType boolAsInt32 = SqlDataType._('bool_as_int32');
-
-  static SqlDataType decimal({int? precision, int? scale}) =>
-      SqlDataType._('decimal', precision: precision, scale: scale);
-
-  static SqlDataType varChar({int? length}) =>
-      SqlDataType._('varchar', length: length);
-
-  static SqlDataType nVarChar({int? length}) =>
-      SqlDataType._('nvarchar', length: length);
-
-  static SqlDataType varBinary({int? length}) =>
-      SqlDataType._('varbinary', length: length);
 }
 
 /// Explicitly typed parameter value.

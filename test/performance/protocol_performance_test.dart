@@ -12,8 +12,7 @@ List<int> _legacyU32Le(int v) {
 
 List<int> _optimizedU32Le(int v) {
   final buffer = Uint8List(4);
-  final byteData = ByteData.view(buffer.buffer);
-  byteData.setUint32(0, v, Endian.little);
+  ByteData.view(buffer.buffer).setUint32(0, v, Endian.little);
   return buffer;
 }
 
