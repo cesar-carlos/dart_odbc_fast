@@ -32,6 +32,8 @@ Consolidated backlog of items not yet included in implemented scope.
 
 - No public API for output parameters
 - Engine/plugin extension points exist, but no stable Dart contract yet
+- Driver roadmap matrix and decision criteria are documented in
+  `doc/notes/TYPE_MAPPING.md` (section `Output parameters roadmap (planned)`).
 
 ### Current decision
 
@@ -49,6 +51,9 @@ Consolidated backlog of items not yet included in implemented scope.
 
 - Keep as planned non-breaking evolution
 - Revisit when there is a clear driver-aware typing requirement
+- API design note and migration sketch are documented in
+  `doc/notes/TYPE_MAPPING.md` (sections `SqlDataType proposal (planned)` and
+  `Migration sketch (planned)`).
 
 ## Criteria to move from open to implemented
 

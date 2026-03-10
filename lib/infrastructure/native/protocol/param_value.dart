@@ -23,6 +23,64 @@ List<int> _i64Le(int v) {
   return b.buffer.asUint8List(0, 8).toList();
 }
 
+/// Explicit SQL data types for optional typed parameter API.
+///
+/// This is an experimental, non-breaking layer on top of [ParamValue].
+/// Existing untyped conversions continue to work as before.
+class SqlDataType {
+  const SqlDataType._(this.kind, {this.length, this.precision, this.scale});
+
+  /// Semantic SQL kind used for validation and conversion.
+  final String kind;
+
+  /// Optional length for textual/binary kinds.
+  final int? length;
+
+  /// Optional precision for decimal kinds.
+  final int? precision;
+
+  /// Optional scale for decimal kinds.
+  final int? scale;
+
+  static const SqlDataType int32 = SqlDataType._('int32');
+  static const SqlDataType int64 = SqlDataType._('int64');
+  static const SqlDataType dateTime = SqlDataType._('datetime');
+  static const SqlDataType date = SqlDataType._('date');
+  static const SqlDataType time = SqlDataType._('time');
+  static const SqlDataType boolAsInt32 = SqlDataType._('bool_as_int32');
+
+  static SqlDataType decimal({int? precision, int? scale}) =>
+      SqlDataType._('decimal', precision: precision, scale: scale);
+
+  static SqlDataType varChar({int? length}) =>
+      SqlDataType._('varchar', length: length);
+
+  static SqlDataType nVarChar({int? length}) =>
+      SqlDataType._('nvarchar', length: length);
+
+  static SqlDataType varBinary({int? length}) =>
+      SqlDataType._('varbinary', length: length);
+}
+
+/// Explicitly typed parameter value.
+///
+/// Use this wrapper when caller wants to opt into explicit SQL typing while
+/// preserving compatibility with the existing `List<dynamic>` API.
+class SqlTypedValue {
+  const SqlTypedValue({
+    required this.type,
+    required this.value,
+  });
+
+  final SqlDataType type;
+  final Object? value;
+}
+
+/// Convenience helper to create [SqlTypedValue] instances.
+SqlTypedValue typedParam(SqlDataType type, Object? value) {
+  return SqlTypedValue(type: type, value: value);
+}
+
 /// Base class for parameter values in prepared statements.
 ///
 /// All parameter values must extend this sealed class and implement
@@ -160,6 +218,7 @@ Uint8List serializeParams(List<ParamValue> params) {
 ParamValue toParamValue(Object? value) {
   if (value == null) return const ParamValueNull();
   if (value is ParamValue) return value;
+  if (value is SqlTypedValue) return _toTypedParamValue(value);
 
   // Fast path for int - most common case
   if (value is int) {
@@ -194,6 +253,90 @@ ParamValue toParamValue(Object? value) {
     'Use explicit ParamValue wrapper if needed, e.g., '
     'ParamValueString(value) for custom string conversion.',
   );
+}
+
+ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
+  final type = typedValue.type;
+  final value = typedValue.value;
+
+  if (value == null) {
+    return const ParamValueNull();
+  }
+
+  switch (type.kind) {
+    case 'int32':
+      if (value is! int) {
+        throw ArgumentError(
+          'SqlDataType.int32 expects int, got ${value.runtimeType}',
+        );
+      }
+      if (value < -0x80000000 || value > 0x7FFFFFFF) {
+        throw ArgumentError(
+          'SqlDataType.int32 value out of range: $value',
+        );
+      }
+      return ParamValueInt32(value);
+    case 'int64':
+      if (value is! int) {
+        throw ArgumentError(
+          'SqlDataType.int64 expects int, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueInt64(value);
+    case 'decimal':
+      if (value is num) {
+        return ParamValueDecimal(value.toString());
+      }
+      if (value is String) {
+        return ParamValueDecimal(value);
+      }
+      throw ArgumentError(
+        'SqlDataType.decimal expects num or String, got ${value.runtimeType}',
+      );
+    case 'varchar':
+    case 'nvarchar':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.${type.kind} expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'varbinary':
+      if (value is! List<int>) {
+        throw ArgumentError(
+          'SqlDataType.varBinary expects List<int>, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueBinary(value);
+    case 'datetime':
+      if (value is DateTime) {
+        return ParamValueString(value.toUtc().toIso8601String());
+      }
+      if (value is String) {
+        return ParamValueString(value);
+      }
+      throw ArgumentError(
+        'SqlDataType.dateTime expects DateTime or String, '
+        'got ${value.runtimeType}',
+      );
+    case 'date':
+    case 'time':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.${type.kind} expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'bool_as_int32':
+      if (value is! bool) {
+        throw ArgumentError(
+          'SqlDataType.boolAsInt32 expects bool, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueInt32(value ? 1 : 0);
+  }
+
+  throw ArgumentError('Unsupported SqlDataType kind: ${type.kind}');
 }
 
 /// Converts a list of objects to `ParamValue` instances.

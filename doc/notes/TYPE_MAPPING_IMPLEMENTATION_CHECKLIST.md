@@ -65,10 +65,10 @@ Acceptance gate:
 
 ## Phase 4 - Optional API evolution (non-breaking)
 
-- [ ] P4.1 Draft `SqlDataType` proposal (API design note).
-- [ ] P4.2 Prototype explicit typed parameter API without breaking `ParamValue`.
-- [ ] P4.3 Add migration notes showing old and new usage side by side.
-- [ ] P4.4 Keep feature behind clear "experimental/planned" label until stable.
+- [x] P4.1 Draft `SqlDataType` proposal (API design note).
+- [x] P4.2 Prototype explicit typed parameter API without breaking `ParamValue`.
+- [x] P4.3 Add migration notes showing old and new usage side by side.
+- [x] P4.4 Keep feature behind clear "experimental/planned" label until stable.
 
 Acceptance gate:
 
@@ -76,9 +76,9 @@ Acceptance gate:
 
 ## Phase 5 - Output parameter roadmap
 
-- [ ] P5.1 Define driver support matrix (SQL Server/Oracle/Postgres/Sybase).
-- [ ] P5.2 Document current unsupported status in canonical docs.
-- [ ] P5.3 Define contract decision criteria before implementation.
+- [x] P5.1 Define driver support matrix (SQL Server/Oracle/Postgres/Sybase).
+- [x] P5.2 Document current unsupported status in canonical docs.
+- [x] P5.3 Define contract decision criteria before implementation.
 
 Acceptance gate:
 
@@ -89,6 +89,7 @@ Acceptance gate:
 - Canonical docs are aligned:
   - `doc/notes/TYPE_MAPPING.md`
   - `README.md` (section `Type Mapping`)
+  - `doc/notes/FUTURE_IMPLEMENTATIONS.md` (backlog + scope)
 - Canonical runtime parser path:
   - `lib/infrastructure/native/protocol/binary_protocol.dart`
   - `lib/infrastructure/repositories/odbc_repository_impl.dart`
@@ -97,6 +98,10 @@ Acceptance gate:
 - Automated coverage:
   - `test/infrastructure/native/protocol/param_value_test.dart`
   - `test/infrastructure/native/protocol/binary_protocol_test.dart`
+- Optional API evolution documented (non-breaking, planned):
+  - `doc/notes/TYPE_MAPPING.md` (sections `SqlDataType proposal (planned)` and `Migration sketch (planned)`)
+- Output parameter roadmap documented:
+  - `doc/notes/TYPE_MAPPING.md` (section `Output parameters roadmap (planned)`)
 
 ## Validation commands (run after each completed phase)
 

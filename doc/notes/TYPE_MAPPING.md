@@ -111,18 +111,82 @@ This model is a valid inspiration for `odbc_fast`, but it is not yet the current
 3. Add test coverage to ensure behavior does not drift.
 4. **DONE:** Explicit type conversion with canonical mappings for `bool`, `double`, `DateTime`.
 
-### Phase 2: Add optional explicit SQL typing (Not Started)
+### Phase 2: Add optional explicit SQL typing (Prototype started)
 
 1. Introduce a public `SqlDataType` model (or equivalent) without breaking `ParamValue`.
 2. Allow explicit parameter typing in high-level APIs where useful.
 3. Keep backward compatibility for existing `executeQueryParams` and prepared APIs.
 4. Enable driver-aware support matrix via configuration.
 
+Prototype status:
+- `SqlDataType`, `SqlTypedValue`, and `typedParam(...)` are available in
+  `lib/infrastructure/native/protocol/param_value.dart`.
+- Existing APIs remain unchanged; typed parameters are opt-in through
+  `List<dynamic>`/named parameter values.
+
+### `SqlDataType` proposal (planned)
+
+Status: **planned/experimental**, not implemented in public API yet.
+
+Design goals:
+- Keep `ParamValue` as the stable default contract.
+- Introduce explicit SQL typing as an opt-in path only.
+- Preserve backward compatibility for existing parameter APIs.
+
+Proposed shape (illustrative only):
+- `SqlDataType.int32`
+- `SqlDataType.int64`
+- `SqlDataType.decimal(precision, scale)`
+- `SqlDataType.varChar(length)`
+- `SqlDataType.nVarChar(length)`
+- `SqlDataType.varBinary(length)`
+- `SqlDataType.dateTime`
+- `SqlDataType.date`
+- `SqlDataType.time`
+
+Proposed typed wrapper (illustrative):
+- `TypedParam(name: 'amount', type: SqlDataType.decimal(18, 4), value: '123.4500')`
+
+### Migration sketch (planned)
+
+Current (implemented today):
+- `executeQueryParams(sql, [ParamValueDecimal('123.45')])`
+- `executeQueryNamed(sql, {'amount': 123.45})` (auto-conversion path)
+
+Planned side-by-side (future, non-breaking):
+- Keep all current calls valid.
+- Add optional typed entry points (or optional typed variants) that accept
+  explicit SQL type metadata.
+- Keep feature clearly labeled as experimental until cross-driver behavior is
+  validated.
+
 ### Phase 3: Evaluate output parameters (Not Started)
 
 1. Define driver-aware support matrix (`SQL Server`, `Oracle`, etc.).
 2. Add stable Dart contract only after cross-driver behavior is validated.
 3. Document unsupported paths clearly when applicable.
+
+## Output parameters roadmap (planned)
+
+Current status:
+- Output parameters are **not supported** in the stable public Dart API.
+- No `request.output`-style contract is currently implemented.
+
+Driver support matrix (planning baseline):
+
+| Driver | Typical capability | Current package status |
+| --- | --- | --- |
+| SQL Server | `OUTPUT` params and return values | Planned (not implemented) |
+| Oracle | OUT params / REF CURSOR patterns | Planned (not implemented) |
+| PostgreSQL | Function returns / OUT-like patterns differ from ODBC OUTPUT style | Planned (not implemented) |
+| Sybase | OUTPUT-like support depends on driver behavior | Planned (not implemented) |
+
+Decision criteria before implementation:
+1. Stable cross-driver behavioral contract defined.
+2. Error semantics standardized (nulls, missing params, unsupported types).
+3. Integration coverage for each claimed driver capability.
+4. Non-breaking API surface with explicit feature flag/label while experimental.
+5. Documentation and examples updated before feature is promoted.
 
 ### Non-goals (current release line)
 

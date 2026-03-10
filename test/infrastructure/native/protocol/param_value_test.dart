@@ -90,6 +90,66 @@ void main() {
     });
   });
 
+  group('Optional explicit SQL typing (Phase 4 prototype)', () {
+    test('SqlDataType.int32 maps to ParamValueInt32', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.int32, 42),
+      ]);
+      expect(params[0], isA<ParamValueInt32>());
+      expect((params[0] as ParamValueInt32).value, equals(42));
+    });
+
+    test('SqlDataType.int32 validates value range', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.int32, 0x80000000),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('out of range'),
+          ),
+        ),
+      );
+    });
+
+    test('SqlDataType.decimal accepts num and String', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.decimal(), 3.14),
+        typedParam(SqlDataType.decimal(), '19.9900'),
+      ]);
+      expect(params[0], isA<ParamValueDecimal>());
+      expect((params[0] as ParamValueDecimal).value, equals('3.14'));
+      expect(params[1], isA<ParamValueDecimal>());
+      expect((params[1] as ParamValueDecimal).value, equals('19.9900'));
+    });
+
+    test('SqlDataType.boolAsInt32 maps bool to 1/0', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.boolAsInt32, true),
+        typedParam(SqlDataType.boolAsInt32, false),
+      ]);
+      expect((params[0] as ParamValueInt32).value, equals(1));
+      expect((params[1] as ParamValueInt32).value, equals(0));
+    });
+
+    test('SqlDataType.varBinary validates payload type', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.varBinary(), 'not-bytes'),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('List<int>'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('Unsupported type errors (Phase 1)', () {
     test('custom object throws ArgumentError', () {
       final custom = _CustomObject();
