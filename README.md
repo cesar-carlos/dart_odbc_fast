@@ -59,6 +59,36 @@ See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed refere
 
 Error messages include column name and row number to simplify debugging.
 
+### Validation examples
+
+```dart
+// BulkInsertBuilder fail-fast: null in non-nullable column.
+final builder = BulkInsertBuilder()
+  ..table('users')
+  ..addColumn('id', BulkColumnType.i32) // nullable: false by default
+  ..addRow([null]); // throws StateError
+```
+
+```dart
+// Text maxLen also validates UTF-8 byte length (emoji uses multiple bytes).
+final builder = BulkInsertBuilder()
+  ..table('users')
+  ..addColumn('name', BulkColumnType.text, maxLen: 2)
+  ..addRow(['😀']); // throws ArgumentError (UTF-8 bytes > maxLen)
+```
+
+```dart
+// Canonical double mapping rejects NaN/Infinity.
+paramValuesFromObjects([double.nan]); // throws ArgumentError
+paramValuesFromObjects([double.infinity]); // throws ArgumentError
+```
+
+```dart
+// DateTime year must be in [1, 9999].
+final outOfRangeDate = DateTime.utc(9999, 12, 31).add(const Duration(days: 2));
+paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
+```
+
 ## API coverage (implemented)
 
 ### High-level service (`OdbcService`)
@@ -548,7 +578,6 @@ dart_odbc_fast/
 - [doc/version/CHANGELOG_TEMPLATE.md](doc/version/CHANGELOG_TEMPLATE.md)
 - [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md)
 - [doc/notes/FUTURE_IMPLEMENTATIONS.md](doc/notes/FUTURE_IMPLEMENTATIONS.md)
-- [doc/notes/RELIABILITY_PERFORMANCE_IMPROVEMENTS_PLAN.md](doc/notes/RELIABILITY_PERFORMANCE_IMPROVEMENTS_PLAN.md)
 
 Files under `doc/notes/` are working plans/backlog and may include features
 that are not implemented yet.
