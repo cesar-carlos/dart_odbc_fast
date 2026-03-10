@@ -35,8 +35,11 @@ Current object-to-parameter auto-conversion (`paramValuesFromObjects`):
 - `String` -> `ParamValueString`
 - `List<int>` -> `ParamValueBinary`
 - `bool` -> `ParamValueInt32(1|0)` (canonical mapping)
-- `double` -> `ParamValueDecimal(value.toString())` (canonical mapping)
-- `DateTime` -> `ParamValueString(value.toUtc().toIso8601String())` (canonical mapping)
+- `double` -> `ParamValueDecimal(value.toStringAsFixed(6))` (canonical mapping)
+  - `NaN` and `Infinity`/`-Infinity` are rejected with `ArgumentError`
+- `DateTime` -> `ParamValueString(value.toUtc().toIso8601String())`
+  (canonical mapping)
+  - `DateTime.year` must be in `[1, 9999]`, otherwise `ArgumentError`
 - `ParamValue` -> returned as-is (fast path)
 
 **Important:** Unsupported types throw `ArgumentError` with actionable message.
@@ -79,11 +82,28 @@ currently use the generic mapping path (no dedicated plugin file yet).
 
 ## Bulk insert nullability
 
-Non-nullable columns now validate null values at build time:
-- Throws `StateError` when `nullable: false` column contains `null`
+Non-nullable columns now validate null values at add time (fail-fast):
+- Throws `StateError` when `nullable: false` column contains `null` in `addRow()`
 - Error message includes column name and row number for easy debugging
 - Suggests using `nullable: true` for columns that should accept null
 - Nullable columns continue to use null bitmap correctly
+
+`build()` keeps a final nullability guard because `addRow()` stores row list
+references for performance and caller code may still mutate rows before build.
+
+## Bulk insert type and text validation
+
+`BulkInsertBuilder.addRow()` validates value types per column before storing rows:
+- `i32`: requires `int` in 32-bit range
+- `i64`: requires `int`
+- `text`: requires `String` with `maxLen` validation by:
+  - character count
+  - UTF-8 byte length
+- `decimal`: requires `String` or `num`
+- `binary`: requires `List<int>` / `Uint8List`
+- `timestamp`: requires `DateTime` or `BulkTimestamp`
+
+Unicode edge cases are covered by tests (emoji and combining characters).
 
 ## Inspiration from node-mssql
 

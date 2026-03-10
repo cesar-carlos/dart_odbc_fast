@@ -7,38 +7,135 @@ const int _tagText = 2;
 const int _tagDecimal = 3;
 const int _tagBinary = 4;
 const int _tagTimestamp = 5;
+const Endian _littleEndian = Endian.little;
 
 int _nullBitmapSize(int rowCount) => (rowCount / 8).ceil();
 
 void _setNullAt(List<int> bitmap, int row) {
   final byteIndex = row ~/ 8;
-  if (byteIndex >= bitmap.length) return;
-  bitmap[byteIndex] |= 1 << (row % 8);
+  // Callers always allocate bitmap using _nullBitmapSize(rowCount),
+  // so byteIndex is guaranteed to be within bounds for valid row values.
+  final bitMask = 1 << (row % 8);
+  bitmap[byteIndex] |= bitMask;
+}
+
+Never _throwNullabilityError(String columnName, int rowNumber) {
+  throw StateError(
+    'Column "$columnName" is non-nullable but contains null '
+    'at row $rowNumber. '
+    'Use nullable: true for columns that should accept null.',
+  );
+}
+
+void _validateTextColumn(String value, BulkColumnSpec spec, int rowNumber) {
+  if (spec.maxLen > 0 && value.length > spec.maxLen) {
+    throw ArgumentError(
+      'Column "${spec.name}" exceeds max length ${spec.maxLen} '
+      '(got ${value.length} characters) at row $rowNumber.',
+    );
+  }
+
+  final List<int> utf8Bytes = utf8.encode(value);
+  if (spec.maxLen > 0 && utf8Bytes.length > spec.maxLen) {
+    throw ArgumentError(
+      'Column "${spec.name}" UTF-8 encoding exceeds max length ${spec.maxLen} '
+      '(got ${utf8Bytes.length} bytes) at row $rowNumber.',
+    );
+  }
+}
+
+void _validateValueForColumn(
+  dynamic value,
+  BulkColumnSpec spec,
+  int rowNumber,
+) {
+  if (value == null) {
+    if (spec.nullable) {
+      return;
+    }
+    _throwNullabilityError(spec.name, rowNumber);
+  }
+
+  switch (spec.colType) {
+    case BulkColumnType.i32:
+      if (value is! int || value < -0x80000000 || value > 0x7FFFFFFF) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects i32 value but got $value '
+          '(${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+    case BulkColumnType.i64:
+      if (value is! int) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects i64 value but got $value '
+          '(${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+    case BulkColumnType.text:
+      if (value is! String) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects text value but got $value '
+          '(${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+      _validateTextColumn(value, spec, rowNumber);
+    case BulkColumnType.decimal:
+      if (value is! String && value is! num) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects decimal (num/string) but got $value '
+          '(${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+    case BulkColumnType.binary:
+      if (value is! List<int>) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects binary data but got $value '
+          '(${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+    case BulkColumnType.timestamp:
+      if (value is! DateTime && value is! BulkTimestamp) {
+        throw ArgumentError(
+          'Column "${spec.name}" expects timestamp (DateTime/BulkTimestamp) '
+          'but got $value (${value.runtimeType}) at row $rowNumber.',
+        );
+      }
+  }
 }
 
 List<int> _u32Le(int v) {
-  final b = ByteData(4)..setUint32(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 4).toList();
+  final buffer = Uint8List(4);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setUint32(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _i32Le(int v) {
-  final b = ByteData(4)..setInt32(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 4).toList();
+  final buffer = Uint8List(4);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setInt32(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _i64Le(int v) {
-  final b = ByteData(8)..setInt64(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 8).toList();
+  final buffer = Uint8List(8);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setInt64(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _u16Le(int v) {
-  final b = ByteData(2)..setUint16(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 2).toList();
+  final buffer = Uint8List(2);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setUint16(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _i16Le(int v) {
-  final b = ByteData(2)..setInt16(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 2).toList();
+  final buffer = Uint8List(2);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setInt16(0, v, _littleEndian);
+  return buffer;
 }
 
 /// Column data types for bulk insert operations.
@@ -207,6 +304,9 @@ class BulkInsertBuilder {
   /// The [values] list must contain values in the same order as columns
   /// were added, and must match the column count.
   ///
+  /// The builder stores the row list reference directly for performance.
+  /// Do not modify [values] after passing it to this method.
+  ///
   /// Returns this builder for method chaining.
   /// Throws [StateError] if columns haven't been added yet.
   /// Throws [ArgumentError] if the row length doesn't match column count.
@@ -219,7 +319,11 @@ class BulkInsertBuilder {
         'Row length ${values.length} != column count ${_columns.length}',
       );
     }
-    _rows.add(List<dynamic>.from(values));
+    final rowNumber = _rows.length + 1;
+    for (var c = 0; c < _columns.length; c++) {
+      _validateValueForColumn(values[c], _columns[c], rowNumber);
+    }
+    _rows.add(values);
     return this;
   }
 
@@ -250,18 +354,15 @@ class BulkInsertBuilder {
       throw StateError('At least one row required');
     }
 
-    // Validate nullability: non-nullable columns must not have null values
+    // Keep a final nullability check because addRow stores row references.
+    // Caller code can still mutate rows after insertion.
     for (var c = 0; c < _columns.length; c++) {
       final spec = _columns[c];
       if (!spec.nullable) {
         for (var r = 0; r < _rows.length; r++) {
           final value = _rows[r][c];
           if (value == null) {
-            throw StateError(
-              'Column "${spec.name}" is non-nullable but contains null '
-              'at row ${r + 1}. '
-              'Use nullable: true for columns that should accept null.',
-            );
+            _throwNullabilityError(spec.name, r + 1);
           }
         }
       }

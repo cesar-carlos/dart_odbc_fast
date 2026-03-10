@@ -3,20 +3,15 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/protocol/bulk_insert_builder.dart';
 import 'package:test/test.dart';
 
-/// Baseline tests for bulk insert nullability behavior.
-///
-/// These tests capture current behavior before refactoring:
-/// - Non-nullable columns currently accept null and serialize default values
-/// - No validation error is thrown for null in non-nullable columns
+/// Nullability validation tests for bulk insert behavior.
 void main() {
   group('Phase 2: Non-nullable null validation', () {
-    test('non-nullable i32 column throws for null value', () {
-      final b = BulkInsertBuilder()
-          .table('t')
-          .addColumn('a', BulkColumnType.i32)
-          .addRow([null]);
+    test('non-nullable i32 column throws in addRow', () {
       expect(
-        b.build,
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addRow([null]),
         throwsA(
           isA<StateError>()
               .having(
@@ -33,13 +28,12 @@ void main() {
       );
     });
 
-    test('non-nullable text column throws for null value', () {
-      final b = BulkInsertBuilder()
-          .table('t')
-          .addColumn('a', BulkColumnType.text, maxLen: 10)
-          .addRow([null]);
+    test('non-nullable text column throws in addRow', () {
       expect(
-        b.build,
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.text, maxLen: 10)
+            .addRow([null]),
         throwsA(
           isA<StateError>().having(
             (e) => e.message,
@@ -50,13 +44,12 @@ void main() {
       );
     });
 
-    test('non-nullable i64 column throws for null value', () {
-      final b = BulkInsertBuilder()
-          .table('t')
-          .addColumn('a', BulkColumnType.i64)
-          .addRow([null]);
+    test('non-nullable i64 column throws in addRow', () {
       expect(
-        b.build,
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i64)
+            .addRow([null]),
         throwsA(
           isA<StateError>().having(
             (e) => e.message,
@@ -68,14 +61,13 @@ void main() {
     });
 
     test(
-      'non-nullable decimal column throws for null value',
+      'non-nullable decimal column throws in addRow',
       () {
-        final b = BulkInsertBuilder()
-            .table('t')
-            .addColumn('a', BulkColumnType.decimal, maxLen: 20)
-            .addRow([null]);
         expect(
-          b.build,
+          () => BulkInsertBuilder()
+              .table('t')
+              .addColumn('a', BulkColumnType.decimal, maxLen: 20)
+              .addRow([null]),
           throwsA(
             isA<StateError>().having(
               (e) => e.message,
@@ -88,14 +80,13 @@ void main() {
     );
 
     test(
-      'non-nullable timestamp column throws for null value',
+      'non-nullable timestamp column throws in addRow',
       () {
-        final b = BulkInsertBuilder()
-            .table('t')
-            .addColumn('a', BulkColumnType.timestamp)
-            .addRow([null]);
         expect(
-          b.build,
+          () => BulkInsertBuilder()
+              .table('t')
+              .addColumn('a', BulkColumnType.timestamp)
+              .addRow([null]),
           throwsA(
             isA<StateError>().having(
               (e) => e.message,
@@ -124,9 +115,239 @@ void main() {
         expect(enc[24] & 1, equals(1));
       },
     );
+
+    test('error message shows correct row number', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addRow([1]).addRow([null]),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('at row 2'),
+          ),
+        ),
+      );
+    });
+
+    test('i32 column rejects string value in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addRow(['1']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects i32 value'),
+          ),
+        ),
+      );
+    });
+
+    test('i32 column rejects out-of-range value in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addRow([0x80000000]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('i64 column rejects non-int value in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i64)
+            .addRow([1.5]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects i64 value'),
+          ),
+        ),
+      );
+    });
+
+    test('text column rejects non-string value in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.text, maxLen: 10)
+            .addRow([123]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects text value'),
+          ),
+        ),
+      );
+    });
+
+    test('text column rejects value longer than maxLen in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.text, maxLen: 3)
+            .addRow(['abcd']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('exceeds max length 3'),
+          ),
+        ),
+      );
+    });
+
+    test('text column rejects UTF-8 byte length overflow (emoji)', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.text, maxLen: 2)
+            .addRow(['😀']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('UTF-8 encoding exceeds max length'),
+          ),
+        ),
+      );
+    });
+
+    test('text column accepts combining characters when within limits', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.text, maxLen: 4)
+          .addRow(['e\u0301']);
+      expect(b.build, returnsNormally);
+    });
+
+    test('decimal column accepts string and num values', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.decimal, maxLen: 20)
+          .addRow(['12.34']).addRow([56.78]);
+      expect(b.build, returnsNormally);
+    });
+
+    test('decimal column rejects unsupported value type in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.decimal, maxLen: 20)
+            .addRow([
+          const [1, 2],
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects decimal'),
+          ),
+        ),
+      );
+    });
+
+    test('binary column rejects non-list<int> value in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.binary, maxLen: 8)
+            .addRow(['abc']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects binary data'),
+          ),
+        ),
+      );
+    });
+
+    test('timestamp column rejects invalid value type in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.timestamp)
+            .addRow(['2025-01-01']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('expects timestamp'),
+          ),
+        ),
+      );
+    });
+
+    test('type error message includes row number', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addRow([1]).addRow(['2']),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('at row 2'),
+          ),
+        ),
+      );
+    });
   });
 
   group('BulkInsertBuilder', () {
+    test('addRow stores list reference (ownership contract)', () {
+      final row = <dynamic>[1];
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.i32)
+          .addRow(row);
+
+      // Ownership contract: mutating source list after addRow affects output.
+      row[0] = 7;
+
+      final enc = b.build();
+      final view = ByteData.sublistView(enc);
+
+      var o = 0;
+      o += 4 + 1; // table length + table char
+      o += 4 + 4 + 1 + 1 + 1 + 4; // single column metadata
+      expect(view.getUint32(o, Endian.little), equals(1));
+      o += 4;
+      expect(view.getInt32(o, Endian.little), equals(7));
+    });
+
+    test('build keeps final nullability guard for mutated rows', () {
+      final row = <dynamic>[1];
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.i32)
+          .addRow(row);
+
+      row[0] = null;
+
+      expect(
+        b.build,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('at row 1'),
+          ),
+        ),
+      );
+    });
+
     test('I32 single column non-nullable roundtrip structure', () {
       final b = BulkInsertBuilder()
           .table('t')

@@ -7,20 +7,54 @@ const int _tagInteger = 2;
 const int _tagBigInt = 3;
 const int _tagDecimal = 4;
 const int _tagBinary = 5;
+const Endian _littleEndian = Endian.little;
+const int _defaultDecimalScale = 6;
+const int _minDateTimeYear = 1;
+const int _maxDateTimeYear = 9999;
 
 List<int> _u32Le(int v) {
-  final b = ByteData(4)..setUint32(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 4).toList();
+  final buffer = Uint8List(4);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setUint32(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _i32Le(int v) {
-  final b = ByteData(4)..setInt32(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 4).toList();
+  final buffer = Uint8List(4);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setInt32(0, v, _littleEndian);
+  return buffer;
 }
 
 List<int> _i64Le(int v) {
-  final b = ByteData(8)..setInt64(0, v, Endian.little);
-  return b.buffer.asUint8List(0, 8).toList();
+  final buffer = Uint8List(8);
+  final byteData = ByteData.view(buffer.buffer);
+  byteData.setInt64(0, v, _littleEndian);
+  return buffer;
+}
+
+String _toValidatedUtcIso8601(DateTime value) {
+  if (value.year < _minDateTimeYear || value.year > _maxDateTimeYear) {
+    throw ArgumentError(
+      'DateTime year must be between $_minDateTimeYear and '
+      '$_maxDateTimeYear, got ${value.year}.',
+    );
+  }
+  return value.toUtc().toIso8601String();
+}
+
+String _unsupportedParameterTypeMessage(Object value) {
+  final buffer = StringBuffer()
+    ..write('Unsupported parameter type: ')
+    ..write(value.runtimeType)
+    ..write('. ')
+    ..write(
+      'Expected one of: null, int, String, List<int>, bool, double, '
+      'DateTime, or ParamValue. ',
+    )
+    ..write('Use explicit ParamValue wrapper if needed, e.g., ')
+    ..write('ParamValueString(value) for custom string conversion.');
+  return buffer.toString();
 }
 
 /// Explicit SQL data types for optional typed parameter API.
@@ -203,9 +237,10 @@ Uint8List serializeParams(List<ParamValue> params) {
 /// - `String` → `ParamValueString`
 /// - `List<int>` or `Uint8List` → `ParamValueBinary`
 /// - `bool` → `ParamValueInt32(1|0)` (canonical mapping)
-/// - `double` → `ParamValueDecimal(value.toString())` (canonical mapping)
+/// - `double` → `ParamValueDecimal(value.toStringAsFixed(6))`
+///   (canonical mapping; `NaN/Infinity` rejected)
 /// - `DateTime` → `ParamValueString(value.toUtc().toIso8601String())`
-///   (canonical mapping)
+///   (canonical mapping; year must be in `[1, 9999]`)
 ///
 /// Throws [ArgumentError] for unsupported types with actionable message.
 ///
@@ -239,20 +274,27 @@ ParamValue toParamValue(Object? value) {
     return ParamValueInt32(value ? 1 : 0);
   }
   if (value is double) {
-    return ParamValueDecimal(value.toString());
+    if (value.isNaN) {
+      throw ArgumentError(
+        'Double value is NaN. Cannot convert to decimal. '
+        'Use explicit ParamValue with desired representation.',
+      );
+    }
+    if (value.isInfinite) {
+      final label = value.isNegative ? '-Infinity' : 'Infinity';
+      throw ArgumentError(
+        'Double value is $label. Cannot convert to decimal. '
+        'Use explicit ParamValue with desired representation.',
+      );
+    }
+    return ParamValueDecimal(value.toStringAsFixed(_defaultDecimalScale));
   }
   if (value is DateTime) {
-    return ParamValueString(value.toUtc().toIso8601String());
+    return ParamValueString(_toValidatedUtcIso8601(value));
   }
 
   // Unsupported type - explicit error instead of silent toString() fallback
-  throw ArgumentError(
-    'Unsupported parameter type: ${value.runtimeType}. '
-    'Expected one of: null, int, String, List<int>, bool, double, DateTime, '
-    'or ParamValue. '
-    'Use explicit ParamValue wrapper if needed, e.g., '
-    'ParamValueString(value) for custom string conversion.',
-  );
+  throw ArgumentError(_unsupportedParameterTypeMessage(value));
 }
 
 ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
@@ -310,7 +352,7 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
       return ParamValueBinary(value);
     case 'datetime':
       if (value is DateTime) {
-        return ParamValueString(value.toUtc().toIso8601String());
+        return ParamValueString(_toValidatedUtcIso8601(value));
       }
       if (value is String) {
         return ParamValueString(value);
@@ -351,9 +393,10 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
 /// - `String` → `ParamValueString`
 /// - `List<int>` → `ParamValueBinary`
 /// - `bool` → `ParamValueInt32(1|0)` (canonical mapping)
-/// - `double` → `ParamValueDecimal(value.toString())` (canonical mapping)
+/// - `double` → `ParamValueDecimal(value.toStringAsFixed(6))`
+///   (canonical mapping; `NaN/Infinity` rejected)
 /// - `DateTime` → `ParamValueString(value.toUtc().toIso8601String())`
-///   (canonical mapping)
+///   (canonical mapping; year must be in `[1, 9999]`)
 ///
 /// Throws [ArgumentError] for unsupported types with actionable message.
 ///

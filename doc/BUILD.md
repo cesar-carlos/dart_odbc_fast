@@ -135,3 +135,21 @@ In PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Accepted values: `1`, `t
 - Quick version bump decisions: [VERSIONING_QUICK_REFERENCE.md](version/VERSIONING_QUICK_REFERENCE.md)
 - Changelog entry template: [CHANGELOG_TEMPLATE.md](version/CHANGELOG_TEMPLATE.md)
 - Data type mapping contract: [TYPE_MAPPING.md](notes/TYPE_MAPPING.md)
+
+## Validation and error guidance
+
+Recent runtime validations are fail-fast and happen before payload emission:
+
+- `BulkInsertBuilder.addRow()` validates:
+  - row length vs column count
+  - nullability (`nullable: false` rejects `null`)
+  - type per column (`i32`, `i64`, `text`, `decimal`, `binary`, `timestamp`)
+  - text `maxLen` for both character count and UTF-8 byte length
+- `paramValuesFromObjects()` validates:
+  - `double.nan` and infinities are rejected for decimal mapping
+  - `DateTime.year` must be in `[1, 9999]`
+
+Typical failures:
+
+- `StateError`: invalid null in non-nullable bulk column
+- `ArgumentError`: incompatible type/range/length in bulk or parameter mapping

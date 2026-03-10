@@ -32,7 +32,12 @@
 
 **Implemented input parameter types** (Dart → Database):
 - `null`, `int` (32/64-bit auto), `String`, `List<int>` (binary)
-- Canonical mappings: `bool` → Int(1|0), `double` → Decimal(string), `DateTime` → ISO8601 string
+- Canonical mappings:
+  - `bool` → `Int(1|0)`
+  - `double` → Decimal string with fixed scale (6)
+    - `NaN` and `Infinity`/`-Infinity` throw `ArgumentError`
+  - `DateTime` → UTC ISO8601 string
+    - year must be in `[1, 9999]` (otherwise `ArgumentError`)
 
 **Implemented result types** (Database → Dart):
 - String (UTF-8), Int32, Int64
@@ -43,6 +48,16 @@
 - Output parameters (SQL Server, Oracle)
 
 See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed reference and roadmap.
+
+### Bulk insert validation behavior
+
+`BulkInsertBuilder.addRow()` performs fail-fast validation:
+- non-nullable columns reject `null` immediately (`StateError`)
+- per-column type checks (`i32`, `i64`, `text`, `decimal`, `binary`, `timestamp`)
+- text columns validate both character length and UTF-8 byte length against
+  `maxLen` (`ArgumentError`)
+
+Error messages include column name and row number to simplify debugging.
 
 ## API coverage (implemented)
 

@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+const Endian _littleEndian = Endian.little;
+
 /// Metadata for a single column in a query result.
 ///
 /// Contains the column name and ODBC type code.
@@ -73,7 +75,7 @@ class BinaryProtocolParser {
     }
     final base = data.offsetInBytes;
     final payloadSize =
-        data.buffer.asByteData().getUint32(base + 12, Endian.little);
+        data.buffer.asByteData().getUint32(base + 12, _littleEndian);
     return headerSize + payloadSize;
   }
 
@@ -157,13 +159,13 @@ class BinaryProtocolParser {
       case 2:
         if (data.length >= 4) {
           final byteData = ByteData.sublistView(data);
-          return byteData.getInt32(0, Endian.little);
+          return byteData.getInt32(0, _littleEndian);
         }
         return String.fromCharCodes(data);
       case 3:
         if (data.length >= 8) {
           final byteData = ByteData.sublistView(data);
-          return byteData.getInt64(0, Endian.little);
+          return byteData.getInt64(0, _littleEndian);
         }
         return String.fromCharCodes(data);
       default:
@@ -192,14 +194,14 @@ class _BufferReader {
 
   /// Reads an unsigned 16-bit integer in little-endian format.
   int readUint16() {
-    final value = _data.buffer.asByteData().getUint16(_offset, Endian.little);
+    final value = _data.buffer.asByteData().getUint16(_offset, _littleEndian);
     _offset += 2;
     return value;
   }
 
   /// Reads an unsigned 32-bit integer in little-endian format.
   int readUint32() {
-    final value = _data.buffer.asByteData().getUint32(_offset, Endian.little);
+    final value = _data.buffer.asByteData().getUint32(_offset, _littleEndian);
     _offset += 4;
     return value;
   }

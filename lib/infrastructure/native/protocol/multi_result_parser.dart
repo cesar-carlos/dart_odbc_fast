@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 
+const Endian _littleEndian = Endian.little;
+
 /// Represents an item in a multi-result set.
 ///
 /// A multi-result query can return multiple result sets
@@ -71,7 +73,7 @@ class MultiResultParser {
     }
 
     final byteData = ByteData.sublistView(data);
-    final itemCount = byteData.getUint32(0, Endian.little);
+    final itemCount = byteData.getUint32(0, _littleEndian);
 
     final items = <MultiResultItem>[];
     var offset = headerSize;
@@ -90,7 +92,7 @@ class MultiResultParser {
         throw FormatException('Unknown multi-result item tag: $tag');
       }
 
-      final length = byteData.getUint32(offset, Endian.little);
+      final length = byteData.getUint32(offset, _littleEndian);
       offset += 4;
 
       if (offset + length > data.length) {
@@ -115,7 +117,7 @@ class MultiResultParser {
             );
           }
 
-          final rowCount = byteData.getInt64(offset, Endian.little);
+          final rowCount = byteData.getInt64(offset, _littleEndian);
           items.add(
             MultiResultItem(resultSet: null, rowCount: rowCount),
           );

@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+const Endian _littleEndian = Endian.little;
+
 /// **EXPERIMENTAL / NOT USED**
 ///
 /// This file implements a columnar protocol parser (version 2) with optional
@@ -242,28 +244,28 @@ class _BufferReader {
   int readUint16() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 2);
     _offset += 2;
-    return byteData.getUint16(0, Endian.little);
+    return byteData.getUint16(0, _littleEndian);
   }
 
   /// Reads an unsigned 32-bit integer in little-endian format.
   int readUint32() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 4);
     _offset += 4;
-    return byteData.getUint32(0, Endian.little);
+    return byteData.getUint32(0, _littleEndian);
   }
 
   /// Reads a signed 32-bit integer in little-endian format.
   int readInt32() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 4);
     _offset += 4;
-    return byteData.getInt32(0, Endian.little);
+    return byteData.getInt32(0, _littleEndian);
   }
 
   /// Reads a signed 64-bit integer in little-endian format.
   int readInt64() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 8);
     _offset += 8;
-    return byteData.getInt64(0, Endian.little);
+    return byteData.getInt64(0, _littleEndian);
   }
 
   /// Reads [length] bytes from the buffer as a list of integers.

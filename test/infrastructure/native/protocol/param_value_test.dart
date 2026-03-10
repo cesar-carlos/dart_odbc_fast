@@ -8,7 +8,7 @@ import 'package:test/test.dart';
 ///
 /// Phase 1 changes:
 /// - bool → ParamValueInt32(1|0) (canonical mapping)
-/// - double → ParamValueDecimal(value.toString())
+/// - double → ParamValueDecimal(value.toStringAsFixed(6))
 /// - DateTime → ParamValueString(value.toUtc().toIso8601String())
 /// - Unsupported types → ArgumentError (no silent toString() fallback)
 /// - Fast path for pre-typed `List<ParamValue>`
@@ -64,11 +64,50 @@ void main() {
     test('double -> ParamValueDecimal', () {
       final params = paramValuesFromObjects([3.14, 0.0, -42.5]);
       expect(params[0], isA<ParamValueDecimal>());
-      expect((params[0] as ParamValueDecimal).value, equals('3.14'));
+      expect((params[0] as ParamValueDecimal).value, equals('3.140000'));
       expect(params[1], isA<ParamValueDecimal>());
-      expect((params[1] as ParamValueDecimal).value, equals('0.0'));
+      expect((params[1] as ParamValueDecimal).value, equals('0.000000'));
       expect(params[2], isA<ParamValueDecimal>());
-      expect((params[2] as ParamValueDecimal).value, equals('-42.5'));
+      expect((params[2] as ParamValueDecimal).value, equals('-42.500000'));
+    });
+
+    test('double NaN throws ArgumentError', () {
+      expect(
+        () => paramValuesFromObjects([double.nan]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('NaN'),
+          ),
+        ),
+      );
+    });
+
+    test('double infinity throws ArgumentError', () {
+      expect(
+        () => paramValuesFromObjects([double.infinity]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('Infinity'),
+          ),
+        ),
+      );
+    });
+
+    test('double negative infinity throws ArgumentError', () {
+      expect(
+        () => paramValuesFromObjects([double.negativeInfinity]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('-Infinity'),
+          ),
+        ),
+      );
     });
 
     test('DateTime -> ParamValueString with UTC ISO8601', () {
@@ -87,6 +126,38 @@ void main() {
       // Should be converted to UTC
       expect(pv.value, contains('T'));
       expect(pv.value, contains('Z'));
+    });
+
+    test('DateTime year below 1 throws ArgumentError', () {
+      final dt = DateTime.utc(1).subtract(const Duration(days: 370));
+      expect(dt.year, lessThan(1));
+      expect(
+        () => paramValuesFromObjects([dt]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('year must be between 1 and 9999'),
+          ),
+        ),
+      );
+    });
+
+    test('DateTime year above 9999 throws ArgumentError', () {
+      final dt = DateTime.utc(9999, 12, 31, 23, 59, 59).add(
+        const Duration(days: 2),
+      );
+      expect(dt.year, greaterThan(9999));
+      expect(
+        () => paramValuesFromObjects([dt]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('year must be between 1 and 9999'),
+          ),
+        ),
+      );
     });
   });
 
@@ -148,9 +219,47 @@ void main() {
         ),
       );
     });
+
+    test('SqlDataType.dateTime validates DateTime year range', () {
+      final dt = DateTime.utc(9999, 12, 31, 23, 59, 59).add(
+        const Duration(days: 2),
+      );
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.dateTime, dt),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('year must be between 1 and 9999'),
+          ),
+        ),
+      );
+    });
   });
 
   group('Unsupported type errors (Phase 1)', () {
+    test('unsupported type message remains identical', () {
+      final custom = _CustomObject();
+      expect(
+        () => paramValuesFromObjects([custom]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            equals(
+              'Unsupported parameter type: _CustomObject. '
+              'Expected one of: null, int, String, List<int>, bool, double, '
+              'DateTime, or ParamValue. '
+              'Use explicit ParamValue wrapper if needed, e.g., '
+              'ParamValueString(value) for custom string conversion.',
+            ),
+          ),
+        ),
+      );
+    });
+
     test('custom object throws ArgumentError', () {
       final custom = _CustomObject();
       expect(
