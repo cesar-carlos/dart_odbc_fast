@@ -28,6 +28,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.
 - [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, state/health checks, and parallel bulk insert.
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit.
+- [catalog_reflection_demo.dart](catalog_reflection_demo.dart): schema reflection for primary keys, foreign keys, and indexes.
 - [connection_string_builder_demo.dart](connection_string_builder_demo.dart): fluent connection string creation for SQL Server/PostgreSQL/MySQL.
 - [telemetry_demo.dart](telemetry_demo.dart): `SimpleTelemetryService`, `ITelemetryRepository`, and `TelemetryBuffer` with in-memory repository.
 - [otel_repository_demo.dart](otel_repository_demo.dart): `OpenTelemetryFFI` + `TelemetryRepositoryImpl` with optional OTLP endpoint.

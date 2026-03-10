@@ -1,11 +1,18 @@
 import 'package:odbc_fast/odbc_fast.dart';
 
+import 'common.dart';
+
 /// Demonstrates schema reflection capabilities for primary keys, foreign keys,
 /// and indexes.
 ///
 /// This example shows how to use the catalog API to query database metadata
 /// for a specific table, including its constraints and indexes.
 void main() async {
+  final dsn = requireExampleDsn();
+  if (dsn == null) {
+    return;
+  }
+
   final native = NativeOdbcConnection();
   final repository = OdbcRepositoryImpl(native);
   final service = OdbcService(repository);
@@ -19,9 +26,7 @@ void main() async {
     }
     
     // Connect to database
-    // Update this connection string for your database
-    const connectionString = 'DSN=MyDatabase';
-    final connectResult = await service.connect(connectionString);
+    final connectResult = await service.connect(dsn);
     
     if (connectResult.isError()) {
       print('Connection failed: ${connectResult.exceptionOrNull()}');

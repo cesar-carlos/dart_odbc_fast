@@ -2,6 +2,8 @@
 
 Execution checklist for GAP 6 (Data type mapping parity and canonical contract).
 
+**Last verified against code:** 2026-03-10
+
 > Note: this file is in `doc/notes/` and tracks planned work. Checklist items
 > can remain open while implementation is in progress.
 
@@ -24,10 +26,10 @@ Ship a clear, testable, and maintainable type mapping contract across Dart and R
 
 ## Phase 1 - Canonical contract in docs
 
-- [ ] P1.1 Confirm `doc/notes/TYPE_MAPPING.md` reflects real code behavior.
-- [ ] P1.2 Add explicit link to type mapping in root `README.md` (documentation section).
-- [ ] P1.3 Add explicit "implemented vs planned" notes in `README.md` type-related sections.
-- [ ] P1.4 Verify no canonical document references unimplemented `SqlType`/`request.output`.
+- [x] P1.1 Confirm `doc/notes/TYPE_MAPPING.md` reflects real code behavior.
+- [x] P1.2 Add explicit link to type mapping in root `README.md` (documentation section).
+- [x] P1.3 Add explicit "implemented vs planned" notes in `README.md` type-related sections.
+- [x] P1.4 Verify no canonical document references unimplemented `SqlType`/`request.output`.
 
 Acceptance gate:
 
@@ -35,16 +37,16 @@ Acceptance gate:
 
 ## Phase 2 - Parser strategy alignment
 
-- [ ] P2.1 Decide canonical parser implementation for runtime usage.
-- [ ] P2.2 If needed, migrate missing conversions into canonical parser:
+- [x] P2.1 Decide canonical parser implementation for runtime usage.
+- [x] P2.2 If needed, migrate missing conversions into canonical parser:
   - varchar/text
   - int32
   - int64
   - decimal representation
   - date/timestamp representation
   - binary
-- [ ] P2.3 Deprecate/remove orphan parser path to prevent drift.
-- [ ] P2.4 Ensure sync, async, repository, wrappers, examples, and tests use the same parser path.
+- [x] P2.3 Deprecate/remove orphan parser path to prevent drift.
+- [x] P2.4 Ensure sync, async, repository, wrappers, examples, and tests use the same parser path.
 
 Acceptance gate:
 
@@ -52,10 +54,10 @@ Acceptance gate:
 
 ## Phase 3 - Test hardening for mapping behavior
 
-- [ ] P3.1 Expand Dart tests for `ParamValue` serialization/deserialization invariants.
-- [ ] P3.2 Add parser tests for all supported type families and null handling.
-- [ ] P3.3 Add repository-level tests verifying conversion stability from raw protocol to `QueryResult`.
-- [ ] P3.4 Add regression test asserting documented mapping table matches runtime behavior.
+- [x] P3.1 Expand Dart tests for `ParamValue` serialization/deserialization invariants.
+- [x] P3.2 Add parser tests for all supported type families and null handling.
+- [x] P3.3 Add repository-level tests verifying conversion stability from raw protocol to `QueryResult`.
+- [x] P3.4 Add regression test asserting documented mapping table matches runtime behavior.
 
 Acceptance gate:
 
@@ -81,6 +83,20 @@ Acceptance gate:
 Acceptance gate:
 
 - No ambiguity about output parameter support status.
+
+## Verification evidence (2026-03-10)
+
+- Canonical docs are aligned:
+  - `doc/notes/TYPE_MAPPING.md`
+  - `README.md` (section `Type Mapping`)
+- Canonical runtime parser path:
+  - `lib/infrastructure/native/protocol/binary_protocol.dart`
+  - `lib/infrastructure/repositories/odbc_repository_impl.dart`
+- Orphan/future parser explicitly marked as non-runtime:
+  - `lib/infrastructure/native/protocol/columnar_protocol.dart`
+- Automated coverage:
+  - `test/infrastructure/native/protocol/param_value_test.dart`
+  - `test/infrastructure/native/protocol/binary_protocol_test.dart`
 
 ## Validation commands (run after each completed phase)
 

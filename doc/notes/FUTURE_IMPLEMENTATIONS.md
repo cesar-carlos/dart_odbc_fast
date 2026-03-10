@@ -2,6 +2,8 @@
 
 Consolidated backlog of items not yet included in implemented scope.
 
+**Last verified against code:** 2026-03-10
+
 > Note: this file is in `doc/notes/` and intentionally documents pending
 > implementation work.
 
@@ -10,6 +12,7 @@ Consolidated backlog of items not yet included in implemented scope.
 | Item                               | Status               | Priority |
 | ---------------------------------- | -------------------- | -------- |
 | ~~Schema reflection (PK/FK/Indexes)~~ | ✅ **Implemented (2026-03-10)** | ~~High~~ |
+| Explicit SQL typing API (`SqlDataType`) | Planned (not started) | Medium |
 | Output parameters by driver/plugin | Out of current scope | Medium   |
 
 ## ~~1. Schema reflection (PK/FK/Indexes)~~ — ✅ IMPLEMENTED
@@ -34,6 +37,18 @@ Consolidated backlog of items not yet included in implemented scope.
 
 - Out of immediate scope
 - Revisit when there is a concrete driver-specific requirement (for example: SQL Server OUTPUT, Oracle REF CURSOR)
+
+## 2. Explicit SQL typing API (`SqlDataType`)
+
+### Current state
+
+- Public parameter contract is `ParamValue` (stable)
+- No explicit public `SqlDataType` API yet
+
+### Current decision
+
+- Keep as planned non-breaking evolution
+- Revisit when there is a clear driver-aware typing requirement
 
 ## Criteria to move from open to implemented
 

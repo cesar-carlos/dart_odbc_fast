@@ -288,6 +288,7 @@ dart run example/multi_result_demo.dart
 dart run example/streaming_demo.dart
 dart run example/pool_demo.dart
 dart run example/savepoint_demo.dart
+dart run example/catalog_reflection_demo.dart
 dart run example/audit_example.dart
 dart run example/execute_async_demo.dart
 dart run example/telemetry_demo.dart
@@ -307,6 +308,8 @@ Coverage-oriented examples:
   `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).
 - `example/audit_example.dart`: dedicated audit wrapper demo with
   enable/status/events/clear flow.
+- `example/catalog_reflection_demo.dart`: focused schema reflection demo for
+  `catalogPrimaryKeys`, `catalogForeignKeys`, and `catalogIndexes`.
 - `example/execute_async_demo.dart`: low-level async execution and streaming
   via worker isolate using raw payload parsing.
 - `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
@@ -336,6 +339,16 @@ More details: [example/README.md](example/README.md)
 - 📊 Built-in metrics and telemetry hooks
 - 🔄 Automatic connection lifecycle management
 - ⚡ Optimized with prepared statement cache
+
+#### Catalog Reflection
+
+**[catalog_reflection_demo.dart](example/catalog_reflection_demo.dart)** -
+Primary keys, foreign keys, and indexes
+
+- ✅ `catalogPrimaryKeys`
+- ✅ `catalogForeignKeys`
+- ✅ `catalogIndexes`
+- ✅ Simple output for migration/introspection workflows
 
 #### Low-Level API (`NativeOdbcConnection`)
 
