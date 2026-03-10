@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _None_
 
+## [1.2.1] - 2026-03-10
+
+### Fixed
+
+- FFI buffer-retry reliability hardening:
+  - preserved stream chunks across `-2` retries in `odbc_stream_fetch`
+  - preserved async payloads across `-2` retries in `odbc_async_get_result`
+  - avoided re-execution for `-2` retries by serving pending payloads in:
+    `odbc_exec_query`, `odbc_exec_query_params`, `odbc_exec_query_multi`,
+    and `odbc_execute`
+  - fixed `odbc_get_driver_capabilities` to return `-2` (instead of truncating
+    JSON with success)
+- Added regression coverage for retry semantics in stream, async, and execute
+  paths (including side-effect safety check for prepared execute retry).
+- Removed CI flakiness in async invalid-request tests by avoiding ID collision
+  between `TEST_INVALID_ID` and generated invalid test IDs.
+
 ## [1.2.0] - 2026-03-10
 
 ### Added
