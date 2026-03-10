@@ -68,7 +68,6 @@ See `odbc_engine_overview.md` for a full map.
 - `data_paths.md`: execution and data flow internals.
 - `async_api_guide.md`: async usage model from Dart.
 - `cross_database.md`: compatibility matrix and SQL quirks.
-- `notes/remaining_implementation.md`: pending implementation items.
 
 ## 6) Before merge checklist
 
@@ -80,8 +79,5 @@ See `odbc_engine_overview.md` for a full map.
 
 ## 7) Current priority
 
-Current top pending item is tracked in:
-
-- `native/doc/notes/remaining_implementation.md`
-
-Focus is statement reuse real gain (F9) and metadata cache E2E evidence.
+Track active priorities in the project issue tracker or open PR checklist.
+This document intentionally stays implementation-agnostic.

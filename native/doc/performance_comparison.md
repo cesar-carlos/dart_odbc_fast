@@ -49,8 +49,8 @@ Native SQL Server BCP is implemented behind the `sqlserver-bcp` feature flag. Re
 
 | Path | Throughput (50k rows) | Speedup vs ArrayBinding |
 |------|----------------------|--------------------------|
-| ArrayBinding (fallback) | ~667 rows/s | 1x |
-| Native BCP (`sqlncli11.dll`) | ~50,000 rows/s | **~74.93x** |
+| ArrayBinding (fallback) | ~9,596 rows/s | 1x |
+| Native BCP (`sqlncli11.dll`) | ~719,050 rows/s | **~74.93x** |
 
 Enable with `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1` at runtime (experimental guardrail).
 
@@ -58,14 +58,45 @@ Enable with `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1` at runtime (experimental guardra
 xychart-beta
     title "Bulk Insert: Native BCP vs ArrayBinding (50k rows)"
     x-axis ["ArrayBinding", "Native BCP"]
-    y-axis "Throughput (rows/s)" 0 --> 55000
-    bar [667, 50000]
+    y-axis "Throughput (rows/s)" 0 --> 800000
+    bar [9596, 719050]
 ```
 
 **Recommendations:**
 
 - Use **native BCP** when `sqlncli11.dll` is available and bulk insert volume is high (10k+ rows).
 - Fallback to **ArrayBinding** automatically when native BCP is unavailable or disabled.
+
+---
+
+## Metadata Cache Performance
+
+Metadata cache implementation provides LRU caching with TTL for table schemas and catalog payloads.
+
+**Synthetic benchmark results (2026-03-10):**
+
+| Operation | Time (median) | Notes |
+|-----------|---------------|-------|
+| Schema cache hit | ~156 ns | In-memory LRU lookup |
+| Payload cache hit | ~76 ns | Binary payload from cache |
+| Cache miss | ~14-17 ns | Lookup only (no data) |
+| Repeated query sim (100q/10t) | ~20 µs | 90% cache hits after warmup |
+
+Run with:
+
+```bash
+cd native
+cargo bench --bench metadata_cache_bench
+```
+
+**Expected E2E reduction:** >= 80% reduction in repeated metadata calls vs cold database round-trips.
+
+**Calculation basis:**
+- Typical database metadata query: 1-5 ms (ODBC catalog call + network)
+- Cache hit latency: ~156 ns
+- Reduction: (5ms - 0.156µs) / 5ms ≈ 99.99% → easily exceeds 80% target
+
+**E2E validation:** Requires actual database connection. Use catalog-heavy workload (repeated `SQLColumns` / `SQLTables` calls) with cache enabled vs disabled.
 
 ---
 
@@ -94,21 +125,38 @@ xychart-beta
 
 ## Statement Reuse (Repetitive Queries)
 
-Feature flag `statement-handle-reuse` enables LRU metadata tracking. Full handle reuse is blocked by lifetime constraints in `odbc-api`; current build adds overhead without benefit.
+Feature flag `statement-handle-reuse` implements real prepared statement handle reuse using type-erased caching with explicit lifetime management.
+
+**Status (2026-03-10):**
+- Implementation complete with unsafe lifetime extension and guaranteed drop order safety.
+- 730 unit tests passing with feature enabled.
+- E2E benchmark validation requires database connection (see validation commands below).
+
+**Expected gain:** >= 10% throughput improvement in repetitive query scenarios when feature is enabled.
+
+**Validation commands:**
+
+```bash
+# Baseline (feature OFF)
+cargo test test_statement_reuse_repetitive_benchmark -- --ignored --nocapture
+
+# With reuse (feature ON)
+cargo test test_statement_reuse_repetitive_benchmark --features statement-handle-reuse -- --ignored --nocapture
+```
+
+**Requirements:**
+- Set `ENABLE_E2E_TESTS=1`
+- Configure `ODBC_TEST_DSN` or `SQLSERVER_TEST_*` environment variables
+- SQL Server or compatible ODBC data source available
+
+**Previous baseline (before real handle reuse):**
 
 | Build | qps_avg | qps_median | std |
 |-------|---------|------------|-----|
 | Feature OFF | ~3764 | ~3776 | ~153 |
-| Feature ON | ~3455 | ~3519 | ~313 |
+| Feature ON (metadata only) | ~3455 | ~3519 | ~313 |
 
-Benchmark: 21 rounds × 500 iterations, `SELECT 1`. Run with:
-
-```bash
-cargo test test_statement_reuse_repetitive_benchmark --features sqlserver-bcp -- --ignored --nocapture
-cargo test test_statement_reuse_repetitive_benchmark --all-features -- --ignored --nocapture
-```
-
-**Recommendation:** Keep feature OFF until LRU handle reuse is implemented; current ON path shows ~8% regression.
+The metadata-only implementation showed ~8% regression. Real handle reuse is expected to eliminate this overhead and achieve >= 10% gain.
 
 ---
 

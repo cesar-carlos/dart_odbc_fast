@@ -12,8 +12,8 @@ The ODBC engine supports multiple databases via ODBC drivers. This document desc
 | PostgreSQL | ✅ | PostgreSQL Unicode | Full support |
 | MySQL | ⚠️ | MySQL ODBC 8.0 Driver | `continue-on-error` in CI (driver setup) |
 | SQLite | ✅ | SQLite3 (libsqliteodbc) | File-based, no server; full support |
-| Oracle | ✅ | Oracle Instant Client ODBC | CI job active (required) |
-| Sybase SQL Anywhere | ❌ | SQL Anywhere | Optional, not in CI |
+| Oracle | ✅ | Oracle Instant Client ODBC | CI job active |
+| Sybase SQL Anywhere | 🧪 | SQL Anywhere | Optional, manual validation only |
 
 ---
 
@@ -101,16 +101,16 @@ Use `sql_drop_table_if_exists(table, db_type)` in tests (see `helpers/e2e.rs`).
 
 ## Feature Support by Database
 
-| Feature | SQL Server | PostgreSQL | MySQL | SQLite |
-|---------|------------|------------|-------|--------|
-| Connect, query, disconnect | ✅ | ✅ | ✅ | ✅ |
-| Prepared statements | ✅ | ✅ | ✅ | ✅ |
-| Transactions, savepoints | ✅ | ✅ | ✅ | ✅ |
-| Streaming | ✅ | ✅ | ✅ | ✅ |
-| Bulk insert (ArrayBinding) | ✅ | ✅ | ✅ | ✅ |
-| Parallel bulk insert | ✅ | ✅ | ✅ | ✅ |
-| Native BCP | ✅ (`sqlncli11.dll`) | ❌ | ❌ | ❌ |
-| Driver capabilities JSON | ✅ | ✅ | ✅ | ✅ |
+| Feature | SQL Server | PostgreSQL | MySQL | SQLite | Oracle | Sybase |
+|---------|------------|------------|-------|--------|--------|--------|
+| Connect, query, disconnect | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Prepared statements | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Transactions, savepoints | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Bulk insert (ArrayBinding) | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Parallel bulk insert | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Native BCP | ✅ (`sqlncli11.dll`) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Driver capabilities JSON | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
 
 ---
 
@@ -122,7 +122,28 @@ The `e2e_multidb.yml` workflow runs E2E tests against:
 2. **PostgreSQL** (postgres:16-alpine, odbc-postgresql)
 3. **MySQL** (mysql:8.0, mysql-connector-odbc) — `continue-on-error: true`
 4. **SQL Server** (mcr.microsoft.com/mssql/server:2022, msodbcsql17)
-5. **Oracle** (gvenzl/oracle-xe + Oracle Instant Client ODBC) — `continue-on-error: true`
+5. **Oracle** (gvenzl/oracle-xe + Oracle Instant Client ODBC)
+
+## Local Docker Matrix
+
+Local `docker-compose.yml` provides server containers for:
+
+1. **PostgreSQL** (`postgres:16-alpine`)
+2. **MySQL** (`mysql:8.0`)
+3. **SQL Server** (`mcr.microsoft.com/mssql/server:2022-latest`)
+4. **Oracle** (`gvenzl/oracle-xe:21-slim-faststart`)
+
+**SQLite** is file-based and does not require a container.
+An optional `sqlite-tools` container is available for local SQLite file
+inspection only (profile `sqlite`).
+
+Start local services:
+
+```bash
+docker compose up -d
+```
+
+Then run E2E tests with `ENABLE_E2E_TESTS=1` and DSN/env vars configured.
 
 Run locally:
 
@@ -153,20 +174,6 @@ Detection is heuristic (connection string substring). See `engine/core/driver_ca
 3. **SQLite**: No server; ideal for local testing and CI. Use `ODBC_TEST_DB=sqlite` with `SQLITE_TEST_DATABASE`.
 4. **Cross-database code**: Use `DatabaseType` detection and `sql_drop_table_if_exists` for DDL portability.
 5. **Connection string**: Prefer `ODBC_TEST_DSN` for tests; fall back to component env vars.
-
----
-
-## 5th Database (Status)
-
-5 bancos em CI já foram validados na execução `22641867638`:
-
-- **Oracle**: Job ativa, validada e obrigatória na matriz `E2E Multi-DB`.
-- **Sybase SQL Anywhere**: Docker image available; driver `SQL Anywhere 17`. Connection string: `Driver={SQL Anywhere 17};ServerName=...;Database=...;Uid=...;Pwd=...;`
-
-Implemented:
-- `get_oracle_test_dsn()` and `get_sybase_test_dsn()` in `helpers/env.rs`
-- `ODBC_TEST_DB=oracle|sybase` routing in `get_connection_and_db_type()`
-- Oracle-safe SQL in `e2e_multi_db_basic_test.rs` (`SELECT ... FROM DUAL`, Oracle drop guard)
 
 ---
 

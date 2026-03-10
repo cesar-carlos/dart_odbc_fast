@@ -8,32 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - _None_
 
 ### Changed
+
 - _None_
 
 ### Fixed
+
 - _None_
 
 ## [1.1.2] - 2026-03-03
 
 ### Added
+
 - `workflow_dispatch` support in publish workflow for manual pub.dev publishing
 
 ## [1.1.1] - 2026-03-03
 
 ### Changed
+
 - Documentation updates and release automation alignment
 
 ## [1.1.0] - 2026-02-19
 
 ### Added
+
 - Statement cancellation API exposed at high-level service/repository layers:
   `cancelStatement(connectionId, stmtId)`
 - `UnsupportedFeatureError` in Dart domain errors for explicit unsupported capability reporting
 
 ### Changed
+
 - Statement cancellation contract standardized as explicit unsupported at runtime
   (Option B path), with structured native error SQLSTATE `0A000`
 - Sync and async cancellation paths now aligned with equivalent behavior and
@@ -42,12 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `README.md`, `doc/TROUBLESHOOTING.md`, `example/README.md`
 
 ### Fixed
+
 - Removed ambiguity between exposed cancellation entrypoints and current runtime
   capability by returning explicit unsupported contract instead of implicit behavior
 
 ## [1.0.3] - 2026-02-16
 
 ### Added
+
 - New canonical type mapping documentation: `doc/TYPE_MAPPING.md`
 - New implementation checklists:
   - `doc/notes/TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md`
@@ -56,32 +65,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New/updated example coverage docs and demo files for advanced/service/telemetry scenarios
 
 ### Changed
+
 - Root and docs indexes now reference canonical type-mapping documentation
 - Master gaps plan now tracks open execution checklists for remaining gaps
 
 ### Fixed
+
 - Documentation consistency across root README, `doc/README.md`, and notes references
 
 ## [1.0.2] - 2026-02-15
 
 ### Added
+
 - **Documentation enhancement**: Expanded examples section with detailed feature overview and advantages for each API level (High-Level, Low-Level, Async, Named Parameters, Multi-Result, Pooling, Streaming, Savepoints)
 
 ### Changed
+
 - _None_
 
 ### Fixed
+
 - _None_
 
 ## [1.0.1] - 2026-02-15
 
 ### Added
+
 - _Test release for automated publishing_
 
 ### Changed
+
 - _None_
 
 ### Fixed
+
 - _None_
 
 ## [1.0.0] - 2026-02-15
@@ -276,5 +293,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/cesar-carlos/dart_odbc_fast/releases/tag/v0.1.6
-
-

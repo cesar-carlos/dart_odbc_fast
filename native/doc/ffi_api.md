@@ -207,7 +207,7 @@ Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
 
-**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU metadata tracking per connection. **Limitation**: Full handle reuse is blocked by lifetime constraints in `odbc-api`; current implementation is passthrough with ~8% overhead. Keep default OFF until real reuse is implemented. See `native/doc/notes/remaining_implementation.md`.
+**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. Current implementation caches prepared handles with explicit lifetime management; keep this feature opt-in until your workload benchmark confirms gains.
 
 ## Streaming (chunked copy-out over FFI)
 
@@ -224,7 +224,8 @@ allocating a huge buffer on the Dart side.
 2. **Batched mode** (`odbc_stream_start_batched`): Cursor-based batching. Fetches
    `fetch_size` rows per batch, encodes each batch, and stores only the next
    batch in `BatchedStreamingState`. Memory is bounded in both Rust and Dart.
-   Uses a worker thread that holds the HandleManager lock for the stream duration.
+   HandleManager lock is used briefly to resolve the connection handle; stream
+   execution then proceeds on the connection lock.
 
 3. **Async batched mode** (`odbc_stream_start_async` + `odbc_stream_poll_async`):
    same cursor-based batching behavior as batched mode, but with explicit
@@ -287,9 +288,8 @@ Fetches the next chunk. Works for both buffer and batched streams.
 
 ### `odbc_stream_cancel(stream_id) -> int`
 
-Requests cancellation of a **batched** stream (created with `odbc_stream_start_batched`).
-The worker checks the cancellation flag between batches and exits early. No-op for
-buffer-mode streams (`odbc_stream_start`).
+Requests cancellation of a stream. Supported for batched and async-batched
+streams; buffer-mode streams (`odbc_stream_start`) treat cancel as no-op.
 
 - **Returns**: `0` on success; non‑zero if `stream_id` is invalid.
 - After cancel, `odbc_stream_fetch` will eventually return `out_has_more = 0`.
@@ -324,6 +324,28 @@ native.streamClose(streamId);
 
 Catalog functions use `INFORMATION_SCHEMA` (TABLES, COLUMNS) and return the same
 binary protocol as `odbc_exec_query`. Decode with `BinaryProtocolDecoder`.
+
+### Metadata cache controls
+
+#### `odbc_metadata_cache_enable(max_size, ttl_secs) -> int`
+
+Configures metadata cache capacity and TTL (seconds).
+
+- **Returns**: `0` on success; non-zero on failure.
+- **max_size**: number of cache entries (`0` keeps current/default behavior).
+- **ttl_secs**: entry TTL in seconds (`0` keeps current/default behavior).
+
+#### `odbc_metadata_cache_stats(buffer, buffer_len, out_written) -> int`
+
+Returns cache statistics as UTF-8 JSON.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if `buffer` is too small.
+
+#### `odbc_metadata_cache_clear() -> int`
+
+Clears metadata cache entries.
+
+- **Returns**: `0` on success; non-zero on failure.
 
 ### `odbc_catalog_tables(conn_id, catalog, schema, out_buffer, buffer_len, out_written) -> int`
 

@@ -170,21 +170,11 @@ export ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1
 
 ## Performance
 
-### Benchmark: Native BCP vs ArrayBinding
+Benchmark numbers are maintained in a single source of truth:
 
-Test configuration:
-- **Dataset**: 50,000 rows, 2 columns (`I32` + `I64`), non-nullable
-- **Batch size**: 1,000 rows
-- **Driver**: `sqlncli11.dll`
+- `native/doc/performance_comparison.md` (section **BCP (Bulk Copy)**)
 
-Results:
-
-| Method        | Time    | Throughput   | Speedup |
-|---------------|---------|--------------|---------|
-| Native BCP    | 69.54ms | 719,050 r/s  | 74.93x  |
-| ArrayBinding  | 5.21s   | 9,596 r/s    | 1.00x   |
-
-**Conclusion**: Native BCP achieves **~75x speedup** for numeric bulk inserts, far exceeding the 2-5x target.
+This avoids drift between compatibility guidance and benchmark snapshots.
 
 ## Future Work
 

@@ -28,17 +28,15 @@ behavior and operational guidance.
 - [getting_started_with_implementation.md](./getting_started_with_implementation.md):
   implementation playbook.
 
-### Planning notes
+### Planning and process
 
-- [notes/remaining_implementation.md](./notes/remaining_implementation.md):
-  open implementation items and closeout criteria.
 - [plan_checklist_template.md](./plan_checklist_template.md): reusable
   completion checklist for future plans.
 
 ## Documentation policy
 
 - Keep only active docs with implementation or operational value.
-- Remove completed plans and stale snapshots after closure.
+- Remove stale status sections tied to one-off runs.
 - Update cross-links in this README whenever files are renamed or removed.
 
 ## Source of truth
@@ -53,5 +51,10 @@ Companion crate docs:
 - `native/odbc_engine/ARCHITECTURE.md`
 - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
 - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
+
+Docker test environment:
+
+- `docker/README.md`
+- `docker-compose.yml`
 
 

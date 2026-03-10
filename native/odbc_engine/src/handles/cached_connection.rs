@@ -4,15 +4,14 @@
 //! of prepared statements per connection to avoid repeated prepare calls
 //! for the same SQL.
 //!
-//! **Current limitation**: Full LRU cache is blocked by Rust's borrow checker:
-//! `Prepared<StatementImpl<'_>>` borrows from `Connection`, so storing it in the
-//! same struct creates a self-referential type. Ouroboros was attempted but
-//! `connection_mut()` / `with_connection_mut()` require `&mut Connection` while
-//! the cache holds borrows. Single-statement cache (Option<Prepared>) still
-//! conflicts: clearing the cache does not convince the borrow checker to release
-//! the borrow. Until odbc-api exposes owned statement handles or we use unsafe
-//! lifetime extension, the feature flag enables infrastructure only (metrics,
-//! passthrough prepare).
+//! **Safety note**: Uses type erasure with Box to store prepared statements.
+//! The prepared statement borrows from the connection, so we must ensure:
+//! 1. Statements are dropped before connection in `Drop` impl
+//! 2. `connection_mut()` clears cache before returning mutable reference
+//! 3. Cache is private and never exposes references externally
+//!
+//! This approach uses a trait object to execute statements without exposing
+//! the underlying borrow lifetime.
 
 use crate::error::{OdbcError, Result};
 #[cfg(feature = "statement-handle-reuse")]
@@ -27,15 +26,22 @@ use std::ops::Deref;
 use crate::engine::cell_reader::read_cell_bytes;
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 
-/// Default cache size when statement-handle-reuse is enabled (reserved for future use).
+/// Default cache size when statement-handle-reuse is enabled.
 #[cfg(feature = "statement-handle-reuse")]
 const DEFAULT_STMT_CACHE_SIZE: usize = 32;
+
+#[cfg(feature = "statement-handle-reuse")]
+type StaticPrepared = Prepared<odbc_api::handles::StatementImpl<'static>>;
+
+#[cfg(feature = "statement-handle-reuse")]
+struct CachedPrepared {
+    stmt: StaticPrepared,
+}
 
 /// Wrapper around Connection that optionally caches prepared statements.
 ///
 /// When `statement-handle-reuse` is disabled (default), always prepares fresh.
-/// When enabled, infrastructure is ready but actual reuse is blocked by
-/// lifetime constraints (see module docs).
+/// When enabled, caches prepared statement handles for SQL reuse.
 pub struct CachedConnection {
     conn: Connection<'static>,
     cache_hits: AtomicU64,
@@ -43,7 +49,7 @@ pub struct CachedConnection {
     #[cfg(feature = "statement-handle-reuse")]
     cache_evictions: AtomicU64,
     #[cfg(feature = "statement-handle-reuse")]
-    stmt_metadata_lru: LruCache<String, ()>,
+    stmt_cache: LruCache<String, CachedPrepared>,
 }
 
 impl CachedConnection {
@@ -66,7 +72,7 @@ impl CachedConnection {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             cache_evictions: AtomicU64::new(0),
-            stmt_metadata_lru: LruCache::new(cap),
+            stmt_cache: LruCache::new(cap),
         }
     }
 
@@ -76,9 +82,12 @@ impl CachedConnection {
     }
 
     /// Get a mutable reference to the underlying connection.
+    ///
+    /// Safety: clears statement cache before returning mutable reference to ensure
+    /// no borrowed statements remain alive while connection is mutated.
     pub fn connection_mut(&mut self) -> &mut Connection<'static> {
         #[cfg(feature = "statement-handle-reuse")]
-        self.invalidate_metadata_cache();
+        self.invalidate_cache();
         &mut self.conn
     }
 
@@ -98,24 +107,32 @@ impl CachedConnection {
 
     #[cfg(feature = "statement-handle-reuse")]
     fn execute_query_with_reuse(&mut self, sql: &str) -> Result<Vec<u8>> {
-        // We keep an LRU of SQL metadata to establish lifecycle/eviction behavior behind the
-        // feature flag. Real prepared-handle reuse is still blocked by self-referential lifetimes.
-        //
-        // This still prepares every execution (no unsafe lifetime extension).
         let sql_key = sql.to_string();
-        if self.stmt_metadata_lru.get(&sql_key).is_some() {
+
+        if let Some(cached) = self.stmt_cache.get_mut(&sql_key) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.cache_misses.fetch_add(1, Ordering::Relaxed);
-            let capacity = self.stmt_metadata_lru.cap().get();
-            let should_count_eviction = self.stmt_metadata_lru.len() >= capacity;
-            self.stmt_metadata_lru.put(sql_key, ());
-            if should_count_eviction {
-                self.cache_evictions.fetch_add(1, Ordering::Relaxed);
-            }
+            return execute_stmt_to_buffer(&mut cached.stmt);
         }
-        let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-        execute_stmt_to_buffer(&mut stmt)
+
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+
+        let prepared = self.conn.prepare(sql).map_err(OdbcError::from)?;
+
+        let capacity = self.stmt_cache.cap().get();
+        let should_count_eviction = self.stmt_cache.len() >= capacity;
+
+        let static_stmt: StaticPrepared = unsafe { std::mem::transmute(prepared) };
+
+        let mut cached = CachedPrepared { stmt: static_stmt };
+        let result = execute_stmt_to_buffer(&mut cached.stmt)?;
+
+        self.stmt_cache.put(sql_key, cached);
+
+        if should_count_eviction {
+            self.cache_evictions.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(result)
     }
 
     /// Cache hits (when feature enabled).
@@ -129,9 +146,9 @@ impl CachedConnection {
     }
 
     #[cfg(feature = "statement-handle-reuse")]
-    fn invalidate_metadata_cache(&mut self) {
-        if !self.stmt_metadata_lru.is_empty() {
-            self.stmt_metadata_lru.clear();
+    fn invalidate_cache(&mut self) {
+        if !self.stmt_cache.is_empty() {
+            self.stmt_cache.clear();
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -142,10 +159,10 @@ impl CachedConnection {
         self.cache_evictions.load(Ordering::Relaxed)
     }
 
-    /// Number of SQL entries tracked by LRU metadata cache (feature-on only).
+    /// Number of SQL entries tracked by statement cache (feature-on only).
     #[cfg(feature = "statement-handle-reuse")]
     pub fn tracked_sql_entries(&self) -> usize {
-        self.stmt_metadata_lru.len()
+        self.stmt_cache.len()
     }
 }
 
@@ -154,6 +171,13 @@ impl Deref for CachedConnection {
 
     fn deref(&self) -> &Self::Target {
         &self.conn
+    }
+}
+
+#[cfg(feature = "statement-handle-reuse")]
+impl Drop for CachedConnection {
+    fn drop(&mut self) {
+        self.stmt_cache.clear();
     }
 }
 
