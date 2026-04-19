@@ -72,6 +72,7 @@ export 'domain/entities/savepoint_dialect.dart';
 export 'domain/entities/schema_info.dart';
 export 'domain/entities/statement_options.dart';
 export 'domain/entities/transaction_access_mode.dart';
+export 'domain/entities/xid.dart';
 export 'domain/errors/odbc_error.dart';
 export 'domain/errors/telemetry_error.dart';
 export 'domain/helpers/retry_helper.dart';
@@ -93,6 +94,7 @@ export 'infrastructure/native/wrappers/catalog_query.dart';
 export 'infrastructure/native/wrappers/connection_pool.dart';
 export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
+export 'infrastructure/native/wrappers/xa_transaction_handle.dart';
 export 'infrastructure/repositories/odbc_repository_impl.dart';
 export 'infrastructure/repositories/telemetry_repository.dart';
 

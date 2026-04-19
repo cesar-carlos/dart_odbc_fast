@@ -10,6 +10,7 @@ pub mod sqlserver_json;
 pub mod statement;
 pub mod streaming;
 pub mod transaction;
+pub mod xa_transaction;
 
 pub use catalog::{
     get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
@@ -39,4 +40,7 @@ pub use streaming::{
 pub use transaction::{
     IsolationLevel, LockTimeout, Savepoint, SavepointDialect, Transaction, TransactionAccessMode,
     TransactionState,
+};
+pub use xa_transaction::{
+    recover_prepared_xids, resume_prepared, PreparedXa, PreparingXa, XaState, XaTransaction, Xid,
 };

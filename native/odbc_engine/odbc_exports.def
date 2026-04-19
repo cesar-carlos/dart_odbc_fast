@@ -32,6 +32,16 @@ odbc_transaction_rollback
 odbc_savepoint_create
 odbc_savepoint_rollback
 odbc_savepoint_release
+odbc_xa_start
+odbc_xa_end
+odbc_xa_prepare
+odbc_xa_commit_prepared
+odbc_xa_rollback_prepared
+odbc_xa_commit_one_phase
+odbc_xa_rollback_active
+odbc_xa_recover_count
+odbc_xa_recover_get
+odbc_xa_resume_prepared
 odbc_get_metrics
 odbc_get_cache_metrics
 odbc_clear_statement_cache

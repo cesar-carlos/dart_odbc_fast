@@ -295,6 +295,108 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   bool get supportsTransactionLockTimeout =>
       _native.supportsTransactionLockTimeout;
 
+  /// True when the loaded native library supports the XA / 2PC FFI
+  /// family (Sprint 4.3). Callers should gate on this before invoking
+  /// [xaStart] / [xaRecover] / [xaResumePrepared]; older binaries
+  /// throw `UnsupportedError`.
+  bool get supportsXa => _native.supportsXa;
+
+  /// Internal — exposes the underlying [bindings.OdbcNative] to
+  /// helpers like [XaTransactionHandle] that need to drive the FFI
+  /// directly. Not part of the public API; callers should use the
+  /// high-level methods on this class.
+  bindings.OdbcNative get native => _native;
+
+  // -----------------------------------------------------------------
+  // Sprint 4.3 — XA / 2PC distributed transactions.
+  //
+  // High-level wrappers that convert between native return codes and
+  // the [XaTransactionHandle] state-machine helper. The lower-level
+  // FFI is available via [native] for callers that need the raw
+  // integer results.
+  // -----------------------------------------------------------------
+
+  /// `xa_start`: open a new XA branch on [connectionId] with the
+  /// given [xid]. Returns a live [XaTransactionHandle] in the
+  /// [XaState.active] state on success, `null` on failure (call
+  /// [getStructuredError] to inspect the cause).
+  ///
+  /// Drive Phase 2 with [XaTransactionHandle.end] →
+  /// [XaTransactionHandle.prepare] → [XaTransactionHandle.commitPrepared]
+  /// or [XaTransactionHandle.rollbackPrepared]. Single-RM callers can
+  /// use the [XaTransactionHandle.commitOnePhase] shortcut.
+  XaTransactionHandle? xaStart(int connectionId, Xid xid) {
+    final xaId = _native.xaStart(
+      connectionId: connectionId,
+      formatId: xid.formatId,
+      gtrid: xid.gtrid,
+      bqual: xid.bqual,
+    );
+    if (xaId == 0) return null;
+    return XaTransactionHandle(xaId: xaId, xid: xid, conn: this);
+  }
+
+  /// `xa_recover`: list every XID currently in the [XaState.prepared]
+  /// state on the resource manager. Used after process restart to
+  /// discover branches awaiting a Phase 2 decision.
+  ///
+  /// Resume each XID with [xaResumePrepared] and call
+  /// [XaTransactionHandle.commitPrepared] / [XaTransactionHandle.rollbackPrepared]
+  /// per the Transaction Manager's recovery decision.
+  ///
+  /// Returns an empty list when no prepared XIDs exist; returns
+  /// `null` on FFI failure (call [getStructuredErrorForConnection]).
+  List<Xid>? xaRecover(int connectionId) {
+    final count = _native.xaRecoverCount(connectionId);
+    if (count < 0) return null;
+    final out = <Xid>[];
+    for (var i = 0; i < count; i++) {
+      final entry = _native.xaRecoverGet(i);
+      if (entry == null) continue;
+      // Xid() throws ArgumentError on length violations. We *want* to
+      // catch that and skip the entry — those XIDs belong to a
+      // different client that violated the X/Open length limits, and
+      // we don't want recovery to abort over an unrelated bad
+      // neighbour.
+      try {
+        out.add(
+          Xid(
+            formatId: entry.formatId,
+            gtrid: entry.gtrid,
+            bqual: entry.bqual,
+          ),
+        );
+        // Catching `Error` is unidiomatic in general, but here the
+        // error path is data-driven (a bad neighbour client wrote a
+        // malformed prepared XID) and we explicitly want to skip,
+        // not crash recovery.
+        // ignore: avoid_catching_errors
+      } on ArgumentError {
+        // intentionally silent — see comment above
+      }
+    }
+    return out;
+  }
+
+  /// Resume a previously prepared [xid] — rebuilds an
+  /// [XaTransactionHandle] in the [XaState.prepared] state for crash-
+  /// recovery scenarios. Returns `null` on failure.
+  XaTransactionHandle? xaResumePrepared(int connectionId, Xid xid) {
+    final xaId = _native.xaResumePrepared(
+      connectionId: connectionId,
+      formatId: xid.formatId,
+      gtrid: xid.gtrid,
+      bqual: xid.bqual,
+    );
+    if (xaId == 0) return null;
+    return XaTransactionHandle(
+      xaId: xaId,
+      xid: xid,
+      conn: this,
+      initialState: XaState.prepared,
+    );
+  }
+
   @override
   bool commitTransaction(int txnId) => _native.transactionCommit(txnId);
 

@@ -81,6 +81,33 @@ class OdbcBindings {
     _odbc_savepoint_create_ptr = _dylib.lookup('odbc_savepoint_create');
     _odbc_savepoint_rollback_ptr = _dylib.lookup('odbc_savepoint_rollback');
     _odbc_savepoint_release_ptr = _dylib.lookup('odbc_savepoint_release');
+    try {
+      // Sprint 4.3 — XA / 2PC FFIs added together. Either the native
+      // library has all of them or none, so we use a single try block
+      // gated on the canonical entry point `odbc_xa_start`.
+      _odbc_xa_start_ptr = _dylib.lookup('odbc_xa_start');
+      _odbc_xa_end_ptr = _dylib.lookup('odbc_xa_end');
+      _odbc_xa_prepare_ptr = _dylib.lookup('odbc_xa_prepare');
+      _odbc_xa_commit_prepared_ptr = _dylib.lookup('odbc_xa_commit_prepared');
+      _odbc_xa_rollback_prepared_ptr =
+          _dylib.lookup('odbc_xa_rollback_prepared');
+      _odbc_xa_commit_one_phase_ptr = _dylib.lookup('odbc_xa_commit_one_phase');
+      _odbc_xa_rollback_active_ptr = _dylib.lookup('odbc_xa_rollback_active');
+      _odbc_xa_recover_count_ptr = _dylib.lookup('odbc_xa_recover_count');
+      _odbc_xa_recover_get_ptr = _dylib.lookup('odbc_xa_recover_get');
+      _odbc_xa_resume_prepared_ptr = _dylib.lookup('odbc_xa_resume_prepared');
+    } on Object catch (_) {
+      _odbc_xa_start_ptr = null;
+      _odbc_xa_end_ptr = null;
+      _odbc_xa_prepare_ptr = null;
+      _odbc_xa_commit_prepared_ptr = null;
+      _odbc_xa_rollback_prepared_ptr = null;
+      _odbc_xa_commit_one_phase_ptr = null;
+      _odbc_xa_rollback_active_ptr = null;
+      _odbc_xa_recover_count_ptr = null;
+      _odbc_xa_recover_get_ptr = null;
+      _odbc_xa_resume_prepared_ptr = null;
+    }
     _odbc_get_metrics_ptr = _dylib.lookup('odbc_get_metrics');
     _odbc_get_cache_metrics_ptr = _dylib.lookup('odbc_get_cache_metrics');
     _odbc_clear_statement_cache_ptr =
@@ -241,6 +268,27 @@ class OdbcBindings {
       _odbc_savepoint_rollback_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_savepoint_release_func>>
       _odbc_savepoint_release_ptr;
+  // Sprint 4.3 — XA / 2PC. All ten pointers are optional (look-up
+  // wrapped in a single try block above); a missing ABI surfaces via
+  // `supportsXa` as `false` so callers can degrade gracefully.
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_start_func>>? _odbc_xa_start_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_end_func>>? _odbc_xa_end_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_prepare_func>>?
+      _odbc_xa_prepare_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_commit_prepared_func>>?
+      _odbc_xa_commit_prepared_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_rollback_prepared_func>>?
+      _odbc_xa_rollback_prepared_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_commit_one_phase_func>>?
+      _odbc_xa_commit_one_phase_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_rollback_active_func>>?
+      _odbc_xa_rollback_active_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_recover_count_func>>?
+      _odbc_xa_recover_count_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_recover_get_func>>?
+      _odbc_xa_recover_get_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_xa_resume_prepared_func>>?
+      _odbc_xa_resume_prepared_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_metrics_func>>
       _odbc_get_metrics_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_cache_metrics_func>>
@@ -394,6 +442,15 @@ class OdbcBindings {
   /// transaction uses the engine default.
   bool get supportsTransactionLockTimeout =>
       _odbc_transaction_begin_v3_ptr != null;
+
+  /// True when the loaded native library exports the XA / 2PC FFI
+  /// family (Sprint 4.3). All ten entry points (`odbc_xa_start`,
+  /// `_end`, `_prepare`, `_commit_prepared`, `_rollback_prepared`,
+  /// `_commit_one_phase`, `_rollback_active`, `_recover_count`,
+  /// `_recover_get`, `_resume_prepared`) ship together. The Dart-
+  /// side wrappers throw `UnsupportedError` when called against an
+  /// older binary; high-level callers should gate on this flag.
+  bool get supportsXa => _odbc_xa_start_ptr != null;
 
   /// True when both multi-result streaming start FFIs and the existing
   /// async-poll FFI are available.
@@ -738,6 +795,140 @@ class OdbcBindings {
   int odbc_savepoint_release(int txnId, ffi.Pointer<Utf8> name) =>
       _odbc_savepoint_release_ptr
           .asFunction<int Function(int, ffi.Pointer<Utf8>)>()(txnId, name);
+
+  // -----------------------------------------------------------------
+  // Sprint 4.3 — XA / 2PC. Each wrapper throws UnsupportedError when
+  // the loaded native library predates Sprint 4.3 (see `supportsXa`).
+  // -----------------------------------------------------------------
+
+  int odbc_xa_start(
+    int connId,
+    int formatId,
+    ffi.Pointer<ffi.Uint8> gtridPtr,
+    int gtridLen,
+    ffi.Pointer<ffi.Uint8> bqualPtr,
+    int bqualLen,
+  ) {
+    final ptr = _odbc_xa_start_ptr;
+    if (ptr == null) {
+      throw _xaUnsupported('odbc_xa_start');
+    }
+    final fn = ptr.asFunction<
+        int Function(
+          int,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+        )>();
+    return fn(connId, formatId, gtridPtr, gtridLen, bqualPtr, bqualLen);
+  }
+
+  int odbc_xa_end(int xaId) {
+    final ptr = _odbc_xa_end_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_end');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_prepare(int xaId) {
+    final ptr = _odbc_xa_prepare_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_prepare');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_commit_prepared(int xaId) {
+    final ptr = _odbc_xa_commit_prepared_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_commit_prepared');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_rollback_prepared(int xaId) {
+    final ptr = _odbc_xa_rollback_prepared_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_rollback_prepared');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_commit_one_phase(int xaId) {
+    final ptr = _odbc_xa_commit_one_phase_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_commit_one_phase');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_rollback_active(int xaId) {
+    final ptr = _odbc_xa_rollback_active_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_rollback_active');
+    return ptr.asFunction<int Function(int)>()(xaId);
+  }
+
+  int odbc_xa_recover_count(int connId) {
+    final ptr = _odbc_xa_recover_count_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_recover_count');
+    return ptr.asFunction<int Function(int)>()(connId);
+  }
+
+  int odbc_xa_recover_get(
+    int index,
+    ffi.Pointer<ffi.Int32> outFormatId,
+    ffi.Pointer<ffi.Uint8> gtridBuf,
+    int gtridBufLen,
+    ffi.Pointer<ffi.Uint32> outGtridLen,
+    ffi.Pointer<ffi.Uint8> bqualBuf,
+    int bqualBufLen,
+    ffi.Pointer<ffi.Uint32> outBqualLen,
+  ) {
+    final ptr = _odbc_xa_recover_get_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_recover_get');
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<ffi.Int32>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(
+      index,
+      outFormatId,
+      gtridBuf,
+      gtridBufLen,
+      outGtridLen,
+      bqualBuf,
+      bqualBufLen,
+      outBqualLen,
+    );
+  }
+
+  int odbc_xa_resume_prepared(
+    int connId,
+    int formatId,
+    ffi.Pointer<ffi.Uint8> gtridPtr,
+    int gtridLen,
+    ffi.Pointer<ffi.Uint8> bqualPtr,
+    int bqualLen,
+  ) {
+    final ptr = _odbc_xa_resume_prepared_ptr;
+    if (ptr == null) throw _xaUnsupported('odbc_xa_resume_prepared');
+    final fn = ptr.asFunction<
+        int Function(
+          int,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+        )>();
+    return fn(connId, formatId, gtridPtr, gtridLen, bqualPtr, bqualLen);
+  }
+
+  UnsupportedError _xaUnsupported(String fn) => UnsupportedError(
+        '$fn: this native library does not export the XA / 2PC FFI '
+        'family (Sprint 4.3). Rebuild the native engine from a '
+        '3.4+ source tree, or gate on `OdbcBindings.supportsXa` '
+        'before calling.',
+      );
 
   int odbc_get_metrics(
     ffi.Pointer<ffi.Uint8> buffer,
@@ -1476,6 +1667,42 @@ typedef odbc_savepoint_release_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
 );
+
+// Sprint 4.3 — XA / 2PC.
+typedef odbc_xa_start_func = ffi.Uint32 Function(
+  ffi.Uint32, // conn_id
+  ffi.Int32, // format_id
+  ffi.Pointer<ffi.Uint8>, // gtrid_ptr
+  ffi.Uint32, // gtrid_len
+  ffi.Pointer<ffi.Uint8>, // bqual_ptr
+  ffi.Uint32, // bqual_len
+);
+typedef odbc_xa_end_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_prepare_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_commit_prepared_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_rollback_prepared_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_commit_one_phase_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_rollback_active_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_recover_count_func = ffi.Int32 Function(ffi.Uint32);
+typedef odbc_xa_recover_get_func = ffi.Int32 Function(
+  ffi.Uint32, // index
+  ffi.Pointer<ffi.Int32>, // out_format_id
+  ffi.Pointer<ffi.Uint8>, // gtrid_buf
+  ffi.Uint32, // gtrid_buf_len
+  ffi.Pointer<ffi.Uint32>, // out_gtrid_len
+  ffi.Pointer<ffi.Uint8>, // bqual_buf
+  ffi.Uint32, // bqual_buf_len
+  ffi.Pointer<ffi.Uint32>, // out_bqual_len
+);
+typedef odbc_xa_resume_prepared_func = ffi.Uint32 Function(
+  ffi.Uint32, // conn_id
+  ffi.Int32, // format_id
+  ffi.Pointer<ffi.Uint8>, // gtrid_ptr
+  ffi.Uint32, // gtrid_len
+  ffi.Pointer<ffi.Uint8>, // bqual_ptr
+  ffi.Uint32, // bqual_len
+);
+
 typedef odbc_get_metrics_func = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,

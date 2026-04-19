@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sprint 4.3 — XA / 2PC distributed transactions.** First-class
+  X/Open XA support with full Phase 1 / Phase 2 lifecycle and
+  recovery, exposed end-to-end (Rust core → FFI → Dart bindings →
+  high-level `XaTransactionHandle`). Closes the Sprint 4 backlog.
+  - **Rust core** — new module `engine::xa_transaction`:
+    - [`Xid`] value type (X/Open `format_id` + `gtrid` 1..64 bytes +
+      `bqual` 0..64 bytes), with validating constructors and
+      engine-specific encoders (`encode_postgres`,
+      `encode_mysql_components`).
+    - [`XaTransaction`] state machine: `Active` → `Idle` (via
+      `xa_end`) → `Prepared` (via `xa_prepare`) → `Committed` /
+      `RolledBack` (via `xa_commit_prepared` / `xa_rollback_prepared`).
+    - [`PreparingXa`] / [`PreparedXa`] handles enforce the per-state
+      contract at compile time — there is no way to call
+      `commit_prepared` on an `Active` branch.
+    - [`commit_one_phase`](XaTransaction::commit_one_phase) — 1RM
+      shortcut that fuses prepare + commit when this RM is the sole
+      participant.
+    - [`recover_prepared_xids`] / [`resume_prepared`] — crash-recovery
+      flow that rebuilds a `PreparedXa` handle from the engine's
+      prepared-transaction catalog.
+    - `Drop` impl auto-rolls back any `Active` / `Idle` branch that
+      escapes scope without explicit commit/rollback.
+  - **Engine matrix** (`apply_xa_*`):
+
+    | Engine                | Mechanism                                       | Status |
+    | --------------------- | ----------------------------------------------- | ------ |
+    | PostgreSQL            | `BEGIN` + `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ |
+    | MySQL / MariaDB       | `XA START / END / PREPARE / COMMIT / ROLLBACK` + `XA RECOVER` | ✅ |
+    | DB2                   | same SQL grammar as MySQL                       | ✅ |
+    | SQL Server            | requires MSDTC enlistment via Windows COM (`SQL_ATTR_ENLIST_IN_DTC` + `ITransaction*`) — stub returns `UnsupportedFeature` with a TODO pointing at a follow-up sprint | ⚠️ |
+    | Oracle                | requires OCI XA library (`oraxa.h`, `xaoSvcCtx`) — stub returns `UnsupportedFeature` with a TODO | ⚠️ |
+    | SQLite / Snowflake / others | no 2PC support — rejected with `UnsupportedFeature` | ❌ |
+
+  - **XID encoding** is hex-based on every engine to keep the SQL
+    ASCII-clean regardless of the byte content (X/Open allows
+    arbitrary binary). PostgreSQL canonicalises as
+    `'<format_id>_<gtrid_hex>_<bqual_hex>'`; MySQL/MariaDB/DB2 use
+    the native 3-argument grammar with hex-encoded components.
+  - **FFI** — 10 new exports under the `odbc_xa_*` family:
+    `odbc_xa_start`, `_end`, `_prepare`, `_commit_prepared`,
+    `_rollback_prepared`, `_commit_one_phase`, `_rollback_active`,
+    `_recover_count`, `_recover_get`, `_resume_prepared`. The
+    recovery flow uses a thread-local cache (`XA_RECOVER_CACHE`) to
+    sidestep variable-length-output marshaling at the FFI boundary.
+  - **Dart**:
+    - [`Xid`] value class in `lib/domain/entities/xid.dart` with the
+      same validation rules as Rust.
+    - [`XaTransactionHandle`] in
+      `lib/infrastructure/native/wrappers/xa_transaction_handle.dart`
+      mirrors the Rust state machine.
+    - `OdbcBindings.odbc_xa_*` (10 wrappers + `supportsXa` getter
+      with graceful fallback throwing `UnsupportedError` on
+      pre-Sprint-4.3 binaries).
+    - `OdbcNative.xa*` ergonomic wrappers including `xaRecoverGet`
+      that handles the FFI memory ceremony.
+    - `NativeOdbcConnection.xaStart` / `xaRecover` /
+      `xaResumePrepared` return a typed `XaTransactionHandle`.
+  - **Verification**: 19 new Rust unit tests in
+    `engine::xa_transaction::tests` (XID validation + length limits,
+    PostgreSQL encoding round-trip, MySQL component encoding round-
+    trip, hex helper edge cases, error-message wording for the
+    SQL Server / Oracle stubs, prepared-state guard checks).
+    17 new Dart unit tests in `test/domain/entities/xid_test.dart`
+    (validation, defensive copy, fromStrings convenience,
+    equality/hashCode, toString).
+    9 new gated E2E tests in
+    `tests/e2e_xa_transaction_test.rs` covering the full PostgreSQL
+    and MySQL 2PC lifecycle (full commit, prepared rollback, 1RM
+    shortcut, resume-after-disconnect with `pg_prepared_xacts` round-
+    trip). E2E tests gracefully skip via `IM002` driver-not-found
+    when the matching engine isn't installed locally.
 - **`SqlDataType` engine-specific kinds.** Seven additional typed kinds
   for engine-native types that don't have a portable cross-vendor
   equivalent. Brings the `SqlDataType` surface from 20/30 → **27/30**

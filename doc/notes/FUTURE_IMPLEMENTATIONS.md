@@ -23,7 +23,9 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Transaction Sprint 4.1 — `READ ONLY`~~                   | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
 | ~~Transaction Sprint 4.2 — lock_timeout~~                  | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
 | ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (Unreleased)**                 | ~~Low~~     |
-| Transaction Sprint 4.3 — XA / 2PC / distributed            | Planned (large scope; needs odbc-api escape hatch) | Medium  |
+| ~~Transaction Sprint 4.3 — XA / 2PC (PG/MySQL/DB2)~~       | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
+| Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Planned — needs `windows-sys` crate + ITransaction COM | Low |
+| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Planned — needs Oracle Instant Client + oraxa.h FFI    | Low |
 | ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (Unreleased)** — atomic inject+read   | ~~Low~~     |
 | `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
@@ -60,13 +62,49 @@ silently no-op. v1/v2 ABIs preserved via v3 delegation. Verified by
 12 unit tests + 4 E2E tests
 (`tests/e2e_transaction_lock_timeout_test.rs`).
 
-### 4.3 XA / two-phase commit / distributed transactions
+### ~~4.3 XA / two-phase commit (PostgreSQL, MySQL/MariaDB, DB2)~~ — ✅ IMPLEMENTED (Unreleased)
 
-- **Why**: cross-resource coordination (TCC, MS-DTC). Out of scope for
-  most apps but a recurring request in the fintech space.
-- **Sketch**: new `engine::xa` module with `XaTransaction::{prepare,
-  commit, rollback}` calling `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC)`
-  via `odbc-api`'s raw escape hatch. Likely a paid-tier feature.
+`engine::xa_transaction` ships first-class XA support with a
+strongly-typed state machine ([`Xid`] → [`XaTransaction`] →
+[`PreparingXa`] → [`PreparedXa`]) plus crash recovery via
+[`recover_prepared_xids`] / [`resume_prepared`]. SQL-level XA grammar
+emitted natively for PostgreSQL (`PREPARE TRANSACTION` +
+`pg_prepared_xacts`), MySQL/MariaDB (`XA START / END / PREPARE /
+COMMIT / ROLLBACK / RECOVER`), and DB2 (same SQL grammar). 1RM
+optimisation (`commit_one_phase`) skips the prepare-log write when
+this RM is the sole participant. 10 new FFI exports + Dart
+[`XaTransactionHandle`] expose the lifecycle end-to-end. Verified by
+19 Rust unit tests + 17 Dart unit tests + 9 gated E2E tests covering
+the full 2PC lifecycle including resume-after-disconnect.
+
+### 4.3b XA on SQL Server (MSDTC) — planned
+
+- **Why**: SQL Server doesn't expose SQL-level XA; integration
+  requires Microsoft Distributed Transaction Coordinator enlistment.
+- **Mechanism**: `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC,
+  ITransaction*)` with a COM `ITransaction` pointer obtained via
+  `DtcGetTransactionManager`. Windows-only.
+- **Build cost**: adds the `windows-sys` crate and per-platform
+  build configuration; requires the MSDTC Windows service running on
+  every machine that participates.
+- **Sketch**: parallel module `engine::xa_dtc` behind a `dtc` Cargo
+  feature, with a thin Rust wrapper around the COM interface. The
+  public API would be the same `XaTransaction` shape as today; the
+  matrix entry would flip from "stub returns `UnsupportedFeature`"
+  to "implemented".
+
+### 4.3c XA on Oracle (OCI XA) — planned
+
+- **Why**: Oracle's XA support is exposed via the OCI XA library
+  (`oraxa.h`, `xaoSvcCtx`), not via the ODBC standard.
+- **Mechanism**: link against the Oracle Instant Client's XA shim
+  and call OCI XA functions directly via Rust FFI; the connection's
+  underlying handle is shared with the OCI session.
+- **Build cost**: adds Oracle Instant Client as a runtime dependency
+  (already required for the Oracle ODBC driver — but the XA
+  integration needs additional headers).
+- **Sketch**: parallel module `engine::xa_oracle` behind an `oracle`
+  Cargo feature.
 
 ### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (Unreleased)
 
