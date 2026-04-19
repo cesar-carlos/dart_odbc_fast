@@ -19,6 +19,7 @@ pub mod c10_integer_binary_decode;
 pub mod c1_ffi_panic_safety;
 pub mod c6_multi_result_loop;
 pub mod c9_bitmap_truncation;
+pub mod m1_multi_result_batch_shapes;
 pub mod v21_dbms_detection;
 pub mod v30_capabilities;
 pub mod v30_returning_dialects;

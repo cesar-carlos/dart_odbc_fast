@@ -443,6 +443,28 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   }) =>
       _native.execQueryMulti(connectionId, sql, maxBufferBytes: maxBufferBytes);
 
+  /// Whether the loaded native library exports
+  /// `odbc_exec_query_multi_params` (added in v3.2.0).
+  bool get supportsExecuteQueryMultiParams =>
+      _native.supportsExecQueryMultiParams;
+
+  /// Executes a parameterised batch SQL that may return multiple result sets.
+  ///
+  /// See `OdbcNative.execQueryMultiParams` for the full contract.
+  /// `paramsBuffer` is the output of `serializeParams(...)`.
+  Uint8List? executeQueryMultiParams(
+    int connectionId,
+    String sql,
+    Uint8List? paramsBuffer, {
+    int? maxBufferBytes,
+  }) =>
+      _native.execQueryMultiParams(
+        connectionId,
+        sql,
+        paramsBuffer,
+        maxBufferBytes: maxBufferBytes,
+      );
+
   @override
   Uint8List? catalogTables(
     int connectionId, {

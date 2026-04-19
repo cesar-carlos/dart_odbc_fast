@@ -308,6 +308,16 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  ) async {
+    executeQueryMultiFullCalled = true;
+    return executeQueryMultiFull(connectionId, sql);
+  }
+
+  @override
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,

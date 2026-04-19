@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - Multi-result hardening
+
+### Fixed
+
+- **M1 — `execute_multi_result` collected only the first item in 2 of the
+  4 batch shapes.** The pre-v3.2 implementation took an
+  `if had_cursor { … } else { row_count }` shape that silently dropped
+  every result set produced *after* the first one whenever the batch mixed
+  cursors and row-counts. Worked for `cursor → cursor → cursor` and
+  `row-count → row-count` (kind of — only first), broken for
+  `row-count → cursor` and `cursor → row-count`.
+  v3.2.0 introduces `collect_multi_results` which walks the full chain via
+  raw `Statement::more_results` (`SQLMoreResults`), rebuilding a
+  `CursorImpl` whenever `num_result_cols > 0`. Crucially, cursors are
+  consumed via `cursor.into_stmt()` instead of being dropped, so
+  `SQLCloseCursor` does **not** discard pending result sets.
+  Covered by 4 new E2E regression tests under
+  `tests/regression/m1_multi_result_batch_shapes.rs`.
+- **M2 — `odbc_exec_query_multi` ignored pooled connection IDs.** Same
+  bug class as M2 for `odbc_exec_query` in v3.1.1, fixed the same way:
+  fall back to `state.pooled_connections` when the id is not in
+  `state.connections`.
+- **M7 — `MultiResultParser.getFirstResultSet` and
+  `QueryResultMulti.firstResultSet` returned a fake empty buffer when the
+  batch produced no cursors at all.** Callers had no way to tell "0 rows"
+  from "no result set". `getFirstResultSet` now returns
+  `ParsedRowBuffer?`. `QueryResultMulti.firstResultSet` is deprecated;
+  prefer `firstResultSetOrNull`.
+
+### Added
+
+- **M3 — `MultiResultItem` (Dart) is now a sealed class.** Two variants:
+  `MultiResultItemResultSet(value)` and `MultiResultItemRowCount(value)`.
+  Pattern-match with Dart 3 `switch`/sealed exhaustiveness:
+  ```dart
+  switch (item) {
+    case MultiResultItemResultSet(:final value): ...
+    case MultiResultItemRowCount(:final value): ...
+  }
+  ```
+  The legacy 2-field constructor (`MultiResultItem(resultSet:..., rowCount:...)`)
+  is preserved as a deprecated factory for one minor cycle so existing
+  code keeps compiling.
+- **M4 — Multi-result wire format v2 with magic + version.** Layout:
+  `[magic = 0x4D554C54 ("MULT")][version: u16 = 2][reserved: u16 = 0][count: u32]`.
+  `decode_multi` (Rust) and `MultiResultParser.parse` (Dart) auto-detect
+  v1 (no magic) and v2 (magic + version) framings, so old buffers in any
+  storage / cache continue to round-trip without a breaking change.
+  `encode_multi` always emits v2 since v3.2.0.
+  - New constants: `MULTI_RESULT_MAGIC`, `MULTI_RESULT_VERSION` (Rust),
+    `multiResultMagic`, `multiResultVersionV2` (Dart).
+  - Legacy `encode_multi_v1` retained for compatibility tests.
+- **M5 — Parameterised multi-result batches.** New end-to-end stack:
+  - Engine: `execute_multi_result_with_params(conn, sql, &[ParamValue])`.
+  - FFI: `odbc_exec_query_multi_params(conn_id, sql, params, params_len, ...)`.
+  - Dart: `OdbcNative.execQueryMultiParams`,
+    `NativeOdbcConnection.executeQueryMultiParams`,
+    `AsyncNativeOdbcConnection.executeQueryMultiParams`,
+    `IOdbcRepository.executeQueryMultiParams`,
+    `IOdbcService.executeQueryMultiParams`,
+    `TelemetryOdbcServiceDecorator.executeQueryMultiParams`,
+    `ExecuteQueryMultiParamsRequest` worker message.
+  Up to 5 positional `?` parameters are supported (same arity ceiling as
+  the existing `executeQueryParams`). Both connection IDs and pooled IDs
+  are accepted.
+- **M6 ergonomics — `OdbcRepositoryImpl.executeQueryMulti` (single)** now
+  unwraps the first result set via `firstResultSetOrNull`, returning a
+  truly empty `QueryResult` only when the batch had zero cursors.
+
+### Internal
+
+- `ExecutionEngine::encode_cursor` now takes `&mut C` instead of consuming
+  the cursor, so the multi-result paths can call `cursor.into_stmt()`
+  afterwards to preserve pending result sets.
+- 6 new lib unit tests in `protocol::multi_result::tests` (v2 framing
+  round-trip, legacy v1 acceptance, version rejection, truncated header).
+
+### Migration notes
+
+- 100% backwards compatible at the source level. Existing callers that
+  built `MultiResultItem(resultSet: ..., rowCount: ...)` directly keep
+  compiling thanks to the deprecated factory.
+- Wire-level: any pre-v3.2 buffer (v1 framing) still decodes; v3.2 emits
+  v2 framing which includes a magic word and a version byte. Storage /
+  cache schemes that round-trip the buffer through e.g. Redis are
+  unaffected.
+- Sealed-class migration path: callers using the runtime checks
+  (`item.resultSet != null`) still work via the backward-compatible
+  accessors. Dart 3 callers are encouraged to migrate to pattern matching
+  with the new variants for compile-time exhaustiveness.
+
+### Tests
+
+- Lib: 846 passed (was 842) / 0 failed / 16 ignored.
+- regression_test: 78 passed / 0 failed / 4 ignored (the new
+  `m1_multi_result_batch_shapes` tests are gated by `ENABLE_E2E_TESTS=1`).
+- Dart unit (`test/{application,domain,infrastructure,core,helpers}`):
+  418 passed / 0 failed / 3 skipped.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
+- `dart analyze lib test`: No issues found.
+
 ## [3.1.1] - E2E test stability fixes
 
 ### Fixed

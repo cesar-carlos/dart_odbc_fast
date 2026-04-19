@@ -140,6 +140,26 @@ void _handleRequest(
           sendPort.send(QueryResponse(request.requestId, error: message));
         }
 
+      case ExecuteQueryMultiParamsRequest():
+        final bytes =
+            request.serializedParams.isEmpty ? null : request.serializedParams;
+        final data = conn.executeQueryMultiParams(
+          request.connectionId,
+          request.sql,
+          bytes,
+          maxBufferBytes: request.maxResultBufferBytes,
+        );
+        if (data != null) {
+          sendPort.send(QueryResponse(request.requestId, data: data));
+        } else {
+          final err = conn.getError();
+          final message = err.isNotEmpty && err != 'No error'
+              ? err
+              : 'Multi-result query (with params) failed '
+                  '(native returned no data)';
+          sendPort.send(QueryResponse(request.requestId, error: message));
+        }
+
       case BeginTransactionRequest():
         final txnId = conn.beginTransaction(
           request.connectionId,
@@ -661,6 +681,7 @@ void _sendErrorResponse(
       sendPort.send(BoolResponse(id, value: false));
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
+    case ExecuteQueryMultiParamsRequest():
     case ExecutePreparedRequest():
     case CatalogTablesRequest():
     case CatalogColumnsRequest():

@@ -11,6 +11,7 @@ enum RequestType {
   disconnect,
   executeQueryParams,
   executeQueryMulti,
+  executeQueryMultiParams,
   beginTransaction,
   commitTransaction,
   rollbackTransaction,
@@ -136,6 +137,21 @@ class ExecuteQueryMultiRequest extends WorkerRequest {
   }) : super(requestId, RequestType.executeQueryMulti);
   final int connectionId;
   final String sql;
+  final int? maxResultBufferBytes;
+}
+
+/// Execute parameterised multi-result query (M5 in v3.2.0).
+class ExecuteQueryMultiParamsRequest extends WorkerRequest {
+  const ExecuteQueryMultiParamsRequest(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    this.serializedParams, {
+    this.maxResultBufferBytes,
+  }) : super(requestId, RequestType.executeQueryMultiParams);
+  final int connectionId;
+  final String sql;
+  final Uint8List serializedParams;
   final int? maxResultBufferBytes;
 }
 

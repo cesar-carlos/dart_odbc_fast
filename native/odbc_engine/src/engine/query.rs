@@ -48,6 +48,14 @@ pub fn execute_multi_result(conn: &Connection<'static>, sql: &str) -> Result<Vec
     PIPELINE.execute_multi(conn, sql)
 }
 
+pub fn execute_multi_result_with_params(
+    conn: &Connection<'static>,
+    sql: &str,
+    params: &[ParamValue],
+) -> Result<Vec<u8>> {
+    PIPELINE.execute_multi_with_params(conn, sql, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

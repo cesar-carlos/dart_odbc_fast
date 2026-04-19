@@ -10,7 +10,8 @@ use crate::protocol::{
 };
 use crate::security::AuditLogger;
 use log::Level;
-use odbc_api::{Connection, Cursor, IntoParameter, ResultSetMetadata};
+use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
+use odbc_api::{Connection, Cursor, CursorImpl, IntoParameter, ResultSetMetadata};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -399,94 +400,281 @@ impl ExecutionEngine {
         result
     }
 
+    /// Execute a multi-result batch with `?` positional parameters.
+    /// Same wire format as [`execute_multi_result`]; supports up to 5 params
+    /// (M5 in v3.2.0).
+    pub fn execute_multi_result_with_params(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+    ) -> Result<Vec<u8>> {
+        use std::time::Instant;
+
+        let start_time = Instant::now();
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
+        let mut metadata = HashMap::new();
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
+        self.logger.log_query(Level::Info, sql, &metadata);
+
+        let result = self.execute_multi_result_with_params_inner(conn, sql, params);
+
+        self.metrics.record_query(start_time.elapsed());
+
+        if let Err(ref e) = result {
+            self.metrics.record_error();
+            self.audit_logger.log_error(None, &e.to_string());
+        }
+
+        result
+    }
+
     fn execute_multi_result_inner(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-        use crate::protocol::{ColumnarEncoder, RowBuffer, RowBufferEncoder};
-
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+        let mut all_items: Vec<MultiResultItem> = Vec::new();
 
-        let mut all_items = Vec::new();
-        let cursor_opt = stmt.execute(()).map_err(OdbcError::from)?;
-
-        // C6 partial fix: A13 (structured SQLSTATE check) is applied in the
-        // cursor chain below. Full row-count-only-first → subsequent-result-set
-        // handling is tracked in v2.1 (requires a different odbc-api integration
-        // path because `Statement::more_results` is `unsafe` and conflicts with the
-        // borrow held by the cursor adapter).
-        let had_cursor = cursor_opt.is_some();
-        let mut current = cursor_opt;
-        if had_cursor {
-            while let Some(mut cursor) = current.take() {
-                let mut row_buffer = RowBuffer::new();
-                let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-                let cols_u16: u16 = cols_i16
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-                let cols_usize: usize = cols_u16.into();
-                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-                for col_idx in 1..=cols_u16 {
-                    let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                    let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                        if let Some(ref plugin) = *active {
-                            plugin.map_type(sql_type_code)
-                        } else {
-                            OdbcType::from_odbc_sql_type(sql_type_code)
-                        }
-                    } else {
-                        OdbcType::from_odbc_sql_type(sql_type_code)
-                    };
-                    row_buffer.add_column(col_name.to_string(), odbc_type);
-                    column_types.push(odbc_type);
-                }
-
-                while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                    let mut row_data = Vec::new();
-                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                            OdbcError::InternalError("Invalid column number".to_string())
-                        })?;
-                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-                        row_data.push(cell_data);
-                    }
-                    row_buffer.add_row(row_data);
-                }
-
-                let encoded = if self.use_columnar {
-                    let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
-                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
-                } else {
-                    RowBufferEncoder::encode(&row_buffer)
-                };
+        // Encode the initial result inside a scope that bounds the cursor's
+        // borrow on `stmt`. We use `cursor.into_stmt()` to drop the cursor
+        // *without* calling `SQLCloseCursor` -- which is essential, because
+        // `SQLCloseCursor` discards the pending result sets that follow it.
+        let had_initial_cursor = {
+            let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
+            if let Some(mut cursor) = initial_cursor {
+                let encoded = self.encode_cursor(&mut cursor)?;
                 all_items.push(MultiResultItem::ResultSet(encoded));
-
-                // A13 fix: structured SQLSTATE check instead of substring match.
-                current = match cursor.more_results() {
-                    Ok(next) => next,
-                    Err(e) => {
-                        let odbc_err = OdbcError::from(e);
-                        if is_no_more_results(&odbc_err) {
-                            None
-                        } else {
-                            return Err(odbc_err);
-                        }
-                    }
-                };
+                // Consume cursor *without* close_cursor (preserves pending
+                // result sets for SQLMoreResults below).
+                let _stmt_ref = cursor.into_stmt();
+                true
+            } else {
+                false
             }
-        } else {
-            // Drop the empty cursor binding so its borrow on `stmt` ends before
-            // we ask `stmt` for the row count.
-            drop(current);
-            let row_count = stmt
+        };
+
+        if !had_initial_cursor {
+            let rc = stmt
                 .row_count()
                 .map_err(OdbcError::from)?
                 .map(|n| n as i64)
                 .unwrap_or(0);
-            all_items.push(MultiResultItem::RowCount(row_count));
+            all_items.push(MultiResultItem::RowCount(rc));
         }
 
+        self.drive_more_results(&mut stmt, &mut all_items)?;
         Ok(encode_multi(&all_items))
+    }
+
+    fn execute_multi_result_with_params_inner(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+    ) -> Result<Vec<u8>> {
+        let optional_strings = crate::protocol::param_values_to_strings(params)?;
+        let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+        let mut all_items: Vec<MultiResultItem> = Vec::new();
+
+        let had_initial_cursor = {
+            let initial_cursor = match optional_strings.len() {
+                0 => stmt.execute(()).map_err(OdbcError::from)?,
+                1 => {
+                    let p0 = optional_strings[0].as_deref().into_parameter();
+                    stmt.execute((&p0,)).map_err(OdbcError::from)?
+                }
+                2 => {
+                    let p0 = optional_strings[0].as_deref().into_parameter();
+                    let p1 = optional_strings[1].as_deref().into_parameter();
+                    stmt.execute((&p0, &p1)).map_err(OdbcError::from)?
+                }
+                3 => {
+                    let p0 = optional_strings[0].as_deref().into_parameter();
+                    let p1 = optional_strings[1].as_deref().into_parameter();
+                    let p2 = optional_strings[2].as_deref().into_parameter();
+                    stmt.execute((&p0, &p1, &p2)).map_err(OdbcError::from)?
+                }
+                4 => {
+                    let p0 = optional_strings[0].as_deref().into_parameter();
+                    let p1 = optional_strings[1].as_deref().into_parameter();
+                    let p2 = optional_strings[2].as_deref().into_parameter();
+                    let p3 = optional_strings[3].as_deref().into_parameter();
+                    stmt.execute((&p0, &p1, &p2, &p3))
+                        .map_err(OdbcError::from)?
+                }
+                5 => {
+                    let p0 = optional_strings[0].as_deref().into_parameter();
+                    let p1 = optional_strings[1].as_deref().into_parameter();
+                    let p2 = optional_strings[2].as_deref().into_parameter();
+                    let p3 = optional_strings[3].as_deref().into_parameter();
+                    let p4 = optional_strings[4].as_deref().into_parameter();
+                    stmt.execute((&p0, &p1, &p2, &p3, &p4))
+                        .map_err(OdbcError::from)?
+                }
+                n => {
+                    return Err(OdbcError::ValidationError(format!(
+                        "At most 5 parameters supported in execute_multi_result_with_params, \
+                         got {}",
+                        n
+                    )))
+                }
+            };
+
+            if let Some(mut cursor) = initial_cursor {
+                let encoded = self.encode_cursor(&mut cursor)?;
+                all_items.push(MultiResultItem::ResultSet(encoded));
+                // Same SQLCloseCursor avoidance as in `execute_multi_result_inner`.
+                let _stmt_ref = cursor.into_stmt();
+                true
+            } else {
+                false
+            }
+        };
+
+        if !had_initial_cursor {
+            let rc = stmt
+                .row_count()
+                .map_err(OdbcError::from)?
+                .map(|n| n as i64)
+                .unwrap_or(0);
+            all_items.push(MultiResultItem::RowCount(rc));
+        }
+
+        self.drive_more_results(&mut stmt, &mut all_items)?;
+        Ok(encode_multi(&all_items))
+    }
+
+    /// Walk every additional result set produced by `stmt` after the first
+    /// one was encoded by the caller. Drives `Statement::more_results` (raw
+    /// `SQLMoreResults`) so we keep advancing regardless of whether each
+    /// step yields a cursor or a row-count.
+    ///
+    /// **M1 fix (v3.2.0)** — closes the long-standing gap where the previous
+    /// implementation silently dropped result sets following a row-count-only
+    /// first statement:
+    ///
+    /// 1. cursor → cursor → cursor                  (already worked)
+    /// 2. row-count → row-count → row-count         (now collects all)
+    /// 3. row-count → cursor                        ← was broken
+    /// 4. cursor → row-count                        ← was broken
+    fn drive_more_results<S>(
+        &self,
+        stmt: &mut S,
+        all_items: &mut Vec<MultiResultItem>,
+    ) -> Result<()>
+    where
+        S: AsStatementRef,
+    {
+        loop {
+            // SAFETY: caller guarantees no live cursor borrow on `stmt`.
+            // `Statement::more_results` is `unsafe` precisely because it
+            // would invalidate any outstanding cursor; `encode_cursor` always
+            // consumes the cursor it receives, so this contract holds.
+            let advance = unsafe { stmt.as_stmt_ref().more_results() };
+            match advance {
+                SqlResult::NoData => return Ok(()),
+                SqlResult::Success(()) | SqlResult::SuccessWithInfo(()) => { /* continue */ }
+                SqlResult::Error { .. } => {
+                    let err = advance
+                        .into_result(&stmt.as_stmt_ref())
+                        .err()
+                        .map(OdbcError::from)
+                        .unwrap_or_else(|| OdbcError::OdbcApi("SQLMoreResults failed".to_string()));
+                    if is_no_more_results(&err) {
+                        return Ok(());
+                    }
+                    return Err(err);
+                }
+                SqlResult::NeedData => {
+                    return Err(OdbcError::OdbcApi(
+                        "Unexpected SQLMoreResults state: NeedData".to_string(),
+                    ));
+                }
+                SqlResult::StillExecuting => {
+                    return Err(OdbcError::OdbcApi(
+                        "Unexpected SQLMoreResults state: StillExecuting".to_string(),
+                    ));
+                }
+            }
+
+            // Disambiguate cursor-vs-rowcount via num_result_cols().
+            let cols = stmt
+                .as_stmt_ref()
+                .num_result_cols()
+                .into_result(&stmt.as_stmt_ref())
+                .map_err(OdbcError::from)?;
+            if cols > 0 {
+                // SAFETY: we just observed `num_result_cols > 0` after a
+                // successful `SQLMoreResults`, so the statement currently
+                // exposes a cursor; we hold no other live borrow of `stmt`.
+                // We take care to consume the cursor via `into_stmt()` so the
+                // pending result sets after this one are not discarded by
+                // `SQLCloseCursor`.
+                let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
+                let encoded = self.encode_cursor(&mut cursor)?;
+                all_items.push(MultiResultItem::ResultSet(encoded));
+                let _stmt_ref = cursor.into_stmt();
+            } else {
+                let rc = stmt
+                    .as_stmt_ref()
+                    .row_count()
+                    .into_result(&stmt.as_stmt_ref())
+                    .map_err(OdbcError::from)?;
+                all_items.push(MultiResultItem::RowCount(rc as i64));
+            }
+        }
+    }
+
+    /// Read every row from `cursor`, encode it as a row-buffer (or columnar
+    /// buffer when `use_columnar` is on) and return the bytes.
+    ///
+    /// Takes `&mut C` instead of consuming `C` so the caller can choose
+    /// whether to drop the cursor (which calls `SQLCloseCursor` and discards
+    /// pending result sets) or to consume it via `cursor.into_stmt()` (which
+    /// preserves them for `SQLMoreResults`). The multi-result path uses the
+    /// latter.
+    fn encode_cursor<C: Cursor + ResultSetMetadata>(&self, cursor: &mut C) -> Result<Vec<u8>> {
+        let mut row_buffer = RowBuffer::new();
+        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+        let cols_u16: u16 = cols_i16
+            .try_into()
+            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+        let cols_usize: usize = cols_u16.into();
+        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+        for col_idx in 1..=cols_u16 {
+            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+            let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                if let Some(ref plugin) = *active {
+                    plugin.map_type(sql_type_code)
+                } else {
+                    OdbcType::from_odbc_sql_type(sql_type_code)
+                }
+            } else {
+                OdbcType::from_odbc_sql_type(sql_type_code)
+            };
+            row_buffer.add_column(col_name.to_string(), odbc_type);
+            column_types.push(odbc_type);
+        }
+
+        while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+            let mut row_data = Vec::new();
+            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                let col_number: u16 = (col_idx + 1)
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
+                let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                row_data.push(cell_data);
+            }
+            row_buffer.add_row(row_data);
+        }
+
+        if self.use_columnar {
+            let columnar_buffer = row_buffer_to_columnar(&row_buffer);
+            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
+        } else {
+            Ok(RowBufferEncoder::encode(&row_buffer))
+        }
     }
 
     pub fn get_metrics(&self) -> Arc<Metrics> {

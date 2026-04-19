@@ -1,4 +1,18 @@
 name: odbc_fast
+# v3.2.0 - Multi-result hardening:
+#   - M1: collect_multi_results walks every result set in any batch shape
+#     (cursor->cursor, rowcount->rowcount, rowcount->cursor, cursor->rowcount).
+#     Pre-v3.2 silently dropped trailing items in the last two shapes.
+#   - M2: odbc_exec_query_multi accepts pooled connection IDs.
+#   - M3: MultiResultItem (Dart) is now a sealed class with two variants.
+#   - M4: multi-result wire format gained magic + version (v2). v1 still
+#     decoded for backwards compatibility.
+#   - M5: NEW odbc_exec_query_multi_params + Dart cadeia completa
+#     (executeQueryMultiParams).
+#   - M6: executeQueryMulti (single) routes through executeQueryMultiFull's
+#     firstResultSetOrNull path; deprecated firstResultSet getter.
+#   - M7: getFirstResultSet / firstResultSetOrNull return null instead of
+#     fake empty buffer when batch produced no cursors.
 # v3.1.0 - Transaction control hardening:
 #   - SavepointDialect::Auto resolved via SQLGetInfo at begin (B2 fix).
 #   - FFI savepoint_create/_rollback/_release now go through
@@ -13,7 +27,7 @@ name: odbc_fast
 # New features: MINOR bumps (3.1.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.1.1
+version: 3.2.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

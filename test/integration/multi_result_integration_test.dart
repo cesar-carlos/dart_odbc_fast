@@ -122,7 +122,7 @@ void main() {
       final result = MultiResultParser.getFirstResultSet(items);
 
       expect(result, isNotNull);
-      expect(result.columnNames, equals(['id', 'name']));
+      expect(result!.columnNames, equals(['id', 'name']));
       expect(
         result.rows,
         equals([
@@ -132,26 +132,25 @@ void main() {
       expect(result.rowCount, equals(1));
     });
 
-    test('should return empty result set when no result sets', () {
+    test('should return null when no result sets are present (M7 fix v3.2.0)',
+        () {
       final buffer = _createEmptyMultiResultBuffer();
       final items = MultiResultParser.parse(buffer);
       final result = MultiResultParser.getFirstResultSet(items);
 
-      expect(result, isNotNull);
-      expect(result.columnNames, equals([]));
-      expect(result.rows, equals([]));
-      expect(result.rowCount, equals(0));
+      // Pre-v3.2 returned an empty placeholder which was indistinguishable
+      // from a real "0 rows" result set; v3.2.0 returns null.
+      expect(result, isNull);
     });
 
-    test('should return empty result set when only row counts', () {
+    test(
+        'should return null when batch contains only row counts '
+        '(M7 fix v3.2.0)', () {
       final buffer = _createRowCountOnlyBuffer();
       final items = MultiResultParser.parse(buffer);
       final result = MultiResultParser.getFirstResultSet(items);
 
-      expect(result, isNotNull);
-      expect(result.columnNames, equals([]));
-      expect(result.rows, equals([]));
-      expect(result.rowCount, equals(0));
+      expect(result, isNull);
     });
   });
 
@@ -166,7 +165,8 @@ void main() {
       expect(items[2].resultSet, isNotNull);
 
       final firstResultSet = MultiResultParser.getFirstResultSet(items);
-      expect(firstResultSet.columnNames, equals(['id', 'name']));
+      expect(firstResultSet, isNotNull);
+      expect(firstResultSet!.columnNames, equals(['id', 'name']));
       expect(
         firstResultSet.rows,
         equals([
@@ -175,15 +175,12 @@ void main() {
       );
     });
 
-    test('should return empty result set when no result sets exist', () {
+    test('should return null when no result sets exist (M7 fix v3.2.0)', () {
       final buffer = _createEmptyMultiResultBuffer();
       final items = MultiResultParser.parse(buffer);
 
       final firstResultSet = MultiResultParser.getFirstResultSet(items);
-      expect(firstResultSet, isNotNull);
-      expect(firstResultSet.columnNames, equals([]));
-      expect(firstResultSet.rows, equals([]));
-      expect(firstResultSet.rowCount, equals(0));
+      expect(firstResultSet, isNull);
     });
   });
 }

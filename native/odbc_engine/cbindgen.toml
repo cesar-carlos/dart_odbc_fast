@@ -35,6 +35,7 @@ include = [
     "odbc_exec_query",
     "odbc_exec_query_params",
     "odbc_exec_query_multi",
+    "odbc_exec_query_multi_params",
     "odbc_prepare",
     "odbc_execute",
     "odbc_cancel",

@@ -31,19 +31,27 @@ class QueryResultMulti {
       .map((item) => item.rowCount!)
       .toList(growable: false);
 
-  /// Returns the first result set, or an empty one if none exists.
+  /// Returns the first result set, or an empty placeholder if none exists.
+  ///
+  /// **Deprecated since v3.2.0.** Prefer [firstResultSetOrNull] which
+  /// distinguishes "0 rows" from "no cursor at all". This getter remains for
+  /// backwards compatibility and will be removed in v4.0.
+  @Deprecated('Use firstResultSetOrNull. Deprecated since v3.2.0.')
   QueryResult get firstResultSet {
+    return firstResultSetOrNull ??
+        const QueryResult(columns: [], rows: [], rowCount: 0);
+  }
+
+  /// Returns the first result set, or `null` when the batch produced no
+  /// cursors (e.g. INSERT-only batch). New in v3.2.0.
+  QueryResult? get firstResultSetOrNull {
     for (final item in items) {
       final set = item.resultSet;
       if (set != null) {
         return set;
       }
     }
-    return const QueryResult(
-      columns: [],
-      rows: [],
-      rowCount: 0,
-    );
+    return null;
   }
 }
 

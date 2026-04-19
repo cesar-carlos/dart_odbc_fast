@@ -260,6 +260,18 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.executeQueryMultiParams',
+      () => _service.executeQueryMultiParams(connectionId, sql, params),
+    );
+  }
+
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,

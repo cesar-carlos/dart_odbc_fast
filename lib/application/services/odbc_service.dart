@@ -116,6 +116,14 @@ abstract class IOdbcService {
     String sql,
   );
 
+  /// Executes a parameterised batch SQL and returns all multi-result items.
+  /// Up to 5 positional `?` parameters are supported. New in v3.2.0.
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  );
+
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
@@ -459,6 +467,15 @@ class OdbcService implements IOdbcService {
     String sql,
   ) async {
     return _repository.executeQueryMultiFull(connectionId, sql);
+  }
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  ) async {
+    return _repository.executeQueryMultiParams(connectionId, sql, params);
   }
 
   @override

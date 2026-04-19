@@ -112,5 +112,12 @@ Future<void> _runMultiResultBatch(
   }
 
   final first = MultiResultParser.getFirstResultSet(items);
-  AppLogger.info('First result-set rowCount: ${first.rowCount}');
+  if (first != null) {
+    AppLogger.info('First result-set rowCount: ${first.rowCount}');
+  } else {
+    AppLogger.info(
+      'No result set in batch (only row-counts) -- expected when the '
+      'batch contains DML/DDL only.',
+    );
+  }
 }

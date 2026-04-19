@@ -64,6 +64,12 @@ class OdbcBindings {
         _dylib.lookup('odbc_clear_statement_cache');
     _odbc_exec_query_params_ptr = _dylib.lookup('odbc_exec_query_params');
     _odbc_exec_query_multi_ptr = _dylib.lookup('odbc_exec_query_multi');
+    try {
+      _odbc_exec_query_multi_params_ptr =
+          _dylib.lookup('odbc_exec_query_multi_params');
+    } on Object catch (_) {
+      _odbc_exec_query_multi_params_ptr = null;
+    }
     _odbc_catalog_tables_ptr = _dylib.lookup('odbc_catalog_tables');
     _odbc_catalog_columns_ptr = _dylib.lookup('odbc_catalog_columns');
     _odbc_catalog_type_info_ptr = _dylib.lookup('odbc_catalog_type_info');
@@ -214,6 +220,15 @@ class OdbcBindings {
       _odbc_exec_query_params_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_func>>
       _odbc_exec_query_multi_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_params_func>>?
+      _odbc_exec_query_multi_params_ptr;
+
+  /// True when the loaded native library exports
+  /// `odbc_exec_query_multi_params` (added in v3.2.0). Used by
+  /// `OdbcNative.execQueryMultiParams` to fall back gracefully on older
+  /// binaries.
+  bool get supportsExecQueryMultiParams =>
+      _odbc_exec_query_multi_params_ptr != null;
   late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_tables_func>>
       _odbc_catalog_tables_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_columns_func>>
@@ -741,6 +756,43 @@ class OdbcBindings {
             ffi.Pointer<ffi.Uint32>,
           )>()(connId, sql, outBuffer, bufferLen, outWritten);
 
+  int odbc_exec_query_multi_params(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_exec_query_multi_params_ptr;
+    if (ptr == null) {
+      throw StateError(
+        'odbc_exec_query_multi_params is not exported by the loaded '
+        'odbc_engine library. Rebuild against odbc_engine >= 3.2.0.',
+      );
+    }
+    final fn = ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>?,
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>();
+    return fn(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      outBuffer,
+      bufferLen,
+      outWritten,
+    );
+  }
+
   int odbc_catalog_tables(
     int connId,
     ffi.Pointer<Utf8> catalog,
@@ -1265,6 +1317,15 @@ typedef odbc_exec_query_params_func = ffi.Int32 Function(
 typedef odbc_exec_query_multi_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_exec_query_multi_params_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>?,
+  ffi.Uint32,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,

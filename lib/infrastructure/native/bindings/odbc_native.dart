@@ -734,6 +734,74 @@ class OdbcNative {
     );
   }
 
+  /// Whether the loaded native library exports
+  /// `odbc_exec_query_multi_params` (added in v3.2.0).
+  bool get supportsExecQueryMultiParams =>
+      _bindings.supportsExecQueryMultiParams;
+
+  /// Executes a parameterised batch SQL that may return multiple result sets.
+  ///
+  /// Same wire format as [execQueryMulti]. Up to 5 positional `?` parameters
+  /// are supported. The Rust engine collects every result set (cursor or
+  /// row-count) the batch produces in order — see M1 fix in v3.2.0.
+  ///
+  /// [paramsBuffer] is the output of `serializeParams(...)`. Pass `null` (or
+  /// an empty buffer) for the no-params case (equivalent to [execQueryMulti]).
+  /// When [maxBufferBytes] is set, caps the result buffer size.
+  ///
+  /// Returns binary result data on success, `null` on failure. Throws
+  /// [StateError] if the loaded native library predates v3.2.0.
+  Uint8List? execQueryMultiParams(
+    int connectionId,
+    String sql,
+    Uint8List? paramsBuffer, {
+    int? maxBufferBytes,
+  }) {
+    if (!_bindings.supportsExecQueryMultiParams) {
+      throw StateError(
+        'odbc_exec_query_multi_params requires odbc_engine >= 3.2.0',
+      );
+    }
+    return _withSql(
+      sql,
+      (sqlPtr) => callWithBuffer(
+        (buf, bufLen, outWritten) {
+          final hasParams = paramsBuffer != null && paramsBuffer.isNotEmpty;
+          if (hasParams) {
+            final paramsLen = paramsBuffer.length;
+            final paramsPtr = malloc<ffi.Uint8>(paramsLen);
+            try {
+              for (var i = 0; i < paramsLen; i++) {
+                paramsPtr[i] = paramsBuffer[i];
+              }
+              return _bindings.odbc_exec_query_multi_params(
+                connectionId,
+                sqlPtr,
+                paramsPtr,
+                paramsLen,
+                buf,
+                bufLen,
+                outWritten,
+              );
+            } finally {
+              malloc.free(paramsPtr);
+            }
+          }
+          return _bindings.odbc_exec_query_multi_params(
+            connectionId,
+            sqlPtr,
+            null,
+            0,
+            buf,
+            bufLen,
+            outWritten,
+          );
+        },
+        maxSize: maxBufferBytes,
+      ),
+    );
+  }
+
   /// Begins a new transaction with the specified isolation level.
   ///
   /// The [connectionId] must be a valid active connection.

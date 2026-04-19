@@ -33,6 +33,7 @@ odbc_get_cache_metrics
 odbc_clear_statement_cache
 odbc_exec_query_params
 odbc_exec_query_multi
+odbc_exec_query_multi_params
 odbc_catalog_tables
 odbc_catalog_columns
 odbc_catalog_type_info

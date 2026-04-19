@@ -22,8 +22,9 @@ pub use identifier::{
     IdentifierQuoting, MAX_IDENTIFIER_LEN,
 };
 pub use query::{
-    execute_multi_result, execute_query_with_cached_connection, execute_query_with_connection,
-    execute_query_with_params, execute_query_with_params_and_timeout, get_global_metrics,
+    execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
+    execute_query_with_connection, execute_query_with_params,
+    execute_query_with_params_and_timeout, get_global_metrics,
 };
 pub use statement::StatementHandle;
 pub use streaming::{

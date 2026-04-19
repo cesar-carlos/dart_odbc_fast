@@ -1276,7 +1276,10 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   ) async {
     final full = await executeQueryMultiFull(connectionId, sql);
     return full.fold(
-      (success) => Success(success.firstResultSet),
+      (success) => Success(
+        success.firstResultSetOrNull ??
+            const QueryResult(columns: [], rows: [], rowCount: 0),
+      ),
       (error) => Failure<QueryResult, OdbcError>(
         error is OdbcError ? error : QueryError(message: error.toString()),
       ),
@@ -1308,6 +1311,79 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           return const Success(
             QueryResultMulti(items: []),
           );
+        }
+
+        final items = MultiResultParser.parse(buf);
+        return Success(_toQueryResultMulti(items));
+      } on Exception catch (e) {
+        return _convertNativeErrorToFailure<QueryResultMulti>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: e.toString(),
+        );
+      }
+    }
+
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+    Future<Result<QueryResultMulti>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<QueryResultMulti, OdbcError>(
+            QueryError(message: _queryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return _withReconnect(connectionId, runWithTimeout);
+  }
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<QueryResultMulti, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    Future<Result<QueryResultMulti>> run() async {
+      try {
+        final paramValues = _toParamValues(params);
+        final paramsBuffer =
+            paramValues.isEmpty ? null : serializeParams(paramValues);
+        final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final buf = _isAsync
+            ? await (_native as AsyncNativeOdbcConnection)
+                .executeQueryMultiParams(
+                nativeId,
+                sql,
+                paramsBuffer,
+                maxBufferBytes: maxBytes,
+              )
+            : (_native as NativeOdbcConnection).executeQueryMultiParams(
+                nativeId,
+                sql,
+                paramsBuffer,
+                maxBufferBytes: maxBytes,
+              );
+
+        if (buf == null || buf.isEmpty) {
+          return const Success(QueryResultMulti(items: []));
         }
 
         final items = MultiResultParser.parse(buf);

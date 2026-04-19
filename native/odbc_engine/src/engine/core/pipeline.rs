@@ -107,6 +107,17 @@ impl QueryPipeline {
         self.execution_engine.execute_multi_result(conn, sql)
     }
 
+    pub fn execute_multi_with_params(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[crate::protocol::ParamValue],
+    ) -> Result<Vec<u8>> {
+        self.parse_sql(sql)?;
+        self.execution_engine
+            .execute_multi_result_with_params(conn, sql, params)
+    }
+
     pub fn get_metrics(&self) -> Arc<Metrics> {
         self.execution_engine.get_metrics()
     }

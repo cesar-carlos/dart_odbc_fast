@@ -24,20 +24,21 @@ void main() {
       expect(result.isNotEmpty, isTrue);
       expect(result.resultSets.length, equals(1));
       expect(result.rowCounts, equals([5, 3]));
-      expect(result.firstResultSet.columns, equals(['id']));
-      expect(result.firstResultSet.rowCount, equals(1));
+      expect(result.firstResultSetOrNull, isNotNull);
+      expect(result.firstResultSetOrNull!.columns, equals(['id']));
+      expect(result.firstResultSetOrNull!.rowCount, equals(1));
     });
 
-    test('should return empty firstResultSet when no result set exists', () {
+    test(
+        'should return null firstResultSetOrNull when no result set '
+        '(M7 fix v3.2.0)', () {
       const result = QueryResultMulti(
         items: [
           QueryResultMultiItem.rowCount(10),
         ],
       );
 
-      expect(result.firstResultSet.columns, isEmpty);
-      expect(result.firstResultSet.rows, isEmpty);
-      expect(result.firstResultSet.rowCount, equals(0));
+      expect(result.firstResultSetOrNull, isNull);
     });
   });
 }

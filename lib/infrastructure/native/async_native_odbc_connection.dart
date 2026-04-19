@@ -745,6 +745,30 @@ class AsyncNativeOdbcConnection {
     return r.data;
   }
 
+  /// Executes a parameterised multi-result batch in the worker.
+  ///
+  /// `paramsBuffer` is the output of `serializeParams(...)`. Pass `null` for
+  /// no parameters. Up to 5 positional `?` parameters are supported.
+  /// New in v3.2.0 (M5).
+  Future<Uint8List?> executeQueryMultiParams(
+    int connectionId,
+    String sql,
+    Uint8List? paramsBuffer, {
+    int? maxBufferBytes,
+  }) async {
+    final r = await _sendRequest<QueryResponse>(
+      ExecuteQueryMultiParamsRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        paramsBuffer ?? Uint8List(0),
+        maxResultBufferBytes: maxBufferBytes,
+      ),
+    );
+    if (r.error != null) return null;
+    return r.data;
+  }
+
   /// Requests cancellation of prepared statement [stmtId] in the worker.
   ///
   /// Returns `true` if cancellation request succeeded, `false` otherwise.

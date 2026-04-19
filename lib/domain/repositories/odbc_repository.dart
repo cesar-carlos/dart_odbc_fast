@@ -235,6 +235,16 @@ abstract class IOdbcRepository {
     String sql,
   );
 
+  /// Executes a parameterised batch SQL and returns all multi-result items.
+  ///
+  /// Same wire format as [executeQueryMultiFull] but accepts up to 5
+  /// positional `?` parameters. New in v3.2.0 (M5).
+  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+    String connectionId,
+    String sql,
+    List<dynamic> params,
+  );
+
   /// Queries the database catalog for table information.
   ///
   /// Returns metadata about tables in the specified [catalog] and [schema].
