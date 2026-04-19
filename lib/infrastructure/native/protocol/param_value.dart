@@ -12,6 +12,25 @@ const int _defaultDecimalScale = 6;
 const int _minDateTimeYear = 1;
 const int _maxDateTimeYear = 9999;
 
+const int _smallIntMin = -32768;
+const int _smallIntMax = 32767;
+
+/// SQL Server / Sybase / DB2 MONEY type carries 4 fractional digits
+/// (the canonical `monetary` precision). Other engines (PostgreSQL
+/// `money`, MySQL `DECIMAL(15,4)`) follow the same convention. We
+/// pin the fractional precision at 4 so a `num` round-trips through
+/// the engine without scale renegotiation.
+const int _moneyFractionalDigits = 4;
+
+/// Canonical UUID matcher: 8-4-4-4-12 hex digits, case-insensitive.
+/// We validate against this *after* normalising the value (stripping
+/// braces and folding to lowercase), so callers can pass `{...}`,
+/// uppercase, or the bare 32-hex form indistinguishably.
+final RegExp _uuidCanonicalPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+);
+final RegExp _uuidBareHexPattern = RegExp(r'^[0-9a-f]{32}$');
+
 List<int> _u32Le(int v) {
   final buffer = Uint8List(4);
   ByteData.view(buffer.buffer).setUint32(0, v, _littleEndian);
@@ -73,6 +92,18 @@ class SqlDataType {
   factory SqlDataType.varBinary({int? length}) =>
       SqlDataType._('varbinary', length: length);
 
+  /// SQL `JSON` / `JSONB` payload. Accepts a `String` (assumed to be
+  /// already-serialised JSON), a `Map<String, dynamic>`, or a `List`;
+  /// the latter two are encoded with `dart:convert::jsonEncode`.
+  /// Serialised as a UTF-8 string on the wire (engines without a
+  /// native `JSON` type accept this transparently as `NVARCHAR`).
+  ///
+  /// Pass `validate: true` to round-trip the input through `jsonDecode`
+  /// before sending — useful in dev/test, off by default to avoid
+  /// paying the parse cost on the hot path.
+  factory SqlDataType.json({bool validate = false}) =>
+      SqlDataType._(validate ? 'json_validated' : 'json');
+
   /// Semantic SQL kind used for validation and conversion.
   final String kind;
 
@@ -91,6 +122,34 @@ class SqlDataType {
   static const SqlDataType date = SqlDataType._('date');
   static const SqlDataType time = SqlDataType._('time');
   static const SqlDataType boolAsInt32 = SqlDataType._('bool_as_int32');
+
+  /// SQL `SMALLINT` (16-bit signed). Validates the input against
+  /// `[-32768, 32767]` and serialises as a 32-bit integer on the wire
+  /// (the engine has no separate 16-bit slot in our binary protocol;
+  /// the validation is what makes this type distinct from
+  /// [SqlDataType.int32]).
+  static const SqlDataType smallInt = SqlDataType._('smallint');
+
+  /// SQL `BIGINT` (64-bit signed). Idiomatic alias for
+  /// [SqlDataType.int64] — same wire representation, same validation,
+  /// just the SQL-flavoured spelling so call sites read more naturally
+  /// when paired with a `BIGINT` column.
+  static const SqlDataType bigInt = SqlDataType._('bigint');
+
+  /// SQL `UUID` / `UNIQUEIDENTIFIER`. Accepts the canonical
+  /// `8-4-4-4-12` form, the bare 32-hex form, or either wrapped in
+  /// `{...}`. Folds to lowercase canonical before sending so the
+  /// engine sees a normalised value regardless of how the caller
+  /// formatted it. Rejects anything that isn't a well-formed UUID
+  /// with an actionable [ArgumentError].
+  static const SqlDataType uuid = SqlDataType._('uuid');
+
+  /// SQL `MONEY` / `SMALLMONEY` / `DECIMAL(15, 4)` — fixed monetary
+  /// scale of 4 fractional digits. Accepts `num` (formatted with
+  /// `toStringAsFixed(4)`) or `String` (passed through verbatim).
+  /// `NaN` / `Infinity` are rejected. Use [SqlDataType.decimal] for
+  /// arbitrary scale.
+  static const SqlDataType money = SqlDataType._('money');
 }
 
 /// Explicitly typed parameter value.
@@ -373,9 +432,156 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
         );
       }
       return ParamValueInt32(value ? 1 : 0);
+    case 'smallint':
+      if (value is! int) {
+        throw ArgumentError(
+          'SqlDataType.smallInt expects int, got ${value.runtimeType}',
+        );
+      }
+      if (value < _smallIntMin || value > _smallIntMax) {
+        throw ArgumentError(
+          'SqlDataType.smallInt value out of range '
+          '[$_smallIntMin, $_smallIntMax]: $value',
+        );
+      }
+      return ParamValueInt32(value);
+    case 'bigint':
+      // Idiomatic alias for int64 — same wire representation. We
+      // intentionally accept any int (Dart ints are 64-bit on every
+      // supported platform) instead of duplicating int64's range
+      // check, which is a no-op there.
+      if (value is! int) {
+        throw ArgumentError(
+          'SqlDataType.bigInt expects int, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueInt64(value);
+    case 'json':
+      return ParamValueString(_toJsonString(value, validate: false));
+    case 'json_validated':
+      return ParamValueString(_toJsonString(value, validate: true));
+    case 'uuid':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.uuid expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(_normaliseUuid(value));
+    case 'money':
+      return ParamValueDecimal(_toMoneyString(value));
   }
 
   throw ArgumentError('Unsupported SqlDataType kind: ${type.kind}');
+}
+
+/// Encode a value as a JSON string suitable for the engine's `JSON` /
+/// `NVARCHAR` slot. `String` is passed through verbatim (the caller is
+/// trusted to have produced valid JSON); `Map` / `List` are encoded
+/// via `dart:convert::jsonEncode`. Everything else is rejected with
+/// an actionable error.
+///
+/// When `validate` is true the resulting string is round-tripped
+/// through `jsonDecode` to catch syntactic mistakes the engine would
+/// otherwise reject at execute time. We keep the parse opt-in because
+/// `JSON` parameters can be many KB; paying for a parse on every call
+/// is unnecessary in production where the JSON is already trusted.
+String _toJsonString(Object? value, {required bool validate}) {
+  String encoded;
+  if (value == null) {
+    // Caller passed an explicit `typedParam(SqlDataType.json(), null)`
+    // — but `_toTypedParamValue` already short-circuits null at the
+    // top, so this path is defensive only. Keep it tight to satisfy
+    // the type checker without producing dead branches.
+    throw ArgumentError(
+      'SqlDataType.json received null after the null short-circuit; '
+      'this is a bug — please report.',
+    );
+  } else if (value is String) {
+    encoded = value;
+  } else if (value is Map<String, dynamic> || value is List<dynamic>) {
+    encoded = jsonEncode(value);
+  } else {
+    throw ArgumentError(
+      'SqlDataType.json expects String, Map<String, dynamic>, or '
+      'List<dynamic>; got ${value.runtimeType}',
+    );
+  }
+
+  if (validate) {
+    try {
+      jsonDecode(encoded);
+    } on FormatException catch (e) {
+      throw ArgumentError(
+        'SqlDataType.json(validate: true): payload is not valid JSON: '
+        '${e.message}',
+      );
+    }
+  }
+  return encoded;
+}
+
+/// Validate and canonicalise a UUID string. Accepts the canonical
+/// `8-4-4-4-12` form, the bare 32-hex form, and either wrapped in
+/// `{...}`. Folds to lowercase. Returns the canonical form so the
+/// engine sees a normalised value regardless of how the caller
+/// formatted it.
+String _normaliseUuid(String raw) {
+  // Strip optional curly braces (common from .NET-flavoured tools)
+  // before doing any matching so `{abc...}` and `abc...` are treated
+  // the same.
+  var s = raw.trim();
+  if (s.startsWith('{') && s.endsWith('}')) {
+    s = s.substring(1, s.length - 1);
+  }
+  s = s.toLowerCase();
+
+  if (_uuidCanonicalPattern.hasMatch(s)) {
+    return s;
+  }
+  if (_uuidBareHexPattern.hasMatch(s)) {
+    // Insert hyphens at the canonical positions: 8-4-4-4-12.
+    return '${s.substring(0, 8)}-${s.substring(8, 12)}-'
+        '${s.substring(12, 16)}-${s.substring(16, 20)}-${s.substring(20)}';
+  }
+  // Build the message in two steps so the canonical pattern stays
+  // visually intact even though it contains a dash that could be
+  // mistaken for a sentence break.
+  const canonicalForm = '"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"';
+  throw ArgumentError(
+    'SqlDataType.uuid expects a 36-char canonical $canonicalForm '
+    'or 32-char bare-hex UUID (optionally wrapped in {...}); '
+    'got "$raw"',
+  );
+}
+
+/// Format a `MONEY`-typed value with the canonical 4 fractional
+/// digits. Accepts `num` (formatted with `toStringAsFixed(4)`) or a
+/// `String` (passed through verbatim — the caller is trusted to have
+/// produced a value the engine accepts). `NaN` / `Infinity` are
+/// rejected with the same wording as the implicit `double → decimal`
+/// path so error messages stay consistent.
+String _toMoneyString(Object? value) {
+  if (value is num) {
+    final asDouble = value.toDouble();
+    if (asDouble.isNaN) {
+      throw ArgumentError(
+        'SqlDataType.money received NaN; cannot format as monetary value.',
+      );
+    }
+    if (asDouble.isInfinite) {
+      final label = asDouble.isNegative ? '-Infinity' : 'Infinity';
+      throw ArgumentError(
+        'SqlDataType.money received $label; cannot format as monetary value.',
+      );
+    }
+    return asDouble.toStringAsFixed(_moneyFractionalDigits);
+  }
+  if (value is String) {
+    return value;
+  }
+  throw ArgumentError(
+    'SqlDataType.money expects num or String, got ${value.runtimeType}',
+  );
 }
 
 /// Converts a list of objects to `ParamValue` instances.

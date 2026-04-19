@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SqlDataType` extras: `smallInt`, `bigInt`, `json`, `uuid`, `money`.**
+  Five new typed kinds in `lib/infrastructure/native/protocol/param_value.dart`,
+  bringing the total to 15/30 from the
+  [`TYPE_MAPPING.md`](../doc/notes/TYPE_MAPPING.md) roadmap. Every
+  kind is **non-breaking** — no existing call site changes, no FFI
+  changes, no wire-format changes. They run on top of the existing
+  `ParamValue*` primitives.
+  - **`SqlDataType.smallInt`** — accepts `int`, validates against
+    `[-32768, 32767]`, serialises as `ParamValueInt32` (the int16
+    distinction lives in the validation; the wire is shared).
+  - **`SqlDataType.bigInt`** — idiomatic alias for
+    [`SqlDataType.int64`]. Accepts `int`, serialises as
+    `ParamValueInt64`. Wire-compatible with `int64` (pinned by an
+    explicit equality test).
+  - **`SqlDataType.json({validate})`** — accepts `String` (passed
+    through verbatim), `Map<String, dynamic>` or `List<dynamic>`
+    (encoded via `dart:convert::jsonEncode`). `validate: true`
+    round-trips the payload through `jsonDecode` to catch syntactic
+    mistakes early. Default `false` to avoid paying parse cost on
+    multi-KB payloads in production.
+  - **`SqlDataType.uuid`** — accepts the canonical 8-4-4-4-12 form,
+    the bare 32-hex form, and either wrapped in `{...}` (for .NET-
+    flavoured tooling). Folds to lowercase canonical so the engine
+    sees a normalised value regardless of the caller's formatting.
+    Rejects malformed input with an actionable error.
+  - **`SqlDataType.money`** — fixed monetary scale of 4 fractional
+    digits (`SQL Server MONEY` / `PostgreSQL money` / `DECIMAL(15,4)`
+    convention). Accepts `num` (formatted with `toStringAsFixed(4)`)
+    or `String` (passed through verbatim). `NaN` / `Infinity`
+    rejected with the same wording as the implicit `double → decimal`
+    path so error messages stay consistent.
+  - **Tests**: 24 new Dart unit tests in
+    `test/infrastructure/native/protocol/param_value_test.dart`
+    covering valid inputs, range validation, format validation,
+    canonicalisation, NaN/Infinity rejection, and the `bigint`/`int64`
+    wire-compatibility contract.
 - **Sprint 4.2 — Per-transaction `LockTimeout`.** Transactions can now
   cap how long a statement waits for a lock without the caller having
   to emit raw `SET` themselves.

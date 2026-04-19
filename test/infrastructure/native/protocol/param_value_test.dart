@@ -239,6 +239,327 @@ void main() {
     });
   });
 
+  // -----------------------------------------------------------------
+  // Sprint backlog item: SqlDataType extras
+  // (smallInt, bigInt, json, uuid, money)
+  // -----------------------------------------------------------------
+
+  group('SqlDataType.smallInt', () {
+    test('accepts values inside the int16 range', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.smallInt, -32768),
+        typedParam(SqlDataType.smallInt, 0),
+        typedParam(SqlDataType.smallInt, 32767),
+      ]);
+      expect(
+        params.every((p) => p is ParamValueInt32),
+        isTrue,
+        reason: 'smallInt serialises as int32 on the wire — '
+            'the distinction lives in the validation, not the encoding',
+      );
+      expect((params[0] as ParamValueInt32).value, equals(-32768));
+      expect((params[1] as ParamValueInt32).value, equals(0));
+      expect((params[2] as ParamValueInt32).value, equals(32767));
+    });
+
+    test('rejects values just outside the int16 boundaries', () {
+      for (final bad in [-32769, 32768, 0x7FFFFFFF, -0x80000000]) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.smallInt, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('out of range [-32768, 32767]'),
+            ),
+          ),
+          reason: 'smallInt must reject $bad',
+        );
+      }
+    });
+
+    test('rejects non-int payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.smallInt, '42'),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.bigInt', () {
+    test('serialises as int64 on the wire', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.bigInt, 9223372036854775807),
+        typedParam(SqlDataType.bigInt, -9223372036854775808),
+      ]);
+      expect(params[0], isA<ParamValueInt64>());
+      expect((params[0] as ParamValueInt64).value, equals(9223372036854775807));
+      expect(
+        (params[1] as ParamValueInt64).value,
+        equals(-9223372036854775808),
+      );
+    });
+
+    test('is wire-compatible with int64 (idiomatic alias)', () {
+      // Pinning the alias contract: a BIGINT-typed param and an
+      // INT64-typed param produce byte-identical wire output for
+      // the same input. If a future refactor splits them, this
+      // test will catch it.
+      final asBigInt = paramValuesFromObjects([
+        typedParam(SqlDataType.bigInt, 1234567890123),
+      ])[0];
+      final asInt64 = paramValuesFromObjects([
+        typedParam(SqlDataType.int64, 1234567890123),
+      ])[0];
+      expect(asBigInt.serialize(), equals(asInt64.serialize()));
+    });
+
+    test('rejects non-int payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.bigInt, '42'),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.json', () {
+    test('passes a String payload through verbatim (no re-encoding)', () {
+      const original = '{"role":"admin","level":3}';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.json(), original),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+      expect((p as ParamValueString).value, equals(original));
+    });
+
+    test('encodes a Map payload via jsonEncode', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.json(), <String, dynamic>{
+          'name': 'Alice',
+          'age': 30,
+        }),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+      // Don't pin field order here — jsonEncode's order is platform-
+      // defined for plain Maps. Round-trip and compare structurally.
+      expect(
+        jsonDecode((p as ParamValueString).value),
+        equals(<String, dynamic>{'name': 'Alice', 'age': 30}),
+      );
+    });
+
+    test('encodes a List payload via jsonEncode', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.json(), <dynamic>[1, 'two', null, true]),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+      expect((p as ParamValueString).value, equals('[1,"two",null,true]'));
+    });
+
+    test('rejects unsupported payload types with actionable message', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.json(), 42),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('SqlDataType.json'), contains('int')),
+          ),
+        ),
+      );
+    });
+
+    test('opt-in validate=true catches malformed JSON early', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.json(validate: true), '{"oops"'),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('not valid JSON'),
+          ),
+        ),
+      );
+    });
+
+    test('default (validate=false) accepts malformed JSON without parsing', () {
+      // Hot-path safety net: the engine will reject malformed JSON
+      // at execute-time anyway. We deliberately do NOT parse on the
+      // happy path so multi-KB JSON payloads don't pay an extra
+      // jsonDecode cost per call.
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.json(), '{"oops"'),
+      ])[0];
+      expect((p as ParamValueString).value, equals('{"oops"'));
+    });
+  });
+
+  group('SqlDataType.uuid', () {
+    const canonical = '550e8400-e29b-41d4-a716-446655440000';
+
+    test('accepts canonical lowercase form unchanged', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.uuid, canonical),
+      ])[0];
+      expect((p as ParamValueString).value, equals(canonical));
+    });
+
+    test('folds uppercase to lowercase canonical form', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.uuid, canonical.toUpperCase()),
+      ])[0];
+      expect(
+        (p as ParamValueString).value,
+        equals(canonical),
+        reason: 'engine should always see normalised lowercase UUIDs',
+      );
+    });
+
+    test('strips {curly braces} (.NET tooling style)', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.uuid, '{$canonical}'),
+      ])[0];
+      expect((p as ParamValueString).value, equals(canonical));
+    });
+
+    test('expands bare 32-hex form to canonical 8-4-4-4-12', () {
+      final bareHex = canonical.replaceAll('-', '');
+      expect(bareHex.length, equals(32), reason: 'sanity check the test');
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.uuid, bareHex),
+      ])[0];
+      expect((p as ParamValueString).value, equals(canonical));
+    });
+
+    test('rejects malformed inputs with actionable message', () {
+      for (final bad in [
+        '',
+        'not-a-uuid',
+        '550e8400-e29b-41d4-a716', // too short
+        '550e8400-e29b-41d4-a716-446655440000-extra',
+        'gggggggg-gggg-gggg-gggg-gggggggggggg', // non-hex
+      ]) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.uuid, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('SqlDataType.uuid expects'),
+            ),
+          ),
+          reason: 'must reject $bad',
+        );
+      }
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.uuid, 42),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.money', () {
+    test('formats num with the canonical 4 fractional digits', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.money, 1234.5),
+      ])[0];
+      expect(p, isA<ParamValueDecimal>());
+      expect(
+        (p as ParamValueDecimal).value,
+        equals('1234.5000'),
+        reason: 'MONEY must always carry exactly 4 fractional digits '
+            'so the engine accepts it without scale renegotiation',
+      );
+    });
+
+    test('formats integer num without losing the trailing zeros', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.money, 100),
+      ])[0];
+      expect((p as ParamValueDecimal).value, equals('100.0000'));
+    });
+
+    test('formats negative values', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.money, -1.2345),
+      ])[0];
+      expect((p as ParamValueDecimal).value, equals('-1.2345'));
+    });
+
+    test('passes pre-formatted String through verbatim', () {
+      // Caller is trusted; we don't try to re-parse and re-format.
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.money, '1234567890.1234'),
+      ])[0];
+      expect((p as ParamValueDecimal).value, equals('1234567890.1234'));
+    });
+
+    test('rejects NaN and Infinity with consistent wording', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.money, double.nan),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('NaN'),
+          ),
+        ),
+      );
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.money, double.infinity),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('Infinity'),
+          ),
+        ),
+      );
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.money, double.negativeInfinity),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('-Infinity'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects unsupported payload types', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.money, true),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   group('Unsupported type errors (Phase 1)', () {
     test('unsupported type message remains identical', () {
       final custom = _CustomObject();
