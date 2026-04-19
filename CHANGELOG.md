@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Notes
+
+- **GitHub issues #1 and #2 are resolved by v3.3.0** (released as part of
+  the streaming multi-result + UTF-16 wide-text decoding work):
+  - [#1 — Chinese Character Encoding Issue with SQL Server NVARCHAR Fields](
+    https://github.com/cesar-carlos/dart_odbc_fast/issues/1) is closed by
+    the switch from `SQLGetData(SQL_C_CHAR)` to
+    `SQLGetData(SQL_C_WCHAR)` in `engine/cell_reader.rs` plus the Dart
+    `_decodeText` hardening (U+FFFD substitution instead of silent
+    Latin-1 fallback). Verified by
+    `tests/e2e_sqlserver_test.rs::test_e2e_sqlserver_unicode_chinese_round_trip`
+    against a real SQL Server (CJK + emoji + RTL all round-trip).
+  - [#2 — JSON Truncation in odbc_fast with SQL Server FOR JSON Queries](
+    https://github.com/cesar-carlos/dart_odbc_fast/issues/2) is closed by
+    `engine::sqlserver_json::coalesce_for_json_rows`, which detects the
+    reserved `JSON_F52E2B61-…` column name SQL Server emits for FOR JSON
+    payloads and concatenates the per-row chunks into a single logical
+    cell before encoding. Verified by
+    `tests/e2e_sqlserver_test.rs::test_e2e_sqlserver_for_json_path_returns_complete_payload`
+    (200 rows ≈ 19 KB reassembled across ~10 chunk boundaries).
+  Both issues should be closed on GitHub with a reference to v3.3.0.
+
 ## [3.3.0] - Streaming multi-result (M8)
 
 ### Added
