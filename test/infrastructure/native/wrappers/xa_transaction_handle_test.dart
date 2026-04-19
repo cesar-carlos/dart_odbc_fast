@@ -20,10 +20,10 @@ import 'package:test/test.dart';
 
 void main() {
   Xid mkXid(String label) => Xid(
-    formatId: 0,
-    gtrid: Uint8List.fromList(label.codeUnits),
-    bqual: Uint8List.fromList('b'.codeUnits),
-  );
+        formatId: 0,
+        gtrid: Uint8List.fromList(label.codeUnits),
+        bqual: Uint8List.fromList('b'.codeUnits),
+      );
 
   group('XaTransactionHandle.runWithStart', () {
     test('happy path: end → prepare → commitPrepared, returns value', () async {
@@ -70,8 +70,9 @@ void main() {
 
       await expectLater(
         XaTransactionHandle.runWithStart<void>(() => fake, (xa) async {
-          xa.end();
-          xa.prepare();
+          xa
+            ..end()
+            ..prepare();
           throw error;
         }),
         throwsA(same(error)),
@@ -236,8 +237,7 @@ enum _FailOn { none, end, prepare, commitPrepared, commitOnePhase, rollback }
 /// is non-nullable; every state-mutating method below is overridden
 /// so the underlying FFI surface is never reached.
 class _FakeXa extends XaTransactionHandle {
-  _FakeXa(Xid xid)
-    : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
+  _FakeXa(Xid xid) : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
 
   _FailOn failOn = _FailOn.none;
 
