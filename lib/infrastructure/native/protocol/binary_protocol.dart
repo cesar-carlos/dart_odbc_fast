@@ -160,9 +160,9 @@ class BinaryProtocolParser {
   /// - [Uint8List] for [OdbcType.binary]
   /// - [String] (UTF-8 decoded) for everything else
   ///
-  /// UTF-8 decoding falls back to `String.fromCharCodes` (latin1-ish) when
-  /// the bytes are not valid UTF-8, mirroring the previous loose behaviour
-  /// for backwards compatibility.
+  /// Invalid UTF-8 sequences are replaced with U+FFFD (the Unicode
+  /// REPLACEMENT CHARACTER) instead of being silently re-interpreted as
+  /// Latin-1 — see [_decodeText] for the rationale.
   static dynamic _convertData(Uint8List data, int odbcType) {
     final type = OdbcType.fromDiscriminant(odbcType);
     if (type == OdbcType.binary) {
@@ -184,13 +184,30 @@ class BinaryProtocolParser {
     return _decodeText(data);
   }
 
-  /// Strict UTF-8 decoding with a graceful fallback.
+  /// UTF-8 decoding with a malformed-sequence-tolerant fallback.
+  ///
+  /// The Rust engine is configured to read text columns through
+  /// `SQLGetData(SQL_C_WCHAR)` (odbc-api `default-features = false`,
+  /// no `narrow` feature), so the bytes that arrive here are always the
+  /// driver's UTF-16 → UTF-8 transcoding of the column value. Any byte
+  /// sequence that fails to decode therefore signals a real upstream
+  /// problem (driver bug, mid-Unicode truncation, deliberate corruption)
+  /// — **not** another encoding to be guessed.
+  ///
+  /// Historically this method fell back to `String.fromCharCodes(data)`,
+  /// which silently re-interprets the bytes as Latin-1. That fallback
+  /// caused the user-visible mojibake reported in
+  /// [issue #1](https://github.com/cesar-carlos/dart_odbc_fast/issues/1):
+  /// GBK bytes (when the driver was misconfigured) showed up as
+  /// `"¹ÜÀíÔ±"` instead of an obviously broken `"\uFFFD\uFFFD\uFFFD"`,
+  /// hiding the bug from both users and the test suite.
+  ///
+  /// We now use `utf8.decode(..., allowMalformed: true)` so invalid
+  /// sequences become U+FFFD. The byte stream always survives a round
+  /// trip, the upstream issue is no longer masked as plausible-looking
+  /// Western text, and CJK / GBK regression tests can pin the contract.
   static String _decodeText(Uint8List data) {
-    try {
-      return utf8.decode(data);
-    } on FormatException {
-      return String.fromCharCodes(data);
-    }
+    return utf8.decode(data, allowMalformed: true);
   }
 }
 

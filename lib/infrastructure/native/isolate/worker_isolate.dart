@@ -254,6 +254,22 @@ void _handleRequest(
         );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
+      case StreamMultiStartBatchedRequest():
+        final streamId = conn.streamMultiStartBatched(
+          request.connectionId,
+          request.sql,
+          chunkSize: request.chunkSize,
+        );
+        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+
+      case StreamMultiStartAsyncRequest():
+        final streamId = conn.streamMultiStartAsync(
+          request.connectionId,
+          request.sql,
+          chunkSize: request.chunkSize,
+        );
+        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+
       case StreamPollAsyncRequest():
         final status = conn.streamPollAsync(request.streamId);
         sendPort.send(IntResponse(request.requestId, status ?? -1));
@@ -698,6 +714,8 @@ void _sendErrorResponse(
     case StreamStartRequest():
     case StreamStartBatchedRequest():
     case StreamStartAsyncRequest():
+    case StreamMultiStartBatchedRequest():
+    case StreamMultiStartAsyncRequest():
     case ClearAllStatementsRequest():
     case ExecuteAsyncStartRequest():
     case AsyncPollRequest():

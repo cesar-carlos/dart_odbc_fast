@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - Streaming multi-result (M8)
+
+### Added
+
+- **M8 — Streaming multi-result.** New end-to-end stack that surfaces every
+  multi-result item incrementally instead of materialising the whole batch
+  in memory. Closes the only multi-result item that was deferred from
+  v3.2.0.
+- **Engine** (`native/odbc_engine/src/engine/streaming.rs`):
+  - `start_multi_batched_stream(handles, conn_id, sql, chunk_size)` —
+    spawns a worker that drives `Statement::more_results` raw + uses
+    `cursor.into_stmt()` to consume cursors **without** triggering
+    `SQLCloseCursor` (which would discard pending result sets, same trick
+    used for the M1 fix in v3.2.0).
+  - `start_multi_async_stream(...)` — async variant returning
+    `AsyncStreamingState` (poll + fetch).
+  - Each worker batch carries one frame-encoded multi-result item:
+    `[tag: u8][len: u32 LE][payload]`. `tag = 0` payload is a
+    `binary_protocol` row-buffer; `tag = 1` payload is `i64 LE` row count.
+  - Constants `MULTI_STREAM_ITEM_TAG_RESULT_SET = 0` and
+    `MULTI_STREAM_ITEM_TAG_ROW_COUNT = 1`.
+- **FFI** — 2 new exports:
+  - `odbc_stream_multi_start_batched(conn_id, sql, chunk_size)`
+  - `odbc_stream_multi_start_async(conn_id, sql, chunk_size)`
+  - Both return `stream_id` and reuse the existing `odbc_stream_fetch`,
+    `odbc_stream_cancel`, `odbc_stream_close` and `odbc_stream_poll_async`
+    FFIs, so no other surface has to change.
+- **Dart** — `MultiResultStreamDecoder` (lib/infrastructure/native/protocol)
+  reassembles partial frames into `MultiResultItem`s as bytes accumulate.
+  Bindings: `OdbcBindings.odbc_stream_multi_start_batched / _async`,
+  `OdbcNative.streamMultiStartBatched / _Async`,
+  `NativeOdbcConnection.streamMultiStartBatched / _Async`,
+  `AsyncNativeOdbcConnection.streamMultiStartBatched / _Async` (also
+  exposes `streamFetch` / `streamClose` so the high-level API can drive
+  the stream lifecycle), worker isolate handlers
+  (`StreamMultiStartBatchedRequest`, `StreamMultiStartAsyncRequest`).
+- **High-level Dart API** — `IOdbcService.streamQueryMulti(connId, sql)`
+  returns `Stream<Result<QueryResultMultiItem>>`. Each item is emitted as
+  soon as the Rust worker produces it.
+  `OdbcRepositoryImpl.streamQueryMulti` gracefully falls back to
+  `executeQueryMultiFull` when the loaded native library predates v3.3.0.
+- **`supportsStreamQueryMulti`** getters on `OdbcBindings`, `OdbcNative`
+  and `NativeOdbcConnection` so callers can detect the capability without
+  catching exceptions.
+
+### Tests
+
+- `tests/regression/m8_streaming_multi_result.rs` — 3 E2E tests (`#[ignore]`,
+  gated by `ENABLE_E2E_TESTS=1` + `ODBC_TEST_DSN`) covering the 3 batch
+  shapes that M1 already covered for the materialising path. All 3 pass
+  against a real SQL Server target.
+- `test/infrastructure/native/protocol/multi_result_stream_decoder_test.dart`
+  — 8 unit tests for the Dart frame decoder (full chunk, split-across,
+  multi-frame chunk, malformed tag/len, exhaustion checks).
+
+### Internal
+
+- `streaming.rs` exposes a small helper (`drive_multi_result_stream`) that
+  shares the cursor / row-count traversal logic with
+  `ExecutionEngine::collect_multi_results`. Both call paths use the same
+  no-`SQLCloseCursor` discipline.
+- `MockOdbcRepository` (test helper) now implements `streamQueryMulti`
+  via `executeQueryMultiFull` so existing tests keep compiling.
+
+### Migration
+
+- 100% backwards compatible. `executeQueryMulti / executeQueryMultiFull /
+  executeQueryMultiParams` continue to work unchanged. Use
+  `streamQueryMulti` whenever the batch result sets are large enough that
+  3× memory cost is meaningful (e.g. wide analytics joins).
+- Loading an older native library only loses the `streamQueryMulti` fast
+  path; `OdbcRepositoryImpl` automatically falls back to
+  `executeQueryMultiFull` and replays the items as a stream so the API
+  contract is preserved.
+
+### Validation
+
+- `cargo test --lib --include-ignored`: 857 passed / 0 failed (was 846).
+- `cargo test --test regression_test`: 78 passed / 0 failed / 7 ignored
+  (3 new M8 streaming + 4 M1 batch shapes — all 7 pass with
+  `ENABLE_E2E_TESTS=1`).
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
+- `dart analyze lib test example`: No issues found.
+- `dart test test/{application,domain,infrastructure,core,helpers}`:
+  430 passed / 0 failed / 3 skipped (was 418, +12 from the new decoder
+  unit tests + mock helpers).
+
 ## [3.2.0] - Multi-result hardening
 
 ### Fixed

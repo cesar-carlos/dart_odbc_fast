@@ -44,6 +44,8 @@ include = [
     "odbc_stream_start",
     "odbc_stream_start_batched",
     "odbc_stream_start_async",
+    "odbc_stream_multi_start_batched",
+    "odbc_stream_multi_start_async",
     "odbc_stream_poll_async",
     "odbc_stream_fetch",
     "odbc_stream_cancel",

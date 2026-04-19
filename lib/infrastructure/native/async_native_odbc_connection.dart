@@ -1133,6 +1133,44 @@ class AsyncNativeOdbcConnection {
     );
   }
 
+  /// Starts a streaming multi-result batch (M8 in v3.3.0). The chunks
+  /// emitted by `streamFetch` follow the framed wire format documented in
+  /// `MultiResultStreamDecoder`. Returns 0 when the loaded native library
+  /// does not export the FFI.
+  Future<int> streamMultiStartBatched(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamMultiStartBatchedRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      ),
+    );
+    return r.value;
+  }
+
+  /// Async variant of [streamMultiStartBatched]. Combine with
+  /// `streamPollAsync`.
+  Future<int> streamMultiStartAsync(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) async {
+    final r = await _sendRequest<IntResponse>(
+      StreamMultiStartAsyncRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      ),
+    );
+    return r.value;
+  }
+
   Future<int> _streamPollAsync(int streamId) async {
     final r = await _sendRequest<IntResponse>(
       StreamPollAsyncRequest(_nextRequestId(), streamId),
@@ -1151,12 +1189,22 @@ class AsyncNativeOdbcConnection {
     );
   }
 
+  /// Fetches the next chunk from an active stream in the worker.
+  /// Public counterpart of `_streamFetch`, used by callers that drive the
+  /// stream lifecycle themselves (e.g. `streamQueryMulti`). New in v3.3.0.
+  Future<StreamFetchResponse> streamFetch(int streamId) =>
+      _streamFetch(streamId);
+
   Future<bool> _streamClose(int streamId) async {
     final r = await _sendRequest<BoolResponse>(
       StreamCloseRequest(_nextRequestId(), streamId),
     );
     return r.value;
   }
+
+  /// Closes an active stream in the worker. Public counterpart of
+  /// `_streamClose` for the same reason as [streamFetch]. New in v3.3.0.
+  Future<bool> streamClose(int streamId) => _streamClose(streamId);
 
   /// Cancels an active low-level native stream in the worker.
   Future<bool> streamCancel(int streamId) async {

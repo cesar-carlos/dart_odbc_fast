@@ -448,6 +448,37 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   bool get supportsExecuteQueryMultiParams =>
       _native.supportsExecQueryMultiParams;
 
+  /// Whether the loaded native library exports the M8 streaming
+  /// multi-result FFIs (added in v3.3.0).
+  bool get supportsStreamQueryMulti => _native.supportsMultiResultStream;
+
+  /// Starts a streaming multi-result batch in batched mode and returns the
+  /// new stream id (or `null` on failure / unsupported native lib).
+  /// Use `streamFetch` / `streamCancel` / `streamClose` to drive it.
+  int? streamMultiStartBatched(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) =>
+      _native.streamMultiStartBatched(
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      );
+
+  /// Async variant of [streamMultiStartBatched]. Combine with
+  /// `streamPollAsync` for non-blocking readiness.
+  int? streamMultiStartAsync(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) =>
+      _native.streamMultiStartAsync(
+        connectionId,
+        sql,
+        chunkSize: chunkSize,
+      );
+
   /// Executes a parameterised batch SQL that may return multiple result sets.
   ///
   /// See `OdbcNative.execQueryMultiParams` for the full contract.

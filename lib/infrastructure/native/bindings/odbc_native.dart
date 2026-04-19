@@ -1274,6 +1274,61 @@ class OdbcNative {
     }
   }
 
+  /// Whether the loaded native library exports the M8 streaming
+  /// multi-result FFIs (added in v3.3.0).
+  bool get supportsMultiResultStream => _bindings.supportsMultiResultStream;
+  bool get supportsAsyncMultiResultStream =>
+      _bindings.supportsAsyncMultiResultStream;
+
+  /// Starts a streaming multi-result batch in batched mode.
+  ///
+  /// Each chunk emitted by `streamFetch` belongs to a frame-based wire
+  /// format where every frame carries one multi-result item:
+  ///
+  ///     [tag: u8] [len: u32 LE] [payload: len bytes]
+  ///
+  /// `tag = 0` payload is a `binary_protocol` row-buffer; `tag = 1` payload
+  /// is `i64 LE` row count. Use `MultiResultStreamDecoder` (Dart) to assemble
+  /// items as bytes accumulate. Returns the new stream id, or `null` when
+  /// the loaded native library predates v3.3.0.
+  int? streamMultiStartBatched(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) {
+    if (!_bindings.supportsMultiResultStream) return null;
+    final sqlPtr = sql.toNativeUtf8();
+    try {
+      return _bindings.odbc_stream_multi_start_batched(
+        connectionId,
+        sqlPtr.cast<bindings.Utf8>(),
+        chunkSize,
+      );
+    } finally {
+      malloc.free(sqlPtr);
+    }
+  }
+
+  /// Async variant of [streamMultiStartBatched]. Status is observable via
+  /// the existing [streamPollAsync].
+  int? streamMultiStartAsync(
+    int connectionId,
+    String sql, {
+    int chunkSize = 64 * 1024,
+  }) {
+    if (!_bindings.supportsAsyncMultiResultStream) return null;
+    final sqlPtr = sql.toNativeUtf8();
+    try {
+      return _bindings.odbc_stream_multi_start_async(
+        connectionId,
+        sqlPtr.cast<bindings.Utf8>(),
+        chunkSize,
+      );
+    } finally {
+      malloc.free(sqlPtr);
+    }
+  }
+
   /// Creates a new connection pool.
   ///
   /// The [connectionString] is used to establish connections in the pool.

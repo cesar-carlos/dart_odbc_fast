@@ -272,6 +272,16 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  ) {
+    // Telemetry per-stream is tricky because a stream can be long-lived.
+    // We surface the underlying stream as-is and let the consumer decide.
+    return _service.streamQueryMulti(connectionId, sql);
+  }
+
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,

@@ -4291,6 +4291,174 @@ pub extern "C" fn odbc_stream_start_async(
     }
 }
 
+/// Start a streaming **multi-result** batch (M8 in v3.3.0).
+///
+/// Like `odbc_stream_start_batched`, but the produced chunks belong to a
+/// frame-based wire format where every frame carries one multi-result item:
+///
+/// ```text
+/// [tag: u8] [len: u32 LE] [payload: len bytes]
+/// ```
+///
+/// `tag = 0` payload is a `binary_protocol` row-buffer; `tag = 1` payload is
+/// `i64 LE` row count. Consumers should accumulate raw chunks into a frame
+/// buffer and parse items as they complete, exactly like the Dart
+/// `MultiResultStreamDecoder`.
+///
+/// Reuses the existing fetch/cancel/close FFIs (`odbc_stream_fetch`,
+/// `odbc_stream_cancel`, `odbc_stream_close`).
+///
+/// Returns: stream_id (>0) on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn odbc_stream_multi_start_batched(
+    conn_id: c_uint,
+    sql: *const c_char,
+    chunk_size: c_uint,
+) -> c_uint {
+    if sql.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { CStr::from_ptr(sql) };
+    let sql_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let Some(state) = try_lock_global_state() else {
+        return 0;
+    };
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            drop(state);
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
+    };
+    let handles = conn.get_handles();
+    let chunk_size = if chunk_size > 0 {
+        chunk_size as usize
+    } else {
+        DEFAULT_CHUNK_SIZE as usize
+    };
+    let sql_owned = sql_str.to_string();
+    drop(state);
+
+    match crate::engine::start_multi_batched_stream(handles, conn_id, sql_owned, chunk_size) {
+        Ok(batched_state) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            let stream_id = allocate_stream_id(&mut state, conn_id);
+            if stream_id == 0 {
+                return 0;
+            }
+            state
+                .streams
+                .insert(stream_id, StreamKind::Batched(batched_state));
+            state.stream_connections.insert(stream_id, conn_id);
+            stream_id
+        }
+        Err(e) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("odbc_stream_multi_start_batched failed: {}", e),
+            );
+            0
+        }
+    }
+}
+
+/// Async variant of [`odbc_stream_multi_start_batched`]. Status is observable
+/// via the existing `odbc_stream_poll_async`.
+///
+/// Returns: stream_id (>0) on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn odbc_stream_multi_start_async(
+    conn_id: c_uint,
+    sql: *const c_char,
+    chunk_size: c_uint,
+) -> c_uint {
+    if sql.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { CStr::from_ptr(sql) };
+    let sql_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return 0;
+    };
+    let conn = match state.connections.get(&conn_id) {
+        Some(c) => c,
+        None => {
+            set_error(&mut state, format!("Invalid connection ID: {}", conn_id));
+            return 0;
+        }
+    };
+    let handles = conn.get_handles();
+    let chunk_size = if chunk_size > 0 {
+        chunk_size as usize
+    } else {
+        DEFAULT_CHUNK_SIZE as usize
+    };
+    let sql_owned = sql_str.to_string();
+    drop(state);
+
+    match crate::engine::start_multi_async_stream(handles, conn_id, sql_owned, chunk_size) {
+        Ok(async_state) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            let stream_id = allocate_stream_id(&mut state, conn_id);
+            if stream_id == 0 {
+                return 0;
+            }
+            state
+                .streams
+                .insert(stream_id, StreamKind::AsyncBatched(async_state));
+            state.stream_connections.insert(stream_id, conn_id);
+            stream_id
+        }
+        Err(e) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("odbc_stream_multi_start_async failed: {}", e),
+            );
+            0
+        }
+    }
+}
+
+/// Allocate a stream id while caller holds the global state lock. Sets a
+/// connection error and returns 0 if exhausted.
+fn allocate_stream_id(state: &mut GlobalState, conn_id: u32) -> u32 {
+    for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
+        let candidate = state.next_stream_id;
+        state.next_stream_id = state.next_stream_id.wrapping_add(1);
+        if candidate != 0 && !state.streams.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    set_connection_error(state, conn_id, "Failed to allocate stream ID".to_string());
+    0
+}
+
 /// Poll async stream status.
 /// out_status: 0=pending, 1=ready, 2=done, -1=error, -2=cancelled
 /// Returns: 0 on success, non-zero on failure.

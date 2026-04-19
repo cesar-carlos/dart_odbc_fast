@@ -31,17 +31,49 @@ pub fn read_cell_bytes(
     }
 }
 
+/// Read a text cell as UTF-8 bytes, regardless of the column's underlying
+/// SQL type or the driver's locale.
+///
+/// ## Why we go through `get_wide_text`
+///
+/// `odbc_api::CursorRow::get_text` issues `SQLGetData(SQL_C_CHAR)`, which
+/// asks the ODBC driver to deliver the value transcoded to the **client's
+/// ANSI code page**. For a US/Western Windows host this is CP1252; for a
+/// Linux box it depends on `LANG`. Any character that does not fit the
+/// destination code page is silently replaced by `?` (or, with some
+/// drivers, by a Latin-1-looking byte sequence — the `"¹ÜÀíÔ±"` mojibake
+/// reported in [issue #1](
+/// https://github.com/cesar-carlos/dart_odbc_fast/issues/1)).
+///
+/// `get_wide_text` issues `SQLGetData(SQL_C_WCHAR)` instead, which is
+/// guaranteed by the spec to deliver UTF-16 LE — the same encoding SQL
+/// Server uses internally for `NVARCHAR`. We then transcode the UTF-16
+/// code units to UTF-8 ourselves, with `String::from_utf16_lossy`
+/// substituting U+FFFD for any unpaired surrogate (which the driver
+/// should never emit, but we tolerate defensively).
+///
+/// This means **every** text-shaped column (`VARCHAR`, `NVARCHAR`,
+/// `CHAR`, `NCHAR`, `TEXT`, `NTEXT`, `WLONGVARCHAR`, dates and numerics
+/// returned as text, etc.) round-trips Unicode correctly without
+/// requiring connection-string tweaks like `CodePage=936` or driver-
+/// specific options. The cost is a single per-cell UTF-16 → UTF-8 pass;
+/// negligible compared with the ODBC fetch itself.
 fn read_text(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
-    let mut buf: Vec<u8> = Vec::new();
+    let mut wide_buf: Vec<u16> = Vec::new();
     let has_value = row
-        .get_text(column_number, &mut buf)
+        .get_wide_text(column_number, &mut wide_buf)
         .map_err(OdbcError::from)?;
 
-    if has_value {
-        Ok(Some(buf))
-    } else {
-        Ok(None)
+    if !has_value {
+        return Ok(None);
     }
+
+    // `from_utf16_lossy` replaces any unpaired surrogate with U+FFFD.
+    // SQL Server / SQL_C_WCHAR never emit those in practice, but if a
+    // misbehaving driver did we'd rather see the replacement character
+    // than panic or truncate.
+    let utf8 = String::from_utf16_lossy(&wide_buf);
+    Ok(Some(utf8.into_bytes()))
 }
 
 fn read_binary(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {

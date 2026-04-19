@@ -124,6 +124,12 @@ abstract class IOdbcService {
     List<dynamic> params,
   );
 
+  /// Streams a multi-result batch one item at a time. New in v3.3.0 (M8).
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  );
+
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
@@ -476,6 +482,14 @@ class OdbcService implements IOdbcService {
     List<dynamic> params,
   ) async {
     return _repository.executeQueryMultiParams(connectionId, sql, params);
+  }
+
+  @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  ) {
+    return _repository.streamQueryMulti(connectionId, sql);
   }
 
   @override

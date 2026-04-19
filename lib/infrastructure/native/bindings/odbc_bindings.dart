@@ -44,9 +44,15 @@ class OdbcBindings {
     _odbc_stream_start_ptr = _dylib.lookup('odbc_stream_start');
     try {
       _odbc_stream_start_async_ptr = _dylib.lookup('odbc_stream_start_async');
+      _odbc_stream_multi_start_batched_ptr =
+          _dylib.lookup('odbc_stream_multi_start_batched');
+      _odbc_stream_multi_start_async_ptr =
+          _dylib.lookup('odbc_stream_multi_start_async');
       _odbc_stream_poll_async_ptr = _dylib.lookup('odbc_stream_poll_async');
     } on Object catch (_) {
       _odbc_stream_start_async_ptr = null;
+      _odbc_stream_multi_start_batched_ptr = null;
+      _odbc_stream_multi_start_async_ptr = null;
       _odbc_stream_poll_async_ptr = null;
     }
     _odbc_stream_fetch_ptr = _dylib.lookup('odbc_stream_fetch');
@@ -190,6 +196,10 @@ class OdbcBindings {
       _odbc_stream_start_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_stream_start_async_func>>?
       _odbc_stream_start_async_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_multi_start_batched_func>>?
+      _odbc_stream_multi_start_batched_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_multi_start_async_func>>?
+      _odbc_stream_multi_start_async_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_stream_poll_async_func>>?
       _odbc_stream_poll_async_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_stream_fetch_func>>
@@ -338,6 +348,19 @@ class OdbcBindings {
 
   bool get supportsAsyncStreamApi =>
       _odbc_stream_start_async_ptr != null &&
+      _odbc_stream_poll_async_ptr != null;
+
+  /// True when the loaded native library exports
+  /// `odbc_stream_multi_start_batched` (added in v3.3.0). Used by
+  /// `OdbcNative.streamMultiStartBatched` to refuse silently on older
+  /// binaries.
+  bool get supportsMultiResultStream =>
+      _odbc_stream_multi_start_batched_ptr != null;
+
+  /// True when both multi-result streaming start FFIs and the existing
+  /// async-poll FFI are available.
+  bool get supportsAsyncMultiResultStream =>
+      _odbc_stream_multi_start_async_ptr != null &&
       _odbc_stream_poll_async_ptr != null;
 
   int odbc_init() => _odbc_init_ptr.asFunction<int Function()>()();
@@ -511,6 +534,38 @@ class OdbcBindings {
       connId,
       sql,
       fetchSize,
+      chunkSize,
+    );
+  }
+
+  /// Starts a streaming multi-result batch in batched mode.
+  /// Returns `null` if the native library predates v3.3.0.
+  int? odbc_stream_multi_start_batched(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int chunkSize,
+  ) {
+    final ptr = _odbc_stream_multi_start_batched_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<Utf8>, int)>()(
+      connId,
+      sql,
+      chunkSize,
+    );
+  }
+
+  /// Starts a streaming multi-result batch in async mode (poll + fetch).
+  /// Returns `null` if the native library predates v3.3.0.
+  int? odbc_stream_multi_start_async(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int chunkSize,
+  ) {
+    final ptr = _odbc_stream_multi_start_async_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<int Function(int, ffi.Pointer<Utf8>, int)>()(
+      connId,
+      sql,
       chunkSize,
     );
   }
@@ -1247,6 +1302,16 @@ typedef odbc_async_get_result_func = ffi.Int32 Function(
 typedef odbc_async_cancel_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_async_free_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_stream_start_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+);
+typedef odbc_stream_multi_start_batched_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+);
+typedef odbc_stream_multi_start_async_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
   ffi.Uint32,

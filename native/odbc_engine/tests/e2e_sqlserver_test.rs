@@ -965,3 +965,273 @@ fn test_e2e_sqlserver_text_type() {
 
     conn.disconnect().expect("Failed to disconnect");
 }
+
+// -------------------------------------------------------------------------
+// FOR JSON regression tests (closes GitHub issue #2)
+//
+// SQL Server splits `FOR JSON` payloads into multiple rows of up to ~2033
+// characters each, all under the reserved column name
+// `JSON_F52E2B61-18A1-11D1-B105-00805F49916B`. Without coalescing, callers
+// see only the first row and report "JSON truncation". The engine now
+// reassembles those chunks into a single logical cell — see
+// `engine::sqlserver_json` for details.
+// -------------------------------------------------------------------------
+
+/// Build a synthetic `FOR JSON` query whose output is large enough to be
+/// guaranteed to span more than one ~2033-byte chunk on the wire.
+///
+/// Generates `row_count` rows from a recursive CTE; SQL Server's default
+/// recursion limit is 100, so we cap it via `OPTION (MAXRECURSION ...)`.
+fn build_for_json_stress_query(row_count: usize) -> String {
+    format!(
+        "WITH n(i) AS ( \
+             SELECT 1 \
+             UNION ALL \
+             SELECT i + 1 FROM n WHERE i < {row_count} \
+         ) \
+         SELECT i AS id, \
+                CONCAT('row-', i) AS label, \
+                'lorem ipsum dolor sit amet, consectetur adipiscing elit' AS payload \
+         FROM n \
+         FOR JSON PATH \
+         OPTION (MAXRECURSION {row_count})"
+    )
+}
+
+#[test]
+fn test_e2e_sqlserver_for_json_path_returns_complete_payload() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
+
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    // 200 rows × ~80 chars each ≈ 16 KB of JSON, comfortably crossing the
+    // 2033-byte SQL Server chunk boundary multiple times.
+    const ROW_COUNT: usize = 200;
+    let sql = build_for_json_stress_query(ROW_COUNT);
+
+    let buffer = execute_query_with_connection(odbc_conn.connection(), &sql)
+        .expect("Failed to execute FOR JSON query");
+
+    drop(handles_guard);
+
+    let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode binary protocol");
+
+    // Coalescing collapses N driver-emitted chunks into exactly one row
+    // with one cell. Pre-fix this would have been ~8 rows of ~2033 bytes
+    // each.
+    assert_eq!(
+        decoded.column_count, 1,
+        "FOR JSON should expose a single column"
+    );
+    assert_eq!(
+        decoded.row_count, 1,
+        "FOR JSON chunks must be coalesced into a single row (closes #2)"
+    );
+
+    let cell = decoded.rows[0][0]
+        .as_ref()
+        .expect("Coalesced FOR JSON cell should not be NULL");
+
+    let json_text =
+        std::str::from_utf8(cell).expect("FOR JSON payload must be valid UTF-8 after coalescing");
+
+    // Sanity-check the well-formedness boundary that broke pre-fix:
+    // the document opens with `[{` and closes with `}]` and contains
+    // every row's id.
+    assert!(
+        json_text.starts_with('['),
+        "FOR JSON output must start with '[', got: {}",
+        &json_text[..json_text.len().min(40)]
+    );
+    assert!(
+        json_text.ends_with(']'),
+        "FOR JSON output must end with ']', not be truncated mid-document"
+    );
+    assert!(
+        cell.len() > 2033,
+        "Stress payload should exceed one chunk; got {} bytes — \
+         the test corpus is too small to exercise the regression",
+        cell.len()
+    );
+
+    // Every row id from 1..=ROW_COUNT must appear; if even one is missing
+    // the chunks were truncated or reordered.
+    for id in 1..=ROW_COUNT {
+        let needle = format!("\"id\":{id},");
+        // The last row has a closing `}]` instead of `},`, handle it
+        // separately.
+        let last_needle = format!("\"id\":{id}}}]");
+        assert!(
+            json_text.contains(&needle) || json_text.contains(&last_needle),
+            "id {id} missing from coalesced FOR JSON payload \
+             (cell length = {} bytes)",
+            cell.len()
+        );
+    }
+
+    // Round-trip through serde_json to confirm the payload is structurally
+    // valid JSON, not just "looks-like-JSON" bytes.
+    let parsed: serde_json::Value = serde_json::from_str(json_text)
+        .expect("Coalesced FOR JSON output must parse as valid JSON");
+    let arr = parsed
+        .as_array()
+        .expect("FOR JSON PATH must produce a top-level array");
+    assert_eq!(
+        arr.len(),
+        ROW_COUNT,
+        "JSON array must contain every row that was selected"
+    );
+
+    println!(
+        "✓ FOR JSON path coalescing test passed: {ROW_COUNT} rows reassembled into {} bytes",
+        cell.len()
+    );
+
+    conn.disconnect().expect("Failed to disconnect");
+}
+
+#[test]
+fn test_e2e_sqlserver_for_json_empty_result_set_is_empty_array() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
+
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    // SQL Server returns *no rows* (not an empty `[]`) for an empty FOR
+    // JSON result set — by design. The coalescer must preserve this
+    // shape rather than fabricating a fake row.
+    let sql = "SELECT 1 AS x WHERE 1 = 0 FOR JSON PATH";
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute empty FOR JSON query");
+
+    drop(handles_guard);
+
+    let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode binary protocol");
+
+    assert_eq!(decoded.column_count, 1);
+    assert_eq!(
+        decoded.row_count, 0,
+        "Empty FOR JSON result must remain a 0-row result set; \
+         coalescing must be a no-op when there is nothing to merge"
+    );
+
+    println!("✓ FOR JSON empty result test passed");
+
+    conn.disconnect().expect("Failed to disconnect");
+}
+
+#[test]
+fn test_e2e_sqlserver_unicode_chinese_round_trip() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
+
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    // Regression coverage for issue #1: Chinese characters stored in
+    // NVARCHAR must come back as well-formed UTF-8, NOT mojibake like
+    // "¹ÜÀíÔ±". Uses `N'...'` literals so the values travel through the
+    // server as Unicode regardless of session collation.
+    let sql = "SELECT \
+                   N'管理员' AS role, \
+                   N'测试用户' AS username, \
+                   N'你好世界 🌍' AS greeting, \
+                   N'مرحبا' AS arabic, \
+                   N'こんにちは' AS japanese";
+
+    let buffer = execute_query_with_connection(odbc_conn.connection(), sql)
+        .expect("Failed to execute Unicode round-trip query");
+
+    drop(handles_guard);
+
+    let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode binary protocol");
+
+    assert_eq!(decoded.column_count, 5);
+    assert_eq!(decoded.row_count, 1);
+
+    let expected = ["管理员", "测试用户", "你好世界 🌍", "مرحبا", "こんにちは"];
+    for (idx, want) in expected.iter().enumerate() {
+        let cell = decoded.rows[0][idx]
+            .as_ref()
+            .expect("Unicode column must not be NULL");
+        let got = std::str::from_utf8(cell).unwrap_or_else(|e| {
+            panic!(
+                "Column {idx} payload is not valid UTF-8: {e} (raw bytes: {:?})",
+                cell
+            )
+        });
+        // Trim trailing padding the driver may add for fixed-width CHAR
+        // promotions, but never alter the Unicode payload itself.
+        assert_eq!(
+            got.trim_end(),
+            *want,
+            "Column {idx} ({want:?}) round-trip failed; got {got:?}. \
+             This is the issue #1 regression — UTF-16 → UTF-8 transcoding \
+             is broken for non-ASCII text."
+        );
+    }
+
+    println!("✓ Unicode (CJK + emoji + RTL) round-trip test passed");
+
+    conn.disconnect().expect("Failed to disconnect");
+}

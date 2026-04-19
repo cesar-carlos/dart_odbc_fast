@@ -6,6 +6,7 @@ pub mod dbms_info;
 pub mod environment;
 pub mod identifier;
 pub mod query;
+pub mod sqlserver_json;
 pub mod statement;
 pub mod streaming;
 pub mod transaction;
@@ -26,9 +27,13 @@ pub use query::{
     execute_query_with_connection, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics,
 };
+pub use sqlserver_json::{
+    coalesce_for_json_rows, is_for_json_result, SQLSERVER_FOR_JSON_COLUMN_NAME,
+};
 pub use statement::StatementHandle;
 pub use streaming::{
-    AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, StreamState, StreamingExecutor,
-    StreamingState,
+    start_multi_async_stream, start_multi_batched_stream, AsyncStreamStatus, AsyncStreamingState,
+    BatchedStreamingState, StreamState, StreamingExecutor, StreamingState,
+    MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
 pub use transaction::{IsolationLevel, Savepoint, SavepointDialect, Transaction, TransactionState};

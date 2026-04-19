@@ -245,6 +245,20 @@ abstract class IOdbcRepository {
     List<dynamic> params,
   );
 
+  /// Streams a multi-result batch one item at a time.
+  ///
+  /// Items are surfaced in execution order as soon as they are produced by
+  /// the engine, instead of materialising the whole batch in memory. Each
+  /// emitted item is either a result-set or a row-count.
+  /// New in v3.3.0 (M8).
+  ///
+  /// On runtime failure, the stream emits a single failure result and
+  /// closes.
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  );
+
   /// Queries the database catalog for table information.
   ///
   /// Returns metadata about tables in the specified [catalog] and [schema].

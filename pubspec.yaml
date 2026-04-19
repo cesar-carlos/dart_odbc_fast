@@ -1,4 +1,15 @@
 name: odbc_fast
+# v3.3.0 - Streaming multi-result (M8):
+#   - New odbc_stream_multi_start_batched / _async FFIs that surface every
+#     multi-result item as a frame ([tag: u8][len: u32][payload]) over the
+#     existing odbc_stream_fetch / cancel / close pipeline.
+#   - StreamingExecutor uses Statement::more_results raw + cursor.into_stmt()
+#     to walk the full chain incrementally; supports all 4 batch shapes
+#     (cursor->cursor, rowcount->rowcount, rowcount->cursor, cursor->rowcount).
+#   - Dart MultiResultStreamDecoder reassembles partial frames + emits items.
+#   - IOdbcService.streamQueryMulti returns Stream<Result<QueryResultMultiItem>>;
+#     OdbcRepositoryImpl gracefully falls back to executeQueryMultiFull when
+#     the loaded native library predates v3.3.0.
 # v3.2.0 - Multi-result hardening:
 #   - M1: collect_multi_results walks every result set in any batch shape
 #     (cursor->cursor, rowcount->rowcount, rowcount->cursor, cursor->rowcount).
@@ -27,7 +38,7 @@ name: odbc_fast
 # New features: MINOR bumps (3.1.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.2.0
+version: 3.3.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

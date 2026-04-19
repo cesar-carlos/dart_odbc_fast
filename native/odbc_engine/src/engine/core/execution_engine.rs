@@ -1,5 +1,6 @@
 use super::prepared_cache::PreparedStatementCache;
 use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::CachedConnection;
 use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
@@ -181,6 +182,11 @@ impl ExecutionEngine {
                 row_buffer.add_row(row_data);
             }
         }
+
+        // Reassemble SQL Server FOR JSON multi-row chunks into a single
+        // logical cell. No-op for any other result shape. See
+        // `engine::sqlserver_json` for the rationale (closes #2).
+        coalesce_for_json_rows(&mut row_buffer);
 
         if self.use_columnar {
             let columnar_buffer = row_buffer_to_columnar(&row_buffer);
@@ -370,6 +376,9 @@ impl ExecutionEngine {
                 row_buffer.add_row(row_data);
             }
         }
+
+        // FOR JSON normalisation — see execute_query_inner above (closes #2).
+        coalesce_for_json_rows(&mut row_buffer);
 
         if self.use_columnar {
             let columnar_buffer = row_buffer_to_columnar(&row_buffer);
@@ -668,6 +677,9 @@ impl ExecutionEngine {
             }
             row_buffer.add_row(row_data);
         }
+
+        // FOR JSON normalisation — see execute_query_inner above (closes #2).
+        coalesce_for_json_rows(&mut row_buffer);
 
         if self.use_columnar {
             let columnar_buffer = row_buffer_to_columnar(&row_buffer);

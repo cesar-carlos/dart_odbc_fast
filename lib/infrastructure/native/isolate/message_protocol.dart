@@ -25,6 +25,8 @@ enum RequestType {
   streamStart,
   streamStartBatched,
   streamStartAsync,
+  streamMultiStartBatched,
+  streamMultiStartAsync,
   streamPollAsync,
   streamFetch,
   streamCancel,
@@ -293,6 +295,32 @@ class StreamStartAsyncRequest extends WorkerRequest {
   final int connectionId;
   final String sql;
   final int fetchSize;
+  final int chunkSize;
+}
+
+/// Start streaming multi-result batch (M8 in v3.3.0).
+class StreamMultiStartBatchedRequest extends WorkerRequest {
+  const StreamMultiStartBatchedRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.chunkSize = 64 * 1024,
+  }) : super(requestId, RequestType.streamMultiStartBatched);
+  final int connectionId;
+  final String sql;
+  final int chunkSize;
+}
+
+/// Start async streaming multi-result batch (M8 in v3.3.0).
+class StreamMultiStartAsyncRequest extends WorkerRequest {
+  const StreamMultiStartAsyncRequest(
+    int requestId,
+    this.connectionId,
+    this.sql, {
+    this.chunkSize = 64 * 1024,
+  }) : super(requestId, RequestType.streamMultiStartAsync);
+  final int connectionId;
+  final String sql;
   final int chunkSize;
 }
 

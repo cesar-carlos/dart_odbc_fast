@@ -20,6 +20,8 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
     show MultiResultItem, MultiResultParser;
+import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart'
+    show MultiResultStreamDecoder;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -564,6 +566,136 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
 
     return _withReconnect(connectionId, runWithTimeout);
+  }
+
+  @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  ) async* {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      yield const Failure<QueryResultMultiItem, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+      return;
+    }
+
+    // The streaming multi-result FFIs were added in v3.3.0. On older sync
+    // native libraries we degrade gracefully to executeQueryMultiFull
+    // (single batch in memory) so the API contract holds even without M8
+    // binaries. The async path always tries the worker; if the worker
+    // replies with streamId=0 we surface a clear error.
+    final supportsStreaming =
+        _isAsync || (_native as NativeOdbcConnection).supportsStreamQueryMulti;
+    if (!supportsStreaming) {
+      final fallback = await executeQueryMultiFull(connectionId, sql);
+      if (fallback.isError()) {
+        final err = fallback.exceptionOrNull();
+        yield Failure<QueryResultMultiItem, OdbcError>(
+          err is OdbcError ? err : QueryError(message: err.toString()),
+        );
+        return;
+      }
+      final items = fallback.getOrNull()!.items;
+      for (final item in items) {
+        yield Success<QueryResultMultiItem, OdbcError>(item);
+      }
+      return;
+    }
+
+    var streamId = 0;
+    try {
+      streamId = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .streamMultiStartBatched(nativeId, sql)
+          : (_native as NativeOdbcConnection)
+                  .streamMultiStartBatched(nativeId, sql) ??
+              0;
+      if (streamId == 0) {
+        final nativeErr = _isAsync
+            ? '(async worker reported failure)'
+            : (_native as NativeOdbcConnection).getError();
+        yield Failure<QueryResultMultiItem, OdbcError>(
+          QueryError(
+            message: 'Failed to start streaming multi-result: $nativeErr',
+          ),
+        );
+        return;
+      }
+
+      final decoder = MultiResultStreamDecoder();
+      while (true) {
+        final bool ok;
+        final Uint8List? data;
+        final bool hasMore;
+        final String? errMsg;
+        if (_isAsync) {
+          final fetched = await (_native as AsyncNativeOdbcConnection)
+              .streamFetch(streamId);
+          ok = fetched.success;
+          data = fetched.data;
+          hasMore = fetched.hasMore;
+          errMsg = fetched.error;
+        } else {
+          final fetched =
+              (_native as NativeOdbcConnection).streamFetch(streamId);
+          ok = fetched.success;
+          final raw = fetched.data;
+          data = raw == null ? null : Uint8List.fromList(raw);
+          hasMore = fetched.hasMore;
+          // `_native` was already narrowed by the `streamFetch` call above.
+          // ignore: unnecessary_cast
+          errMsg = ok ? null : (_native as NativeOdbcConnection).getError();
+        }
+
+        if (!ok) {
+          yield Failure<QueryResultMultiItem, OdbcError>(
+            QueryError(message: errMsg ?? 'Stream fetch failed'),
+          );
+          return;
+        }
+        if (data != null && data.isNotEmpty) {
+          for (final item in decoder.feed(Uint8List.fromList(data))) {
+            yield Success<QueryResultMultiItem, OdbcError>(
+              _toQueryResultMultiItem(item),
+            );
+          }
+        }
+        if (!hasMore) {
+          break;
+        }
+      }
+
+      try {
+        decoder.assertExhausted();
+      } on FormatException catch (e) {
+        yield Failure<QueryResultMultiItem, OdbcError>(
+          MalformedPayloadError(message: e.message),
+        );
+        return;
+      }
+    } on Exception catch (e) {
+      yield Failure<QueryResultMultiItem, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    } finally {
+      if (streamId != 0) {
+        if (_isAsync) {
+          await (_native as AsyncNativeOdbcConnection).streamClose(streamId);
+        } else {
+          (_native as NativeOdbcConnection).streamClose(streamId);
+        }
+      }
+    }
+  }
+
+  QueryResultMultiItem _toQueryResultMultiItem(MultiResultItem item) {
+    final rs = item.resultSet;
+    if (rs != null) {
+      return QueryResultMultiItem.resultSet(_toQueryResult(rs));
+    }
+    return QueryResultMultiItem.rowCount(item.rowCount ?? 0);
   }
 
   @override

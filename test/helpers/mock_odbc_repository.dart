@@ -318,6 +318,24 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
+    String connectionId,
+    String sql,
+  ) async* {
+    final full = await executeQueryMultiFull(connectionId, sql);
+    if (full.isError()) {
+      final err = full.exceptionOrNull();
+      yield Failure<QueryResultMultiItem, OdbcError>(
+        err is OdbcError ? err : QueryError(message: err.toString()),
+      );
+      return;
+    }
+    for (final item in full.getOrNull()!.items) {
+      yield Success<QueryResultMultiItem, OdbcError>(item);
+    }
+  }
+
+  @override
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
