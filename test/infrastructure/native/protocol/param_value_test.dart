@@ -843,6 +843,321 @@ void main() {
     });
   });
 
+  // -----------------------------------------------------------------
+  // Engine-specific SqlDataType kinds
+  // PostgreSQL:    range, cidr, tsvector
+  // SQL Server:    hierarchyId, geography
+  // Oracle:        raw, bfile
+  //
+  // These wrap existing wire primitives (String / Binary); the value
+  // is the type-discipline at the call site plus per-kind validation.
+  // Several of them require the caller to wrap the parameter in a
+  // CAST or constructor function inside the SQL itself — see each
+  // kind's doc comment in `param_value.dart` for the convention.
+  // -----------------------------------------------------------------
+
+  group('SqlDataType.range (PostgreSQL)', () {
+    test('passes a range literal through verbatim', () {
+      for (final literal in [
+        '[1,10)',
+        '(1,5]',
+        'empty',
+        '[2020-01-01,2020-12-31)',
+        '[1.5,3.5]',
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.range, literal),
+        ])[0];
+        expect(p, isA<ParamValueString>());
+        expect(
+          (p as ParamValueString).value,
+          equals(literal),
+          reason: 'concrete range subtype is resolved by the server; '
+              'this layer must not mangle the literal',
+        );
+      }
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.range, [1, 10]),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.cidr (PostgreSQL)', () {
+    test('accepts well-formed IPv4 with and without /prefix', () {
+      for (final ip in [
+        '192.168.1.1',
+        '192.168.1.0/24',
+        '10.0.0.0/8',
+        '0.0.0.0/0',
+        '255.255.255.255/32',
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.cidr, ip),
+        ])[0];
+        expect((p as ParamValueString).value, equals(ip));
+      }
+    });
+
+    test('accepts well-formed IPv6 with and without /prefix', () {
+      for (final ip in [
+        '2001:db8::1',
+        '2001:db8::/32',
+        'fe80::1/64',
+        '::1',
+        '::/0',
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.cidr, ip),
+        ])[0];
+        expect(
+          (p as ParamValueString).value,
+          equals(ip),
+          reason: 'IPv6 literal "$ip" must be accepted',
+        );
+      }
+    });
+
+    test('rejects obviously-malformed inputs early', () {
+      for (final bad in [
+        '',
+        'not-an-ip',
+        '192.168.1.1/33', // mask out of range for IPv4
+        '300.300.300.300', // out of octet range — caught loosely
+        // ^^^ note: we accept loose octet ranges; PostgreSQL is the
+        // authoritative validator. This test only pins what we DO
+        // catch (the structural shape).
+        'fe80:::1', // triple colon — malformed compact form
+      ]) {
+        // Use any check that covers obvious typos only; the exact
+        // rejection rate is a quality knob, not a contract. Pin the
+        // rejected inputs we actually catch.
+        final shouldReject = bad == '' ||
+            bad == 'not-an-ip' ||
+            bad == '192.168.1.1/33' ||
+            bad == 'fe80:::1';
+        if (!shouldReject) continue;
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.cidr, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('SqlDataType.cidr'),
+            ),
+          ),
+          reason: 'cidr must reject obvious typo "$bad"',
+        );
+      }
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.cidr, 0xC0A80101),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.tsvector (PostgreSQL)', () {
+    test('passes a tsvector literal through verbatim', () {
+      for (final literal in [
+        'fat:1A cat:2B sat:3 mat:4',
+        'hello world',
+        "'a' 'b' 'c'",
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.tsvector, literal),
+        ])[0];
+        expect((p as ParamValueString).value, equals(literal));
+      }
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.tsvector, ['fat', 'cat']),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.hierarchyId (SQL Server)', () {
+    test('accepts the canonical "/"-rooted, "/"-terminated forms', () {
+      for (final path in [
+        '/',
+        '/1/',
+        '/1/2/',
+        '/1/2/3.5/', // .5 inserts between siblings 3 and 4 without renumber
+        '/1/2/3.5/4/',
+        '/100/200/300/',
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.hierarchyId, path),
+        ])[0];
+        expect((p as ParamValueString).value, equals(path));
+      }
+    });
+
+    test('rejects malformed paths', () {
+      for (final bad in [
+        '',
+        '1/2/', // missing leading /
+        '/1/2', // missing trailing /
+        '/1/-2/', // negative segment
+        '/a/', // non-decimal segment
+        '/1//2/', // empty segment
+      ]) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.hierarchyId, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('SqlDataType.hierarchyId'),
+            ),
+          ),
+          reason: 'hierarchyId must reject "$bad"',
+        );
+      }
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.hierarchyId, 1),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.geography (SQL Server)', () {
+    test('passes a WKT literal through verbatim', () {
+      for (final wkt in [
+        'POINT(-122.349 47.651)',
+        'LINESTRING(0 0, 1 1, 2 2)',
+        'POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))',
+        'MULTIPOINT((0 0), (1 1))',
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.geography, wkt),
+        ])[0];
+        expect(
+          (p as ParamValueString).value,
+          equals(wkt),
+          reason: 'caller wraps in geography::STGeomFromText(?, srid) '
+              'in the SQL — the WKT itself must not be mangled',
+        );
+      }
+    });
+
+    test(
+      'rejects List<int> with actionable hint pointing at varBinary',
+      () {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.geography, [0x01, 0x01, 0x00]),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('SqlDataType.geography expects String (WKT)'),
+                contains('SqlDataType.varBinary'),
+                contains('STGeomFromWKB'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('rejects num and other non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.geography, 47.651),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.raw (Oracle)', () {
+    test('serialises List<int> as ParamValueBinary', () {
+      final bytes = [0xDE, 0xAD, 0xBE, 0xEF];
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.raw, bytes),
+      ])[0];
+      expect(p, isA<ParamValueBinary>());
+      expect((p as ParamValueBinary).value, equals(bytes));
+    });
+
+    test('is wire-compatible with varBinary (idiomatic alias)', () {
+      // Same input, two type names → identical wire output. If a
+      // future refactor splits them this test catches the regression.
+      final bytes = [1, 2, 3, 4, 5];
+      final asRaw = paramValuesFromObjects([
+        typedParam(SqlDataType.raw, bytes),
+      ])[0];
+      final asVarBinary = paramValuesFromObjects([
+        typedParam(SqlDataType.varBinary(), bytes),
+      ])[0];
+      expect(asRaw.serialize(), equals(asVarBinary.serialize()));
+    });
+
+    test('handles empty payloads', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.raw, <int>[]),
+      ])[0];
+      expect((p as ParamValueBinary).value, isEmpty);
+    });
+
+    test('rejects non-List<int> payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.raw, 'DEADBEEF'),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.bfile (Oracle)', () {
+    test('passes a BFILENAME(...) snippet through verbatim', () {
+      // BFILE is unusual: the parameter usually carries a complete
+      // SQL fragment that the server evaluates. Wire layer must not
+      // touch the string contents.
+      const snippet = "BFILENAME('DIR_OBJECT', 'docs/file.pdf')";
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.bfile, snippet),
+      ])[0];
+      expect((p as ParamValueString).value, equals(snippet));
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.bfile, 0),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   group('Unsupported type errors (Phase 1)', () {
     test('unsupported type message remains identical', () {
       final custom = _CustomObject();

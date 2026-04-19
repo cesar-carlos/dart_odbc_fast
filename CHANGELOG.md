@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SqlDataType` engine-specific kinds.** Seven additional typed kinds
+  for engine-native types that don't have a portable cross-vendor
+  equivalent. Brings the `SqlDataType` surface from 20/30 → **27/30**
+  of the [TYPE_MAPPING.md](../doc/notes/TYPE_MAPPING.md) roadmap.
+  Wire-compatible with existing `ParamValue*` primitives (the value
+  is the type-discipline at the call site plus per-kind validation).
+  - **PostgreSQL `range`** — accepts the standard PG range literal
+    (`'[1,10)'`, `'(1,5]'`, `'[2020-01-01,2020-12-31)'`, `'empty'`).
+    Concrete subtype (`int4range` / `tsrange` / `daterange`...) is
+    resolved by the server from the column definition.
+  - **PostgreSQL `cidr`** / `inet` — accepts IPv4 and IPv6 with
+    optional `/prefix` mask. Validated structurally (not via a single
+    mega-regex) so compressed IPv6 forms (`2001:db8::1`, `::1`) round
+    trip correctly while triple-colon typos (`fe80:::1`) are rejected
+    early. Mask range (`/0..32` for IPv4, `/0..128` for IPv6) is
+    enforced.
+  - **PostgreSQL `tsvector`** — accepts the standard tsvector literal
+    (`'fat:1A cat:2B sat:3'`). No client-side validation; PostgreSQL's
+    `to_tsvector` / cast is the real validator.
+  - **SQL Server `hierarchyId`** — accepts the canonical `'/'`-rooted,
+    `'/'`-terminated path (`'/'`, `'/1/'`, `'/1/2/3.5/'`) with
+    `/`-separated decimal segments, each optionally with a
+    `.fraction` (used to insert nodes between siblings without
+    renumbering). **Caller wraps in `CAST(? AS hierarchyid)` in the
+    SQL** — the type is not directly bindable as a parameter.
+  - **SQL Server `geography`** — accepts WKT (`'POINT(-122.349 47.651)'`,
+    `'POLYGON((...))'`, `'LINESTRING(...)'`, etc.). **Caller wraps in
+    `geography::STGeomFromText(?, 4326)`** in the SQL (replace the
+    SRID with whatever's appropriate). For binary WKB use
+    [`SqlDataType.varBinary`] with `geography::STGeomFromWKB`.
+    The `List<int>` path is rejected with an actionable error
+    pointing at varBinary instead.
+  - **Oracle `raw`** — accepts `List<int>`. Idiomatic alias for
+    [`SqlDataType.varBinary`]; wire-equality pinned by an explicit
+    `serialize()` test.
+  - **Oracle `bfile`** — accepts a `String` containing a fully-formed
+    `BFILENAME(...)` invocation. BFILE is unusual: it's a pointer to
+    an external file, not the content. The more common pattern is
+    two `varChar` parameters fed into `BFILENAME(?, ?)` in SQL; this
+    kind is for the rarer case of binding a complete textual
+    snippet.
+  - **Tests**: 20 new Dart unit tests covering accepted shapes,
+    rejected typos (with structural IPv6 edge cases), wire-equality
+    (`raw` vs `varBinary`), and the cross-kind rejection messages
+    (`geography` rejecting `List<int>` with a hint at `varBinary`).
 - **`SqlDataType` extras (final batch): `tinyInt`, `bit`, `text`, `xml`,
   `interval`.** Five additional typed kinds in
   `lib/infrastructure/native/protocol/param_value.dart`. Together with

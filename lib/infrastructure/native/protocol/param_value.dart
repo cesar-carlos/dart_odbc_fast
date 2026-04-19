@@ -39,6 +39,22 @@ final RegExp _uuidCanonicalPattern = RegExp(
 );
 final RegExp _uuidBareHexPattern = RegExp(r'^[0-9a-f]{32}$');
 
+/// IPv4 octet matcher (`0..255`); used by the structural CIDR
+/// validator instead of a single mega-regex because the address-vs-
+/// prefix split is much easier to reason about as plain code.
+final RegExp _ipv4OctetPattern = RegExp(r'^(25[0-5]|2[0-4]\d|[01]?\d{1,2})$');
+
+/// IPv6 group matcher (1-4 hex digits). The full-address validation
+/// is done structurally — see [_isValidIpv6Address].
+final RegExp _ipv6GroupPattern = RegExp(r'^[0-9a-fA-F]{1,4}$');
+
+/// `hierarchyid` path matcher: starts with `/`, followed by zero or
+/// more `/`-separated segments, each of which is a positive integer
+/// optionally with a `.fraction` component (SQL Server uses
+/// `1.5`-style segments to insert nodes between siblings without
+/// renumbering). Always ends with a trailing `/`.
+final RegExp _hierarchyIdPattern = RegExp(r'^/(\d+(\.\d+)?/)*$');
+
 List<int> _u32Le(int v) {
   final buffer = Uint8List(4);
   ByteData.view(buffer.buffer).setUint32(0, v, _littleEndian);
@@ -204,6 +220,120 @@ class SqlDataType {
   /// is purely semantic so call sites paired with a `TEXT` column
   /// read naturally.
   static const SqlDataType text = SqlDataType._('text');
+
+  // -----------------------------------------------------------------
+  // Engine-specific kinds. Each is wire-compatible with an existing
+  // `ParamValue*` primitive (typically String or Binary) — the value
+  // of routing through `SqlDataType` is the explicit semantic name in
+  // the call site plus the per-kind input validation.
+  //
+  // **Important caveat shared by SQL Server `hierarchyid` and
+  // `geography`, and by Oracle `BFILE`**: these types are usually NOT
+  // bindable as a plain `?` placeholder of their native SQL type.
+  // The driver expects a textual representation that must be wrapped
+  // in a CAST or constructor function inside the SQL itself, e.g.:
+  //
+  //   INSERT INTO t(node) VALUES (CAST(? AS hierarchyid))
+  //   INSERT INTO t(area) VALUES (geography::STGeomFromText(?, 4326))
+  //   INSERT INTO t(doc)  VALUES (BFILENAME(?, ?))
+  //
+  // We document the convention here once and let each kind's doc
+  // comment refer to it. The wire-level work this layer does is
+  // exactly the same as `varChar` / `varBinary`; the value lives in
+  // the **type-discipline at the call site**.
+  // -----------------------------------------------------------------
+
+  /// PostgreSQL **range** literal (`int4range`, `int8range`, `numrange`,
+  /// `tsrange`, `tstzrange`, `daterange`, `int4multirange`, ...).
+  /// Accepts a `String` literal in PostgreSQL's standard form, e.g.
+  /// `'[1,10)'`, `'(1,5]'`, `'[2020-01-01,2020-12-31)'`. Wraps in
+  /// [ParamValueString]; the server resolves the concrete range type
+  /// from the column definition.
+  ///
+  /// We do **not** validate the bracket / value grammar — PostgreSQL
+  /// accepts a wide variety of formats per concrete subtype and the
+  /// server is the authoritative validator at execute-time.
+  static const SqlDataType range = SqlDataType._('range');
+
+  /// PostgreSQL **CIDR** / **INET** address literal (`192.168.1.0/24`,
+  /// `2001:db8::/32`). Accepts a `String`. Validates against a
+  /// pragmatic IPv4/IPv6 regex — accepts most well-formed inputs
+  /// without pulling in a full RFC-grade parser. The server remains
+  /// the authoritative validator at execute-time.
+  ///
+  /// Wraps in [ParamValueString]. PostgreSQL accepts the same string
+  /// form for both `cidr` and `inet` columns.
+  static const SqlDataType cidr = SqlDataType._('cidr');
+
+  /// PostgreSQL **tsvector** (full-text search lexeme list). Accepts a
+  /// `String` in `tsvector`'s native form: `'fat:1A cat:2B sat:3'` or
+  /// the simpler space-separated lexeme list. Wraps in
+  /// [ParamValueString]. Sintax is too permissive to validate
+  /// usefully here; PostgreSQL's `to_tsvector` / cast is the real
+  /// validator.
+  static const SqlDataType tsvector = SqlDataType._('tsvector');
+
+  /// SQL Server **hierarchyid** path (`'/'`, `'/1/'`, `'/1/2/3.5/'`).
+  /// Accepts a `String`; validates that it starts with `/`, contains
+  /// only `/`-separated decimal segments (each optionally with a
+  /// `.fraction` for between-siblings inserts), and ends with `/`.
+  ///
+  /// **Caller is responsible for the CAST**: SQL Server's `hierarchyid`
+  /// is not directly bindable from a parameter; the typical idiom is
+  ///
+  /// ```sql
+  /// INSERT INTO t(node) VALUES (CAST(? AS hierarchyid))
+  /// ```
+  ///
+  /// Wraps in [ParamValueString].
+  static const SqlDataType hierarchyId = SqlDataType._('hierarchyid');
+
+  /// SQL Server **geography** / **geometry** WKT literal
+  /// (`'POINT(-122.349 47.651)'`, `'POLYGON((...))'`). Accepts a
+  /// `String` in the OGC Well-Known Text form. Wraps in
+  /// [ParamValueString].
+  ///
+  /// **Caller is responsible for the constructor function**: SQL
+  /// Server's spatial types require an explicit constructor in the
+  /// SQL, typically:
+  ///
+  /// ```sql
+  /// INSERT INTO t(area) VALUES (geography::STGeomFromText(?, 4326))
+  /// ```
+  ///
+  /// (The `4326` is the SRID — WGS-84 by convention; choose the SRID
+  /// appropriate to your data.) For binary WKB payloads use
+  /// [SqlDataType.varBinary] together with `geography::STGeomFromWKB`.
+  static const SqlDataType geography = SqlDataType._('geography');
+
+  /// Oracle **RAW** binary data. Accepts `List<int>` (or `Uint8List`).
+  /// Wraps in [ParamValueBinary] — wire-compatible with
+  /// [SqlDataType.varBinary]; the distinction is purely semantic so
+  /// call sites paired with an Oracle `RAW(N)` column read naturally.
+  ///
+  /// Oracle's legacy `RAW` is capped at 2000 bytes; modern
+  /// `RAW(32767)` requires `MAX_STRING_SIZE = EXTENDED`. This layer
+  /// does not enforce either limit — the server rejects oversize
+  /// values at execute-time with a descriptive error.
+  static const SqlDataType raw = SqlDataType._('raw');
+
+  /// Oracle **BFILE** locator. Accepts a `String` containing a
+  /// fully-formed `BFILENAME(...)` invocation, e.g.
+  /// `"BFILENAME('DIR_OBJECT', 'docs/file.pdf')"`. Wraps in
+  /// [ParamValueString].
+  ///
+  /// **`BFILE` is a pointer to an external file**, not the file
+  /// content. In practice it is set via SQL like:
+  ///
+  /// ```sql
+  /// INSERT INTO t(doc) VALUES (BFILENAME(?, ?))
+  /// -- params: ['DIR_OBJECT', 'docs/file.pdf']
+  /// ```
+  ///
+  /// In that case use two separate `varChar` parameters. This kind
+  /// is provided for the less common case of binding a complete
+  /// `BFILENAME(...)` text snippet that the server then evaluates.
+  static const SqlDataType bfile = SqlDataType._('bfile');
 
   /// SQL `INTERVAL` (PostgreSQL `INTERVAL`, Oracle `INTERVAL DAY/YEAR`,
   /// Db2 `<n> SECONDS`). Accepts a [Duration] (formatted as
@@ -591,9 +721,170 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
       return ParamValueString(value);
     case 'interval':
       return ParamValueString(_toIntervalString(value));
+    case 'range':
+    case 'tsvector':
+    case 'bfile':
+      // Three engine-specific kinds with no per-input validation:
+      // the server is the authoritative validator at execute-time.
+      // Sharing one branch keeps the switch tight.
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.${type.kind} expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'cidr':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.cidr expects String, got ${value.runtimeType}',
+        );
+      }
+      _validateCidrLiteral(value);
+      return ParamValueString(value);
+    case 'hierarchyid':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.hierarchyId expects String, got ${value.runtimeType}',
+        );
+      }
+      _validateHierarchyIdLiteral(value);
+      return ParamValueString(value);
+    case 'geography':
+      // We only accept WKT here (String). Binary WKB callers should
+      // use SqlDataType.varBinary together with `geography::STGeomFromWKB`.
+      // Rejecting `List<int>` explicitly avoids silent ambiguity.
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.geography expects String (WKT); for binary WKB use '
+          'SqlDataType.varBinary with geography::STGeomFromWKB. '
+          'Got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'raw':
+      if (value is! List<int>) {
+        throw ArgumentError(
+          'SqlDataType.raw expects List<int>, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueBinary(value);
   }
 
   throw ArgumentError('Unsupported SqlDataType kind: ${type.kind}');
+}
+
+/// Pragmatic CIDR / INET validator for `SqlDataType.cidr`.
+///
+/// Accepts:
+/// - bare IPv4 (`192.168.1.1`) or IPv4 with `/0..32` prefix
+/// - bare IPv6 in canonical or compressed `::` form, or IPv6 with
+///   `/0..128` prefix
+///
+/// Implemented structurally rather than via a single regex because
+/// IPv6's compressed form (`::`) makes a regex either overly permissive
+/// (accepts `fe80:::1`) or overly strict (rejects `2001:db8::1`).
+/// PostgreSQL remains the authoritative validator at execute-time;
+/// this check just rules out the obvious typos that would otherwise
+/// round-trip before failing.
+void _validateCidrLiteral(String s) {
+  final trimmed = s.trim();
+  if (trimmed.isEmpty) {
+    _throwCidrError(s);
+  }
+
+  // Split off the optional /prefix.
+  final slashIdx = trimmed.indexOf('/');
+  final addrPart = slashIdx < 0 ? trimmed : trimmed.substring(0, slashIdx);
+  final prefixPart = slashIdx < 0 ? null : trimmed.substring(slashIdx + 1);
+
+  final isIpv4 = _isValidIpv4Address(addrPart);
+  final isIpv6 = !isIpv4 && _isValidIpv6Address(addrPart);
+  if (!isIpv4 && !isIpv6) {
+    _throwCidrError(s);
+  }
+
+  if (prefixPart != null) {
+    final mask = int.tryParse(prefixPart);
+    final maxMask = isIpv4 ? 32 : 128;
+    if (mask == null || mask < 0 || mask > maxMask) {
+      _throwCidrError(s);
+    }
+  }
+}
+
+Never _throwCidrError(String s) {
+  throw ArgumentError(
+    'SqlDataType.cidr expects an IPv4/IPv6 address, optionally with a '
+    '/prefix mask (e.g. "192.168.1.0/24" or "2001:db8::/32"); '
+    'got "$s"',
+  );
+}
+
+bool _isValidIpv4Address(String s) {
+  final parts = s.split('.');
+  if (parts.length != 4) return false;
+  for (final p in parts) {
+    if (!_ipv4OctetPattern.hasMatch(p)) return false;
+  }
+  return true;
+}
+
+/// Validate an IPv6 address allowing the compressed `::` form.
+///
+/// Rules enforced:
+/// - At most one `::` (the compression marker).
+/// - With `::`: at most 8 groups total in the expansion.
+/// - Without `::`: exactly 8 groups.
+/// - Each group is 1..4 hex digits.
+/// - Edge case: `::` alone (the unspecified address) and trailing/
+///   leading `::` (e.g. `::1`, `2001:db8::`) are valid.
+bool _isValidIpv6Address(String s) {
+  if (s.isEmpty) return false;
+  // `:::` (three colons in a row) is never valid — bail before split.
+  if (s.contains(':::')) return false;
+
+  // Compressed form? Split exactly once to keep the leading/trailing
+  // empty halves intact (`split` collapses adjacent separators when
+  // given a regex; with a literal pattern it preserves them).
+  final compressedParts = s.split('::');
+  if (compressedParts.length > 2) return false;
+
+  if (compressedParts.length == 2) {
+    final left = compressedParts[0].isEmpty
+        ? <String>[]
+        : compressedParts[0].split(':');
+    final right = compressedParts[1].isEmpty
+        ? <String>[]
+        : compressedParts[1].split(':');
+    if (left.length + right.length > 7) return false;
+    for (final g in [...left, ...right]) {
+      if (!_ipv6GroupPattern.hasMatch(g)) return false;
+    }
+    return true;
+  }
+
+  // No `::` — must be exactly 8 groups.
+  final groups = s.split(':');
+  if (groups.length != 8) return false;
+  for (final g in groups) {
+    if (!_ipv6GroupPattern.hasMatch(g)) return false;
+  }
+  return true;
+}
+
+/// `hierarchyid` literal validator: must start with `/`, contain only
+/// `/`-separated decimal segments (each optionally with a `.fraction`),
+/// and end with `/`. SQL Server uses `1.5`-style segments to insert
+/// nodes between siblings without renumbering, so the fraction is part
+/// of the grammar — not a typo.
+void _validateHierarchyIdLiteral(String s) {
+  if (!_hierarchyIdPattern.hasMatch(s)) {
+    throw ArgumentError(
+      'SqlDataType.hierarchyId expects a "/"-rooted, "/"-terminated '
+      'path of decimal segments (each optionally with a ".fraction"), '
+      'e.g. "/", "/1/", "/1/2/3.5/"; got "$s"',
+    );
+  }
 }
 
 /// Cheap structural sanity check for `SqlDataType.xml(validate: true)`.
