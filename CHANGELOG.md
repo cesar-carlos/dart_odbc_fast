@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sprint 4.3b / 4.3c — XA / 2PC scaffolding for SQL Server (MSDTC)
+  and Oracle (OCI), Phase 1 of 2.** Two new opt-in Cargo features
+  add the COM / OCI plumbing that the cross-vendor `apply_xa_*`
+  matrix in [`engine::xa_transaction`] needs to integrate SQL Server
+  and Oracle into the existing 2PC lifecycle.
+  - **Honest status disclaimer**: Phase 1 lands the dependency
+    bindings, the COM ceremony / dynamic-loading shim, and a
+    self-contained handle type with state-machine guards. **Live
+    runtime behaviour against MSDTC and Oracle has not been
+    validated end-to-end** — the dev box that produced this commit
+    did not have either dependency installed. Phase 2 wires the new
+    handles into `apply_xa_*` and adds gated E2E tests against real
+    MSDTC + Oracle hosts. Both phases are tracked under
+    `FUTURE_IMPLEMENTATIONS.md` §4.3b / §4.3c.
+  - **Sprint 4.3b — `engine::xa_dtc`** (Windows-only, behind
+    `--features xa-dtc`):
+    - Pulls the `windows` 0.59 crate (high-level COM bindings —
+      `windows-sys` doesn't generate COM interface code).
+    - `ensure_com_initialised()` — caches the per-thread
+      `CoInitializeEx(COINIT_MULTITHREADED)` result so the cost is
+      paid once.
+    - `acquire_transaction_dispenser()` — calls the documented
+      `DtcGetTransactionManagerExA` entry point, builds a typed
+      `ITransactionDispenser` wrapper from the raw `*mut c_void` via
+      `Interface::from_raw`.
+    - `begin_msdtc_transaction()` — `ITransactionDispenser::BeginTransaction`
+      with `ISOLATIONLEVEL_READCOMMITTED` (SQL Server's MSDTC default).
+    - `DtcXaBranch` owned handle with `commit()` / `abort()` calling
+      `ITransaction::Commit` / `ITransaction::Abort`. `Drop` aborts a
+      still-active branch best-effort, recognising
+      `XACT_E_NOTRANSACTION` (`0x8004D00B`) as "already
+      finalised — silent success".
+    - The `apply_xa_*` matrix now has a feature-aware
+      `unsupported_sqlserver()` that distinguishes "feature missing"
+      from "feature enabled, Phase 2 wiring pending" so callers can
+      tell the difference.
+  - **Sprint 4.3c — `engine::xa_oci`** (cross-platform, behind
+    `--features xa-oci`):
+    - Pulls `libloading 0.8` for runtime resolution of the OCI
+      shared library (`libclntsh.so` / `libclntsh.dylib` / `oci.dll`).
+      Fallback search list per platform; first-match wins.
+    - `OciXid` `repr(C)` struct mirrors the X/Open `xid_t` layout
+      from `oraxa.h` (`format_id` + `gtrid_length` + `bqual_length`
+      + 128-byte concatenated payload). Pinned by a layout-asserting
+      unit test.
+    - Symbol-table struct `OciXaSymbols` resolves the eight XA
+      entry points (`xaosw`, `xaocl`, `xaostart`, `xaoend`,
+      `xaoprep`, `xaocommit`, `xaoroll`, `xaorecover`) via
+      `Library::get`. Cached in a `OnceLock` so subsequent calls are
+      O(1).
+    - `OciXaBranch` owned handle: `prepare()` (`xa_end(TMSUCCESS)`
+      + `xa_prepare`), `commit()` / `rollback()` (Phase 2),
+      `commit_one_phase()` (`xa_end` + `xa_commit(TMONEPHASE)`).
+      `Drop` rolls back + closes a still-active branch best-effort.
+    - `recover_oci_xids()` — Phase-2-recovery scan via `xa_recover`,
+      filters out malformed XIDs from foreign clients (length
+      violations).
+    - The `apply_xa_*` matrix now has a feature-aware
+      `unsupported_oracle()` mirroring the SQL Server pattern.
+  - **Tests**: 7 new Rust unit tests across the two modules:
+    `OciXid` layout pinning + packing edge cases (empty bqual,
+    max-size 64+64, gtrid-then-bqual ordering), XA flag constants
+    matching `oraxa.h`, the load-error path returning
+    `UnsupportedFeature` with actionable wording, and the always-on
+    `DtcXaBranch` reachability probe. Live MSDTC / Oracle behaviour
+    is covered by the (unwritten) Phase 2 integration tests.
+  - **Build matrix**: default build is byte-identical to today.
+    `--features xa-dtc` adds `windows` 0.59 (Windows targets only).
+    `--features xa-oci` adds `libloading` 0.8 (every target).
+    Both can be enabled simultaneously.
 - **Sprint 4.3 — XA / 2PC distributed transactions.** First-class
   X/Open XA support with full Phase 1 / Phase 2 lifecycle and
   recovery, exposed end-to-end (Rust core → FFI → Dart bindings →

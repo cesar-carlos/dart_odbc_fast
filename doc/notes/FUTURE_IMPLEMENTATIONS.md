@@ -24,8 +24,8 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Transaction Sprint 4.2 — lock_timeout~~                  | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
 | ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (Unreleased)**                 | ~~Low~~     |
 | ~~Transaction Sprint 4.3 — XA / 2PC (PG/MySQL/DB2)~~       | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
-| Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Planned — needs `windows-sys` crate + ITransaction COM | Low |
-| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Planned — needs Oracle Instant Client + oraxa.h FFI    | Low |
+| Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Phase 1 ✅ scaffolding (Unreleased) / Phase 2 wiring pending | Low |
+| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Phase 1 ✅ scaffolding (Unreleased) / Phase 2 wiring pending | Low |
 | ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (Unreleased)** — atomic inject+read   | ~~Low~~     |
 | `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
@@ -77,34 +77,66 @@ this RM is the sole participant. 10 new FFI exports + Dart
 19 Rust unit tests + 17 Dart unit tests + 9 gated E2E tests covering
 the full 2PC lifecycle including resume-after-disconnect.
 
-### 4.3b XA on SQL Server (MSDTC) — planned
+### 4.3b XA on SQL Server (MSDTC) — Phase 1 implemented; Phase 2 pending
 
-- **Why**: SQL Server doesn't expose SQL-level XA; integration
-  requires Microsoft Distributed Transaction Coordinator enlistment.
-- **Mechanism**: `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC,
-  ITransaction*)` with a COM `ITransaction` pointer obtained via
-  `DtcGetTransactionManager`. Windows-only.
-- **Build cost**: adds the `windows-sys` crate and per-platform
-  build configuration; requires the MSDTC Windows service running on
-  every machine that participates.
-- **Sketch**: parallel module `engine::xa_dtc` behind a `dtc` Cargo
-  feature, with a thin Rust wrapper around the COM interface. The
-  public API would be the same `XaTransaction` shape as today; the
-  matrix entry would flip from "stub returns `UnsupportedFeature`"
-  to "implemented".
+**Phase 1 (Unreleased) — scaffolding landed**:
 
-### 4.3c XA on Oracle (OCI XA) — planned
+- New module `engine::xa_dtc` behind `--features xa-dtc`
+  (Windows-only).
+- Pulls the `windows` 0.59 crate (high-level COM bindings).
+- COM ceremony complete: `CoInitializeEx` (cached),
+  `DtcGetTransactionManagerExA`, `ITransactionDispenser::BeginTransaction`,
+  `ITransaction::Commit/Abort`. Owned `DtcXaBranch` handle with
+  `Drop` cleanup that recognises `XACT_E_NOTRANSACTION`.
+- Cross-vendor `unsupported_sqlserver()` is now feature-aware: it
+  distinguishes "feature missing" from "feature enabled but Phase 2
+  wiring pending", which is what callers see today.
 
-- **Why**: Oracle's XA support is exposed via the OCI XA library
-  (`oraxa.h`, `xaoSvcCtx`), not via the ODBC standard.
-- **Mechanism**: link against the Oracle Instant Client's XA shim
-  and call OCI XA functions directly via Rust FFI; the connection's
-  underlying handle is shared with the OCI session.
-- **Build cost**: adds Oracle Instant Client as a runtime dependency
-  (already required for the Oracle ODBC driver — but the XA
-  integration needs additional headers).
-- **Sketch**: parallel module `engine::xa_oracle` behind an `oracle`
-  Cargo feature.
+**Phase 2 — pending**:
+
+- Wire `engine::xa_dtc::begin_dtc_branch()` into the cross-vendor
+  `apply_xa_*` matrix in `xa_transaction.rs`.
+- Call `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)`
+  on the ODBC connection handle to enlist the connection in the
+  MSDTC transaction. (The `odbc-api` crate doesn't expose this
+  attribute directly — needs the raw escape hatch via
+  `Connection::as_ptr()` + manual `SQLSetConnectAttrW`.)
+- Implement crash recovery via `IResourceManager::Reenlist`.
+- Add gated E2E tests under `tests/regression/xa_dtc_test.rs` with
+  `cargo test --features xa-dtc -- --ignored --test-threads=1`
+  against a Windows host with `sc query MSDTC` reporting `RUNNING`.
+
+### 4.3c XA on Oracle (OCI XA) — Phase 1 implemented; Phase 2 pending
+
+**Phase 1 (Unreleased) — scaffolding landed**:
+
+- New module `engine::xa_oci` behind `--features xa-oci`
+  (cross-platform; Oracle Instant Client must be on the dynamic-
+  linker search path at runtime).
+- Pulls `libloading` 0.8 and resolves the OCI XA symbol set
+  (`xaosw`, `xaocl`, `xaostart`, `xaoend`, `xaoprep`, `xaocommit`,
+  `xaoroll`, `xaorecover`) at first use; cached in a `OnceLock`.
+- `OciXid` `repr(C)` struct mirrors the X/Open `xid_t` layout from
+  `oraxa.h` (140 bytes, 4 + 4 + 4 + 128). Layout pinned by a unit
+  test.
+- Owned `OciXaBranch` handle: `prepare()` → `commit()` /
+  `rollback()` (Phase 2), `commit_one_phase()` (1RM optimisation),
+  Drop-time best-effort rollback + close.
+- `recover_oci_xids()` for crash-recovery.
+- Cross-vendor `unsupported_oracle()` is now feature-aware (same
+  pattern as MSDTC).
+
+**Phase 2 — pending**:
+
+- Wire `engine::xa_oci::begin_oci_branch()` into the cross-vendor
+  `apply_xa_*` matrix in `xa_transaction.rs`.
+- Decide the right way to share the OCI handle with the existing
+  `odbc-api` connection (the OCI session has to be the same one
+  ODBC is using; today's bridging via the Oracle ODBC driver may
+  not surface the underlying `OCIServer*` we'd need).
+- Add gated E2E tests under `tests/regression/xa_oci_test.rs` with
+  `cargo test --features xa-oci -- --ignored --test-threads=1`
+  against an Oracle DB with an `XA_OPEN` entry registered.
 
 ### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (Unreleased)
 

@@ -895,24 +895,57 @@ fn parse_ascii_int<T: std::str::FromStr>(bytes: &[u8]) -> Option<T> {
 }
 
 fn unsupported_sqlserver() -> OdbcError {
-    OdbcError::UnsupportedFeature(
-        "XA / 2PC on SQL Server requires MSDTC enlistment via Windows COM (\
-         SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)). \
-         This is planned as a separate feature (needs the windows-sys crate \
-         and a per-platform build configuration) — track the FUTURE_IMPLEMENTATIONS \
-         §4.3 entry."
-            .to_string(),
-    )
+    // The MSDTC integration ships in `engine::xa_dtc` as Phase 1
+    // (Sprint 4.3b): the COM ceremony is implemented but **wiring
+    // into this `apply_xa_*` matrix** (translating XaTransaction
+    // lifecycle calls to ITransaction::Commit/Abort and enlisting
+    // the ODBC connection via `SQL_ATTR_ENLIST_IN_DTC`) is Phase 2.
+    // The error wording reflects whichever phase the build is in.
+    if cfg!(all(target_os = "windows", feature = "xa-dtc")) {
+        OdbcError::UnsupportedFeature(
+            "XA / 2PC on SQL Server: the `xa-dtc` feature ships the \
+             MSDTC COM scaffolding (engine::xa_dtc) but Phase 2 wiring \
+             into the apply_xa_* matrix is pending. Track \
+             FUTURE_IMPLEMENTATIONS.md §4.3b for the integration TODO."
+                .to_string(),
+        )
+    } else {
+        OdbcError::UnsupportedFeature(
+            "XA / 2PC on SQL Server requires MSDTC enlistment via Windows \
+             COM (SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)). \
+             Build with `--features xa-dtc` on a Windows host with MSDTC \
+             enabled to activate the integration — see FUTURE_IMPLEMENTATIONS.md \
+             §4.3b for the full prerequisites."
+                .to_string(),
+        )
+    }
 }
 
 fn unsupported_oracle() -> OdbcError {
-    OdbcError::UnsupportedFeature(
-        "XA / 2PC on Oracle requires the OCI XA library (oraxa.h, xaoSvcCtx). \
-         Not exposed via the ODBC standard or odbc-api. Planned as a separate \
-         feature (needs Oracle Instant Client linkage and direct OCI FFI) — \
-         track the FUTURE_IMPLEMENTATIONS §4.3 entry."
-            .to_string(),
-    )
+    // The OCI XA integration ships in `engine::xa_oci` as Phase 1
+    // (Sprint 4.3c): the dynamic-loading shim is implemented but
+    // **wiring into this `apply_xa_*` matrix** (translating
+    // XaTransaction lifecycle calls to xa_open / xa_start / xa_end /
+    // xa_prepare / xa_commit / xa_rollback) is Phase 2. The error
+    // wording reflects whichever phase the build is in.
+    if cfg!(feature = "xa-oci") {
+        OdbcError::UnsupportedFeature(
+            "XA / 2PC on Oracle: the `xa-oci` feature ships the OCI \
+             dynamic-loading shim (engine::xa_oci) but Phase 2 wiring \
+             into the apply_xa_* matrix is pending. Track \
+             FUTURE_IMPLEMENTATIONS.md §4.3c for the integration TODO."
+                .to_string(),
+        )
+    } else {
+        OdbcError::UnsupportedFeature(
+            "XA / 2PC on Oracle requires the OCI XA library (oraxa.h, \
+             xaoSvcCtx). Build with `--features xa-oci` and ensure the \
+             Oracle Instant Client is on the dynamic-linker search path \
+             (LD_LIBRARY_PATH on Linux, PATH on Windows). See \
+             FUTURE_IMPLEMENTATIONS.md §4.3c for the full prerequisites."
+                .to_string(),
+        )
+    }
 }
 
 fn unsupported_other(engine_id: &str) -> OdbcError {
@@ -1114,8 +1147,11 @@ mod tests {
     fn unsupported_sqlserver_message_points_at_dtc() {
         let err = unsupported_sqlserver();
         let s = err.to_string();
+        // MSDTC must be mentioned in BOTH variants (no-feature + feature
+        // enabled). The cfg!() switch picks the right body; the test
+        // pins the universal substring so a refactor can't accidentally
+        // drop the actionable hint.
         assert!(s.contains("MSDTC"));
-        assert!(s.contains("ENLIST_IN_DTC"));
         assert!(s.contains("FUTURE_IMPLEMENTATIONS"));
     }
 
@@ -1123,8 +1159,9 @@ mod tests {
     fn unsupported_oracle_message_points_at_oci() {
         let err = unsupported_oracle();
         let s = err.to_string();
-        assert!(s.contains("OCI XA"));
-        assert!(s.contains("oraxa"));
+        // OCI must be mentioned in BOTH variants. Same rationale as
+        // the SQL Server test above.
+        assert!(s.contains("OCI"));
         assert!(s.contains("FUTURE_IMPLEMENTATIONS"));
     }
 

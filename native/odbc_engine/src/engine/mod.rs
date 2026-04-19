@@ -12,6 +12,16 @@ pub mod streaming;
 pub mod transaction;
 pub mod xa_transaction;
 
+// Sprint 4.3b — SQL Server XA via MSDTC (Windows-only, feature-gated).
+// The module is conditionally compiled so non-Windows builds and
+// builds without the `xa-dtc` feature are byte-identical to today.
+#[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+pub mod xa_dtc;
+
+// Sprint 4.3c — Oracle XA via OCI (cross-platform, feature-gated).
+#[cfg(feature = "xa-oci")]
+pub mod xa_oci;
+
 pub use catalog::{
     get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
 };

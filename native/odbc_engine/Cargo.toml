@@ -35,6 +35,19 @@ test-helpers = ["dep:dotenvy"]
 # Enables FFI tests (concurrent_error_test, e2e_savepoint_test FFI parts).
 # FFI symbols may not be visible in all build configs.
 ffi-tests = []
+# Sprint 4.3b — XA / 2PC on SQL Server via MSDTC (Windows-only).
+# Pulls `windows-sys` and links into the OLE32/MSDTC COM API. The
+# feature is a no-op on non-Windows targets (the underlying engine
+# matrix returns `UnsupportedFeature` there). Code outside the
+# `xa-dtc` feature gate continues to behave exactly as before.
+xa-dtc = ["dep:windows"]
+# Sprint 4.3c — XA / 2PC on Oracle via the OCI XA library
+# (`libclntsh.so` / `oci.dll`, header `oraxa.h`). The Oracle Instant
+# Client must be present at runtime; the FFI is loaded dynamically
+# via `libloading` so the engine can be shipped without an Oracle
+# build dependency. Code outside the `xa-oci` feature gate continues
+# to behave exactly as before.
+xa-oci = ["dep:libloading"]
 
 [dependencies]
 odbc-api = { version = "20.1.1", default-features = false, features = ["odbc_version_3_5"] }
@@ -52,9 +65,31 @@ ureq = { version = "2.9", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = { version = "0.15", optional = true }
+# Sprint 4.3c — Oracle OCI XA dynamic-loading shim. Cross-platform
+# because Oracle Instant Client ships on Windows + Linux + macOS;
+# we resolve the right shared library at runtime so the same Cargo
+# feature works everywhere.
+libloading = { version = "0.8", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-libloading = "0.8"
+# Sprint 4.3b — MSDTC COM enlistment.
+#
+# We use the `windows` crate (NOT `windows-sys`) because MSDTC is a
+# COM API and we need auto-generated `IUnknown` / `ITransaction` /
+# `ITransactionDispenser` interface bindings. `windows-sys` only
+# ships raw FFI declarations and would require us to hand-roll the
+# vtables — error-prone and not worth the binary-size saving for an
+# opt-in feature.
+#
+# The feature gate `xa-dtc` controls whether the bindings are
+# linked; without the feature this dep is not pulled and the binary
+# is byte-identical to today.
+windows = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_DistributedTransactionCoordinator",
+    "Win32_System_Variant",
+], optional = true }
 
 [dev-dependencies]
 env_logger = "0.11"
