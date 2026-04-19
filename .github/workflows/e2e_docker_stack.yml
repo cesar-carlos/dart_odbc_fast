@@ -70,6 +70,13 @@ jobs:
       - name: Validate compose
         run: docker compose config --quiet
 
+      # build-push-action's `cache-from`/`cache-to type=gha` requires the
+      # `docker-container` BuildKit driver; the runner's default `docker`
+      # driver rejects cache export. setup-buildx-action provisions a
+      # builder with the right driver so the cache backends work.
+      - name: Set up Docker Buildx (docker-container driver)
+        uses: docker/setup-buildx-action@v3
+
       - name: Build test-runner image (BuildKit cache)
         uses: docker/build-push-action@v6
         with:
