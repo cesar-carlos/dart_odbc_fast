@@ -25,6 +25,7 @@ odbc_stream_fetch
 odbc_stream_cancel
 odbc_stream_close
 odbc_transaction_begin
+odbc_transaction_begin_v2
 odbc_transaction_commit
 odbc_transaction_rollback
 odbc_savepoint_create

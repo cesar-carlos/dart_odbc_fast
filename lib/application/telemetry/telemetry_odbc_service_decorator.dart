@@ -8,6 +8,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
+import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -91,6 +92,7 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     String connectionId, {
     IsolationLevel? isolationLevel,
     SavepointDialect? savepointDialect,
+    TransactionAccessMode? accessMode,
   }) async {
     return _telemetry.inOperation(
       'ODBC.beginTransaction',
@@ -98,6 +100,7 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
         connectionId,
         isolationLevel: isolationLevel,
         savepointDialect: savepointDialect,
+        accessMode: accessMode,
       ),
     );
   }

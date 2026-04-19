@@ -10,6 +10,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
+import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
@@ -241,6 +242,7 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionId,
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
+    TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
   }) async {
     beginTransactionCalled = true;
     return const Success(1);

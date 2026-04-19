@@ -237,17 +237,21 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// 2=RepeatableRead, 3=Serializable).
   /// The [savepointDialect] is the wire code from `SavepointDialect.code`
   /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
+  /// The [accessMode] is the wire code from `TransactionAccessMode.code`
+  /// (default `0` = `readWrite`). Sprint 4.1.
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int beginTransaction(
     int connectionId,
     int isolationLevel, {
     int savepointDialect = 0,
+    int accessMode = 0,
   }) =>
       _native.transactionBegin(
         connectionId,
         isolationLevel,
         savepointDialect: savepointDialect,
+        accessMode: accessMode,
       );
 
   /// Begins a new transaction and returns a [TransactionHandle] wrapper.
@@ -258,15 +262,24 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     int connectionId,
     int isolationLevel, {
     int savepointDialect = 0,
+    int accessMode = 0,
   }) {
     final txnId = beginTransaction(
       connectionId,
       isolationLevel,
       savepointDialect: savepointDialect,
+      accessMode: accessMode,
     );
     if (txnId == 0) return null;
     return TransactionHandle(this, txnId);
   }
+
+  /// True when the loaded native library supports
+  /// `odbc_transaction_begin_v2` (Sprint 4.1, the `accessMode` parameter
+  /// of [beginTransaction]). When false, `accessMode` is silently ignored
+  /// and every transaction is `READ WRITE`.
+  bool get supportsTransactionAccessMode =>
+      _native.supportsTransactionAccessMode;
 
   @override
   bool commitTransaction(int txnId) => _native.transactionCommit(txnId);

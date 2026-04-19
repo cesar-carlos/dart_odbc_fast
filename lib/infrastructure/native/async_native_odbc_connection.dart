@@ -510,10 +510,13 @@ class AsyncNativeOdbcConnection {
   ///
   /// [savepointDialect] is the wire code from `SavepointDialect.code`
   /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
+  /// [accessMode] is the wire code from `TransactionAccessMode.code`
+  /// (default `0` = `readWrite`). Sprint 4.1.
   Future<int> beginTransaction(
     int connectionId,
     int isolationLevel, {
     int savepointDialect = 0,
+    int accessMode = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       BeginTransactionRequest(
@@ -521,6 +524,7 @@ class AsyncNativeOdbcConnection {
         connectionId,
         isolationLevel,
         savepointDialect: savepointDialect,
+        accessMode: accessMode,
       ),
     );
     return r.value;

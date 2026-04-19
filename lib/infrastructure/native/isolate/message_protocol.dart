@@ -164,6 +164,7 @@ class BeginTransactionRequest extends WorkerRequest {
     this.connectionId,
     this.isolationLevel, {
     this.savepointDialect = 0,
+    this.accessMode = 0,
   }) : super(requestId, RequestType.beginTransaction);
   final int connectionId;
   final int isolationLevel;
@@ -171,6 +172,11 @@ class BeginTransactionRequest extends WorkerRequest {
   /// Wire code from `SavepointDialect.code` (`0=auto`, `1=sqlServer`,
   /// `2=sql92`). Default is `auto` so legacy callers keep working.
   final int savepointDialect;
+
+  /// Wire code from `TransactionAccessMode.code` (`0=readWrite`,
+  /// `1=readOnly`). Default is `readWrite` so legacy callers keep
+  /// working unchanged. Sprint 4.1.
+  final int accessMode;
 }
 
 /// Commit transaction.

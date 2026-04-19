@@ -59,6 +59,14 @@ class OdbcBindings {
     _odbc_stream_cancel_ptr = _dylib.lookup('odbc_stream_cancel');
     _odbc_stream_close_ptr = _dylib.lookup('odbc_stream_close');
     _odbc_transaction_begin_ptr = _dylib.lookup('odbc_transaction_begin');
+    try {
+      _odbc_transaction_begin_v2_ptr =
+          _dylib.lookup('odbc_transaction_begin_v2');
+    } on Object catch (_) {
+      // Older native libraries (pre-Sprint 4.1) only ship v1. Callers
+      // that require READ ONLY support gate on `supportsTransactionAccessMode`.
+      _odbc_transaction_begin_v2_ptr = null;
+    }
     _odbc_transaction_commit_ptr = _dylib.lookup('odbc_transaction_commit');
     _odbc_transaction_rollback_ptr = _dylib.lookup('odbc_transaction_rollback');
     _odbc_savepoint_create_ptr = _dylib.lookup('odbc_savepoint_create');
@@ -210,6 +218,8 @@ class OdbcBindings {
       _odbc_stream_close_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_func>>
       _odbc_transaction_begin_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_v2_func>>?
+      _odbc_transaction_begin_v2_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_commit_func>>
       _odbc_transaction_commit_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_rollback_func>>
@@ -356,6 +366,14 @@ class OdbcBindings {
   /// binaries.
   bool get supportsMultiResultStream =>
       _odbc_stream_multi_start_batched_ptr != null;
+
+  /// True when the loaded native library exports
+  /// `odbc_transaction_begin_v2` (added in Sprint 4.1). Callers that need
+  /// the `accessMode` (`READ ONLY` / `READ WRITE`) parameter should gate
+  /// on this flag; older binaries silently fall back to v1, which is
+  /// equivalent to always passing `accessMode = readWrite`.
+  bool get supportsTransactionAccessMode =>
+      _odbc_transaction_begin_v2_ptr != null;
 
   /// True when both multi-result streaming start FFIs and the existing
   /// async-poll FFI are available.
@@ -611,6 +629,40 @@ class OdbcBindings {
         isolationLevel,
         savepointDialect,
       );
+
+  /// Sprint 4.1 — begin a transaction with the access-mode hint
+  /// (`READ ONLY` / `READ WRITE`).
+  ///
+  /// Returns the transaction id (`> 0`) on success, `0` on failure (call
+  /// `odbc_get_last_error`). When the loaded native library predates v3.4
+  /// (`supportsTransactionAccessMode == false`), this falls through to
+  /// the v1 entry-point and the `accessMode` argument is ignored —
+  /// always `READ WRITE`. Use the `supports*` getter to detect the
+  /// capability and emit a friendly fallback at the higher layers.
+  int odbc_transaction_begin_v2(
+    int connId,
+    int isolationLevel,
+    int savepointDialect,
+    int accessMode,
+  ) {
+    final ptr = _odbc_transaction_begin_v2_ptr;
+    if (ptr == null) {
+      // Graceful degradation: fall back to v1 so existing tooling that
+      // bundles an older `.so`/`.dll` keeps working. The caller loses
+      // READ ONLY semantics but never the transaction itself.
+      return odbc_transaction_begin(
+        connId,
+        isolationLevel,
+        savepointDialect,
+      );
+    }
+    return ptr.asFunction<int Function(int, int, int, int)>()(
+      connId,
+      isolationLevel,
+      savepointDialect,
+      accessMode,
+    );
+  }
 
   int odbc_transaction_commit(int txnId) =>
       _odbc_transaction_commit_ptr.asFunction<int Function(int)>()(txnId);
@@ -1336,6 +1388,12 @@ typedef odbc_stream_fetch_func = ffi.Int32 Function(
 typedef odbc_stream_cancel_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_stream_close_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_transaction_begin_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_transaction_begin_v2_func = ffi.Uint32 Function(
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,

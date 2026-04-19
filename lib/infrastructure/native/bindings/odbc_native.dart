@@ -809,19 +809,43 @@ class OdbcNative {
   /// `IsolationLevel`).
   /// The [savepointDialect] is the wire code from `SavepointDialect.code`
   /// (default `0` = `auto`, resolved on the Rust side via SQLGetInfo).
+  /// The [accessMode] is the wire code from `TransactionAccessMode.code`
+  /// (default `0` = `readWrite`). When the loaded native library predates
+  /// Sprint 4.1 the parameter is silently ignored — see
+  /// [supportsTransactionAccessMode].
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int transactionBegin(
     int connectionId,
     int isolationLevel, {
     int savepointDialect = 0,
+    int accessMode = 0,
   }) {
-    return _bindings.odbc_transaction_begin(
+    if (accessMode == 0) {
+      // Stay on the v1 entry-point when the caller is OK with the
+      // engine default (READ WRITE). Avoids touching v2 at all so any
+      // FFI mismatch surfaces only when the caller actually asks for
+      // READ ONLY.
+      return _bindings.odbc_transaction_begin(
+        connectionId,
+        isolationLevel,
+        savepointDialect,
+      );
+    }
+    return _bindings.odbc_transaction_begin_v2(
       connectionId,
       isolationLevel,
       savepointDialect,
+      accessMode,
     );
   }
+
+  /// True when the loaded native library exports `odbc_transaction_begin_v2`
+  /// (Sprint 4.1). Callers that intend to pass a non-default `accessMode`
+  /// should gate on this flag; older binaries fall back to v1 and `READ
+  /// ONLY` becomes a silent no-op.
+  bool get supportsTransactionAccessMode =>
+      _bindings.supportsTransactionAccessMode;
 
   /// Commits a transaction.
   ///

@@ -11,6 +11,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
+import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
@@ -836,6 +837,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
+    TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
   }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
@@ -849,11 +851,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
               nativeId,
               isolationLevel.value,
               savepointDialect: savepointDialect.code,
+              accessMode: accessMode.code,
             )
           : (_native as NativeOdbcConnection).beginTransaction(
               nativeId,
               isolationLevel.value,
               savepointDialect: savepointDialect.code,
+              accessMode: accessMode.code,
             );
 
       if (txnId == 0) {

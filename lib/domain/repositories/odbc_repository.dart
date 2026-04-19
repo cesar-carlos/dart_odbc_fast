@@ -7,6 +7,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
+import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Repository interface for ODBC database operations.
@@ -75,6 +76,12 @@ abstract class IOdbcRepository {
   /// operations on the returned transaction. Default is
   /// `SavepointDialect.auto`, which lets the engine pick the right dialect
   /// from `SQLGetInfo` (B2 fix in v3.1).
+  /// [accessMode] selects the SQL-92 transaction access mode
+  /// (`READ ONLY` / `READ WRITE`). Default is
+  /// `TransactionAccessMode.readWrite`. On engines without an equivalent
+  /// hint (SQL Server, SQLite, Snowflake) `readOnly` is silently treated
+  /// as a no-op — see [TransactionAccessMode] for the engine matrix.
+  /// Sprint 4.1.
   ///
   /// Returns a transaction ID on success, which must be used for
   /// [commitTransaction] or [rollbackTransaction].
@@ -82,6 +89,7 @@ abstract class IOdbcRepository {
     String connectionId,
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
+    TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
   });
 
   /// Commits a transaction.

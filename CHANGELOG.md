@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sprint 4.1 — `TransactionAccessMode` (`READ ONLY` / `READ WRITE`).**
+  Transactions can now opt into the SQL-92 access-mode hint without
+  having to emit raw `SET TRANSACTION` themselves.
+  - **Rust core**: new `engine::TransactionAccessMode { ReadWrite,
+    ReadOnly }`. `Transaction::begin_with_access_mode(handles, conn_id,
+    isolation, savepoint_dialect, access_mode)` is the new full-control
+    entry point; `begin_with_dialect` and `begin` keep their existing
+    signatures and default to `ReadWrite`. `Transaction::access_mode()`
+    getter exposes the resolved value. `OdbcConnection` gains
+    `begin_transaction_with_access_mode(...)`. The
+    `Transaction::execute*` family gains `execute_with_access_mode`.
+  - **Engine matrix** (`apply_access_mode`):
+    PostgreSQL / MySQL / MariaDB / DB2 / Oracle emit
+    `SET TRANSACTION READ ONLY` after isolation. SQL Server / SQLite /
+    Snowflake / Sybase / Redshift / BigQuery / unknown silently treat
+    `ReadOnly` as a no-op (logged at debug) so callers can program
+    against the abstraction unconditionally. `ReadWrite` is the engine
+    default everywhere, so we do **not** emit a redundant `SET` for it
+    on any engine — the connection's session log stays clean.
+  - **FFI**: new export `odbc_transaction_begin_v2(conn_id, isolation,
+    savepoint_dialect, access_mode)`. The legacy
+    `odbc_transaction_begin` delegates to v2 with `access_mode = 0`
+    (ReadWrite) so the v1 ABI is preserved byte-for-byte.
+  - **Dart**: new `TransactionAccessMode { readWrite, readOnly }` enum
+    in `lib/domain/entities/transaction_access_mode.dart`. Threaded
+    through `OdbcBindings` (new `odbc_transaction_begin_v2` + typedef +
+    `supportsTransactionAccessMode` getter that reflects whether the
+    loaded native library exports v2), `OdbcNative.transactionBegin`,
+    `NativeOdbcConnection.beginTransaction`,
+    `AsyncNativeOdbcConnection.beginTransaction`,
+    `BeginTransactionRequest` (new `accessMode` field, default `0`),
+    `IOdbcRepository.beginTransaction` (new optional named arg),
+    `IOdbcService.beginTransaction` (new optional named arg),
+    `TelemetryOdbcServiceDecorator`. Existing call sites keep working
+    unchanged because every new parameter defaults to the
+    `ReadWrite` / wire `0` value.
+  - **Graceful fallback**: when an older native library predates
+    Sprint 4.1, `OdbcBindings.odbc_transaction_begin_v2` silently
+    delegates to v1 and the `accessMode` argument is ignored — the
+    transaction is always `READ WRITE`. Callers that need the
+    distinction gate on `supportsTransactionAccessMode`.
+
+### Tests
+
+- 8 new lib unit tests under `engine::transaction::tests::*` covering
+  the `TransactionAccessMode` from-`u32` mapping, SQL keyword
+  formatting, the `is_read_only` predicate, the default value attached
+  to the `Transaction` struct, and the `for_test_with_access_mode`
+  test-only constructor.
+- `tests/e2e_transaction_access_mode_test.rs` — 4 new E2E tests gated
+  by `should_run_e2e_tests()`. Verified against a live SQL Server:
+  default `ReadWrite` preserves v1 behaviour, `ReadOnly` is a silent
+  no-op on SQL Server (the recorded `access_mode()` still reflects
+  what the caller asked for), the v1 path defaults to `ReadWrite`,
+  and a placeholder for the
+  Postgres/MySQL/Oracle native-hint exercise (skipped when the DSN
+  isn't one of those engines).
+
+### Migration
+
+- 100% backwards compatible. Every existing call site keeps working
+  unchanged because the new parameter is optional with a `ReadWrite`
+  default. Wire-level v1 is also preserved: `odbc_transaction_begin`
+  still ships, still has the same signature, and now delegates to v2
+  with `access_mode = 0`.
+
 ### Notes
 
 - **GitHub issues #1 and #2 are resolved by v3.3.0** (released as part of

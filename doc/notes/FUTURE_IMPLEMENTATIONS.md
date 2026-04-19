@@ -20,7 +20,8 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Multi-result with parameters (M5)~~                      | ✅ **Implemented (v3.2.0)**                     | ~~Medium~~  |
 | ~~Streaming multi-result (M8)~~                            | ✅ **Implemented (v3.3.0)**                     | ~~Medium~~  |
 | ~~UTF-16 wide-text column decoding~~                       | ✅ **Implemented (v3.3.0)**                     | ~~High~~    |
-| Transaction Sprint 4 — `READ ONLY`, lock_timeout, XA / 2PC | Planned (not started)                           | Medium      |
+| ~~Transaction Sprint 4.1 — `READ ONLY`~~                   | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
+| Transaction Sprint 4.2/4.3/4.4 — lock_timeout, XA, runInTx | Partial — 4.1 done; 4.2/4.3/4.4 still pending  | Medium      |
 | `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
 | `SqlDataType` extended kinds (smallInt, json, uuid, …)     | Incremental (10/30 kinds shipped in v3.0.0)     | Low         |
@@ -35,16 +36,14 @@ shipped the Dart safety helpers (`runWithBegin`, `withSavepoint`,
 `Finalizable`). Sprint 4 covers the optional / advanced surface that did
 **not** make it into v3.1 because none of it is required for correctness.
 
-### 4.1 `SET TRANSACTION READ ONLY`
+### ~~4.1 `SET TRANSACTION READ ONLY`~~ — ✅ IMPLEMENTED (Unreleased)
 
-- **Why**: PostgreSQL and MySQL skip locking and use REPEATABLE READ
-  snapshot semantics for read-only transactions. Significant perf win for
-  reporting.
-- **Sketch**: `IsolationLevel.asReadOnly()` modifier + extra strategy in
-  `IsolationStrategy::Sql92` to append ` READ ONLY`. Or a sibling enum
-  `TransactionAccessMode { readWrite, readOnly }`.
-- **Engines**: PostgreSQL, MySQL/MariaDB, Db2 (`READ ONLY`), Oracle
-  (`READ ONLY` after isolation). SQL Server has no equivalent → no-op.
+Sibling enum `TransactionAccessMode { readWrite, readOnly }` exposed
+end-to-end (Rust core → FFI v2 → Dart bindings → Service). PostgreSQL /
+MySQL / MariaDB / DB2 / Oracle emit `SET TRANSACTION READ ONLY`; SQL
+Server / SQLite / Snowflake silently no-op. v1 FFI ABI preserved.
+Verified by 8 unit tests + 4 E2E tests (`tests/e2e_transaction_access_mode_test.rs`).
+See CHANGELOG `[Unreleased] / Added` for the full surface.
 
 ### 4.2 Lock / statement timeouts per transaction
 

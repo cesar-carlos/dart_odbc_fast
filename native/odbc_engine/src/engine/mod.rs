@@ -36,4 +36,7 @@ pub use streaming::{
     BatchedStreamingState, StreamState, StreamingExecutor, StreamingState,
     MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
-pub use transaction::{IsolationLevel, Savepoint, SavepointDialect, Transaction, TransactionState};
+pub use transaction::{
+    IsolationLevel, Savepoint, SavepointDialect, Transaction, TransactionAccessMode,
+    TransactionState,
+};

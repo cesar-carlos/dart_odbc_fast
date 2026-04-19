@@ -16,7 +16,7 @@ use crate::engine::{
     list_foreign_keys, list_indexes, list_primary_keys, list_tables, AsyncStreamStatus,
     AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, MetadataCache,
     OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
-    StreamingExecutor, Transaction,
+    StreamingExecutor, Transaction, TransactionAccessMode,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -1036,6 +1036,36 @@ pub extern "C" fn odbc_transaction_begin(
     isolation_level: c_uint,
     savepoint_dialect: c_uint,
 ) -> c_uint {
+    // v1 ABI is preserved by delegating to v2 with the safe default
+    // access mode (READ WRITE / discriminant 0). v3.x clients that
+    // never call v2 keep the exact same wire and behaviour.
+    odbc_transaction_begin_v2(conn_id, isolation_level, savepoint_dialect, 0)
+}
+
+/// Begin a new transaction with full control over isolation, savepoint
+/// dialect AND access mode (`READ ONLY` / `READ WRITE`). Sprint 4.1.
+///
+/// - `conn_id`: connection ID from `odbc_connect`.
+/// - `isolation_level`: `0 = ReadUncommitted`, `1 = ReadCommitted`,
+///   `2 = RepeatableRead`, `3 = Serializable`.
+/// - `savepoint_dialect`: `0 = Auto` (default; resolved via `SQLGetInfo`),
+///   `1 = SqlServer` (`SAVE TRANSACTION`/`ROLLBACK TRANSACTION`),
+///   `2 = Sql92` (`SAVEPOINT`/`ROLLBACK TO SAVEPOINT`).
+/// - `access_mode`: `0 = ReadWrite` (default), `1 = ReadOnly`. Engines
+///   without an equivalent SQL hint (SQL Server, SQLite, Snowflake)
+///   silently treat `ReadOnly` as a no-op so callers can program against
+///   the abstraction unconditionally.
+///
+/// Returns the transaction ID (`> 0`) on success, `0` on failure
+/// (consult `odbc_get_last_error`). Same allocation and error semantics
+/// as [`odbc_transaction_begin`].
+#[no_mangle]
+pub extern "C" fn odbc_transaction_begin_v2(
+    conn_id: c_uint,
+    isolation_level: c_uint,
+    savepoint_dialect: c_uint,
+    access_mode: c_uint,
+) -> c_uint {
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
@@ -1049,6 +1079,7 @@ pub extern "C" fn odbc_transaction_begin(
     };
 
     let dialect = SavepointDialect::from_u32(savepoint_dialect);
+    let access = TransactionAccessMode::from_u32(access_mode);
 
     let conn = match state.connections.get(&conn_id) {
         Some(c) => c,
@@ -1072,7 +1103,7 @@ pub extern "C" fn odbc_transaction_begin(
 
     // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
     // `DbmsInfo::detect_for_conn_id` (live SQLGetInfo) — see v3.1 fix B2.
-    let txn_result = conn.begin_transaction_with_dialect(isolation, dialect);
+    let txn_result = conn.begin_transaction_with_access_mode(isolation, dialect, access);
 
     match txn_result {
         Ok(txn) => {

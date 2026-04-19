@@ -1,5 +1,6 @@
 use crate::engine::core::{
-    ENGINE_DB2, ENGINE_ORACLE, ENGINE_SNOWFLAKE, ENGINE_SQLITE, ENGINE_SQLSERVER, ENGINE_UNKNOWN,
+    ENGINE_DB2, ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_SNOWFLAKE,
+    ENGINE_SQLITE, ENGINE_SQLSERVER, ENGINE_UNKNOWN,
 };
 use crate::engine::dbms_info::DbmsInfo;
 use crate::engine::identifier::{quote_identifier, validate_identifier, IdentifierQuoting};
@@ -13,6 +14,52 @@ pub enum IsolationLevel {
     ReadCommitted,
     RepeatableRead,
     Serializable,
+}
+
+/// Whether a transaction is allowed to mutate state.
+///
+/// Equivalent of the SQL-92 `READ ONLY` / `READ WRITE` modifier on
+/// `SET TRANSACTION`. Setting `ReadOnly` lets the engine skip locking
+/// (PostgreSQL, MySQL/MariaDB), pick a snapshot path (Oracle), or simply
+/// reject any DML attempt during the transaction. Engines that have no
+/// equivalent (SQL Server, SQLite, Snowflake) treat this as a no-op so
+/// callers can program against the abstraction unconditionally.
+///
+/// Sprint 4.1 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionAccessMode {
+    /// Default. Transaction may execute any DML/DDL allowed by the user's
+    /// privileges. Equivalent to `READ WRITE` on SQL-92 engines.
+    ReadWrite,
+    /// Transaction may not execute DML or DDL. Drivers that support the
+    /// hint use it to skip locking and (where applicable) take a
+    /// snapshot read path.
+    ReadOnly,
+}
+
+impl TransactionAccessMode {
+    /// FFI mapping (stable):
+    /// - `0` → `ReadWrite` (default)
+    /// - `1` → `ReadOnly`
+    /// - anything else → `ReadWrite`
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => Self::ReadOnly,
+            _ => Self::ReadWrite,
+        }
+    }
+
+    /// SQL-92 keyword for the `SET TRANSACTION ... <KW>` modifier.
+    pub(crate) fn to_sql_keyword(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "READ ONLY",
+            Self::ReadWrite => "READ WRITE",
+        }
+    }
+
+    pub fn is_read_only(self) -> bool {
+        matches!(self, Self::ReadOnly)
+    }
 }
 
 impl IsolationLevel {
@@ -143,6 +190,7 @@ pub struct Transaction {
     state: Arc<Mutex<TransactionState>>,
     isolation_level: IsolationLevel,
     savepoint_dialect: SavepointDialect,
+    access_mode: TransactionAccessMode,
 }
 
 impl Transaction {
@@ -159,6 +207,27 @@ impl Transaction {
         conn_id: u32,
         isolation_level: IsolationLevel,
         savepoint_dialect: SavepointDialect,
+    ) -> Result<Self> {
+        Self::begin_with_access_mode(
+            handles,
+            conn_id,
+            isolation_level,
+            savepoint_dialect,
+            TransactionAccessMode::ReadWrite,
+        )
+    }
+
+    /// Begin a transaction with full control over isolation, savepoint
+    /// dialect and access mode (`READ ONLY` / `READ WRITE`).
+    ///
+    /// Sprint 4.1 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.1 and
+    /// the [`TransactionAccessMode`] doc for the engine matrix.
+    pub fn begin_with_access_mode(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
     ) -> Result<Self> {
         // Resolve `Auto` ahead of time so the rest of the lifecycle is
         // dialect-agnostic. Best-effort: if `SQLGetInfo` fails we fall back to
@@ -182,6 +251,11 @@ impl Transaction {
         // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
         Self::apply_isolation(conn.connection_mut(), &engine_id, isolation_level)?;
 
+        // Access mode must follow isolation. Oracle is special-cased inside
+        // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
+        // the previous isolation choice on that engine.
+        Self::apply_access_mode(conn.connection_mut(), &engine_id, access_mode)?;
+
         conn.connection_mut()
             .set_autocommit(false)
             .map_err(OdbcError::from)?;
@@ -192,6 +266,7 @@ impl Transaction {
             state,
             isolation_level,
             savepoint_dialect: resolved_dialect,
+            access_mode,
         })
     }
 
@@ -282,8 +357,65 @@ impl Transaction {
         }
     }
 
+    /// Apply the `READ ONLY` / `READ WRITE` access mode to the connection
+    /// using a vendor-aware strategy.
+    ///
+    /// Engine matrix:
+    ///
+    /// | Engine                       | Behaviour                                                      |
+    /// | ---------------------------- | -------------------------------------------------------------- |
+    /// | PostgreSQL                   | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+    /// | MySQL / MariaDB              | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+    /// | DB2                          | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+    /// | Oracle                       | `SET TRANSACTION READ ONLY` (no-op for `READ WRITE` — default) |
+    /// | SQL Server / SQLite / others | log + skip; no native equivalent                                |
+    ///
+    /// `READ WRITE` is the engine default everywhere, so for any engine
+    /// without an explicit clause we treat it as a no-op rather than emit
+    /// a redundant `SET`. This keeps the connection's textual session log
+    /// clean and avoids spurious failures on engines that reject the
+    /// keyword.
+    fn apply_access_mode(
+        conn: &mut odbc_api::Connection<'static>,
+        engine_id: &str,
+        access_mode: TransactionAccessMode,
+    ) -> Result<()> {
+        // `READ WRITE` is the universal default; only emit a SET when we
+        // actually need to switch the engine into read-only mode.
+        if !access_mode.is_read_only() {
+            return Ok(());
+        }
+
+        match engine_id {
+            ENGINE_POSTGRES | ENGINE_MYSQL | ENGINE_MARIADB | ENGINE_DB2 | ENGINE_ORACLE => {
+                let sql = format!("SET TRANSACTION {}", access_mode.to_sql_keyword());
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            _ => {
+                // SQL Server, SQLite, Snowflake, Sybase, Redshift, BigQuery,
+                // MongoDB, unknown — none have a portable READ ONLY hint
+                // here. Log so misuse is visible in DEBUG builds, then
+                // silently succeed so callers can program against the
+                // abstraction unconditionally.
+                log::debug!(
+                    "apply_access_mode: engine {engine_id:?} has no READ ONLY transaction \
+                     hint; silently treating as READ WRITE. Application-level \
+                     enforcement (DENY UPDATE/INSERT/DELETE) is the only option \
+                     on this engine."
+                );
+                Ok(())
+            }
+        }
+    }
+
     pub fn savepoint_dialect(&self) -> SavepointDialect {
         self.savepoint_dialect
+    }
+
+    pub fn access_mode(&self) -> TransactionAccessMode {
+        self.access_mode
     }
 
     pub fn commit(self) -> Result<()> {
@@ -390,7 +522,37 @@ impl Transaction {
     where
         F: FnOnce(&Transaction) -> Result<T>,
     {
-        let txn = Self::begin_with_dialect(handles.clone(), conn_id, isolation, savepoint_dialect)?;
+        Self::execute_with_access_mode(
+            handles,
+            conn_id,
+            isolation,
+            savepoint_dialect,
+            TransactionAccessMode::ReadWrite,
+            f,
+        )
+    }
+
+    /// Run `f` inside a fully-qualified transaction (isolation + savepoint
+    /// dialect + access mode) with automatic commit on success and
+    /// rollback on error.
+    pub fn execute_with_access_mode<F, T>(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        f: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&Transaction) -> Result<T>,
+    {
+        let txn = Self::begin_with_access_mode(
+            handles.clone(),
+            conn_id,
+            isolation,
+            savepoint_dialect,
+            access_mode,
+        )?;
         match f(&txn) {
             Ok(result) => {
                 txn.commit()?;
@@ -503,6 +665,7 @@ impl Transaction {
             state: Arc::new(Mutex::new(state)),
             isolation_level,
             savepoint_dialect: SavepointDialect::Sql92,
+            access_mode: TransactionAccessMode::ReadWrite,
         }
     }
 
@@ -522,6 +685,28 @@ impl Transaction {
             state: Arc::new(Mutex::new(state)),
             isolation_level,
             savepoint_dialect,
+            access_mode: TransactionAccessMode::ReadWrite,
+        }
+    }
+
+    /// Test-only constructor that lets the caller pin both the dialect and
+    /// the access mode. See [`for_test`] for caveats.
+    #[doc(hidden)]
+    pub fn for_test_with_access_mode(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        state: TransactionState,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+    ) -> Self {
+        Self {
+            handles,
+            conn_id,
+            state: Arc::new(Mutex::new(state)),
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
         }
     }
 
@@ -546,6 +731,7 @@ impl Transaction {
             state: Arc::new(Mutex::new(state)),
             isolation_level,
             savepoint_dialect,
+            access_mode: TransactionAccessMode::ReadWrite,
         }
     }
 }
@@ -645,7 +831,9 @@ impl<'t> Savepoint<'t> {
 
 #[cfg(test)]
 mod tests {
-    use super::{IsolationLevel, SavepointDialect, Transaction, TransactionState};
+    use super::{
+        IsolationLevel, SavepointDialect, Transaction, TransactionAccessMode, TransactionState,
+    };
     use crate::error::OdbcError;
     use crate::handles::{HandleManager, SharedHandleManager};
     use std::sync::{Arc, Mutex};
@@ -943,6 +1131,89 @@ mod tests {
         // SQL Server has no RELEASE SAVEPOINT — implementation returns Ok(())
         // without touching the connection (so the bogus conn_id is fine).
         assert!(txn.savepoint_release("sp1").is_ok());
+    }
+
+    // ---------------------------------------------------------------
+    // TransactionAccessMode (Sprint 4.1) regression coverage
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn transaction_access_mode_from_u32_default_is_read_write() {
+        assert_eq!(
+            TransactionAccessMode::from_u32(0),
+            TransactionAccessMode::ReadWrite
+        );
+        assert_eq!(
+            TransactionAccessMode::from_u32(99),
+            TransactionAccessMode::ReadWrite,
+            "unknown discriminants must default to ReadWrite (safe default)"
+        );
+    }
+
+    #[test]
+    fn transaction_access_mode_from_u32_explicit_codes() {
+        assert_eq!(
+            TransactionAccessMode::from_u32(1),
+            TransactionAccessMode::ReadOnly
+        );
+    }
+
+    #[test]
+    fn transaction_access_mode_to_sql_keyword() {
+        assert_eq!(TransactionAccessMode::ReadOnly.to_sql_keyword(), "READ ONLY");
+        assert_eq!(
+            TransactionAccessMode::ReadWrite.to_sql_keyword(),
+            "READ WRITE"
+        );
+    }
+
+    #[test]
+    fn transaction_access_mode_is_read_only_predicate() {
+        assert!(TransactionAccessMode::ReadOnly.is_read_only());
+        assert!(!TransactionAccessMode::ReadWrite.is_read_only());
+    }
+
+    #[test]
+    fn transaction_default_access_mode_is_read_write() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        assert_eq!(txn.access_mode(), TransactionAccessMode::ReadWrite);
+    }
+
+    #[test]
+    fn transaction_for_test_with_access_mode_pins_the_value() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_access_mode(
+            handles,
+            7,
+            TransactionState::Active,
+            IsolationLevel::Serializable,
+            SavepointDialect::Sql92,
+            TransactionAccessMode::ReadOnly,
+        );
+        assert_eq!(txn.access_mode(), TransactionAccessMode::ReadOnly);
+        assert_eq!(txn.isolation_level(), IsolationLevel::Serializable);
+    }
+
+    /// Reproduces the SQL string the engine would emit for the SQL-92
+    /// access-mode statement. Pure formatting check; no driver involved.
+    #[test]
+    fn transaction_access_mode_sql_format_matches_spec() {
+        let ro = format!(
+            "SET TRANSACTION {}",
+            TransactionAccessMode::ReadOnly.to_sql_keyword()
+        );
+        assert_eq!(ro, "SET TRANSACTION READ ONLY");
+        let rw = format!(
+            "SET TRANSACTION {}",
+            TransactionAccessMode::ReadWrite.to_sql_keyword()
+        );
+        assert_eq!(rw, "SET TRANSACTION READ WRITE");
     }
 
     #[test]

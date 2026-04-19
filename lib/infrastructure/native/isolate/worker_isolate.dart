@@ -165,6 +165,7 @@ void _handleRequest(
           request.connectionId,
           request.isolationLevel,
           savepointDialect: request.savepointDialect,
+          accessMode: request.accessMode,
         );
         sendPort.send(IntResponse(request.requestId, txnId));
 
