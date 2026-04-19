@@ -1,15 +1,22 @@
 [package]
 name = "odbc_engine"
-# v3.1.0 release: transaction control hardening.
-# - SavepointDialect::Auto resolved via SQLGetInfo at Transaction::begin (B2).
-# - FFI odbc_savepoint_* now route through Transaction::savepoint_* with
-#   identifier validation + dialect-aware quoting (B1 / closes A1 via FFI).
-# - apply_isolation engine-aware (SQLite PRAGMA, Db2 SET CURRENT, Oracle
-#   restricted, Snowflake skip, Sql92 default).
-# - commit / rollback always restore autocommit (B7).
-# - 6 new regression tests under tests/regression/a1_ffi_savepoint_injection.
-# See CHANGELOG.md for the complete list and migration notes.
-version = "3.3.0"
+# v3.4.0 release: transaction control Sprint 4.
+# - 4.1 SET TRANSACTION READ ONLY (PG/MySQL/MariaDB/DB2/Oracle).
+# - 4.2 Lock / statement timeouts per transaction (engine::LockTimeout typed
+#   wrapper; FFI v3 with v1/v2 ABI preserved via delegation).
+# - 4.3 X/Open XA / 2PC for PG, MySQL/MariaDB, DB2 with state machine
+#   (Xid -> XaTransaction -> PreparingXa -> PreparedXa); 1RM fast-path;
+#   crash recovery via recover_prepared_xids/resume_prepared.
+# - 4.3b XA on SQL Server (MSDTC) -- Phase 1 scaffolding under
+#   --features xa-dtc (Windows-only). Phase 2 wiring + E2E pending.
+# - 4.3c XA on Oracle (OCI XA) -- Phase 1 scaffolding under --features
+#   xa-oci (cross-platform). Phase 2 wiring + E2E pending.
+# - 4.4 IOdbcService.runInTransaction<T> helper.
+# - 17 new SqlDataType kinds (now 27/30 covering PG/MySQL/MariaDB/SQL
+#   Server/Oracle/SQLite specific types).
+# - test_ffi_get_structured_error flakiness fixed (atomic inject+read).
+# See CHANGELOG.md [3.4.0] for the complete list and migration notes.
+version = "3.4.0"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

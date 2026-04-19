@@ -1,4 +1,21 @@
 name: odbc_fast
+# v3.4.0 - Transaction control Sprint 4:
+#   - 4.1 SET TRANSACTION READ ONLY (PostgreSQL/MySQL/MariaDB/DB2/Oracle;
+#     SQL Server/SQLite/Snowflake silently no-op).
+#   - 4.2 Lock / statement timeouts per transaction (engine::LockTimeout
+#     typed wrapper; FFI v3 with v1/v2 ABI preserved via delegation).
+#   - 4.3 X/Open XA / 2PC for PostgreSQL, MySQL/MariaDB and DB2 with
+#     state machine Xid → XaTransaction → PreparingXa → PreparedXa,
+#     1RM optimisation, crash recovery via recover_prepared_xids.
+#     10 new FFIs + Dart XaTransactionHandle.
+#   - 4.3b XA on SQL Server (MSDTC) — Phase 1 scaffolding under
+#     --features xa-dtc (Windows-only). Phase 2 wiring + E2E pending.
+#   - 4.3c XA on Oracle (OCI XA) — Phase 1 scaffolding under
+#     --features xa-oci (cross-platform). Phase 2 wiring + E2E pending.
+#   - 4.4 IOdbcService.runInTransaction<T> helper with telemetry wrapper.
+#   - 17 new SqlDataType kinds (now 27/30 covering PG/MySQL/MariaDB/
+#     SQL Server/Oracle/SQLite specific types).
+#   - test_ffi_get_structured_error flakiness fixed (atomic inject+read).
 # v3.3.0 - Streaming multi-result (M8):
 #   - New odbc_stream_multi_start_batched / _async FFIs that surface every
 #     multi-result item as a frame ([tag: u8][len: u32][payload]) over the
@@ -38,7 +55,7 @@ name: odbc_fast
 # New features: MINOR bumps (3.1.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.3.0
+version: 3.4.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

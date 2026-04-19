@@ -2,7 +2,7 @@
 
 Consolidated backlog of items not yet included in implemented scope.
 
-**Last verified against code:** 2026-04-19 (v3.3.0)
+**Last verified against code:** 2026-04-19 (v3.4.0)
 
 > Note: this file is in `doc/notes/` and intentionally documents pending
 > implementation work.
@@ -20,18 +20,16 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Multi-result with parameters (M5)~~                      | ✅ **Implemented (v3.2.0)**                     | ~~Medium~~  |
 | ~~Streaming multi-result (M8)~~                            | ✅ **Implemented (v3.3.0)**                     | ~~Medium~~  |
 | ~~UTF-16 wide-text column decoding~~                       | ✅ **Implemented (v3.3.0)**                     | ~~High~~    |
-| ~~Transaction Sprint 4.1 — `READ ONLY`~~                   | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
-| ~~Transaction Sprint 4.2 — lock_timeout~~                  | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
-| ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (Unreleased)**                 | ~~Low~~     |
-| ~~Transaction Sprint 4.3 — XA / 2PC (PG/MySQL/DB2)~~       | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
-| Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Phase 1 ✅ scaffolding (Unreleased) / Phase 2 wiring pending | Low |
-| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Phase 1 ✅ scaffolding (Unreleased) / Phase 2 wiring pending | Low |
-| ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (Unreleased)** — atomic inject+read   | ~~Low~~     |
-| `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
+| ~~Transaction Sprint 4.1 — `READ ONLY`~~                   | ✅ **Implemented (v3.4.0)**                     | ~~Medium~~  |
+| ~~Transaction Sprint 4.2 — lock_timeout~~                  | ✅ **Implemented (v3.4.0)**                     | ~~Medium~~  |
+| ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (v3.4.0)**                     | ~~Low~~     |
+| ~~Transaction Sprint 4.3 — XA / 2PC (PG/MySQL/DB2)~~       | ✅ **Implemented (v3.4.0)**                     | ~~Medium~~  |
+| Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Phase 1 ✅ scaffolding (v3.4.0) / Phase 2 wiring pending | Low |
+| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Phase 1 ✅ scaffolding (v3.4.0) / Phase 2 wiring pending | Low |
+| ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (v3.4.0)** — atomic inject+read       | ~~Low~~     |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
-| `SqlDataType` extended kinds (incremental)                 | 27/30 kinds shipped (10 in v3.0.0, +17 unreleased) | Low     |
+| `SqlDataType` extended kinds (incremental)                 | 27/30 kinds shipped (10 in v3.0.0, +17 in v3.4.0) | Low       |
 | Columnar protocol v2 (sketch)                              | Orphaned — see `doc/notes/columnar_protocol_sketch.md` | Low   |
-| `test_ffi_get_structured_error` flakiness on parallel runs | Known issue — passes serially                   | Low         |
 | `e2e_pool_test`, `e2e_savepoint_test` hang on slow DSN     | Known infra — gated by `ENABLE_E2E_TESTS=1`     | Low         |
 
 ## 0. Transaction control — Sprint 4 (Planned)
@@ -41,16 +39,16 @@ shipped the Dart safety helpers (`runWithBegin`, `withSavepoint`,
 `Finalizable`). Sprint 4 covers the optional / advanced surface that did
 **not** make it into v3.1 because none of it is required for correctness.
 
-### ~~4.1 `SET TRANSACTION READ ONLY`~~ — ✅ IMPLEMENTED (Unreleased)
+### ~~4.1 `SET TRANSACTION READ ONLY`~~ — ✅ IMPLEMENTED (v3.4.0)
 
 Sibling enum `TransactionAccessMode { readWrite, readOnly }` exposed
 end-to-end (Rust core → FFI v2 → Dart bindings → Service). PostgreSQL /
 MySQL / MariaDB / DB2 / Oracle emit `SET TRANSACTION READ ONLY`; SQL
 Server / SQLite / Snowflake silently no-op. v1 FFI ABI preserved.
 Verified by 8 unit tests + 4 E2E tests (`tests/e2e_transaction_access_mode_test.rs`).
-See CHANGELOG `[Unreleased] / Added` for the full surface.
+See CHANGELOG `[3.4.0] / Added` for the full surface.
 
-### ~~4.2 Lock / statement timeouts per transaction~~ — ✅ IMPLEMENTED (Unreleased)
+### ~~4.2 Lock / statement timeouts per transaction~~ — ✅ IMPLEMENTED (v3.4.0)
 
 `engine::LockTimeout` typed wrapper exposed end-to-end (Rust core →
 FFI v3 → Dart `Duration?` → Service). Engine matrix: SQL Server emits
@@ -62,7 +60,7 @@ silently no-op. v1/v2 ABIs preserved via v3 delegation. Verified by
 12 unit tests + 4 E2E tests
 (`tests/e2e_transaction_lock_timeout_test.rs`).
 
-### ~~4.3 XA / two-phase commit (PostgreSQL, MySQL/MariaDB, DB2)~~ — ✅ IMPLEMENTED (Unreleased)
+### ~~4.3 XA / two-phase commit (PostgreSQL, MySQL/MariaDB, DB2)~~ — ✅ IMPLEMENTED (v3.4.0)
 
 `engine::xa_transaction` ships first-class XA support with a
 strongly-typed state machine ([`Xid`] → [`XaTransaction`] →
@@ -79,7 +77,7 @@ the full 2PC lifecycle including resume-after-disconnect.
 
 ### 4.3b XA on SQL Server (MSDTC) — Phase 1 implemented; Phase 2 pending
 
-**Phase 1 (Unreleased) — scaffolding landed**:
+**Phase 1 (v3.4.0) — scaffolding landed**:
 
 - New module `engine::xa_dtc` behind `--features xa-dtc`
   (Windows-only).
@@ -108,7 +106,7 @@ the full 2PC lifecycle including resume-after-disconnect.
 
 ### 4.3c XA on Oracle (OCI XA) — Phase 1 implemented; Phase 2 pending
 
-**Phase 1 (Unreleased) — scaffolding landed**:
+**Phase 1 (v3.4.0) — scaffolding landed**:
 
 - New module `engine::xa_oci` behind `--features xa-oci`
   (cross-platform; Oracle Instant Client must be on the dynamic-
@@ -138,7 +136,7 @@ the full 2PC lifecycle including resume-after-disconnect.
   `cargo test --features xa-oci -- --ignored --test-threads=1`
   against an Oracle DB with an `XA_OPEN` entry registered.
 
-### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (Unreleased)
+### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (v3.4.0)
 
 `IOdbcService.runInTransaction<T>(connId, action, {isolationLevel,
 savepointDialect, accessMode, lockTimeout})` ships in
@@ -171,14 +169,14 @@ swallowed so they never overwrite the original cause. Verified by
 
 v3.0.0 shipped 10 kinds (`int32`, `int64`, `decimal`, `varChar`,
 `nVarChar`, `varBinary`, `dateTime`, `date`, `time`, `boolAsInt32`).
-**Unreleased adds 17 more**:
+**v3.4.0 adds 17 more**:
 
 - Cross-engine batch 1 (smallInt, bigInt, json, uuid, money)
 - Cross-engine batch 2 (tinyInt, bit, text, xml, interval)
 - Engine-specific batch (range, cidr, tsvector, hierarchyId,
   geography, raw, bfile)
 
-See CHANGELOG `[Unreleased] / Added` and
+See CHANGELOG `[3.4.0] / Added` and
 `test/infrastructure/native/protocol/param_value_test.dart` for the
 full validation matrix per kind.
 
@@ -196,7 +194,7 @@ These are **not** product bugs — they affect test runs against specific
 local infrastructures. Documented here so they don't get re-discovered
 each release cycle.
 
-### ~~3.1 `test_ffi_get_structured_error` is flaky in parallel~~ — ✅ FIXED (Unreleased)
+### ~~3.1 `test_ffi_get_structured_error` is flaky in parallel~~ — ✅ FIXED (v3.4.0)
 
 The previous implementation triggered the structured error via
 `trigger_structured_cancel_unsupported_error()`, released the global
