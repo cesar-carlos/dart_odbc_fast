@@ -6,6 +6,8 @@ Consolidated backlog of items not yet included in implemented scope.
 
 > Note: this file is in `doc/notes/` and intentionally documents pending
 > implementation work.
+>
+> **Quick reference (pending only, PT):** [`docs/Features/PENDING_IMPLEMENTATIONS.md`](../../docs/Features/PENDING_IMPLEMENTATIONS.md).
 
 ## Summary
 
