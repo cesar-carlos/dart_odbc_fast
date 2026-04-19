@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] - E2E test stability fixes
+
+### Fixed
+
+- **`odbc_exec_query` ignored pooled connection IDs.** The function only
+  looked up `state.connections` and returned `Invalid connection ID` for any
+  id handed out by `odbc_pool_get_connection`. Brought the function in line
+  with `odbc_exec_query_params`, `odbc_prepare` and the other paths that
+  already accept both kinds of id (B added in v3.1.1).
+- **`test_ffi_pool_release_raii_rollback_autocommit` could not exercise the
+  RAII path on SQL Server.** It tried to dirty the connection with
+  `odbc_exec_query("BEGIN TRANSACTION")` which SQL Server rejects with
+  SQLSTATE 25000 / native error 266 ("mismatching number of BEGIN and
+  COMMIT statements") because `SQLExecute` runs in autocommit-on mode by
+  default. The test now flips `set_autocommit(false)` directly on the live
+  pooled `Connection` (the same path `Transaction::begin` uses) and
+  asserts that the next checkout observes a clean connection thanks to
+  `PoolAutocommitCustomizer.on_acquire`.
+- **`test_ffi_execute_retry_after_buffer_too_small_does_not_reexecute_side_effect_sql`
+  used a SQL Server local temp table (`#name`).** Local temp tables are
+  scoped per **physical** session, and the ODBC Driver Manager may
+  multiplex several physical sessions over a single logical `Connection`,
+  so the temp table was missing on the second statement. Switched to a
+  permanent table named `ffi_exec_retry_guard_<pid>` plus an
+  `INSERT … OUTPUT REPLICATE('X', 6000)` that returns a single result set
+  (so `odbc_exec_query` actually sees the 6000-byte payload) while still
+  proving the no-re-execute property via PRIMARY KEY constraint.
+- **`tests/helpers/env.rs` got 4 broken assertions when `ODBC_TEST_DSN`
+  pointed at SQL Server.** `get_postgresql_test_dsn` / `_mysql` / `_oracle`
+  / `_sybase` all fall back to the global `ODBC_TEST_DSN`, but the tests
+  asserted that the returned string contained the corresponding driver
+  name (e.g. `"MySQL"`). When the developer only exports a single
+  `ODBC_TEST_DSN` for SQL Server (the typical setup), all four asserts
+  failed. They now skip gracefully when the available DSN points at a
+  different engine, and only run for real when a per-engine env var is
+  configured (or a multi-DB CI matrix is in place).
+
+### Tests
+
+- Lib: 858 passed / 0 failed / 0 ignored (was 856 / 2 / 0 with
+  `--include-ignored`).
+- regression_test: 78 passed.
+- cell_reader_test: 32 passed (was 28 / 4).
+- transaction_test: 16 passed.
+- ffi_compatibility_test: 14 passed.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 0 warnings.
+
 ## [3.1.0] - Transaction control hardening
 
 ### Fixed

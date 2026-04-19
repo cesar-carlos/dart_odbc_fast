@@ -10,12 +10,12 @@ use crate::engine::ArrayBinding;
 #[cfg(feature = "sqlserver-bcp")]
 use crate::engine::BulkCopyExecutor;
 use crate::engine::{
-    execute_multi_result, execute_query_with_cached_connection, execute_query_with_params,
-    execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
-    list_foreign_keys, list_indexes, list_primary_keys, list_tables, AsyncStreamStatus,
-    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, MetadataCache,
-    OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
-    StreamingExecutor, Transaction,
+    execute_multi_result, execute_query_with_cached_connection, execute_query_with_connection,
+    execute_query_with_params, execute_query_with_params_and_timeout, get_global_metrics,
+    get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
+    AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, DriverCapabilities,
+    IsolationLevel, MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect,
+    StatementHandle, StreamState, StreamingExecutor, Transaction,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -2111,65 +2111,6 @@ pub extern "C" fn odbc_exec_query(
         return -1;
     };
 
-    let handles = match state.connections.get(&conn_id) {
-        Some(c) => c.get_handles(),
-        None => {
-            drop(state);
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            set_connection_error(
-                &mut state,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
-            set_out_written_zero(out_written);
-            return -1;
-        }
-    };
-
-    let Some(handles_guard) = handles.lock().ok() else {
-        drop(state);
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-        set_error(&mut state, "Failed to lock handles mutex".to_string());
-        set_out_written_zero(out_written);
-        return -1;
-    };
-
-    let conn_arc = match handles_guard.get_connection(conn_id) {
-        Ok(c) => c,
-        Err(e) => {
-            drop(handles_guard);
-            drop(state);
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            set_error(&mut state, format!("Failed to get connection: {}", e));
-            set_out_written_zero(out_written);
-            return -1;
-        }
-    };
-    drop(handles_guard);
-
-    let mut conn_guard = match conn_arc.lock() {
-        Ok(g) => g,
-        Err(_) => {
-            drop(state);
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            set_error(&mut state, "Failed to lock connection".to_string());
-            set_out_written_zero(out_written);
-            return -1;
-        }
-    };
-
     state.audit_logger.log_query(conn_id, sql_str);
 
     let metrics = Arc::clone(&state.metrics);
@@ -2189,7 +2130,79 @@ pub extern "C" fn odbc_exec_query(
         return code;
     }
 
-    match execute_query_with_cached_connection(&mut conn_guard, sql_str) {
+    // Resolve `conn_id` to a runnable query. We accept both:
+    //   1. plain connection IDs created by `odbc_connect`
+    //      (`state.connections`), and
+    //   2. pooled IDs handed out by `odbc_pool_get_connection`
+    //      (`state.pooled_connections`).
+    // Until v3.1.1 only path (1) was implemented here, so any caller
+    // using `odbc_pool_get_connection` + `odbc_exec_query` got
+    // "Invalid connection ID" -- this regressed the
+    // `test_ffi_pool_release_raii_rollback_autocommit` E2E test.
+    let result = if state.connections.contains_key(&conn_id) {
+        let handles = state
+            .connections
+            .get(&conn_id)
+            .expect("conn_id present, just checked")
+            .get_handles();
+        let Ok(handles_guard) = handles.lock() else {
+            drop(state);
+            let Some(mut state) = try_lock_global_state() else {
+                set_out_written_zero(out_written);
+                return -1;
+            };
+            set_error(&mut state, "Failed to lock handles mutex".to_string());
+            set_out_written_zero(out_written);
+            return -1;
+        };
+        let conn_arc = match handles_guard.get_connection(conn_id) {
+            Ok(c) => c,
+            Err(e) => {
+                drop(handles_guard);
+                drop(state);
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
+                set_error(&mut state, format!("Failed to get connection: {}", e));
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        drop(handles_guard);
+
+        let mut conn_guard = match conn_arc.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                drop(state);
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
+                set_error(&mut state, "Failed to lock connection".to_string());
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        execute_query_with_cached_connection(&mut conn_guard, sql_str)
+    } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
+        execute_query_with_connection(pooled.get_connection(), sql_str)
+    } else {
+        drop(state);
+        let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
+            return -1;
+        };
+        set_connection_error(
+            &mut state,
+            conn_id,
+            format!("Invalid connection ID: {}", conn_id),
+        );
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    match result {
         Ok(data) => {
             let elapsed = start.elapsed();
             let data_len = data.len();
@@ -6965,8 +6978,18 @@ mod tests {
         assert_eq!(cr, 0);
     }
 
-    /// RAII: releasing a connection with an open transaction rolls back and restores autocommit.
-    /// The next checkout gets a clean connection regardless of test_on_checkout.
+    /// RAII: releasing a connection with autocommit disabled (i.e. an open
+    /// implicit transaction) must trigger `PoolAutocommitCustomizer.on_acquire`
+    /// on the next checkout, which rolls back any pending transaction and
+    /// restores autocommit. The next caller must observe a clean connection.
+    ///
+    /// We dirty the connection by flipping `set_autocommit(false)` directly on
+    /// the live `odbc_api::Connection` (via the FFI's own `state.pooled_connections`
+    /// map). Using `odbc_exec_query("BEGIN TRANSACTION")` is **not** an option
+    /// here because SQL Server with autocommit=ON rejects unbalanced BEGIN with
+    /// SQLSTATE 25000 / native error 266 ("mismatching number of BEGIN and
+    /// COMMIT statements"); the idiomatic dirtying path is through autocommit
+    /// toggling, which is exactly what `Transaction::begin` does internally.
     #[test]
     fn test_ffi_pool_release_raii_rollback_autocommit() {
         let Some(dsn) = ffi_test_dsn() else {
@@ -6982,17 +7005,20 @@ mod tests {
         let pooled_id = odbc_pool_get_connection(pool_id);
         assert!(pooled_id > 0);
 
-        let begin_sql = CString::new("BEGIN TRANSACTION").unwrap();
-        let mut buffer = vec![0u8; 2048];
-        let mut written: c_uint = 0;
-        let begin_result = odbc_exec_query(
-            pooled_id,
-            begin_sql.as_ptr(),
-            buffer.as_mut_ptr(),
-            buffer.len() as c_uint,
-            &mut written,
-        );
-        assert_eq!(begin_result, 0, "BEGIN TRANSACTION should succeed");
+        // Dirty the connection: flip autocommit off via the live Connection
+        // handle. This mirrors what `Transaction::begin` does for non-pooled
+        // connections; for the pool path we go straight to the wrapper.
+        {
+            let mut state = get_global_state().lock().unwrap();
+            let (_pid, wrapper) = state
+                .pooled_connections
+                .get_mut(&pooled_id)
+                .expect("just-acquired pooled connection must be in state");
+            wrapper
+                .get_connection_mut()
+                .set_autocommit(false)
+                .expect("set_autocommit(false) on pooled conn");
+        }
 
         let pr = odbc_pool_release_connection(pooled_id);
         assert_eq!(
@@ -7003,6 +7029,8 @@ mod tests {
         let pooled_id2 = odbc_pool_get_connection(pool_id);
         assert!(pooled_id2 > 0);
 
+        // The customizer must have rolled back + reset autocommit; a plain
+        // SELECT must succeed without any "transaction state" complaint.
         let select_sql = CString::new("SELECT 1 AS n").unwrap();
         let mut buffer2 = vec![0u8; 2048];
         let mut written2: c_uint = 0;
@@ -7013,9 +7041,19 @@ mod tests {
             buffer2.len() as c_uint,
             &mut written2,
         );
+        let err_msg = {
+            let mut buf = vec![0i8; 2048];
+            let n = odbc_get_error(buf.as_mut_ptr(), buf.len() as c_uint);
+            if n > 0 {
+                let bytes: Vec<u8> = buf[..n as usize].iter().map(|b| *b as u8).collect();
+                String::from_utf8_lossy(&bytes).to_string()
+            } else {
+                "<empty>".to_string()
+            }
+        };
         assert_eq!(
             select_result, 0,
-            "SELECT after release should succeed (clean connection)"
+            "SELECT after release should succeed (clean connection); err = {err_msg}"
         );
         assert!(written2 > 0, "Should have result data");
 
@@ -7591,25 +7629,39 @@ mod tests {
         let conn_id = odbc_connect(conn_cstr.as_ptr());
         assert!(conn_id > 0);
 
-        // SQL Server local temp table is scoped to this connection and dropped on disconnect.
-        let create_sql =
-            CString::new("CREATE TABLE #ffi_exec_retry_guard (id INT PRIMARY KEY)").unwrap();
+        // We need a table that survives across statements on the same logical
+        // ODBC `Connection`, even when the Driver Manager multiplexes physical
+        // sessions. Local temp tables (`#name`) are per-physical-session and
+        // therefore unreliable here -- use a regular table with a unique
+        // per-process name and clean it up at the end.
+        let table = format!("ffi_exec_retry_guard_{}", std::process::id());
+        let setup_sql = CString::new(format!(
+            "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}; \
+             CREATE TABLE {table} (id INT PRIMARY KEY)"
+        ))
+        .unwrap();
         let mut setup_buf = vec![0u8; 1024];
         let mut setup_written: c_uint = 0;
         let create_result = odbc_exec_query(
             conn_id,
-            create_sql.as_ptr(),
+            setup_sql.as_ptr(),
             setup_buf.as_mut_ptr(),
             setup_buf.len() as c_uint,
             &mut setup_written,
         );
-        assert_eq!(create_result, 0, "Temp table setup should succeed");
+        assert_eq!(create_result, 0, "Table setup should succeed");
 
-        // If execute gets retried by re-running SQL after -2, this INSERT will fail
-        // with duplicate key on the second call.
-        let sql = CString::new(
-            "INSERT INTO #ffi_exec_retry_guard (id) VALUES (42); SELECT REPLICATE('X', 6000) AS payload",
-        )
+        // INSERT ... OUTPUT returns a single result set whose row carries the
+        // 6000-byte REPLICATE payload while also performing the side-effect
+        // INSERT. If `odbc_execute` re-runs the SQL after returning -2, the
+        // INSERT (id=42) will fail with PRIMARY KEY violation on the second
+        // call; the test therefore proves that retry pulls the buffered
+        // payload instead of re-executing.
+        let sql = CString::new(format!(
+            "INSERT INTO {table} (id) \
+             OUTPUT REPLICATE('X', 6000) AS payload \
+             VALUES (42)"
+        ))
         .unwrap();
         let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 0);
         assert!(stmt_id > 0, "Prepare should succeed");
@@ -7647,6 +7699,19 @@ mod tests {
         assert!(written > 0);
 
         let _ = odbc_close_statement(stmt_id);
+
+        // Cleanup -- best effort; if it fails we still try to disconnect.
+        let drop_sql = CString::new(format!("DROP TABLE IF EXISTS {table}")).unwrap();
+        let mut db = vec![0u8; 1024];
+        let mut dw: c_uint = 0;
+        let _ = odbc_exec_query(
+            conn_id,
+            drop_sql.as_ptr(),
+            db.as_mut_ptr(),
+            db.len() as c_uint,
+            &mut dw,
+        );
+
         let _ = odbc_disconnect(conn_id);
     }
 
