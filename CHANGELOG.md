@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.3] - 2026-04-19
+
+### Fixed
+
+- **pub.dev publish:** removed top-level `docs/` (Pub expects singular `doc/`);
+  moved `docs/Features/*` to `doc/Features/`. Updated backlog cross-links.
+- **`.github/workflows/publish.yml`:** `dart pub publish` / `--dry-run` now
+  pass `--ignore-warnings` so the client-side hint about skipping versions
+  after the last published **1.2.1** does not fail CI (server still enforces
+  its own rules).
+
 ## [3.4.2] - 2026-04-19
 
 Dart XA helpers (`runWithStart` / `runWithStartOnePhase`), Docker E2E

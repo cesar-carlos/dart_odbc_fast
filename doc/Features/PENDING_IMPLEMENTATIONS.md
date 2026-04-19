@@ -4,7 +4,7 @@ Lista consolidada do que **ainda não está implementado** ou está **parcialmen
 
 **Referência de versão:** v3.4.2 (Dart helpers XA) / engine Rust alinhado ao `pubspec.yaml`.
 
-**Documento canônico de backlog técnico:** [`doc/notes/FUTURE_IMPLEMENTATIONS.md`](../../doc/notes/FUTURE_IMPLEMENTATIONS.md) — mantém histórico, critérios de “done” e notas longas. Este ficheiro resume o que falta para leitura rápida.
+**Documento canônico de backlog técnico:** [`doc/notes/FUTURE_IMPLEMENTATIONS.md`](../notes/FUTURE_IMPLEMENTATIONS.md) — mantém histórico, critérios de “done” e notas longas. Este ficheiro resume o que falta para leitura rápida.
 
 ---
 
@@ -64,7 +64,7 @@ Lista consolidada do que **ainda não está implementado** ou está **parcialmen
 
 ### 2.2 Protocolo columnar v2
 
-**Estado:** *Sketch* em [`doc/notes/columnar_protocol_sketch.md`](../../doc/notes/columnar_protocol_sketch.md); implementação em código foi adiada.
+**Estado:** *Sketch* em [`doc/notes/columnar_protocol_sketch.md`](../notes/columnar_protocol_sketch.md); implementação em código foi adiada.
 
 **Pendente:** desenho + implementação FFI/Dart se o projeto avançar para protocolo columnar v2.
 

@@ -1,4 +1,4 @@
-# Features (`docs/Features`)
+# Features (`doc/Features`)
 
 This folder holds **feature-oriented documentation**: short indexes and summaries that sit beside the long-form technical notes under `doc/notes/`.
 
@@ -10,7 +10,7 @@ This folder holds **feature-oriented documentation**: short indexes and summarie
 
 ## See also
 
-- [`doc/notes/FUTURE_IMPLEMENTATIONS.md`](../../doc/notes/FUTURE_IMPLEMENTATIONS.md) — canonical backlog, “done” criteria, and detailed notes.
+- [`doc/notes/FUTURE_IMPLEMENTATIONS.md`](../notes/FUTURE_IMPLEMENTATIONS.md) — canonical backlog, “done” criteria, and detailed notes.
 - Repository overview: [`README.md`](../../README.md).
 
 When a feature listed here ships end-to-end, update `doc/notes/FUTURE_IMPLEMENTATIONS.md` and trim or archive the corresponding section in `PENDING_IMPLEMENTATIONS.md` so this folder stays a faithful snapshot.

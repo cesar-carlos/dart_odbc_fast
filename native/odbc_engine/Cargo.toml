@@ -39,7 +39,9 @@ name = "odbc_engine"
 #
 # 3.4.2 — Align crate version with Dart pubspec; release notes in
 # CHANGELOG.md [3.4.2] (Dart XA helpers + Docker E2E script/test fixes).
-version = "3.4.2"
+#
+# 3.4.3 — Parity with Dart pubspec for pub.dev publish patch.
+version = "3.4.3"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"
