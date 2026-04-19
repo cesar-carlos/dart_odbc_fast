@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - Oracle XA / 2PC via DBMS_XA (Sprint 4.3c Phase 2)
+
+### Added
+
+- **Sprint 4.3c Phase 2 — Oracle XA via `DBMS_XA` PL/SQL package.**
+  Production wiring for X/Open XA on Oracle 10g+ closes the last
+  remaining engine in the cross-vendor `apply_xa_*` matrix from
+  `engine::xa_transaction`. The path goes through ordinary callable
+  SQL (`SYS.DBMS_XA.XA_START / XA_END / XA_PREPARE / XA_COMMIT /
+  XA_ROLLBACK`) so it works through any Oracle ODBC driver without
+  needing access to the underlying `OCIServer*` handle (which
+  `odbc-api` does not expose).
+  - `Xid::encode_oracle_components()` / `decode_oracle_components()`
+    convert between the cross-vendor `Xid` and the
+    `(formatid, RAW(64), RAW(64))` triple that `SYS.DBMS_XA_XID`
+    expects. Hex is upper-case to round-trip with Oracle's
+    `RAWTOHEX` output in `DBA_PENDING_TRANSACTIONS`; decode is
+    case-insensitive so future driver changes don't break recovery.
+  - `oracle_xa_block(call, allow_rcs)` PL/SQL helper wraps each
+    `DBMS_XA.*` call in an exception-translating `BEGIN ... END;`
+    that converts non-zero return codes into `ORA-20100`. Tolerates
+    `XA_RDONLY` (rc=3) on `XA_PREPARE` (Oracle auto-completes
+    branches that did no DML) and `XAER_NOTA` (rc=-4) on the
+    follow-up `XA_COMMIT(FALSE)` so the read-only path is a no-op
+    at the cross-vendor `XaTransaction` layer.
+  - `apply_xa_recover` for Oracle reads `DBA_PENDING_TRANSACTIONS`
+    via `RAWTOHEX(GLOBALID)` / `RAWTOHEX(BRANCHID)` so prepared
+    XIDs round-trip with our `HEXTORAW` literals on `XA_START`.
+- **OCI shim retained, status reframed.** `engine::xa_oci` (behind
+  `--features xa-oci`) keeps the dynamic-loading scaffolding +
+  `OciXaBranch` / `recover_oci_xids` API as documented OCI ABI
+  bindings and a possible future option, but is no longer a "Phase
+  2 wiring TODO" — the `DBMS_XA` path is the production
+  integration. See module doc-header for the rationale.
+- **Public re-export** of `engine::SharedHandleManager` so tests
+  / downstreams that hold an `XaTransaction::start` arg across
+  calls don't have to reach into the private `crate::handles`
+  module.
+- **4 new E2E tests** in `tests/e2e_xa_transaction_test.rs` validate
+  the Oracle path against Oracle XE 21 in the docker
+  `test-runner-oracle` profile:
+  - `test_e2e_xa_oracle_full_2pc_commit_path` — full lifecycle
+    (start → INSERT → end → prepare → recover lists xid → commit →
+    recover empty → row visible).
+  - `test_e2e_xa_oracle_rollback_prepared_path` — rollback after
+    prepare; verifies `DBA_PENDING_TRANSACTIONS` clears and the
+    INSERT was discarded.
+  - `test_e2e_xa_oracle_one_phase_commit_shortcut` — `TMONEPHASE`
+    fast path without `XA_PREPARE`.
+  - `test_e2e_xa_oracle_resume_prepared_after_disconnect` — XID
+    survives session loss; second connection recovers + commits via
+    `resume_prepared`.
+- **5 new unit tests** in `engine::xa_transaction::tests`:
+  Oracle component round-trip (upper-case hex), case-insensitive
+  decode, `oracle_xid_literal` shape pinned, `oracle_xa_block`
+  rc-guard structure pinned. Total xa_transaction unit tests: 22 → 27.
+
+### Changed
+
+- **Engine matrix in `engine::xa_transaction` doc-header**
+  reclassifies Oracle from "stub — `UnsupportedFeature` with TODO"
+  to "implemented (10g+) via `DBMS_XA`". `unsupported_oracle()`
+  helper removed; `unsupported_other()` lists Oracle as supported.
+- **`hex_decode` / `hex_nibble`** now accept upper-case A–F so the
+  same helper handles MySQL's lower-case hex and Oracle's
+  upper-case `RAWTOHEX` output. `hex_encode_upper` added for the
+  Oracle emit path.
+- **`engine::xa_oci` doc-header** rewritten to reflect the new
+  status: dynamic-loading shim retained as documented OCI ABI;
+  production Oracle XA flows through `DBMS_XA`; OCI wiring
+  deferred until/unless `odbc-api` exposes the underlying handle.
+
+### Required Oracle privileges
+
+The connection user needs `EXECUTE` on `SYS.DBMS_XA` (default for
+`SYSTEM`), `FORCE [ANY] TRANSACTION` (for crash-recovery on
+prepared XIDs from other sessions), and `SELECT` on
+`DBA_PENDING_TRANSACTIONS`. The Oracle XE 21 image used in CI ships
+with these enabled out of the box for `SYSTEM`.
+
+### Migration notes
+
+- Existing builds calling Oracle through `XaTransaction::start` /
+  `recover_prepared_xids` no longer get `UnsupportedFeature` —
+  they execute against `DBMS_XA`. No source changes required; the
+  failure surface narrows.
+- `--features xa-oci` no longer changes the runtime behaviour of
+  Oracle XA (it kept the OCI shim built but the shim was never
+  wired). The feature flag still compiles cleanly and is kept for
+  future opt-in OCI integration.
+
 ## [3.4.0] - Transaction control Sprint 4
 
 ### Added

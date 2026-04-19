@@ -16,7 +16,27 @@ name = "odbc_engine"
 #   Server/Oracle/SQLite specific types).
 # - test_ffi_get_structured_error flakiness fixed (atomic inject+read).
 # See CHANGELOG.md [3.4.0] for the complete list and migration notes.
-version = "3.4.0"
+#
+# 3.4.1 -- Sprint 4.3c Phase 2: Oracle XA / 2PC implemented via the
+# SYS.DBMS_XA PL/SQL package -- works through any Oracle ODBC driver
+# without needing OCIServer* (which odbc-api does not surface).
+# - apply_xa_start/end/prepare/commit/rollback for ENGINE_ORACLE emit
+#   PL/SQL blocks calling DBMS_XA.* with SYS.DBMS_XA_XID literals;
+#   recovery reads DBA_PENDING_TRANSACTIONS via RAWTOHEX().
+# - Tolerates XA_RDONLY (rc=3) on prepare and XAER_NOTA (rc=-4) on
+#   commit-prepared so read-only branches are a no-op.
+# - 4 new E2E tests (full 2PC commit, rollback prepared, one-phase
+#   shortcut, resume after disconnect) validated against Oracle XE
+#   21 in the docker test-runner-oracle profile.
+# - 5 new unit tests pin the Oracle component encoding + PL/SQL
+#   block shape.
+# - engine::SharedHandleManager re-exported (was reachable only via
+#   the private crate::handles path).
+# - engine::xa_oci retained as documented OCI ABI scaffolding but
+#   reframed as an alternative path; production Oracle XA flows
+#   through DBMS_XA.
+# See CHANGELOG.md [3.4.1] for the complete list and migration notes.
+version = "3.4.1"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

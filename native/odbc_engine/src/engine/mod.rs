@@ -54,3 +54,8 @@ pub use transaction::{
 pub use xa_transaction::{
     recover_prepared_xids, resume_prepared, PreparedXa, PreparingXa, XaState, XaTransaction, Xid,
 };
+// SharedHandleManager appears in public APIs (XaTransaction::start,
+// recover_prepared_xids, etc.); re-export so tests / downstreams that
+// need to hold one across calls don't have to reach into a private
+// path.
+pub use crate::handles::SharedHandleManager;

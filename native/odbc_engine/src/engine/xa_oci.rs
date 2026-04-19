@@ -1,34 +1,37 @@
-//! Oracle XA / 2PC via the OCI XA library — Sprint 4.3c.
+//! Oracle XA / 2PC via the OCI XA library — Sprint 4.3c (deferred path).
 //!
 //! ## Status
 //!
-//! **Phase 1: dynamic-loading shim landed; live OCI validation deferred.**
+//! **Phase 1: dynamic-loading shim landed and unit-tested. Production
+//! Oracle XA flows through [`crate::engine::xa_transaction`] using the
+//! `DBMS_XA` PL/SQL package instead.**
 //!
-//! Oracle does not expose XA through the ODBC standard. The
-//! distributed-transaction path goes through Oracle's OCI XA library
-//! — `libclntsh.so` on Linux/macOS, `oci.dll` on Windows — which
-//! exports the X/Open `xa_*` symbol set (`xa_open`, `xa_start`,
-//! `xa_end`, `xa_prepare`, `xa_commit`, `xa_rollback`, `xa_recover`,
-//! `xa_close`).
+//! Oracle does not expose XA through the ODBC standard. Two
+//! integration paths exist:
 //!
-//! We resolve those symbols at **runtime** via `libloading` so the
-//! crate keeps building on hosts without Oracle Instant Client
-//! installed. Code outside the `xa-oci` Cargo feature is byte-
-//! identical to today.
-//!
-//! **Runtime behaviour against an actual Oracle target has not been
-//! validated end-to-end** — the dev box that produced this commit did
-//! not have Oracle Instant Client installed. Treat this as Sprint
-//! 4.3c Phase 1 of 2: dynamic-loading shim + symbol resolution land;
-//! live validation against an Oracle DB with `XA_OPEN` registered is
-//! Phase 2 and tracked in `FUTURE_IMPLEMENTATIONS.md` §4.3c.
+//! - **`DBMS_XA` PL/SQL package** *(production)* — every Oracle 10g+
+//!   ships a `SYS.DBMS_XA` package that exposes `XA_START / END /
+//!   PREPARE / COMMIT / ROLLBACK` as ordinary callable SQL. The
+//!   `apply_xa_*` matrix in [`crate::engine::xa_transaction`] uses
+//!   this path because it works through any Oracle ODBC driver
+//!   without requiring access to the underlying `OCIServer*` handle
+//!   (which `odbc-api` does not expose). Recovery uses
+//!   `DBA_PENDING_TRANSACTIONS`.
+//! - **OCI XA library** *(this module, deferred)* — resolves the
+//!   X/Open `xa_*` symbol set from `libclntsh.so` (Linux/macOS) or
+//!   `oci.dll` (Windows) at runtime via `libloading`. Wiring this
+//!   path into the `apply_xa_*` matrix would require sharing the OCI
+//!   session with the ODBC connection (the OCI XA branch must run on
+//!   the same physical session ODBC is using). Until `odbc-api`
+//!   surfaces the underlying handle this stays as a scaffolded option
+//!   — useful documentation of the OCI ABI and a possible target if
+//!   we ever need OCI-only features the PL/SQL path can't reach.
 //!
 //! ## Build / activation
 //!
-//! - Compile with `--features xa-oci`. Without the feature the
-//!   `apply_xa_*` matrix in [`crate::engine::xa_transaction`] keeps
-//!   returning the existing `UnsupportedFeature` stub for Oracle, so
-//!   the default build is byte-identical to today.
+//! - Compile with `--features xa-oci`. Without the feature the OCI
+//!   shim is not built; Oracle XA still works via the `DBMS_XA` path
+//!   in [`crate::engine::xa_transaction`].
 //! - At runtime, the Oracle Instant Client must be on the dynamic-
 //!   linker search path (`LD_LIBRARY_PATH` on Linux, `PATH` on
 //!   Windows). If the library can't be found, [`load_oci`] returns

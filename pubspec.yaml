@@ -53,9 +53,18 @@ name: odbc_fast
 #     methods, NativeFinalizer (best-effort token reclaim).
 # Breaking changes: MAJOR bumps (2.0.0, 3.0.0)
 # New features: MINOR bumps (3.1.0)
-# Bug fixes: PATCH bumps (1.0.1, 1.0.2)
+# Bug fixes / additive engine integrations: PATCH bumps (3.4.1)
+#
+# 3.4.1 — Sprint 4.3c Phase 2: Oracle XA / 2PC wired into the
+# cross-vendor apply_xa_* matrix via the SYS.DBMS_XA PL/SQL package
+# (works through any Oracle ODBC driver; no OCI handle required).
+# Recovery via DBA_PENDING_TRANSACTIONS. 4 new E2E tests validated
+# against Oracle XE 21 in the docker test-runner-oracle profile.
+# OCI shim (engine::xa_oci) retained as documented ABI but no longer
+# the production path. No FFI ABI changes; pure Rust engine bug-fix
+# / additive integration.
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.4.0
+version: 3.4.1
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

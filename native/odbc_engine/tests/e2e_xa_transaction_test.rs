@@ -21,11 +21,12 @@
 //! `resume_prepared` -> `xa_commit_prepared`).
 
 use odbc_engine::engine::{
-    recover_prepared_xids, resume_prepared, OdbcConnection, OdbcEnvironment, XaTransaction, Xid,
+    recover_prepared_xids, resume_prepared, OdbcConnection, OdbcEnvironment, SharedHandleManager,
+    XaTransaction, Xid,
 };
 
 mod helpers;
-use helpers::env::{get_mysql_test_dsn, get_postgresql_test_dsn};
+use helpers::env::{get_mysql_test_dsn, get_oracle_test_dsn, get_postgresql_test_dsn};
 
 /// Build a unique XID per test so a failed run can't poison
 /// subsequent ones (PG keeps prepared xacts across reconnects).
@@ -330,4 +331,321 @@ fn test_e2e_xa_mysql_one_phase_commit_shortcut() {
 
     println!("OK MySQL commit_one_phase emits XA COMMIT ... ONE PHASE");
     conn.disconnect().expect("disconnect");
+}
+
+// =========================================================================
+// Oracle (DBMS_XA PL/SQL package — Sprint 4.3c Phase 2)
+// =========================================================================
+//
+// Oracle XA flows through `apply_xa_*` via PL/SQL calls into the
+// `SYS.DBMS_XA` package. The path validates the wiring sandboxed in
+// the docker test-runner-oracle service. Skipped silently when the
+// configured DSN is not Oracle (most dev boxes only run one engine
+// at a time).
+
+/// True when the DSN string is recognisably Oracle. `get_oracle_test_dsn`
+/// is permissive (falls back to ODBC_TEST_DSN), so we double-gate
+/// here to avoid running PL/SQL against a SQL-Server-only dev box.
+fn dsn_targets_oracle(dsn: &str) -> bool {
+    let lower = dsn.to_lowercase();
+    lower.contains("oracle") || lower.contains("dbq=")
+}
+
+/// Run a one-shot SQL statement against `conn_id`, propagating errors
+/// via panic with `ctx` for diagnostics. Used to seed scratch tables
+/// and INSERTs around an XA branch.
+fn oracle_exec(handles: &SharedHandleManager, conn_id: u32, sql: &str, ctx: &str) {
+    let conn_arc = {
+        let h = handles.lock().expect("handles lock");
+        h.get_connection(conn_id).expect("conn lookup")
+    };
+    let conn = conn_arc.lock().expect("conn lock");
+    odbc_engine::engine::execute_query_with_connection(conn.connection(), sql)
+        .unwrap_or_else(|e| panic!("{ctx}: {e}"));
+}
+
+/// Drop a per-test scratch table; swallows `ORA-00942` so the helper
+/// is idempotent across reruns.
+fn oracle_drop_table(handles: &SharedHandleManager, conn_id: u32, table: &str) {
+    let sql = format!(
+        "BEGIN EXECUTE IMMEDIATE 'DROP TABLE {table}'; \
+         EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;",
+        table = table,
+    );
+    let conn_arc = {
+        let h = handles.lock().expect("handles lock");
+        h.get_connection(conn_id).expect("conn lookup")
+    };
+    let conn = conn_arc.lock().expect("conn lock");
+    let _ = odbc_engine::engine::execute_query_with_connection(conn.connection(), &sql);
+}
+
+/// Run a `SELECT COUNT(*)`-shaped query and return the integer. We
+/// scan the wire bytes for the first ASCII digit run rather than
+/// re-implementing the protocol decoder — adequate for the
+/// single-int answers we ask of Oracle here.
+fn oracle_count(handles: &SharedHandleManager, conn_id: u32, sql: &str) -> i64 {
+    let conn_arc = {
+        let h = handles.lock().expect("handles lock");
+        h.get_connection(conn_id).expect("conn lookup")
+    };
+    let conn = conn_arc.lock().expect("conn lock");
+    let result = odbc_engine::engine::execute_query_with_connection(conn.connection(), sql)
+        .unwrap_or_else(|e| panic!("count query failed: {e}"));
+    let s = String::from_utf8_lossy(&result);
+    for chunk in s.split(|c: char| !c.is_ascii_digit()) {
+        if let Ok(n) = chunk.parse::<i64>() {
+            return n;
+        }
+    }
+    panic!("could not parse integer from query result: {s:?}");
+}
+
+#[test]
+fn test_e2e_xa_oracle_full_2pc_commit_path() {
+    let Some(conn_str) = get_oracle_test_dsn() else {
+        eprintln!("[SKIP] Oracle DSN not configured");
+        return;
+    };
+    if !dsn_targets_oracle(&conn_str) {
+        eprintln!("[SKIP] DSN does not target Oracle: {conn_str}");
+        return;
+    }
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("init");
+    let handles = env.get_handles();
+    let Some(conn) = try_connect(&env, &conn_str, "Oracle") else {
+        return;
+    };
+    let conn_id = conn.get_connection_id();
+
+    oracle_drop_table(&handles, conn_id, "ora_xa_2pc_scratch");
+    oracle_exec(
+        &handles,
+        conn_id,
+        "CREATE TABLE ora_xa_2pc_scratch (k VARCHAR2(64) PRIMARY KEY)",
+        "create scratch table",
+    );
+
+    let xid = unique_xid("ora-2pc-commit");
+    let xa = XaTransaction::start(handles.clone(), conn_id, xid.clone())
+        .expect("xa_start (Oracle: DBMS_XA.XA_START)");
+
+    // INSERT inside the XA branch so PREPARE actually writes a log
+    // record (without DML Oracle returns XA_RDONLY and the prepared
+    // entry never appears in DBA_PENDING_TRANSACTIONS).
+    oracle_exec(
+        &handles,
+        conn_id,
+        "INSERT INTO ora_xa_2pc_scratch (k) VALUES ('committed-via-xa')",
+        "insert inside XA branch",
+    );
+
+    let preparing = xa
+        .end()
+        .expect("xa_end (Oracle: DBMS_XA.XA_END(TMSUCCESS))");
+    let prepared = preparing
+        .prepare()
+        .expect("xa_prepare (Oracle: DBMS_XA.XA_PREPARE)");
+
+    let recovered = recover_prepared_xids(handles.clone(), conn_id)
+        .expect("xa_recover must succeed (DBA_PENDING_TRANSACTIONS)");
+    assert!(
+        recovered.iter().any(|x| x == &xid),
+        "xid must appear in DBA_PENDING_TRANSACTIONS after PREPARE; recovered: {:?}",
+        recovered,
+    );
+
+    prepared
+        .commit()
+        .expect("xa_commit_prepared (Oracle: DBMS_XA.XA_COMMIT(FALSE))");
+
+    let after = recover_prepared_xids(handles.clone(), conn_id).expect("post-commit recover");
+    assert!(
+        !after.iter().any(|x| x == &xid),
+        "xid must NOT appear in DBA_PENDING_TRANSACTIONS after COMMIT",
+    );
+
+    let n = oracle_count(
+        &handles,
+        conn_id,
+        "SELECT COUNT(*) FROM ora_xa_2pc_scratch WHERE k = 'committed-via-xa'",
+    );
+    assert_eq!(n, 1, "row inserted via XA must survive 2PC commit");
+
+    oracle_drop_table(&handles, conn_id, "ora_xa_2pc_scratch");
+    println!("OK Oracle full 2PC commit lifecycle round-trip via DBMS_XA");
+    conn.disconnect().expect("disconnect");
+}
+
+#[test]
+fn test_e2e_xa_oracle_rollback_prepared_path() {
+    let Some(conn_str) = get_oracle_test_dsn() else {
+        eprintln!("[SKIP] Oracle DSN not configured");
+        return;
+    };
+    if !dsn_targets_oracle(&conn_str) {
+        eprintln!("[SKIP] DSN does not target Oracle: {conn_str}");
+        return;
+    }
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("init");
+    let handles = env.get_handles();
+    let Some(conn) = try_connect(&env, &conn_str, "Oracle") else {
+        return;
+    };
+    let conn_id = conn.get_connection_id();
+
+    oracle_drop_table(&handles, conn_id, "ora_xa_rb_scratch");
+    oracle_exec(
+        &handles,
+        conn_id,
+        "CREATE TABLE ora_xa_rb_scratch (k VARCHAR2(64) PRIMARY KEY)",
+        "create scratch table",
+    );
+
+    let xid = unique_xid("ora-2pc-rollback");
+    let xa = XaTransaction::start(handles.clone(), conn_id, xid.clone()).expect("xa_start");
+    oracle_exec(
+        &handles,
+        conn_id,
+        "INSERT INTO ora_xa_rb_scratch (k) VALUES ('should-rollback')",
+        "insert inside XA branch",
+    );
+
+    let preparing = xa.end().expect("xa_end");
+    let prepared = preparing.prepare().expect("xa_prepare");
+    prepared.rollback().expect("xa_rollback_prepared");
+
+    let after = recover_prepared_xids(handles.clone(), conn_id).expect("post-rollback recover");
+    assert!(
+        !after.iter().any(|x| x == &xid),
+        "xid must be gone after ROLLBACK PREPARED",
+    );
+
+    let n = oracle_count(
+        &handles,
+        conn_id,
+        "SELECT COUNT(*) FROM ora_xa_rb_scratch WHERE k = 'should-rollback'",
+    );
+    assert_eq!(n, 0, "rolled-back row must not survive");
+
+    oracle_drop_table(&handles, conn_id, "ora_xa_rb_scratch");
+    println!("OK Oracle ROLLBACK PREPARED clears DBA_PENDING_TRANSACTIONS");
+    conn.disconnect().expect("disconnect");
+}
+
+#[test]
+fn test_e2e_xa_oracle_one_phase_commit_shortcut() {
+    let Some(conn_str) = get_oracle_test_dsn() else {
+        eprintln!("[SKIP] Oracle DSN not configured");
+        return;
+    };
+    if !dsn_targets_oracle(&conn_str) {
+        eprintln!("[SKIP] DSN does not target Oracle: {conn_str}");
+        return;
+    }
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("init");
+    let handles = env.get_handles();
+    let Some(conn) = try_connect(&env, &conn_str, "Oracle") else {
+        return;
+    };
+    let conn_id = conn.get_connection_id();
+
+    let xid = unique_xid("ora-1rm-commit");
+    let xa = XaTransaction::start(handles.clone(), conn_id, xid.clone()).expect("xa_start");
+
+    // 1RM: TMONEPHASE collapses prepare+commit. With no DML the
+    // branch is read-only and TMONEPHASE still succeeds (Oracle
+    // treats it as a no-op fast path).
+    xa.commit_one_phase()
+        .expect("commit_one_phase (Oracle: DBMS_XA.XA_COMMIT(TRUE))");
+
+    let after = recover_prepared_xids(handles, conn_id).expect("recover");
+    assert!(
+        !after.iter().any(|x| x == &xid),
+        "1RM commit must NOT leave a prepared entry on Oracle",
+    );
+
+    println!("OK Oracle commit_one_phase emits DBMS_XA.XA_COMMIT(TRUE)");
+    conn.disconnect().expect("disconnect");
+}
+
+#[test]
+fn test_e2e_xa_oracle_resume_prepared_after_disconnect() {
+    let Some(conn_str) = get_oracle_test_dsn() else {
+        eprintln!("[SKIP] Oracle DSN not configured");
+        return;
+    };
+    if !dsn_targets_oracle(&conn_str) {
+        eprintln!("[SKIP] DSN does not target Oracle: {conn_str}");
+        return;
+    }
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("init");
+    let handles = env.get_handles();
+
+    let Some(conn1) = try_connect(&env, &conn_str, "Oracle") else {
+        return;
+    };
+
+    let xid = {
+        let conn = conn1;
+        let conn_id = conn.get_connection_id();
+
+        oracle_drop_table(&handles, conn_id, "ora_xa_resume_scratch");
+        oracle_exec(
+            &handles,
+            conn_id,
+            "CREATE TABLE ora_xa_resume_scratch (k VARCHAR2(64) PRIMARY KEY)",
+            "create scratch",
+        );
+
+        let xid = unique_xid("ora-resume");
+        let xa = XaTransaction::start(handles.clone(), conn_id, xid.clone()).expect("xa_start");
+        oracle_exec(
+            &handles,
+            conn_id,
+            "INSERT INTO ora_xa_resume_scratch (k) VALUES ('survives-disconnect')",
+            "insert inside branch",
+        );
+        let preparing = xa.end().expect("xa_end");
+        let _prepared = preparing.prepare().expect("xa_prepare");
+        // Drop _prepared without committing — Oracle's prepare log
+        // outlives the session.
+        conn.disconnect().expect("disconnect 1");
+        xid
+    };
+
+    let Some(conn) = try_connect(&env, &conn_str, "Oracle") else {
+        return;
+    };
+    let conn_id = conn.get_connection_id();
+
+    let recovered =
+        recover_prepared_xids(handles.clone(), conn_id).expect("recover on a fresh connection");
+    assert!(
+        recovered.iter().any(|x| x == &xid),
+        "xid prepared on connection 1 must show up on connection 2; recovered: {:?}",
+        recovered,
+    );
+
+    let prepared = resume_prepared(handles.clone(), conn_id, xid.clone())
+        .expect("resume_prepared rebuilds the handle");
+    prepared.commit().expect("commit after recovery");
+
+    let after = recover_prepared_xids(handles.clone(), conn_id).expect("post-commit recover");
+    assert!(
+        !after.iter().any(|x| x == &xid),
+        "xid must be gone after recovery commit",
+    );
+
+    oracle_drop_table(&handles, conn_id, "ora_xa_resume_scratch");
+    println!("OK Oracle prepared XID survives disconnect and is recoverable");
+    conn.disconnect().expect("disconnect 2");
 }

@@ -25,7 +25,7 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (v3.4.0)**                     | ~~Low~~     |
 | ~~Transaction Sprint 4.3 — XA / 2PC (PG/MySQL/DB2)~~       | ✅ **Implemented (v3.4.0)**                     | ~~Medium~~  |
 | Transaction Sprint 4.3b — XA on SQL Server (MSDTC)         | Phase 1 ✅ scaffolding (v3.4.0) / Phase 2 wiring pending | Low |
-| Transaction Sprint 4.3c — XA on Oracle (OCI)               | Phase 1 ✅ scaffolding (v3.4.0) / Phase 2 wiring pending | Low |
+| ~~Transaction Sprint 4.3c — XA on Oracle~~                 | ✅ **Implemented (v3.4.1) via DBMS_XA PL/SQL** — OCI shim deferred | ~~Low~~ |
 | ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (v3.4.0)** — atomic inject+read       | ~~Low~~     |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
 | `SqlDataType` extended kinds (incremental)                 | 27/30 kinds shipped (10 in v3.0.0, +17 in v3.4.0) | Low       |
@@ -104,37 +104,42 @@ the full 2PC lifecycle including resume-after-disconnect.
   `cargo test --features xa-dtc -- --ignored --test-threads=1`
   against a Windows host with `sc query MSDTC` reporting `RUNNING`.
 
-### 4.3c XA on Oracle (OCI XA) — Phase 1 implemented; Phase 2 pending
+### ~~4.3c XA on Oracle~~ — ✅ IMPLEMENTED (v3.4.1) via `DBMS_XA` PL/SQL
 
-**Phase 1 (v3.4.0) — scaffolding landed**:
+**Production path — `DBMS_XA` (v3.4.1)**:
 
-- New module `engine::xa_oci` behind `--features xa-oci`
-  (cross-platform; Oracle Instant Client must be on the dynamic-
-  linker search path at runtime).
-- Pulls `libloading` 0.8 and resolves the OCI XA symbol set
-  (`xaosw`, `xaocl`, `xaostart`, `xaoend`, `xaoprep`, `xaocommit`,
-  `xaoroll`, `xaorecover`) at first use; cached in a `OnceLock`.
-- `OciXid` `repr(C)` struct mirrors the X/Open `xid_t` layout from
-  `oraxa.h` (140 bytes, 4 + 4 + 4 + 128). Layout pinned by a unit
-  test.
-- Owned `OciXaBranch` handle: `prepare()` → `commit()` /
-  `rollback()` (Phase 2), `commit_one_phase()` (1RM optimisation),
-  Drop-time best-effort rollback + close.
-- `recover_oci_xids()` for crash-recovery.
-- Cross-vendor `unsupported_oracle()` is now feature-aware (same
-  pattern as MSDTC).
+- `apply_xa_*` matrix in `xa_transaction.rs` emits PL/SQL calls into
+  `SYS.DBMS_XA` (`XA_START`, `XA_END`, `XA_PREPARE`, `XA_COMMIT`,
+  `XA_ROLLBACK`) using `SYS.DBMS_XA_XID` constructors with
+  `HEXTORAW` literals. Recovery reads `DBA_PENDING_TRANSACTIONS`
+  with `RAWTOHEX(GLOBALID)` / `RAWTOHEX(BRANCHID)` for round-trip.
+- Read-only branches surface as `XA_RDONLY` (rc=3) on `XA_PREPARE`
+  and are silently accepted; the follow-up `XA_COMMIT(FALSE)`
+  tolerates `XAER_NOTA` (rc=-4) so the read-only path is a no-op.
+- Validated end-to-end against Oracle XE 21 in the docker
+  `test-runner-oracle` profile (4 tests in
+  `tests/e2e_xa_transaction_test.rs`):
+  - full 2PC commit (start → INSERT → end → prepare → commit)
+  - 2PC rollback prepared (verifies row absence + recovery clear)
+  - one-phase commit shortcut
+  - resume prepared XID after disconnect (cross-session recovery)
+- Required Oracle privileges on the connection user: `EXECUTE` on
+  `DBMS_XA` (default for `system`), `FORCE [ANY] TRANSACTION` (for
+  recovery on prepared XIDs from other sessions), `SELECT` on
+  `DBA_PENDING_TRANSACTIONS`.
+- Cross-vendor `unsupported_oracle()` removed; `unsupported_other()`
+  now lists Oracle as supported.
 
-**Phase 2 — pending**:
+**Alternative OCI path — deferred (Phase 1 scaffolding kept)**:
 
-- Wire `engine::xa_oci::begin_oci_branch()` into the cross-vendor
-  `apply_xa_*` matrix in `xa_transaction.rs`.
-- Decide the right way to share the OCI handle with the existing
-  `odbc-api` connection (the OCI session has to be the same one
-  ODBC is using; today's bridging via the Oracle ODBC driver may
-  not surface the underlying `OCIServer*` we'd need).
-- Add gated E2E tests under `tests/regression/xa_oci_test.rs` with
-  `cargo test --features xa-oci -- --ignored --test-threads=1`
-  against an Oracle DB with an `XA_OPEN` entry registered.
+- `engine::xa_oci` behind `--features xa-oci` retains the dynamic-
+  loading shim for `xaosw`/`xaocl`/`xaostart`/.../`xaorecover`
+  symbols and an owned `OciXaBranch` handle. Useful as documented
+  ABI for OCI XA and a possible future option *if* `odbc-api` ever
+  exposes the underlying `OCIServer*` handle so the OCI session
+  can share state with the ODBC connection.
+- Today the OCI path is **not wired** into `apply_xa_*`; production
+  Oracle XA flows entirely through `DBMS_XA`.
 
 ### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (v3.4.0)
 

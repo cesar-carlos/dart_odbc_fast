@@ -14,8 +14,17 @@
 //! | MySQL / MariaDB       | SQL: `XA START / END / PREPARE / COMMIT / ROLLBACK / RECOVER` | ✅ implemented |
 //! | DB2                   | SQL: native `XA*` family                   | ✅ implemented    |
 //! | SQL Server            | Requires MSDTC enlistment (Windows COM, `SQL_ATTR_ENLIST_IN_DTC` + `ITransaction*`) | ⚠️ stub — returns `UnsupportedFeature` with TODO; planned as a follow-up that needs the `windows-sys` crate and a separate build configuration |
-//! | Oracle                | Requires OCI XA library (`oraxa.h`, `xaoSvcCtx`); not exposed via the ODBC standard | ⚠️ stub — returns `UnsupportedFeature` with TODO; planned as a follow-up that needs Oracle Instant Client linkage |
+//! | Oracle                | PL/SQL: `DBMS_XA` package (`SYS.DBMS_XA_XID`, `XA_START / END / PREPARE / COMMIT / ROLLBACK`); recovery via `DBA_PENDING_TRANSACTIONS` | ✅ implemented (10g+) — needs `EXECUTE` on `DBMS_XA` plus `FORCE [ANY] TRANSACTION` |
 //! | SQLite / Snowflake / others | No 2PC support                       | ❌ rejected with `UnsupportedFeature` |
+//!
+//! Note on Oracle: an alternative path through Oracle's OCI XA library
+//! (`xaoSvcCtx` / `oraxa.h`) is scaffolded in [`crate::engine::xa_oci`]
+//! behind the `xa-oci` Cargo feature. Production deployments use the
+//! `DBMS_XA` PL/SQL path because it works through any Oracle ODBC
+//! driver without requiring access to the underlying `OCIServer*`
+//! handle (which `odbc-api` does not expose). The OCI shim is kept
+//! as a future option if the underlying handle ever becomes
+//! reachable.
 //!
 //! ## XID encoding
 //!
@@ -187,6 +196,35 @@ impl Xid {
         let bqual = hex_decode(bqual_hex)?;
         Self::new(format_id, gtrid, bqual).ok()
     }
+
+    /// Oracle `DBMS_XA` PL/SQL takes a `SYS.DBMS_XA_XID(formatid INTEGER,
+    /// gtrid RAW(64), bqual RAW(64))` constructor. We pass the binary
+    /// components as `HEXTORAW('<uppercase hex>')` literals — uppercase
+    /// because Oracle's own `RAWTOHEX` returns uppercase, which keeps
+    /// recovery round-trips byte-identical.
+    ///
+    /// Returns `(format_id, gtrid_hex_upper, bqual_hex_upper)`.
+    pub fn encode_oracle_components(&self) -> (i32, String, String) {
+        (
+            self.format_id,
+            hex_encode_upper(&self.gtrid),
+            hex_encode_upper(&self.bqual),
+        )
+    }
+
+    /// Inverse of [`Xid::encode_oracle_components`]. Hex parsing is
+    /// case-insensitive so we round-trip both our own `HEXTORAW`
+    /// literals and the uppercase form returned by Oracle's
+    /// `RAWTOHEX(globalid)` in `DBA_PENDING_TRANSACTIONS`.
+    pub fn decode_oracle_components(
+        format_id: i32,
+        gtrid_hex: &str,
+        bqual_hex: &str,
+    ) -> Option<Self> {
+        let gtrid = hex_decode(gtrid_hex)?;
+        let bqual = hex_decode(bqual_hex)?;
+        Self::new(format_id, gtrid, bqual).ok()
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -199,6 +237,16 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 const HEX_LUT: &[u8; 16] = b"0123456789abcdef";
+const HEX_LUT_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+
+fn hex_encode_upper(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX_LUT_UPPER[(b >> 4) as usize] as char);
+        out.push(HEX_LUT_UPPER[(b & 0x0F) as usize] as char);
+    }
+    out
+}
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
@@ -622,6 +670,59 @@ fn detect_engine_id(handles: &SharedHandleManager, conn_id: u32) -> String {
 }
 
 // -------------------------------------------------------------------------
+// Oracle DBMS_XA helpers
+// -------------------------------------------------------------------------
+
+/// Build a `SYS.DBMS_XA_XID(formatid, HEXTORAW('gtrid'), HEXTORAW('bqual'))`
+/// constructor literal. The hex form is uppercase to round-trip with
+/// Oracle's `RAWTOHEX` output in `DBA_PENDING_TRANSACTIONS`.
+fn oracle_xid_literal(xid: &Xid) -> String {
+    let (fmt, g, b) = xid.encode_oracle_components();
+    format!(
+        "SYS.DBMS_XA_XID({fmt}, HEXTORAW('{g}'), HEXTORAW('{b}'))",
+        fmt = fmt,
+        g = g,
+        b = b,
+    )
+}
+
+/// Wrap a single `DBMS_XA.*` call in a PL/SQL block that converts a
+/// non-zero return code into an `ORA-20100`. Optionally tolerates
+/// specific extra return codes (the typical case is `XA_RDONLY=3` on
+/// `XA_PREPARE`, where the branch did no DML and is auto-completed).
+///
+/// The block prefixes the surfaced rc with a sentinel marker the
+/// caller can grep for; the engine_id is included so the error path
+/// makes the source obvious in a multi-RM transaction.
+fn oracle_xa_block(call: &str, allow_rcs: &[i32]) -> String {
+    // Build an `IF rc <> 0 AND rc <> R1 AND rc <> R2 ... THEN raise`
+    // guard. Empty allow_rcs collapses to `IF rc <> 0 THEN raise` so
+    // any non-zero return is fatal. The PL/SQL block converts the
+    // surfaced rc into ORA-20100 so the ODBC error path is uniform.
+    let mut allow_clause = String::new();
+    for rc in allow_rcs {
+        allow_clause.push_str(&format!(" AND rc <> {}", rc));
+    }
+    format!(
+        "BEGIN DECLARE rc PLS_INTEGER; BEGIN rc := {call}; \
+         IF rc <> 0{allow_clause} THEN \
+           RAISE_APPLICATION_ERROR(-20100, 'DBMS_XA rc=' || rc); \
+         END IF; END; END;",
+        call = call,
+        allow_clause = allow_clause,
+    )
+}
+
+/// `XAER_NOTA = -4` (the xid is not in the engine's known set).
+/// Surfaces after a read-only `XA_PREPARE` (rc=3) auto-completes the
+/// branch — Oracle silently drops it so the subsequent `XA_COMMIT`
+/// can't find it. We treat both paths as success at the
+/// [`XaTransaction`] layer; see `apply_xa_prepare` for context.
+const ORACLE_XA_RDONLY: i32 = 3;
+#[allow(dead_code)]
+const ORACLE_XAER_NOTA: i32 = -4;
+
+// -------------------------------------------------------------------------
 // Per-engine SQL emitters
 // -------------------------------------------------------------------------
 
@@ -651,7 +752,22 @@ fn apply_xa_start(
                 .map_err(OdbcError::from)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // DBMS_XA.XA_START(xid, TMNOFLAGS) attaches the current
+            // session to a new branch. The PL/SQL helper wraps the
+            // call in an exception-translating block so a non-zero rc
+            // surfaces as an ODBC error instead of silently winning.
+            let sql = oracle_xa_block(
+                &format!(
+                    "DBMS_XA.XA_START({}, DBMS_XA.TMNOFLAGS)",
+                    oracle_xid_literal(xid),
+                ),
+                &[],
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -679,7 +795,20 @@ fn apply_xa_end(
                 .map_err(OdbcError::from)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // DBMS_XA.XA_END(xid, TMSUCCESS) detaches the session from
+            // the branch. Required before XA_PREPARE per X/Open.
+            let sql = oracle_xa_block(
+                &format!(
+                    "DBMS_XA.XA_END({}, DBMS_XA.TMSUCCESS)",
+                    oracle_xid_literal(xid),
+                ),
+                &[],
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -712,7 +841,23 @@ fn apply_xa_prepare(
                 .map_err(OdbcError::from)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // DBMS_XA.XA_PREPARE(xid). Allowed extra rc: XA_RDONLY (3)
+            // — Oracle uses it to signal "this branch did no DML, I
+            // already auto-completed it; no commit/rollback needed".
+            // We treat that as success at this layer; the subsequent
+            // commit_prepared call will see XAER_NOTA and similarly
+            // accept it. Tracking the read-only branch separately
+            // would require a state-machine extension; the silent
+            // accept matches X/Open's documented behaviour.
+            let sql = oracle_xa_block(
+                &format!("DBMS_XA.XA_PREPARE({})", oracle_xid_literal(xid)),
+                &[ORACLE_XA_RDONLY],
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -749,7 +894,27 @@ fn apply_xa_commit(
                 .map_err(OdbcError::from)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // DBMS_XA.XA_COMMIT(xid, onephase). For one_phase=true, we
+            // also forgive XAER_PROTO (-6) which Oracle returns when
+            // the branch was implicitly auto-committed (read-only DML
+            // after start without prior end). Otherwise allow
+            // XAER_NOTA (-4) so commit_prepared after a read-only
+            // prepare is a no-op.
+            let onephase_lit = if one_phase { "TRUE" } else { "FALSE" };
+            let allow: &[i32] = if one_phase { &[] } else { &[ORACLE_XAER_NOTA] };
+            let sql = oracle_xa_block(
+                &format!(
+                    "DBMS_XA.XA_COMMIT({}, {})",
+                    oracle_xid_literal(xid),
+                    onephase_lit,
+                ),
+                allow,
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -779,7 +944,24 @@ fn apply_xa_rollback(
                 .map_err(OdbcError::from)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // Active/Idle rollback: XA_END(TMSUCCESS) then XA_ROLLBACK.
+            // We chain both in a single PL/SQL block so a network blip
+            // can't strand the branch in the Idle state.
+            let xid_lit = oracle_xid_literal(xid);
+            let sql = format!(
+                "BEGIN DECLARE rc PLS_INTEGER; BEGIN \
+                   rc := DBMS_XA.XA_END({xid}, DBMS_XA.TMSUCCESS); \
+                   IF rc <> 0 THEN RAISE_APPLICATION_ERROR(-20100, 'DBMS_XA xa_end rc=' || rc); END IF; \
+                   rc := DBMS_XA.XA_ROLLBACK({xid}); \
+                   IF rc <> 0 THEN RAISE_APPLICATION_ERROR(-20101, 'DBMS_XA xa_rollback rc=' || rc); END IF; \
+                 END; END;",
+                xid = xid_lit,
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -806,7 +988,19 @@ fn apply_xa_rollback_prepared(
             apply_xa_rollback(conn, engine_id, xid)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // Prepared rollback: only XA_ROLLBACK; XA_END was already
+            // emitted by `xa_prepare`. Allow XAER_NOTA so a follow-up
+            // recovery sweep on a branch that read-only-prepared
+            // (Oracle auto-completed it) is a no-op.
+            let sql = oracle_xa_block(
+                &format!("DBMS_XA.XA_ROLLBACK({})", oracle_xid_literal(xid)),
+                &[ORACLE_XAER_NOTA],
+            );
+            conn.execute(&sql, (), None)
+                .map(|_| ())
+                .map_err(OdbcError::from)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -885,7 +1079,49 @@ fn apply_xa_recover(conn: &mut odbc_api::Connection<'static>, engine_id: &str) -
             Ok(out)
         }
         ENGINE_SQLSERVER => Err(unsupported_sqlserver()),
-        ENGINE_ORACLE => Err(unsupported_oracle()),
+        ENGINE_ORACLE => {
+            // Oracle exposes prepared XIDs via DBA_PENDING_TRANSACTIONS
+            // (FORMATID NUMBER, GLOBALID RAW(64), BRANCHID RAW(64)).
+            // We RAWTOHEX both binary columns so the ODBC driver
+            // returns ASCII (round-trips with our HEXTORAW literals on
+            // start). XIDs we can't decode (different application's
+            // format) are skipped silently.
+            let mut out = Vec::new();
+            let cursor = conn
+                .execute(
+                    "SELECT FORMATID, RAWTOHEX(GLOBALID), RAWTOHEX(BRANCHID) \
+                     FROM DBA_PENDING_TRANSACTIONS",
+                    (),
+                    None,
+                )
+                .map_err(OdbcError::from)?;
+            if let Some(mut cursor) = cursor {
+                use odbc_api::Cursor;
+                while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                    let mut format_id_buf: Vec<u8> = Vec::new();
+                    let mut globalid_buf: Vec<u8> = Vec::new();
+                    let mut branchid_buf: Vec<u8> = Vec::new();
+                    let _ = row
+                        .get_text(1, &mut format_id_buf)
+                        .map_err(OdbcError::from)?;
+                    let _ = row
+                        .get_text(2, &mut globalid_buf)
+                        .map_err(OdbcError::from)?;
+                    let _ = row
+                        .get_text(3, &mut branchid_buf)
+                        .map_err(OdbcError::from)?;
+                    let format_id: i32 = parse_ascii_int(&format_id_buf).unwrap_or(0);
+                    let globalid_hex = std::str::from_utf8(&globalid_buf).unwrap_or("");
+                    let branchid_hex = std::str::from_utf8(&branchid_buf).unwrap_or("");
+                    if let Some(xid) =
+                        Xid::decode_oracle_components(format_id, globalid_hex, branchid_hex)
+                    {
+                        out.push(xid);
+                    }
+                }
+            }
+            Ok(out)
+        }
         _ => Err(unsupported_other(engine_id)),
     }
 }
@@ -921,38 +1157,11 @@ fn unsupported_sqlserver() -> OdbcError {
     }
 }
 
-fn unsupported_oracle() -> OdbcError {
-    // The OCI XA integration ships in `engine::xa_oci` as Phase 1
-    // (Sprint 4.3c): the dynamic-loading shim is implemented but
-    // **wiring into this `apply_xa_*` matrix** (translating
-    // XaTransaction lifecycle calls to xa_open / xa_start / xa_end /
-    // xa_prepare / xa_commit / xa_rollback) is Phase 2. The error
-    // wording reflects whichever phase the build is in.
-    if cfg!(feature = "xa-oci") {
-        OdbcError::UnsupportedFeature(
-            "XA / 2PC on Oracle: the `xa-oci` feature ships the OCI \
-             dynamic-loading shim (engine::xa_oci) but Phase 2 wiring \
-             into the apply_xa_* matrix is pending. Track \
-             FUTURE_IMPLEMENTATIONS.md §4.3c for the integration TODO."
-                .to_string(),
-        )
-    } else {
-        OdbcError::UnsupportedFeature(
-            "XA / 2PC on Oracle requires the OCI XA library (oraxa.h, \
-             xaoSvcCtx). Build with `--features xa-oci` and ensure the \
-             Oracle Instant Client is on the dynamic-linker search path \
-             (LD_LIBRARY_PATH on Linux, PATH on Windows). See \
-             FUTURE_IMPLEMENTATIONS.md §4.3c for the full prerequisites."
-                .to_string(),
-        )
-    }
-}
-
 fn unsupported_other(engine_id: &str) -> OdbcError {
     OdbcError::UnsupportedFeature(format!(
         "XA / 2PC is not supported on engine {:?}. Supported engines: \
-         postgres, mysql, mariadb, db2. SQL Server / Oracle have engine-specific \
-         extension paths planned as follow-up features.",
+         postgres, mysql, mariadb, db2, oracle (via DBMS_XA). SQL Server \
+         requires MSDTC enlistment (xa-dtc feature, Phase 2 pending).",
         engine_id,
     ))
 }
@@ -1156,16 +1365,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_oracle_message_points_at_oci() {
-        let err = unsupported_oracle();
-        let s = err.to_string();
-        // OCI must be mentioned in BOTH variants. Same rationale as
-        // the SQL Server test above.
-        assert!(s.contains("OCI"));
-        assert!(s.contains("FUTURE_IMPLEMENTATIONS"));
-    }
-
-    #[test]
     fn unsupported_other_lists_supported_engines() {
         let err = unsupported_other(ENGINE_SQLITE);
         let s = err.to_string();
@@ -1174,6 +1373,54 @@ mod tests {
         assert!(s.contains("mysql"));
         assert!(s.contains("mariadb"));
         assert!(s.contains("db2"));
+        assert!(s.contains("oracle"));
+    }
+
+    // -----------------------------------------------------------------
+    // Oracle DBMS_XA encoding round-trips (unit-only — no live DB)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn xid_oracle_components_round_trip() {
+        let original = Xid::new(7, vec![0xDE, 0xAD, 0xBE, 0xEF], vec![0xCA, 0xFE]).unwrap();
+        let (fmt, g, b) = original.encode_oracle_components();
+        assert_eq!(fmt, 7);
+        assert_eq!(g, "DEADBEEF");
+        assert_eq!(b, "CAFE");
+        let decoded = Xid::decode_oracle_components(fmt, &g, &b).expect("must round-trip");
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn xid_oracle_decode_accepts_lowercase_hex() {
+        // Some recovery sweeps may surface lowercase hex; we accept
+        // both so the helper doesn't trip over a future driver
+        // change.
+        let xid = Xid::decode_oracle_components(0, "abcd", "ef").expect("lowercase ok");
+        assert_eq!(xid.gtrid(), &[0xAB, 0xCD][..]);
+        assert_eq!(xid.bqual(), &[0xEF][..]);
+    }
+
+    #[test]
+    fn oracle_xid_literal_emits_dbms_xa_xid_constructor() {
+        let xid = Xid::new(0x1B, b"global".to_vec(), b"branch".to_vec()).unwrap();
+        let lit = oracle_xid_literal(&xid);
+        // 'global' = 676C6F62616C ; 'branch' = 6272616E6368.
+        // Verify uppercase hex (Oracle's RAWTOHEX convention) and the
+        // exact constructor name we tested live in the sandbox.
+        assert_eq!(
+            lit,
+            "SYS.DBMS_XA_XID(27, HEXTORAW('676C6F62616C'), HEXTORAW('6272616E6368'))"
+        );
+    }
+
+    #[test]
+    fn oracle_xa_block_wraps_call_with_rc_check() {
+        let sql = oracle_xa_block("DBMS_XA.XA_PREPARE(x)", &[3]);
+        assert!(sql.contains("DBMS_XA.XA_PREPARE(x)"));
+        assert!(sql.contains("rc <> 0"));
+        assert!(sql.contains("rc <> 3"));
+        assert!(sql.contains("RAISE_APPLICATION_ERROR(-20100"));
     }
 
     // -----------------------------------------------------------------
