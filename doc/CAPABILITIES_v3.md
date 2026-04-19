@@ -33,6 +33,38 @@ or directly through the per-plugin module.
 \* BCP via `sqlncli11.dll`/`msodbcsql17/18.dll` (Windows-only feature `sqlserver-bcp`, gated by env `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1`). Currently supports `I32` and `I64` types; extending to Text/Binary/Timestamp/Decimal is tracked for v3.1.
 \** Native streaming paths (`COPY FROM STDIN BINARY`, `LOAD DATA LOCAL INFILE`, Snowflake `PUT/COPY INTO`) are tracked for v3.1. v3.0 uses optimised array-binding INSERT under `BulkLoader`.
 
+## Transaction control matrix (Sprint 4 — Unreleased)
+
+| Capability \ Engine                | SQL Server   | PostgreSQL   | MySQL / MariaDB | Oracle        | DB2          | SQLite       | Snowflake    |
+| ---------------------------------- | ------------ | ------------ | --------------- | ------------- | ------------ | ------------ | ------------ |
+| Isolation levels (`SET TRANSACTION`) | full | full | full | RC + SER only† | UR/CS/RS/RR | PRAGMA‡ | skip§ |
+| Savepoints (`SAVEPOINT` / `SAVE TRANSACTION`) | full (SQL Server dialect) | SQL-92 | SQL-92 | SQL-92 | SQL-92 | SQL-92 | SQL-92 |
+| `TransactionAccessMode.readOnly` (Sprint 4.1) | no-op¶ | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | no-op¶ | no-op¶ |
+| `LockTimeout` (Sprint 4.2) | `SET LOCK_TIMEOUT <ms>` | `SET LOCAL lock_timeout = '<ms>ms'` | `SET SESSION innodb_lock_wait_timeout = <s>`# | (per-statement only) | `SET CURRENT LOCK TIMEOUT <s>`# | `PRAGMA busy_timeout = <ms>` | (statement timeout, not lock) |
+| `runInTransaction<T>` (Sprint 4.4) | universal — pure Service-layer wrapper around the matrix above; works on every engine | — | — | — | — | — | — |
+| **XA / 2PC** (Sprint 4.3) | ⚠️ scaffolding** | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` | ⚠️ scaffolding†† | ✅ same SQL grammar as MySQL | ❌ no 2PC | ❌ no 2PC |
+
+† Oracle: only `READ COMMITTED` and `SERIALIZABLE` are valid per
+`SET TRANSACTION ISOLATION LEVEL`; the other two levels are rejected
+with `ValidationError`.
+‡ SQLite: `PRAGMA read_uncommitted = 0|1` is the closest equivalent.
+§ Snowflake: per-transaction isolation isn't supported; the `SET` is
+silently skipped and logged at debug.
+¶ SQL Server / SQLite / Snowflake have no native `READ ONLY` hint;
+the call is a logged no-op so callers can program against the
+abstraction unconditionally.
+\# MySQL/MariaDB and DB2 express waits in *seconds*; sub-second
+millisecond values **round UP to 1 second** so the caller's bound is
+never silently relaxed.
+\*\* SQL Server XA requires MSDTC enlistment via Windows COM
+(`ITransaction*` + `SQL_ATTR_ENLIST_IN_DTC`). Phase 1 scaffolding
+ships behind `--features xa-dtc`; Phase 2 wiring into the
+cross-vendor `apply_xa_*` matrix is pending — see
+[`FUTURE_IMPLEMENTATIONS.md` §4.3b](notes/FUTURE_IMPLEMENTATIONS.md).
+†† Oracle XA requires the OCI XA library (`oraxa.h`, `xaoSvcCtx`).
+Phase 1 scaffolding ships behind `--features xa-oci`; Phase 2 wiring
+is pending — see [§4.3c](notes/FUTURE_IMPLEMENTATIONS.md).
+
 ## OdbcType variants (v3.0 additions)
 
 ```

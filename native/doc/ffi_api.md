@@ -430,8 +430,45 @@ Isolation levels (ODBC mapping):
 
 Savepoint dialect (determines SQL syntax for savepoints):
 
-- `0`: SQL-92 (SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT) — PostgreSQL, MySQL, etc.
+- `0`: Auto — resolved at runtime via `SQLGetInfo(SQL_DBMS_NAME)`. SQL Server resolves to `SqlServer`; everything else to `Sql92`. **Recommended default since v3.1**.
 - `1`: SQL Server (SAVE TRANSACTION, ROLLBACK TRANSACTION)
+- `2`: SQL-92 (SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT) — PostgreSQL, MySQL, etc.
+
+Returns `txn_id > 0` on success; `0` on failure.
+
+In v3.4+ this entry-point delegates internally to `odbc_transaction_begin_v2`
+with `access_mode = 0` (ReadWrite). v1 ABI is preserved byte-for-byte.
+
+### `odbc_transaction_begin_v2(conn_id, isolation_level, savepoint_dialect, access_mode) -> unsigned int`
+
+**Sprint 4.1 — added in v3.4 (Unreleased).** Same lifecycle as
+`odbc_transaction_begin` plus the SQL-92 access-mode hint.
+
+`access_mode`:
+
+- `0`: ReadWrite (default; engine default everywhere — no `SET` is emitted).
+- `1`: ReadOnly. PostgreSQL / MySQL / MariaDB / DB2 / Oracle emit
+  `SET TRANSACTION READ ONLY`. SQL Server / SQLite / Snowflake silently
+  no-op (logged at debug); enforce with `DENY` grants instead.
+
+Returns `txn_id > 0` on success; `0` on failure. In v3.5+ delegates to
+`odbc_transaction_begin_v3` with `lock_timeout_ms = 0`.
+
+### `odbc_transaction_begin_v3(conn_id, isolation_level, savepoint_dialect, access_mode, lock_timeout_ms) -> unsigned int`
+
+**Sprint 4.2 — added in v3.5 (Unreleased).** Same lifecycle as `_v2`
+plus a per-transaction lock timeout.
+
+`lock_timeout_ms` (`0` = engine default; any positive value is the
+maximum number of milliseconds a statement inside the transaction
+will wait for a lock):
+
+- SQL Server: `SET LOCK_TIMEOUT <ms>`.
+- PostgreSQL: `SET LOCAL lock_timeout = '<ms>ms'` (auto-resets on commit/rollback).
+- MySQL / MariaDB: `SET SESSION innodb_lock_wait_timeout = <s>` (sub-second values **round UP to 1 s** so the bound is never silently relaxed).
+- DB2: `SET CURRENT LOCK TIMEOUT <s>` (same rounding policy).
+- SQLite: `PRAGMA busy_timeout = <ms>`.
+- Oracle / Snowflake / others: silently no-op (logged at debug); use per-statement options instead.
 
 Returns `txn_id > 0` on success; `0` on failure.
 
@@ -442,6 +479,71 @@ Commits and ends the transaction.
 ### `odbc_transaction_rollback(txn_id) -> int`
 
 Rolls back and ends the transaction.
+
+## XA / 2PC (Sprint 4.3 — Unreleased)
+
+X/Open distributed-transaction lifecycle for engines that support
+2PC at the SQL level: PostgreSQL, MySQL/MariaDB, DB2. SQL Server
+(MSDTC) and Oracle (OCI XA) ship Phase 1 scaffolding behind the
+`xa-dtc` / `xa-oci` Cargo features but Phase 2 wiring is pending —
+both engines currently return a feature-aware `UnsupportedFeature`.
+SQLite / Snowflake have no 2PC support.
+
+### `odbc_xa_start(conn_id, format_id, gtrid_ptr, gtrid_len, bqual_ptr, bqual_len) -> unsigned int`
+
+Start a new XA branch on `conn_id` with the given XID components
+(`gtrid` 1..64 bytes; `bqual` 0..64 bytes; `null + 0` accepted as
+empty bqual). Returns `xa_id > 0` on success; `0` on failure.
+
+### `odbc_xa_end(xa_id) -> int`
+
+Detach the branch from the connection. Required before `xa_prepare`.
+Returns `0` on success; non-zero on failure.
+
+### `odbc_xa_prepare(xa_id) -> int`
+
+Phase 1 of 2PC. Promotes the branch from `Idle` to `Prepared`.
+
+### `odbc_xa_commit_prepared(xa_id) -> int`
+
+Phase 2 commit on a previously prepared branch.
+
+### `odbc_xa_rollback_prepared(xa_id) -> int`
+
+Phase 2 rollback on a previously prepared branch.
+
+### `odbc_xa_commit_one_phase(xa_id) -> int`
+
+1RM optimisation: fuse `xa_end` + `xa_commit(TMONEPHASE)` for the
+case where this branch is the sole RM in the global transaction.
+**Only safe when no other RM has enlisted.**
+
+### `odbc_xa_rollback_active(xa_id) -> int`
+
+Roll back an Active branch (no PREPARE issued). No recovery path
+exists after this call.
+
+### `odbc_xa_recover_count(conn_id) -> int`
+
+Step 1 of crash recovery: query the engine for prepared XIDs and
+cache the result on the calling thread. Returns the count
+(`-1` on failure). PostgreSQL reads `pg_prepared_xacts`; MySQL/MariaDB/DB2
+run `XA RECOVER`.
+
+### `odbc_xa_recover_get(index, out_format_id, gtrid_buf, gtrid_buf_len, out_gtrid_len, bqual_buf, bqual_buf_len, out_bqual_len) -> int`
+
+Step 2: extract one XID component triple from the cache populated by
+`odbc_xa_recover_count`. Caller-allocated buffers (max 64 bytes each
+is always safe). Returns `0` on success; `1` on failure (index out
+of range or buffer too small — `out_*_len` is populated with the
+required size for retry).
+
+### `odbc_xa_resume_prepared(conn_id, format_id, gtrid_ptr, gtrid_len, bqual_ptr, bqual_len) -> unsigned int`
+
+Resume a previously prepared XID — rebuilds an `xa_id` handle for
+crash-recovery scenarios. Returns `xa_id > 0` on success; `0` on
+failure. The handle goes straight to the `Prepared` state; callers
+drive Phase 2 with `odbc_xa_commit_prepared` / `odbc_xa_rollback_prepared`.
 
 ### Savepoints
 

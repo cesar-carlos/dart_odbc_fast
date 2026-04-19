@@ -6,7 +6,7 @@
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-04-18 (v3.1.0)
+**Last verified against code:** 2026-04-19 (Unreleased / Sprint 4.3b/c)
 
 ---
 
@@ -98,21 +98,54 @@ Decoder rules in `binary_protocol.dart::_convertData`:
 Opt-in typed parameters layered on top of `ParamValue`. Existing untyped
 calls continue to work unchanged.
 
-Code: `lib/infrastructure/native/protocol/param_value.dart` (lines 61-113
-for definitions, 297-379 for the `_toTypedParamValue` dispatcher).
+Code: `lib/infrastructure/native/protocol/param_value.dart` (the
+`SqlDataType` class for definitions, `_toTypedParamValue` for the
+dispatcher).
 
-Available kinds (10):
+**27 kinds shipped today** (10 in v3.0.0, +17 unreleased):
 
-- `SqlDataType.int32`
-- `SqlDataType.int64`
-- `SqlDataType.decimal({precision, scale})`
-- `SqlDataType.varChar({length})`
-- `SqlDataType.nVarChar({length})`
-- `SqlDataType.varBinary({length})`
-- `SqlDataType.dateTime`
-- `SqlDataType.date`
-- `SqlDataType.time`
-- `SqlDataType.boolAsInt32`
+#### Cross-engine kinds (20)
+
+| Kind                                  | Accepts                            | Wire                  | Notes                                              |
+| ------------------------------------- | ---------------------------------- | --------------------- | -------------------------------------------------- |
+| `SqlDataType.int32`                   | `int` (32-bit range)               | `ParamValueInt32`     | Range-validated.                                   |
+| `SqlDataType.int64`                   | `int`                              | `ParamValueInt64`     | Always 64-bit.                                     |
+| `SqlDataType.smallInt` *(new)*        | `int` ∈ `[-32768, 32767]`          | `ParamValueInt32`     | Range-validated; wire shared with int32.            |
+| `SqlDataType.bigInt` *(new)*          | `int`                              | `ParamValueInt64`     | Idiomatic alias for `int64` — wire-equality pinned by test. |
+| `SqlDataType.tinyInt` *(new)*         | `int` ∈ `[0, 255]`                 | `ParamValueInt32`     | Unsigned, SQL Server / Sybase convention.          |
+| `SqlDataType.bit` *(new)*             | `bool` OR `int` ∈ `{0, 1}`         | `ParamValueInt32`     | Idiomatic for `BIT` columns; rejects `int` outside `{0, 1}`. |
+| `SqlDataType.boolAsInt32`             | `bool`                             | `ParamValueInt32`     | Same wire as `bit`, but rejects `int` for type discipline. |
+| `SqlDataType.decimal({precision, scale})` | `num` or `String`              | `ParamValueDecimal`   | Optional precision/scale metadata.                 |
+| `SqlDataType.money` *(new)*           | `num` or `String`                  | `ParamValueDecimal`   | Fixed 4-fractional-digit convention (SQL Server `MONEY`); rejects NaN/Infinity. |
+| `SqlDataType.varChar({length})`       | `String`                           | `ParamValueString`    | Optional length metadata.                          |
+| `SqlDataType.nVarChar({length})`      | `String`                           | `ParamValueString`    | UTF-16 conceptually; same wire (UTF-8).            |
+| `SqlDataType.text` *(new)*            | `String`                           | `ParamValueString`    | No length cap (`TEXT` / `NTEXT` / `CLOB` convention). |
+| `SqlDataType.json({validate})` *(new)* | `String`, `Map<String,dynamic>`, `List<dynamic>` | `ParamValueString` | `validate: true` round-trips through `jsonDecode` to catch bad payloads early. |
+| `SqlDataType.xml({validate})` *(new)* | `String`                           | `ParamValueString`    | `validate: true` runs a cheap structural shape check (`<...>`). |
+| `SqlDataType.uuid` *(new)*            | `String` (canonical / bare-hex / `{...}`) | `ParamValueString` | Folds to lowercase canonical 8-4-4-4-12.   |
+| `SqlDataType.varBinary({length})`     | `List<int>`                        | `ParamValueBinary`    | Optional length metadata.                          |
+| `SqlDataType.dateTime`                | `DateTime` or `String`             | `ParamValueString`    | `DateTime` validated for year ∈ `[1, 9999]`.       |
+| `SqlDataType.date`                    | `String`                           | `ParamValueString`    | Caller formats as the engine expects.              |
+| `SqlDataType.time`                    | `String`                           | `ParamValueString`    | Caller formats as the engine expects.              |
+| `SqlDataType.interval` *(new)*        | `Duration` or `String`             | `ParamValueString`    | `Duration` formatted as `'<n> seconds'` (Postgres/MySQL/Oracle/Db2 portable); sub-second values padded as 3-digit decimal. |
+
+#### Engine-specific kinds (7) — *new in unreleased*
+
+These wrap the same wire primitives as the cross-engine kinds; the
+value lives in the per-kind validation and the type-discipline at the
+call site. **Several require the caller to wrap the parameter in a
+CAST or constructor function inside the SQL itself** — see each kind's
+doc comment in `param_value.dart` for the convention.
+
+| Kind                            | Engine        | Accepts                                   | Caveat                                                           |
+| ------------------------------- | ------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| `SqlDataType.range`             | PostgreSQL    | `String` (`'[1,10)'`, `'empty'`, etc.)    | Concrete range subtype resolved by the server.                   |
+| `SqlDataType.cidr`              | PostgreSQL    | `String` (IPv4/IPv6, optional `/prefix`)  | Validated structurally (compressed `::` form OK; `:::` rejected); mask range enforced (`/0..32` IPv4, `/0..128` IPv6). |
+| `SqlDataType.tsvector`          | PostgreSQL    | `String` (`'fat:1A cat:2B sat:3'`)        | No client-side validation; `to_tsvector` is the real validator.  |
+| `SqlDataType.hierarchyId`       | SQL Server    | `String` (`'/1/2/3.5/'`)                  | Path validated; **caller wraps in `CAST(? AS hierarchyid)`** in the SQL. |
+| `SqlDataType.geography`         | SQL Server    | `String` (WKT)                            | **Caller wraps in `geography::STGeomFromText(?, srid)`**. `List<int>` rejected with hint pointing at `varBinary` + `STGeomFromWKB`. |
+| `SqlDataType.raw`                | Oracle        | `List<int>`                               | Wire-equality pinned with `varBinary`; idiomatic alias for `RAW(N)` columns. |
+| `SqlDataType.bfile`             | Oracle        | `String` (`BFILENAME(...)` snippet)       | BFILE is a pointer to an external file; the more common pattern is two `varChar` parameters fed into `BFILENAME(?, ?)` in SQL. |
 
 Wrapper: `SqlTypedValue({required type, required value})`. Convenience
 factory: `typedParam(type, value)`.
@@ -123,14 +156,22 @@ Example:
 final params = [
   typedParam(SqlDataType.decimal(precision: 18, scale: 4), '123.4500'),
   typedParam(SqlDataType.nVarChar(length: 64), 'hello'),
-  typedParam(SqlDataType.boolAsInt32, true),
+  typedParam(SqlDataType.bit, true),
+  typedParam(SqlDataType.uuid, '550E8400-E29B-41D4-A716-446655440000'),
+  typedParam(SqlDataType.json(validate: true),
+      <String, dynamic>{'name': 'Alice', 'roles': ['admin']}),
+  typedParam(SqlDataType.interval, const Duration(hours: 1, minutes: 30)),
 ];
 await service.executeQueryParams(connId, sql, params);
 ```
 
 The dispatcher validates the runtime type against the requested kind
 and rejects mismatches with `ArgumentError` (e.g. `SqlDataType.int32`
-with a `String` value).
+with a `String` value, or `SqlDataType.uuid` with a malformed string).
+
+**Pending (3 of original 30-kind roadmap)**: reserved for future
+spatial/temporal additions (`geometry`, `year/month interval`,
+`json with schema validation`) when concrete consumers ask for them.
 
 ### 1.4 Driver plugins (9 total)
 

@@ -6,6 +6,82 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
+## What's New (Unreleased)
+
+Highlights of the work currently on `main` ahead of the next tagged
+release. See the [CHANGELOG](CHANGELOG.md) for the complete list and
+[`doc/notes/FUTURE_IMPLEMENTATIONS.md`](doc/notes/FUTURE_IMPLEMENTATIONS.md)
+for the remaining backlog.
+
+### Sprint 4 — transaction control
+
+- **`TransactionAccessMode.readOnly`** (Sprint 4.1) — emits
+  `SET TRANSACTION READ ONLY` on PostgreSQL / MySQL / MariaDB / DB2 /
+  Oracle; silent no-op on engines without a native hint (SQL Server,
+  SQLite, Snowflake). Lets the engine skip locking and pick a
+  snapshot read path where applicable.
+
+- **Per-transaction `LockTimeout`** (Sprint 4.2) — `Duration` cap on
+  how long any statement inside the transaction waits for a lock.
+  Engine-aware emission: SQL Server `SET LOCK_TIMEOUT <ms>`,
+  PostgreSQL `SET LOCAL lock_timeout`, MySQL/MariaDB
+  `SET SESSION innodb_lock_wait_timeout` (sub-second values round
+  UP to 1s so the bound is never silently relaxed).
+
+- **`IOdbcService.runInTransaction<T>`** (Sprint 4.4) — captures the
+  full begin → action → commit/rollback dance behind one call:
+
+  ```dart
+  final result = await service.runInTransaction<int>(
+    connId,
+    (txnId) async {
+      // Any work here participates in the transaction.
+      return const Success(42);
+    },
+    isolationLevel: IsolationLevel.repeatableRead,
+    accessMode: TransactionAccessMode.readOnly,
+    lockTimeout: const Duration(seconds: 2),
+  );
+  ```
+
+  Action `Failure` rolls back, action throws are caught + converted
+  to `QueryError` (the throw never escapes), commit failure surfaces
+  as the unit-of-work failure, rollback failures during cleanup are
+  swallowed so they never overwrite the original cause. See
+  [`example/run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart).
+
+- **X/Open XA / 2PC** (Sprint 4.3) — strongly-typed `Xid` value class
+  + `XaTransactionHandle` state machine
+  (Active → Idle → Prepared → Committed/RolledBack). Engine matrix:
+
+  | Engine                | Status                                      |
+  | --------------------- | ------------------------------------------- |
+  | PostgreSQL            | ✅ `BEGIN` + `PREPARE TRANSACTION` + `pg_prepared_xacts` |
+  | MySQL / MariaDB       | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
+  | DB2                   | ✅ same SQL grammar as MySQL                 |
+  | SQL Server (MSDTC)    | ⚠️ Phase 1 scaffolding (`--features xa-dtc`); Phase 2 wiring pending — see `FUTURE_IMPLEMENTATIONS.md` §4.3b |
+  | Oracle (OCI XA)       | ⚠️ Phase 1 scaffolding (`--features xa-oci`); Phase 2 wiring pending — see §4.3c |
+  | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
+
+  1RM optimisation (`commit_one_phase`) skips the prepare-log write
+  when this RM is the sole participant. Crash-recovery via
+  `xaRecover` + `xaResumePrepared`. See
+  [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart) for the
+  full PostgreSQL lifecycle.
+
+### `SqlDataType` extras (17 new kinds, 27 total)
+
+Cross-engine: `smallInt`, `bigInt`, `tinyInt`, `bit`, `text`, `xml`,
+`json` (with optional `validate:true` round-trip), `uuid` (canonical
+folding + bare-hex/`{...}` wrapping), `money` (4-fractional-digit
+SQL Server convention), `interval` (`Duration` → portable
+`'<n> seconds'` form).
+
+Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
+`hierarchyId` / `geography`, Oracle `raw` / `bfile`. See
+[`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
+27-kind matrix with validation and wire-encoding details.
+
 ## Why Rust + FFI
 
 - Low overhead (no platform channels)
