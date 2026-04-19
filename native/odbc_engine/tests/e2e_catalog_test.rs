@@ -1,5 +1,5 @@
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::engine::{
     execute_query_with_connection, get_type_info, list_columns, list_tables, OdbcConnection,
@@ -71,6 +71,12 @@ fn test_catalog_list_tables_schema_filter() {
 fn test_catalog_list_columns() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        eprintln!(
+            "⚠️  Skipping test_catalog_list_columns: T-SQL setup (dbo / IF OBJECT_ID) is SQL Server-only"
+        );
         return;
     }
 

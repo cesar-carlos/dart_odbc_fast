@@ -9,6 +9,7 @@ TEST_FILTER=""
 FEATURES="ffi-tests"
 NO_BUILD=0
 SMOKE_ONLY=0
+QUICK=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -21,6 +22,7 @@ Usage:
   scripts/docker_e2e.sh --filter xa_pg_      # cargo test substring filter
   scripts/docker_e2e.sh --no-build            # skip docker build
   scripts/docker_e2e.sh --smoke               # cargo test --lib transaction only
+  scripts/docker_e2e.sh --quick               # no --include-ignored (skip long #[ignore] stress)
 EOF
 }
 
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
         --features) FEATURES="$2"; shift 2 ;;
         --no-build) NO_BUILD=1; shift ;;
         --smoke) SMOKE_ONLY=1; shift ;;
+        --quick) QUICK=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
     esac
@@ -70,6 +73,12 @@ fi
 
 if [[ $SMOKE_ONLY -eq 1 ]]; then
     cargo_cmd="cargo test --lib --features ${FEATURES} transaction -- --test-threads=1"
+elif [[ $QUICK -eq 1 ]]; then
+    if [[ -n "$TEST_FILTER" ]]; then
+        cargo_cmd="cargo test --features ${FEATURES} ${TEST_FILTER} -- --test-threads=1"
+    else
+        cargo_cmd="cargo test --features ${FEATURES} -- --test-threads=1"
+    fi
 else
     if [[ -n "$TEST_FILTER" ]]; then
         cargo_cmd="cargo test --features ${FEATURES} ${TEST_FILTER} -- --include-ignored --test-threads=1"

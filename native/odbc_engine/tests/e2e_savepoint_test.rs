@@ -50,6 +50,8 @@ fn test_savepoint_create_and_rollback() {
                 &c,
                 "IF OBJECT_ID(N'sp_test', N'U') IS NOT NULL DROP TABLE sp_test",
             );
+        } else {
+            let _ = execute_query_with_connection(c.connection(), "DROP TABLE IF EXISTS sp_test");
         }
         execute_query_with_connection(c.connection(), "CREATE TABLE sp_test (id INT)").unwrap();
     }
@@ -127,6 +129,9 @@ fn test_savepoint_release() {
                 &c,
                 "IF OBJECT_ID(N'sp_rel_test', N'U') IS NOT NULL DROP TABLE sp_rel_test",
             );
+        } else {
+            let _ =
+                execute_query_with_connection(c.connection(), "DROP TABLE IF EXISTS sp_rel_test");
         }
         execute_query_with_connection(c.connection(), "CREATE TABLE sp_rel_test (id INT)").unwrap();
     }

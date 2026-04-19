@@ -3,7 +3,7 @@ use odbc_engine::{
     OdbcConnection, OdbcEnvironment, ParamValue,
 };
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 
 /// Helper to decode integer values from binary data
@@ -138,6 +138,12 @@ fn test_execution_engine_plugin_optimization() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        eprintln!(
+            "⚠️  Skipping test_execution_engine_plugin_optimization: uses SELECT TOP (SQL Server-only)"
+        );
         return;
     }
     let conn_str: String =

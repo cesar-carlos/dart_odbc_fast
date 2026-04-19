@@ -8,6 +8,7 @@
 #   pwsh scripts/docker_e2e.ps1 -Engine mariadb
 #   pwsh scripts/docker_e2e.ps1 -Engine mssql
 #   pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_pg_
+#   pwsh scripts/docker_e2e.ps1 -Quick              # same DBs, no --include-ignored (skips long #[ignore] stress)
 
 [CmdletBinding()]
 param(
@@ -26,7 +27,12 @@ param(
 
     # Run a quick smoke test (cargo test --lib transaction) instead of the
     # full ignored E2E suite. Useful for CI smoke jobs.
-    [switch]$SmokeOnly
+    [switch]$SmokeOnly,
+
+    # Run `cargo test` without `--include-ignored` so `#[ignore]` cases (e.g.
+    # 10k-row bulk transaction stress) stay skipped. Full matrix parity for
+    # CI remains the default when this switch is not set.
+    [switch]$Quick
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,7 +81,8 @@ if ($SmokeOnly) {
     $cargoCmd = 'cargo test --lib --features ' + $Features + ' transaction -- --test-threads=1'
 } else {
     $filterArg = if ($TestFilter) { " $TestFilter" } else { '' }
-    $cargoCmd = "cargo test --features $Features$filterArg -- --include-ignored --test-threads=1"
+    $extraArgs = if ($Quick) { '--test-threads=1' } else { '--include-ignored --test-threads=1' }
+    $cargoCmd = "cargo test --features $Features$filterArg -- $extraArgs"
 }
 
 Write-Step "Inside container: $cargoCmd"

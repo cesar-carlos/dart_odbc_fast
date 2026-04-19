@@ -3,7 +3,7 @@ use odbc_engine::engine::core::DriverCapabilities;
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
@@ -11,6 +11,12 @@ fn test_driver_capabilities_detect() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        eprintln!(
+            "⚠️  Skipping test_driver_capabilities_detect: assertions are pinned to SQL Server ODBC defaults"
+        );
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");

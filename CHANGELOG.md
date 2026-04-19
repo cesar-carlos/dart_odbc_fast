@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/docker_e2e.ps1 -Quick`** / **`scripts/docker_e2e.sh --quick`** —
+  runs `cargo test` without `--include-ignored` so long `#[ignore]` cases
+  (e.g. bulk transaction stress) stay skipped; default behaviour remains
+  full CI parity with `--include-ignored`.
+
 ### Fixed
 
 - **Docker multi-engine E2E:** FFI tests that use T-SQL only (`WAITFOR`,
@@ -15,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolved E2E engine is SQL Server, so `scripts/docker_e2e.ps1` with
   PostgreSQL / MySQL / MariaDB / Oracle no longer fails on SQL
   Server–specific SQL.
+- **E2E on non–SQL Server:** `test_catalog_list_columns` (dbo / `IF OBJECT_ID`),
+  `test_driver_capabilities_detect` (pinned ODBC defaults), and
+  `test_execution_engine_plugin_optimization` (`SELECT TOP`) skip unless
+  the live DSN is SQL Server.
+- **`e2e_savepoint_test`:** for `SavepointDialect::Sql92`, run
+  `DROP TABLE IF EXISTS` before `CREATE` so PostgreSQL / MySQL runs do
+  not fail when `sp_test` / `sp_rel_test` already exist from a prior run.
 
 ## [3.4.2] - Dart XA helpers (`runWithStart` / `runWithStartOnePhase`)
 
