@@ -39,25 +39,39 @@ jobs:
   smoke:
     name: docker-stack (${{ matrix.engine }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Oracle takes the longest path: ~3min base build + ~5min Oracle
+    # Instant Client download/unzip + ~3min XE container ready + tests.
+    # 35min leaves comfortable margin once the GHA cache warms up.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        engine: [postgres, mysql, mariadb, mssql]
+        engine: [postgres, mysql, mariadb, mssql, oracle]
         include:
           - engine: postgres
             filter: test_e2e_xa_postgresql
+            include_oracle: "false"
           - engine: mysql
             filter: test_e2e_xa_mysql
+            include_oracle: "false"
           - engine: mariadb
             # MariaDB plugin reuses the MySQL XA grammar; the dedicated
             # mariadb tests live alongside the mysql ones with the same prefix.
             filter: test_e2e_xa_mysql
+            include_oracle: "false"
           - engine: mssql
             # SQL Server XA Phase 2 is still pending (see FUTURE_IMPLEMENTATIONS
             # 4.3b). For this matrix we exercise the read-only / lock-timeout
             # surface that v3.4.0 *did* finish for SQL Server.
             filter: test_e2e_transaction_access_mode
+            include_oracle: "false"
+          - engine: oracle
+            # Sprint 4.3c Phase 2 (v3.4.1): Oracle XA via DBMS_XA PL/SQL.
+            # Builds the heavier Oracle Instant Client layer on top of the
+            # base test-runner image. Cache scope is separate so the smaller
+            # non-Oracle entries don't pull the 600MB Oracle layer.
+            filter: test_e2e_xa_oracle
+            include_oracle: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -84,29 +98,39 @@ jobs:
           file: Dockerfile.test-runner
           tags: dart_odbc_fast-test-runner:ci
           load: true
-          cache-from: type=gha,scope=test-runner
-          cache-to:   type=gha,scope=test-runner,mode=max
-          # Mirrors the docker-compose default (no Oracle layer).
+          # Separate cache scope per Oracle on/off so the Oracle entry
+          # doesn't poison the lighter cache that the other engines share.
+          cache-from: type=gha,scope=test-runner-${{ matrix.include_oracle }}
+          cache-to:   type=gha,scope=test-runner-${{ matrix.include_oracle }},mode=max
           build-args: |
-            INCLUDE_ORACLE=false
+            INCLUDE_ORACLE=${{ matrix.include_oracle }}
 
       - name: Bring up DB stack
         run: |
           set -euo pipefail
           # docker compose up only the engine we need + its deps.
+          # Oracle's TCP-only healthcheck flips to 'healthy' as soon as
+          # port 1521 accepts connections; the listener is up well before
+          # XEPDB1 can serve queries, so we extend the wait budget below.
           docker compose up -d ${{ matrix.engine }}
-          # Wait for healthcheck.
-          for i in $(seq 1 60); do
+          # Per-engine wait budget (each iteration sleeps 3s).
+          if [ "${{ matrix.engine }}" = "oracle" ]; then
+            attempts=120  # ~6 minutes
+          else
+            attempts=60   # ~3 minutes (unchanged for the SQL-XA engines)
+          fi
+          for i in $(seq 1 "$attempts"); do
             state=$(docker inspect -f '{{.State.Health.Status}}' "odbc_test_${{ matrix.engine }}" 2>/dev/null || true)
-            echo "  $state"
+            echo "  [${i}/${attempts}] $state"
             if [ "$state" = "healthy" ]; then exit 0; fi
             if [ "$state" = "unhealthy" ]; then
-              docker logs --tail 50 "odbc_test_${{ matrix.engine }}"
+              docker logs --tail 80 "odbc_test_${{ matrix.engine }}"
               exit 1
             fi
             sleep 3
           done
           echo "Timed out waiting for ${{ matrix.engine }}" >&2
+          docker logs --tail 80 "odbc_test_${{ matrix.engine }}" || true
           exit 1
 
       - name: Resolve DSN for engine
@@ -117,6 +141,7 @@ jobs:
             mysql)    echo "value=Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
             mariadb)  echo "value=Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
             mssql)    echo "value=Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;" >> "$GITHUB_OUTPUT" ;;
+            oracle)   echo "value=Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;" >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Smoke test (cargo --version + odbcinst -q -d)
@@ -155,6 +180,12 @@ jobs:
             -e "SQLSERVER_TEST_USER=sa" \
             -e "SQLSERVER_TEST_PASSWORD=OdbcTest123!" \
             -e "SQLSERVER_TEST_PORT=1433" \
+            -e "ORACLE_TEST_SERVER=oracle" \
+            -e "ORACLE_TEST_PORT=1521" \
+            -e "ORACLE_TEST_SERVICE_NAME=XEPDB1" \
+            -e "ORACLE_TEST_USER=system" \
+            -e "ORACLE_TEST_PASSWORD=OdbcTest123!" \
+            -e "LD_LIBRARY_PATH=/opt/oracle/instantclient_23_6" \
             dart_odbc_fast-test-runner:ci \
             bash -c "cargo test --features ffi-tests ${{ matrix.filter }} -- --include-ignored --test-threads=1"
 
