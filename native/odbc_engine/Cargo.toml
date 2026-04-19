@@ -36,7 +36,10 @@ name = "odbc_engine"
 #   reframed as an alternative path; production Oracle XA flows
 #   through DBMS_XA.
 # See CHANGELOG.md [3.4.1] for the complete list and migration notes.
-version = "3.4.1"
+#
+# 3.4.2 — Align crate version with Dart pubspec; release notes in
+# CHANGELOG.md [3.4.2] (Dart XA helpers + Docker E2E script/test fixes).
+version = "3.4.2"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

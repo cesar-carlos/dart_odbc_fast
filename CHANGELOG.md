@@ -7,33 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-04-19
+
+Dart XA helpers (`runWithStart` / `runWithStartOnePhase`), Docker E2E
+hardening for multi-engine matrices, and optional `docker_e2e` `-Quick` /
+`--quick` for faster local runs.
+
 ### Added
 
 - **`scripts/docker_e2e.ps1 -Quick`** / **`scripts/docker_e2e.sh --quick`** —
   runs `cargo test` without `--include-ignored` so long `#[ignore]` cases
   (e.g. bulk transaction stress) stay skipped; default behaviour remains
   full CI parity with `--include-ignored`.
-
-### Fixed
-
-- **Docker multi-engine E2E:** FFI tests that use T-SQL only (`WAITFOR`,
-  `INSERT … OUTPUT`, `IF OBJECT_ID`) now skip unless `ODBC_TEST_DSN`
-  targets SQL Server. `cell_reader_test` likewise runs only when the
-  resolved E2E engine is SQL Server, so `scripts/docker_e2e.ps1` with
-  PostgreSQL / MySQL / MariaDB / Oracle no longer fails on SQL
-  Server–specific SQL.
-- **E2E on non–SQL Server:** `test_catalog_list_columns` (dbo / `IF OBJECT_ID`),
-  `test_driver_capabilities_detect` (pinned ODBC defaults), and
-  `test_execution_engine_plugin_optimization` (`SELECT TOP`) skip unless
-  the live DSN is SQL Server.
-- **`e2e_savepoint_test`:** for `SavepointDialect::Sql92`, run
-  `DROP TABLE IF EXISTS` before `CREATE` so PostgreSQL / MySQL runs do
-  not fail when `sp_test` / `sp_rel_test` already exist from a prior run.
-
-## [3.4.2] - Dart XA helpers (`runWithStart` / `runWithStartOnePhase`)
-
-### Added
-
 - **`XaTransactionHandle.runWithStart<T>`** — exception-safe
   helper that drives the full Two-Phase Commit lifecycle around a
   user-supplied closure. Mirrors the
@@ -91,6 +76,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 - Existing manual 2PC code keeps working unmodified; the helpers
   are an opt-in convenience.
+
+### Fixed
+
+- **Docker multi-engine E2E:** FFI tests that use T-SQL only (`WAITFOR`,
+  `INSERT … OUTPUT`, `IF OBJECT_ID`) now skip unless `ODBC_TEST_DSN`
+  targets SQL Server. `cell_reader_test` likewise runs only when the
+  resolved E2E engine is SQL Server, so `scripts/docker_e2e.ps1` with
+  PostgreSQL / MySQL / MariaDB / Oracle no longer fails on SQL
+  Server–specific SQL.
+- **E2E on non–SQL Server:** `test_catalog_list_columns` (dbo / `IF OBJECT_ID`),
+  `test_driver_capabilities_detect` (pinned ODBC defaults), and
+  `test_execution_engine_plugin_optimization` (`SELECT TOP`) skip unless
+  the live DSN is SQL Server.
+- **`e2e_savepoint_test`:** for `SavepointDialect::Sql92`, run
+  `DROP TABLE IF EXISTS` before `CREATE` so PostgreSQL / MySQL runs do
+  not fail when `sp_test` / `sp_rel_test` already exist from a prior run.
 
 ## [3.4.1] - Oracle XA / 2PC via DBMS_XA (Sprint 4.3c Phase 2)
 
