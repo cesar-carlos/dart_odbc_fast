@@ -2,222 +2,258 @@
 
 **Canonical reference** for data type mapping in `odbc_fast`.
 
-> **Note**: This is a working document in `doc/notes/`. Some sections describe planned
-> work that is not implemented yet. Implementation status is clearly marked below.
+> Working document under `doc/notes/`. Implementation status is marked
+> next to each section. When in doubt, the source of truth is the code
+> referenced inline.
 
-**Last verified**: 2026-03-10
+**Last verified against code:** 2026-04-18 (v3.1.0)
 
-This document separates:
-1. What is implemented today
-2. What is planned
-3. What is inspired by `node-mssql` but not yet part of public contract.
+---
 
-## Current implemented contract
+## 1. Implemented today
 
-### Input parameters (Dart -> native)
+### 1.1 Input parameters (Dart → native)
 
-Implemented parameter types in Dart:
-- `ParamValueNull`
-- `ParamValueString`
-- `ParamValueInt32`
-- `ParamValueInt64`
-- `ParamValueDecimal` (string payload)
-- `ParamValueBinary`
+Six concrete `ParamValue` subclasses with a stable wire tag:
 
-Primary code references:
-- `lib/infrastructure/native/protocol/param_value.dart`
-- `native/odbc_engine/src/protocol/param_value.rs`
+| Class               | Wire tag | Payload                                |
+| ------------------- | -------- | -------------------------------------- |
+| `ParamValueNull`    | `0`      | empty                                  |
+| `ParamValueString`  | `1`      | UTF-8 bytes                            |
+| `ParamValueInt32`   | `2`      | 4 bytes little-endian signed           |
+| `ParamValueInt64`   | `3`      | 8 bytes little-endian signed           |
+| `ParamValueDecimal` | `4`      | UTF-8 string payload (e.g. `"123.45"`) |
+| `ParamValueBinary`  | `5`      | raw bytes                              |
 
-Current object-to-parameter auto-conversion (`paramValuesFromObjects`):
-- `null` -> `ParamValueNull`
-- `int` in 32-bit range -> `ParamValueInt32`
-- `int` outside 32-bit range -> `ParamValueInt64`
-- `String` -> `ParamValueString`
-- `List<int>` -> `ParamValueBinary`
-- `bool` -> `ParamValueInt32(1|0)` (canonical mapping)
-- `double` -> `ParamValueDecimal(value.toStringAsFixed(6))` (canonical mapping)
-  - `NaN` and `Infinity`/`-Infinity` are rejected with `ArgumentError`
-- `DateTime` -> `ParamValueString(value.toUtc().toIso8601String())`
-  (canonical mapping)
-  - `DateTime.year` must be in `[1, 9999]`, otherwise `ArgumentError`
-- `ParamValue` -> returned as-is (fast path)
+Code: `lib/infrastructure/native/protocol/param_value.dart`,
+`native/odbc_engine/src/protocol/param_value.rs`.
 
-**Important:** Unsupported types throw `ArgumentError` with actionable message.
-No silent `toString()` fallback for unsupported types.
+#### Auto-conversion (`paramValuesFromObjects` / `toParamValue`)
 
-### Result decoding (native -> Dart)
+| Dart input              | Result                                                        |
+| ----------------------- | ------------------------------------------------------------- |
+| `null`                  | `ParamValueNull`                                              |
+| `int` ∈ 32-bit range    | `ParamValueInt32`                                             |
+| `int` outside 32-bit    | `ParamValueInt64`                                             |
+| `String`                | `ParamValueString`                                            |
+| `List<int>` / `Uint8List` | `ParamValueBinary`                                          |
+| `bool`                  | `ParamValueInt32(1\|0)`                                       |
+| `double`                | `ParamValueDecimal(value.toStringAsFixed(6))`                 |
+| `DateTime`              | `ParamValueString(value.toUtc().toIso8601String())`           |
+| `ParamValue`            | returned as-is (fast path)                                    |
+| `SqlTypedValue`         | dispatched to typed conversion (see §1.3)                     |
 
-**Current implementation** uses binary protocol (version 1):
+Validation:
 
-Dart parser reference:
-- `lib/infrastructure/native/protocol/binary_protocol.dart`
+- `double.NaN` and `double.infinity` are rejected with `ArgumentError`.
+- `DateTime.year` must be in `[1, 9999]` — otherwise `ArgumentError`.
+- Anything else throws `ArgumentError` with an actionable message
+  (no silent `toString()` fallback).
 
-Supported ODBC type codes in binary protocol:
-- Type 1: String (UTF-8)
-- Type 2: Int32 (little-endian)
-- Type 3: Int64 (little-endian)
-- Default: String (fallback)
+### 1.2 Result decoding (native → Dart)
 
-Rust internal mapping:
-- `odbc_api::DataType -> SQL type code`
-- `SQL type code -> OdbcType`
-- `OdbcType -> Dart type conversion`
+Binary protocol **version 1**, magic `"ODBC"` (`0x4F444243`). Header is
+16 bytes; payload follows.
 
-Primary reference:
-- `native/odbc_engine/src/protocol/types.rs`
+Code: `lib/infrastructure/native/protocol/binary_protocol.dart`,
+`native/odbc_engine/src/protocol/types.rs`,
+`lib/infrastructure/native/protocol/odbc_type.dart`.
 
-Driver-specific type mapping exists via plugins:
-- `native/odbc_engine/src/plugins/sqlserver.rs`
-- `native/odbc_engine/src/plugins/postgres.rs`
-- `native/odbc_engine/src/plugins/oracle.rs`
-- `native/odbc_engine/src/plugins/sybase.rs`
+`OdbcType` enum (Rust + Dart, kept in lockstep) has **19 variants**
+with stable discriminants 1..19:
 
-Driver detection also recognizes `mysql`, `mongodb`, and `sqlite`, but these
-currently use the generic mapping path (no dedicated plugin file yet).
+| #  | Variant            | Decoder return         | Notes                                  |
+| -- | ------------------ | ---------------------- | -------------------------------------- |
+| 1  | `varchar`          | `String` (UTF-8)       | default text path                      |
+| 2  | `integer`          | `int`                  | 4 bytes little-endian                  |
+| 3  | `bigInt`           | `int`                  | 8 bytes little-endian                  |
+| 4  | `decimal`          | `String`               | preserves precision                    |
+| 5  | `date`             | `String` (ISO-8601)    | `YYYY-MM-DD`                           |
+| 6  | `timestamp`        | `String` (ISO-8601)    | `YYYY-MM-DD HH:MM:SS[.fff]`            |
+| 7  | `binary`           | `Uint8List`            | raw bytes                              |
+| 8  | `nVarchar`         | `String` (UTF-8)       | wide-char source                       |
+| 9  | `timestampWithTz`  | `String` (ISO-8601)    | with offset                            |
+| 10 | `datetimeOffset`   | `String` (ISO-8601)    | SQL Server `datetimeoffset`            |
+| 11 | `time`             | `String`               | `HH:MM:SS[.fff]`                       |
+| 12 | `smallInt`         | `String`               | encoded as text on the wire            |
+| 13 | `boolean`          | `String`               | `"true"` / `"false"`                   |
+| 14 | `float`            | `String`               | text-formatted                         |
+| 15 | `doublePrecision`  | `String`               | text-formatted                         |
+| 16 | `json`             | `String`               | raw JSON text                          |
+| 17 | `uuid`             | `String`               | RFC 4122 hyphenated                    |
+| 18 | `money`            | `String`               | preserves precision                    |
+| 19 | `interval`         | `String`               | engine-specific format                 |
 
-**Future protocol** (not implemented):
-- `lib/infrastructure/native/protocol/columnar_protocol.dart` exists but is not
-  used by the engine. This is prepared for a future columnar format (version 2)
-  with optional compression, but the Rust side does not emit this format yet.
+Unknown discriminants degrade to `OdbcType.varchar` (forward compatible).
 
-## Bulk insert nullability
+Decoder rules in `binary_protocol.dart::_convertData`:
 
-Non-nullable columns now validate null values at add time (fail-fast):
-- Throws `StateError` when `nullable: false` column contains `null` in `addRow()`
-- Error message includes column name and row number for easy debugging
-- Suggests using `nullable: true` for columns that should accept null
-- Nullable columns continue to use null bitmap correctly
+- `binary` → `Uint8List`
+- `integer`, `bigInt` → `int` (LE) with text fallback for short payloads
+- everything else → `String` (UTF-8 with `String.fromCharCodes` fallback
+  for invalid UTF-8, mirroring the loose pre-v3.0 behaviour for compat).
 
-`build()` keeps a final nullability guard because `addRow()` stores row list
-references for performance and caller code may still mutate rows before build.
+### 1.3 Optional explicit SQL typing (`SqlDataType`)
 
-## Bulk insert type and text validation
+Opt-in typed parameters layered on top of `ParamValue`. Existing untyped
+calls continue to work unchanged.
 
-`BulkInsertBuilder.addRow()` validates value types per column before storing rows:
+Code: `lib/infrastructure/native/protocol/param_value.dart` (lines 61-113
+for definitions, 297-379 for the `_toTypedParamValue` dispatcher).
+
+Available kinds (10):
+
+- `SqlDataType.int32`
+- `SqlDataType.int64`
+- `SqlDataType.decimal({precision, scale})`
+- `SqlDataType.varChar({length})`
+- `SqlDataType.nVarChar({length})`
+- `SqlDataType.varBinary({length})`
+- `SqlDataType.dateTime`
+- `SqlDataType.date`
+- `SqlDataType.time`
+- `SqlDataType.boolAsInt32`
+
+Wrapper: `SqlTypedValue({required type, required value})`. Convenience
+factory: `typedParam(type, value)`.
+
+Example:
+
+```dart
+final params = [
+  typedParam(SqlDataType.decimal(precision: 18, scale: 4), '123.4500'),
+  typedParam(SqlDataType.nVarChar(length: 64), 'hello'),
+  typedParam(SqlDataType.boolAsInt32, true),
+];
+await service.executeQueryParams(connId, sql, params);
+```
+
+The dispatcher validates the runtime type against the requested kind
+and rejects mismatches with `ArgumentError` (e.g. `SqlDataType.int32`
+with a `String` value).
+
+### 1.4 Driver plugins (9 total)
+
+Each plugin opts into capability traits (`BulkLoader`, `Upsertable`,
+`Returnable`, `TypeCatalog`, `IdentifierQuoter`, `CatalogProvider`,
+`SessionInitializer`) — see `doc/CAPABILITIES_v3.md` for the matrix.
+
+| Plugin                                            | Engine id    | Notes                                     |
+| ------------------------------------------------- | ------------ | ----------------------------------------- |
+| `native/odbc_engine/src/plugins/sqlserver.rs`     | `sqlserver`  | MERGE, OUTPUT, brackets quoting           |
+| `native/odbc_engine/src/plugins/postgres.rs`      | `postgres`   | ON CONFLICT, RETURNING, COPY              |
+| `native/odbc_engine/src/plugins/mysql.rs`         | `mysql`      | ON DUPLICATE KEY UPDATE, LOAD DATA, backtick |
+| `native/odbc_engine/src/plugins/mariadb.rs`       | `mariadb`    | RETURNING (MariaDB-only), backtick, UUID  |
+| `native/odbc_engine/src/plugins/oracle.rs`        | `oracle`     | MERGE, RETURNING INTO, FETCH FIRST        |
+| `native/odbc_engine/src/plugins/sybase.rs`        | `sybase_*`   | sysobjects catalog, ASA/ASE detection     |
+| `native/odbc_engine/src/plugins/sqlite.rs`        | `sqlite`     | ON CONFLICT, RETURNING, sqlite_master     |
+| `native/odbc_engine/src/plugins/db2.rs`           | `db2`        | MERGE, FROM FINAL TABLE, SYSCAT           |
+| `native/odbc_engine/src/plugins/snowflake.rs`     | `snowflake`  | MERGE, RETURNING, VARIANT/OBJECT/ARRAY    |
+
+Engines without a dedicated plugin (Redshift, BigQuery, MongoDB) fall
+back to the generic SQL-92 path. The canonical ids are listed in
+`engine::core::ENGINE_*`.
+
+### 1.5 Bulk insert nullability
+
+`BulkInsertBuilder.addRow()` validates non-nullable columns up front:
+
+- Throws `StateError` when a column declared `nullable: false` receives
+  a `null` value.
+- Error message includes column name and row number.
+- Suggests using `nullable: true` for columns that should accept null.
+- Nullable columns continue to use the null bitmap correctly.
+
+`build()` keeps a final nullability guard because `addRow()` stores row
+list references for performance; caller code may still mutate rows
+before `build()`.
+
+### 1.6 Bulk insert type and text validation
+
+Per-column validation in `BulkInsertBuilder.addRow()`:
+
 - `i32`: requires `int` in 32-bit range
 - `i64`: requires `int`
-- `text`: requires `String` with `maxLen` validation by:
-  - character count
-  - UTF-8 byte length
+- `text`: requires `String`, with `maxLen` validated by **both** char
+  count and UTF-8 byte length
 - `decimal`: requires `String` or `num`
 - `binary`: requires `List<int>` / `Uint8List`
 - `timestamp`: requires `DateTime` or `BulkTimestamp`
 
-Unicode edge cases are covered by tests (emoji and combining characters).
+Unicode edge cases (emoji and combining characters) are covered by
+tests under `test/infrastructure/native/protocol/`.
 
-## Inspiration from node-mssql
+---
 
-`node-mssql` provides a convenient API around:
-- `input(name, [type], value)`
-- `output(name, type[, value])`
+## 2. Inspirations (not claimed as implementation)
+
+### `node-mssql`
+
+`node-mssql` provides:
+
+- `request.input(name, [type], value)`
+- `request.output(name, type[, value])`
 - automatic JS-to-SQL mapping when type is omitted
+- common mapping `String → NVarChar`, `Number → Int`, `Boolean → Bit`,
+  `Date → DateTime`, `Buffer → VarBinary`, `Table → TVP`
 
-The common mapping in that ecosystem is:
-- `String` -> `NVarChar`
-- `Number` -> `Int`
-- `Boolean` -> `Bit`
-- `Date` -> `DateTime`
-- `Buffer` -> `VarBinary`
-- `Table` -> `TVP`
+We borrowed the auto-conversion idea (§1.1) and the typed-parameter
+pattern (§1.3). We **do not** claim parity with the full `node-mssql`
+surface — TVP and `request.output` are explicitly out of scope today
+(see §3.1).
 
-This model is a valid inspiration for `odbc_fast`, but it is not yet the current Dart public contract.
+---
 
-## Planned implementation direction
+## 3. Roadmap (not implemented)
 
-### Phase 1: Make current behavior explicit (Completed)
+### 3.1 Output parameters
 
-1. Keep `ParamValue` as stable contract.
-2. Document exact auto-conversion and limitations.
-3. Add test coverage to ensure behavior does not drift.
-4. **DONE:** Explicit type conversion with canonical mappings for `bool`, `double`, `DateTime`.
+Not supported in the public Dart API. No `request.output`-style
+contract currently exists.
 
-### Phase 2: Add optional explicit SQL typing (Prototype started)
+Planning baseline:
 
-1. Introduce a public `SqlDataType` model (or equivalent) without breaking `ParamValue`.
-2. Allow explicit parameter typing in high-level APIs where useful.
-3. Keep backward compatibility for existing `executeQueryParams` and prepared APIs.
-4. Enable driver-aware support matrix via configuration.
+| Driver     | Typical capability                           | Status                      |
+| ---------- | -------------------------------------------- | --------------------------- |
+| SQL Server | `OUTPUT` parameters and return values        | Planned (not implemented)   |
+| Oracle     | OUT params / REF CURSOR patterns             | Planned (not implemented)   |
+| PostgreSQL | Function returns / OUT-like patterns         | Planned (not implemented)   |
+| Sybase     | OUTPUT-like support varies by driver         | Planned (not implemented)   |
 
-Prototype status:
-- `SqlDataType`, `SqlTypedValue`, and `typedParam(...)` are available in
-  `lib/infrastructure/native/protocol/param_value.dart`.
-- Existing APIs remain unchanged; typed parameters are opt-in through
-  `List<dynamic>`/named parameter values.
+Decision criteria before promoting to public API:
 
-### `SqlDataType` proposal (planned)
-
-Status: **planned/experimental**, not implemented in public API yet.
-
-Design goals:
-- Keep `ParamValue` as the stable default contract.
-- Introduce explicit SQL typing as an opt-in path only.
-- Preserve backward compatibility for existing parameter APIs.
-
-Proposed shape (illustrative only):
-- `SqlDataType.int32`
-- `SqlDataType.int64`
-- `SqlDataType.decimal(precision, scale)`
-- `SqlDataType.varChar(length)`
-- `SqlDataType.nVarChar(length)`
-- `SqlDataType.varBinary(length)`
-- `SqlDataType.dateTime`
-- `SqlDataType.date`
-- `SqlDataType.time`
-
-Proposed typed wrapper (illustrative):
-- `TypedParam(name: 'amount', type: SqlDataType.decimal(18, 4), value: '123.4500')`
-
-### Migration sketch (planned)
-
-Current (implemented today):
-- `executeQueryParams(sql, [ParamValueDecimal('123.45')])`
-- `executeQueryNamed(sql, {'amount': 123.45})` (auto-conversion path)
-
-Planned side-by-side (future, non-breaking):
-- Keep all current calls valid.
-- Add optional typed entry points (or optional typed variants) that accept
-  explicit SQL type metadata.
-- Keep feature clearly labeled as experimental until cross-driver behavior is
-  validated.
-
-### Phase 3: Evaluate output parameters (Not Started)
-
-1. Define driver-aware support matrix (`SQL Server`, `Oracle`, etc.).
-2. Add stable Dart contract only after cross-driver behavior is validated.
-3. Document unsupported paths clearly when applicable.
-
-## Output parameters roadmap (planned)
-
-Current status:
-- Output parameters are **not supported** in the stable public Dart API.
-- No `request.output`-style contract is currently implemented.
-
-Driver support matrix (planning baseline):
-
-| Driver | Typical capability | Current package status |
-| --- | --- | --- |
-| SQL Server | `OUTPUT` params and return values | Planned (not implemented) |
-| Oracle | OUT params / REF CURSOR patterns | Planned (not implemented) |
-| PostgreSQL | Function returns / OUT-like patterns differ from ODBC OUTPUT style | Planned (not implemented) |
-| Sybase | OUTPUT-like support depends on driver behavior | Planned (not implemented) |
-
-Decision criteria before implementation:
-1. Stable cross-driver behavioral contract defined.
-2. Error semantics standardized (nulls, missing params, unsupported types).
+1. Stable cross-driver behavioural contract defined.
+2. Error semantics standardised (nulls, missing params, unsupported types).
 3. Integration coverage for each claimed driver capability.
-4. Non-breaking API surface with explicit feature flag/label while experimental.
-5. Documentation and examples updated before feature is promoted.
+4. Non-breaking API surface with explicit feature flag/label while
+   experimental.
+5. Documentation and examples updated before promotion.
 
-### Non-goals (current release line)
+### 3.2 Columnar protocol v2
 
-- Do not claim `SqlType` 30+ support in public API until implemented.
-- Do not claim `request.output` support in public API until implemented.
-- Do not use `doc/api/` generated artifacts as source of truth for roadmap commitments.
+The original sketch lived in `lib/infrastructure/native/protocol/columnar_protocol.dart`
+and was orphan code (no callers in `lib/` or `test/`). Moved to
+`doc/notes/columnar_protocol_sketch.md` in v3.1.0 to preserve the design
+without keeping dead code in the production tree. Revive only if there
+is a concrete throughput requirement that the row-major v1 protocol
+cannot meet.
+
+---
+
+## Non-goals (current release line)
+
+- Do not claim `request.output`-style support in the public API until §3.1
+  ships.
+- Do not claim `TVP` (table-valued parameters) support.
+- Do not use `doc/api/` generated artifacts as source of truth for
+  roadmap commitments.
+
+---
 
 ## References
 
-- `doc/notes/TYPE_MAPPING_IMPLEMENTATION_CHECKLIST.md`
-- `doc/notes/FUTURE_IMPLEMENTATIONS.md`
-- https://www.npmjs.com/package/mssql
-- https://github.com/tediousjs/node-mssql
-
+- `doc/notes/FUTURE_IMPLEMENTATIONS.md` — open backlog items.
+- `doc/CAPABILITIES_v3.md` — capability × engine matrix.
+- `doc/notes/columnar_protocol_sketch.md` — orphaned v2 design (§3.2).
+- <https://www.npmjs.com/package/mssql>
+- <https://github.com/tediousjs/node-mssql>

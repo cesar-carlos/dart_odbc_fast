@@ -1,3 +1,72 @@
+# Columnar protocol v2 — design sketch (orphaned)
+
+> **Status:** orphan code. The Rust engine does not emit this format and no
+> Dart caller imports it. Moved here from
+> `lib/infrastructure/native/protocol/columnar_protocol.dart` in v3.1.0 so we
+> stop shipping dead code in the production tree.
+>
+> Revive this design only if there is a concrete throughput requirement that
+> the row-major `binary_protocol.dart` (version 1) cannot meet — for example
+> wide analytics result sets where columnar layout would unlock cheaper
+> CPU-vector decoding or per-column compression.
+
+## What it does
+
+A columnar payload (version 2) where data is laid out column-by-column rather
+than row-by-row, with optional per-column compression.
+
+Header layout (little-endian):
+
+```
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  magic ("ODBC")  |ver |flags|colCnt|     rowCount      |comp|   reserved |
+|       u32        |u16 | u16 | u16  |        u32        |u8  |     u32    |
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+```
+
+Per column then follows:
+
+- `u16` ODBC type code
+- `u16` name length, then UTF-8 name bytes
+- `u8` compressed flag; if `1`, an extra `u8` compression algorithm id
+- `u32` data size; then that many bytes of (possibly compressed) column data
+
+`ColumnarProtocolParser.parse(data)` produces a `ParsedColumnarBuffer`, and
+`decodeRows(buffer)` flips it back into the row-major shape the rest of the
+library uses, decompressing per column when needed (decompression itself was
+never wired — `_decompress` always throws `UnimplementedError`).
+
+## Why it was parked
+
+1. The row-major v1 protocol covers all current consumers comfortably.
+2. Compression on the Dart side requires a binding to a native compressor
+   (zstd/lz4) that we do not want in the default footprint.
+3. The 19-variant `OdbcType` work in v3.0 was easier to land on the row-major
+   format first; columnar v2 would need to mirror the same expansion.
+4. The Rust engine never grew an emitter for this format — no end-to-end test
+   ever ran against it.
+
+## If this comes back
+
+- Add the emitter on the Rust side first, behind a `columnar-v2` cargo
+  feature.
+- Decide on a compression set (probably zstd only) and add the Dart binding
+  via Native Assets the same way `odbc_engine.dll` is shipped.
+- Mirror the 19-variant `OdbcType` decode rules from
+  `binary_protocol.dart::_convertData` so the two formats stay observationally
+  equivalent at the call site.
+- Add a benchmark next to `bench_baselines/` that justifies the format
+  switch on a representative wide query.
+
+---
+
+## Original code (Dart, v3.0)
+
+The original sketch is preserved verbatim below for reference. Do **not**
+re-import it under `lib/`; copy the relevant pieces into a fresh module if
+the design is revived.
+
+```dart
 import 'dart:typed_data';
 
 const Endian _littleEndian = Endian.little;
@@ -218,21 +287,12 @@ class ColumnarProtocolParser {
 }
 
 /// Internal buffer reader for parsing columnar protocol data.
-///
-/// Provides methods to read various data types from a byte buffer
-/// with automatic offset tracking and overflow checking.
 class _BufferReader {
-  /// Creates a new [_BufferReader] instance.
-  ///
-  /// The data parameter is the byte buffer to read from.
   _BufferReader(this._data);
 
   final Uint8List _data;
   int _offset = 0;
 
-  /// Reads a single unsigned 8-bit integer.
-  ///
-  /// Throws [RangeError] if the buffer overflows.
   int readUint8() {
     if (_offset >= _data.length) {
       throw RangeError('Buffer overflow');
@@ -240,37 +300,30 @@ class _BufferReader {
     return _data[_offset++];
   }
 
-  /// Reads an unsigned 16-bit integer in little-endian format.
   int readUint16() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 2);
     _offset += 2;
     return byteData.getUint16(0, _littleEndian);
   }
 
-  /// Reads an unsigned 32-bit integer in little-endian format.
   int readUint32() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 4);
     _offset += 4;
     return byteData.getUint32(0, _littleEndian);
   }
 
-  /// Reads a signed 32-bit integer in little-endian format.
   int readInt32() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 4);
     _offset += 4;
     return byteData.getInt32(0, _littleEndian);
   }
 
-  /// Reads a signed 64-bit integer in little-endian format.
   int readInt64() {
     final byteData = ByteData.sublistView(_data, _offset, _offset + 8);
     _offset += 8;
     return byteData.getInt64(0, _littleEndian);
   }
 
-  /// Reads [length] bytes from the buffer as a list of integers.
-  ///
-  /// Throws [RangeError] if the buffer overflows.
   List<int> readBytes(int length) {
     if (_offset + length > _data.length) {
       throw RangeError('Buffer overflow');
@@ -280,3 +333,4 @@ class _BufferReader {
     return result;
   }
 }
+```

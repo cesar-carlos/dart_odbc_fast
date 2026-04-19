@@ -12,11 +12,12 @@ Consolidated backlog of items not yet included in implemented scope.
 | Item                               | Status               | Priority |
 | ---------------------------------- | -------------------- | -------- |
 | ~~Schema reflection (PK/FK/Indexes)~~ | ✅ **Implemented (2026-03-10)** | ~~High~~ |
+| ~~Explicit SQL typing API (`SqlDataType`)~~ | ✅ **Implemented (v3.0.0)** — see `doc/notes/TYPE_MAPPING.md` §1.3 | ~~Medium~~ |
 | ~~SavepointDialect autodetect (B2/B4)~~ | ✅ **Implemented (v3.1.0)**     | ~~High~~ |
 | ~~FFI savepoint identifier injection (B1)~~ | ✅ **Implemented (v3.1.0)** | ~~Critical~~ |
 | Transaction Sprint 4 — `READ ONLY`, lock_timeout, XA / 2PC | Planned (not started) | Medium |
-| Explicit SQL typing API (`SqlDataType`) | Planned (not started) | Medium |
 | Output parameters by driver/plugin | Out of current scope | Medium   |
+| Columnar protocol v2 (sketch) | Orphaned design — see `doc/notes/columnar_protocol_sketch.md` | Low |
 
 ## 0. Transaction control — Sprint 4 (Planned)
 
@@ -84,20 +85,30 @@ v3.1 because none of it is required for correctness.
 - Out of immediate scope
 - Revisit when there is a concrete driver-specific requirement (for example: SQL Server OUTPUT, Oracle REF CURSOR)
 
-## 2. Explicit SQL typing API (`SqlDataType`)
+## 2. ~~Explicit SQL typing API (`SqlDataType`)~~ — ✅ IMPLEMENTED
 
-### Current state
+**Implemented on**: v3.0.0 (`SqlDataType` + `SqlTypedValue` + `typedParam`).
 
-- Public parameter contract is `ParamValue` (stable)
-- No explicit public `SqlDataType` API yet
+### Implementation summary
 
-### Current decision
+- ✅ `SqlDataType` with 10 kinds: `int32`, `int64`, `decimal(precision, scale)`,
+  `varChar(length)`, `nVarChar(length)`, `varBinary(length)`, `dateTime`,
+  `date`, `time`, `boolAsInt32`.
+- ✅ `SqlTypedValue({required type, required value})` wrapper.
+- ✅ `typedParam(type, value)` factory.
+- ✅ Integrated into `toParamValue` / `paramValuesFromObjects` so typed
+  values mix freely with the existing untyped `List<dynamic>` API
+  (non-breaking).
+- ✅ Per-kind validation (e.g. `int32` rejects out-of-range, `varChar`
+  rejects non-`String`) with actionable `ArgumentError` messages.
+- ✅ Reference: `doc/notes/TYPE_MAPPING.md` §1.3.
 
-- Keep as planned non-breaking evolution
-- Revisit when there is a clear driver-aware typing requirement
-- API design note and migration sketch are documented in
-  `doc/notes/TYPE_MAPPING.md` (sections `SqlDataType proposal (planned)` and
-  `Migration sketch (planned)`).
+### Not yet covered
+
+The original sketch listed ~30 SQL types. Only the 10 kinds above are
+shipped. Additional kinds (`smallInt`, `bigInt`, `tinyInt`, `bit`, `text`,
+`xml`, `json`, `uuid`, `money`, etc.) can be added incrementally without
+breaking existing callers.
 
 ## Criteria to move from open to implemented
 
