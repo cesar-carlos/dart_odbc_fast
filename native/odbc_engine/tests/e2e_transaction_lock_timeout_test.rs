@@ -105,7 +105,8 @@ fn test_e2e_lock_timeout_explicit_value_is_accepted_by_sqlserver() {
     assert_eq!(txn.lock_timeout().millis(), Some(2_500));
 
     // SELECT inside the transaction still works after the SET.
-    txn.execute_sql("SELECT 1").expect("select inside lock-timeout txn");
+    txn.execute_sql("SELECT 1")
+        .expect("select inside lock-timeout txn");
     txn.commit().expect("commit");
 
     println!("✓ SET LOCK_TIMEOUT 2500 accepted by SQL Server");

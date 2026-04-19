@@ -34,9 +34,7 @@ use helpers::env::get_sqlserver_test_dsn;
 fn read_single_i32(buffer: &[u8]) -> i32 {
     let decoded = BinaryProtocolDecoder::parse(buffer).expect("decode failed");
     assert_eq!(decoded.row_count, 1, "expected exactly one row");
-    let cell = decoded.rows[0][0]
-        .as_ref()
-        .expect("expected non-NULL cell");
+    let cell = decoded.rows[0][0].as_ref().expect("expected non-NULL cell");
     if cell.len() == 4 {
         i32::from_le_bytes([cell[0], cell[1], cell[2], cell[3]])
     } else {
@@ -222,15 +220,14 @@ fn test_e2e_access_mode_read_only_on_engines_with_native_hint() {
         .expect("begin read-only");
 
     // SELECT must succeed under READ ONLY.
-    txn.execute_sql("SELECT 1").expect("select inside read-only");
+    txn.execute_sql("SELECT 1")
+        .expect("select inside read-only");
 
     // Some engines (Postgres, Oracle) raise an error if we try DML
     // inside a read-only transaction. Don't assert on that to keep
     // this test cross-engine portable — but note in the log that the
     // hint is in effect.
-    println!(
-        "✓ ReadOnly accepted on engine with native hint (lifecycle round-trip)"
-    );
+    println!("✓ ReadOnly accepted on engine with native hint (lifecycle round-trip)");
 
     txn.commit().expect("commit");
     conn.disconnect().expect("disconnect");

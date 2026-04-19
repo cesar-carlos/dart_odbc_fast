@@ -559,9 +559,9 @@ impl Transaction {
         if lock_timeout.is_engine_default() {
             return Ok(());
         }
-        let ms = lock_timeout.millis().expect(
-            "is_engine_default just returned false; millis() must be Some",
-        );
+        let ms = lock_timeout
+            .millis()
+            .expect("is_engine_default just returned false; millis() must be Some");
 
         match engine_id {
             ENGINE_SQLSERVER => {
@@ -1460,7 +1460,10 @@ mod tests {
 
     #[test]
     fn transaction_access_mode_to_sql_keyword() {
-        assert_eq!(TransactionAccessMode::ReadOnly.to_sql_keyword(), "READ ONLY");
+        assert_eq!(
+            TransactionAccessMode::ReadOnly.to_sql_keyword(),
+            "READ ONLY"
+        );
         assert_eq!(
             TransactionAccessMode::ReadWrite.to_sql_keyword(),
             "READ WRITE"
@@ -1553,8 +1556,10 @@ mod tests {
     #[test]
     fn lock_timeout_from_duration_zero_is_engine_default() {
         let lt = LockTimeout::from_duration(Duration::ZERO);
-        assert!(lt.is_engine_default(),
-            "Duration::ZERO must be the canonical 'engine default' input");
+        assert!(
+            lt.is_engine_default(),
+            "Duration::ZERO must be the canonical 'engine default' input"
+        );
     }
 
     #[test]
@@ -1674,7 +1679,10 @@ mod tests {
             format!("SET CURRENT LOCK TIMEOUT {}", secs),
             "SET CURRENT LOCK TIMEOUT 3",
         );
-        assert_eq!(format!("PRAGMA busy_timeout = {}", ms), "PRAGMA busy_timeout = 2500");
+        assert_eq!(
+            format!("PRAGMA busy_timeout = {}", ms),
+            "PRAGMA busy_timeout = 2500"
+        );
     }
 
     #[test]

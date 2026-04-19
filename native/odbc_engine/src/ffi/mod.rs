@@ -1069,13 +1069,7 @@ pub extern "C" fn odbc_transaction_begin_v2(
     // v2 ABI is preserved by delegating to v3 with the safe default
     // lock-timeout (`0` = engine default). v2 callers that never opt
     // into the timeout get exactly the same behaviour as before.
-    odbc_transaction_begin_v3(
-        conn_id,
-        isolation_level,
-        savepoint_dialect,
-        access_mode,
-        0,
-    )
+    odbc_transaction_begin_v3(conn_id, isolation_level, savepoint_dialect, access_mode, 0)
 }
 
 /// Begin a new transaction with full control over isolation, savepoint
