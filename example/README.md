@@ -45,6 +45,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit. Uses the high-level `OdbcService` API.
 - **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(NEW v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
+- **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA)*: full X/Open XA / 2PC lifecycle via `XaTransactionHandle` + `Xid`. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`) and a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch. Works against PostgreSQL, MySQL/MariaDB, DB2 and **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL); skips with a friendly message when the loaded native library predates Sprint 4.3.
 
 ### Schema introspection
 

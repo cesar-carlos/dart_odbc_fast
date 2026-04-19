@@ -1,4 +1,4 @@
-// X/Open XA / 2PC demo (NEW in Sprint 4.3).
+// X/Open XA / 2PC demo (Sprint 4.3 + 4.3c).
 //
 // Showcases the full Two-Phase Commit lifecycle via the
 // `XaTransactionHandle` + `Xid` API. Demonstrated:
@@ -10,21 +10,32 @@
 //   3. Crash-recovery flow:
 //        xaStart → end → prepare → (process restart) →
 //        xaRecover → xaResumePrepared → commitPrepared
+//   4. (Bonus) DML-inside-branch — relevant for Oracle, where a
+//        branch with no DML returns XA_RDONLY=3 from xa_prepare and
+//        Oracle silently auto-completes it (no entry in
+//        DBA_PENDING_TRANSACTIONS, nothing to commit prepared).
 //
 // Engine matrix:
 //
 //   - PostgreSQL (BEGIN + PREPARE TRANSACTION + pg_prepared_xacts) ✅
 //   - MySQL / MariaDB (XA START / END / PREPARE / COMMIT / RECOVER) ✅
 //   - DB2 (same SQL grammar as MySQL) ✅
+//   - Oracle 10g+ (SYS.DBMS_XA PL/SQL + DBA_PENDING_TRANSACTIONS) ✅ (v3.4.1)
 //   - SQL Server (requires MSDTC; build with `--features xa-dtc`) — stub
-//   - Oracle (requires OCI XA; build with `--features xa-oci`) — stub
 //   - SQLite / Snowflake / others — UnsupportedFeature (no 2PC)
 //
 // Run: dart run example/xa_2pc_demo.dart
 //
 // Requires `EXAMPLE_DSN` (or `ODBC_TEST_DSN`) pointing at PostgreSQL,
-// MySQL or DB2. The demo gates on `supportsXa` and skips with a
-// friendly message when the loaded native library predates Sprint 4.3.
+// MySQL, DB2, MariaDB or Oracle. The demo gates on `supportsXa` and
+// skips with a friendly message when the loaded native library
+// predates Sprint 4.3.
+//
+// Required Oracle privileges (when DSN points at Oracle): the
+// connecting user needs EXECUTE on SYS.DBMS_XA (default for SYSTEM),
+// FORCE [ANY] TRANSACTION (for crash-recovery), and SELECT on
+// DBA_PENDING_TRANSACTIONS. The gvenzl/oracle-xe image used by
+// docker compose ships with these enabled out of the box for SYSTEM.
 
 import 'dart:typed_data';
 
@@ -182,6 +193,94 @@ void main() async {
       return;
     }
     AppLogger.info('  Recovery commit OK → state=${resumed.state}');
+
+    // -----------------------------------------------------------------
+    // 4. Bonus: DML inside the branch.
+    //
+    // On Oracle a branch with no DML returns XA_RDONLY=3 from
+    // xa_prepare and is silently auto-completed by the engine — it
+    // never appears in DBA_PENDING_TRANSACTIONS, and the follow-up
+    // commitPrepared returns XAER_NOTA which we tolerate as a no-op.
+    // For a meaningful 2PC log entry the branch needs at least one
+    // INSERT/UPDATE/DELETE. PG / MySQL / MariaDB / DB2 always log,
+    // so the same code path works for all engines.
+    //
+    // The demo creates a tiny scratch table, runs an INSERT inside
+    // the branch, prepares + commits, then verifies the row landed.
+    // -----------------------------------------------------------------
+    AppLogger.info('--- 4. Bonus: DML inside the XA branch ---');
+    final tableName = 'xa_demo_${DateTime.now().millisecondsSinceEpoch}';
+
+    // CREATE TABLE outside the XA branch (DDL inside an XA branch is
+    // engine-dependent and not what this demo is showing). Wrap in
+    // try-finally so we always clean up.
+    final created = native.executeQueryParams(
+      connId,
+      'CREATE TABLE $tableName (k VARCHAR(64))',
+      const [],
+    );
+    if (created == null) {
+      AppLogger.severe('  CREATE TABLE failed: ${native.getError()}');
+    } else {
+      try {
+        final xidD = Xid.fromStrings(
+          gtrid: 'demo-dml-${DateTime.now().microsecondsSinceEpoch}',
+          bqual: 'branch-D',
+        );
+        final xaDml = native.xaStart(connId, xidD);
+        if (xaDml == null) {
+          AppLogger.severe('  xaStart (DML) failed: ${native.getError()}');
+        } else {
+          // The INSERT runs on the same connection that's attached to
+          // the branch, so it's recorded against this XID.
+          final inserted = native.executeQueryParams(
+            connId,
+            "INSERT INTO $tableName (k) VALUES ('committed-via-xa')",
+            const [],
+          );
+          if (inserted == null) {
+            AppLogger.severe(
+              '  INSERT inside XA branch failed: ${native.getError()}',
+            );
+          } else {
+            AppLogger.info('  INSERT inside XA branch OK');
+          }
+
+          xaDml
+            ..end()
+            ..prepare();
+
+          // After PREPARE the row exists logically but is not visible
+          // to other sessions. xaRecover should now list xidD.
+          final recoveredAfter = native.xaRecover(connId);
+          final present = recoveredAfter?.any((x) => x == xidD) ?? false;
+          AppLogger.info(
+            '  After prepare: branch is in DBA_PENDING_TRANSACTIONS = $present',
+          );
+
+          if (!xaDml.commitPrepared()) {
+            AppLogger.severe(
+              '  commitPrepared (DML) failed: ${native.getError()}',
+            );
+          } else {
+            AppLogger.info('  commitPrepared OK → row is now visible');
+          }
+
+          // Verify the row landed.
+          final verified = native.executeQueryParams(
+            connId,
+            "SELECT COUNT(*) FROM $tableName WHERE k = 'committed-via-xa'",
+            const [],
+          );
+          AppLogger.info(
+            '  SELECT COUNT(*) returned ${verified?.lengthInBytes ?? 0} bytes '
+            '(non-zero ⇒ row visible)',
+          );
+        }
+      } finally {
+        native.executeQueryParams(connId, 'DROP TABLE $tableName', const []);
+      }
+    }
   } finally {
     native
       ..disconnect(connId)

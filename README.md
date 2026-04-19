@@ -50,8 +50,8 @@ for the remaining backlog.
   swallowed so they never overwrite the original cause. See
   [`example/run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart).
 
-- **X/Open XA / 2PC** (Sprint 4.3) — strongly-typed `Xid` value class
-  + `XaTransactionHandle` state machine
+- **X/Open XA / 2PC** (Sprint 4.3 / 4.3c) — strongly-typed `Xid`
+  value class + `XaTransactionHandle` state machine
   (Active → Idle → Prepared → Committed/RolledBack). Engine matrix:
 
   | Engine                | Status                                      |
@@ -59,15 +59,19 @@ for the remaining backlog.
   | PostgreSQL            | ✅ `BEGIN` + `PREPARE TRANSACTION` + `pg_prepared_xacts` |
   | MySQL / MariaDB       | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
   | DB2                   | ✅ same SQL grammar as MySQL                 |
+  | **Oracle**            | ✅ **`SYS.DBMS_XA` PL/SQL** + `DBA_PENDING_TRANSACTIONS` (v3.4.1); needs `EXECUTE` on `DBMS_XA` + `FORCE [ANY] TRANSACTION` |
   | SQL Server (MSDTC)    | ⚠️ Phase 1 scaffolding (`--features xa-dtc`); Phase 2 wiring pending — see `FUTURE_IMPLEMENTATIONS.md` §4.3b |
-  | Oracle (OCI XA)       | ⚠️ Phase 1 scaffolding (`--features xa-oci`); Phase 2 wiring pending — see §4.3c |
   | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
 
   1RM optimisation (`commit_one_phase`) skips the prepare-log write
   when this RM is the sole participant. Crash-recovery via
-  `xaRecover` + `xaResumePrepared`. See
+  `xaRecover` + `xaResumePrepared` (works across reconnects on every
+  ✅ engine, including Oracle). See
   [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart) for the
-  full PostgreSQL lifecycle.
+  full lifecycle (full 2PC, 1RM, crash-recovery, plus an
+  Oracle-specific section that runs DML inside the branch so the
+  prepare actually writes a log entry — without DML Oracle returns
+  `XA_RDONLY` and silently auto-completes the branch).
 
 ### `SqlDataType` extras (17 new kinds, 27 total)
 
