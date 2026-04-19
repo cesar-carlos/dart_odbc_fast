@@ -281,6 +281,83 @@ void main() async {
         native.executeQueryParams(connId, 'DROP TABLE $tableName', const []);
       }
     }
+
+    // -----------------------------------------------------------------
+    // 5. The exception-safe helper: XaTransactionHandle.runWithStart.
+    //
+    // Mirrors `TransactionHandle.runWithBegin` for local transactions.
+    // Runs the action inside a fresh branch and drives the full 2PC
+    // lifecycle (end → prepare → commit_prepared) on success, or the
+    // appropriate rollback path on any throw — without you having to
+    // chase every step manually. Same engine matrix as the rest of
+    // the demo (PG / MySQL / MariaDB / DB2 / Oracle).
+    //
+    // For the 1RM optimisation use `runWithStartOnePhase`, which
+    // collapses the lifecycle into `xa_commit_one_phase`.
+    // -----------------------------------------------------------------
+    AppLogger.info('--- 5. Helper: XaTransactionHandle.runWithStart ---');
+    final tableHelper = 'xa_helper_${DateTime.now().millisecondsSinceEpoch}';
+    final created2 = native.executeQueryParams(
+      connId,
+      'CREATE TABLE $tableHelper (k VARCHAR(64))',
+      const [],
+    );
+    if (created2 == null) {
+      AppLogger.severe('  CREATE TABLE failed: ${native.getError()}');
+    } else {
+      try {
+        final xidE = Xid.fromStrings(
+          gtrid: 'demo-helper-${DateTime.now().microsecondsSinceEpoch}',
+          bqual: 'branch-E',
+        );
+
+        final committedRows = await XaTransactionHandle.runWithStart<int>(
+          () => native.xaStart(connId, xidE),
+          (xa) async {
+            // The closure runs while the branch is Active. The helper
+            // takes care of end → prepare → commit_prepared on return,
+            // and best-effort rollback on any throw.
+            final inserted = native.executeQueryParams(
+              connId,
+              "INSERT INTO $tableHelper (k) VALUES ('via-helper')",
+              const [],
+            );
+            if (inserted == null) {
+              throw StateError(
+                'INSERT failed inside helper: ${native.getError()}',
+              );
+            }
+            return 1;
+          },
+        );
+        AppLogger.info('  Helper committed $committedRows row(s) via 2PC');
+
+        // Demonstrate the rollback path: any throw inside the closure
+        // unwinds the branch (xa_end + xa_rollback{,_prepared}) and
+        // rethrows, so the caller can react with normal try / catch.
+        final xidF = Xid.fromStrings(
+          gtrid: 'demo-helper-roll-${DateTime.now().microsecondsSinceEpoch}',
+          bqual: 'branch-F',
+        );
+        try {
+          await XaTransactionHandle.runWithStart<void>(
+            () => native.xaStart(connId, xidF),
+            (xa) async {
+              native.executeQueryParams(
+                connId,
+                "INSERT INTO $tableHelper (k) VALUES ('rolled-back')",
+                const [],
+              );
+              throw Exception('simulated business-rule failure');
+            },
+          );
+        } on Exception catch (e) {
+          AppLogger.info('  Helper rolled back as expected: $e');
+        }
+      } finally {
+        native.executeQueryParams(connId, 'DROP TABLE $tableHelper', const []);
+      }
+    }
   } finally {
     native
       ..disconnect(connId)

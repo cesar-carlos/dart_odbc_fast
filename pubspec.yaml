@@ -63,8 +63,18 @@ name: odbc_fast
 # OCI shim (engine::xa_oci) retained as documented ABI but no longer
 # the production path. No FFI ABI changes; pure Rust engine bug-fix
 # / additive integration.
+#
+# 3.4.2 — Dart-side ergonomics: XaTransactionHandle.runWithStart<T>
+# and runWithStartOnePhase<T> static helpers mirror
+# TransactionHandle.runWithBegin for the XA / 2PC lifecycle. Drive
+# end → prepare → commit_prepared on success, best-effort rollback
+# on any throw (xa_end + xa_rollback or xa_rollback_prepared
+# depending on state), and rethrow the original cause so try/catch
+# composes naturally. Validated by 11 unit tests via a counter-
+# based fake; demo extended with a section showing the helper
+# (commit + rollback paths). No FFI / engine changes.
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.4.1
+version: 3.4.2
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

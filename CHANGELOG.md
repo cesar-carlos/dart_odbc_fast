@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.2] - Dart XA helpers (`runWithStart` / `runWithStartOnePhase`)
+
+### Added
+
+- **`XaTransactionHandle.runWithStart<T>`** — exception-safe
+  helper that drives the full Two-Phase Commit lifecycle around a
+  user-supplied closure. Mirrors the
+  `TransactionHandle.runWithBegin` convention shipped for local
+  transactions in v3.1.0:
+  - On normal completion: emits `xa_end` → `xa_prepare` →
+    `xa_commit_prepared`. Each step's failure is surfaced as a
+    `StateError` with a diagnostic message so the caller can
+    distinguish "commit failed" from "user closure failed".
+  - On any thrown exception (or runtime error): inspects the
+    branch state, emits `xa_end` if still `Active` (the engine
+    refuses `xa_rollback` on an attached branch), then
+    `xa_rollback_prepared` (Prepared) or `xa_rollback`
+    (Idle/Failed) depending on where the throw landed in the
+    lifecycle. The original cause is rethrown so `try / catch`
+    composes naturally.
+  - Engine-aware: tolerates Oracle's `XA_RDONLY=3` on
+    read-only branches (the underlying Rust `apply_xa_prepare`
+    already accepts it as success), so the helper completes
+    normally even when the user's closure ran no DML.
+- **`XaTransactionHandle.runWithStartOnePhase<T>`** — 1RM
+  optimisation variant: collapses `xa_prepare` + `xa_commit` into
+  `xa_commit_one_phase` for the case where this RM is the sole
+  participant in the global transaction. Same exception-safety
+  contract as `runWithStart`.
+- **11 new Dart unit tests** in
+  `test/infrastructure/native/wrappers/xa_transaction_handle_test.dart`
+  cover the full state-machine matrix without touching FFI: a
+  counter-based `_FakeXa` subclass overrides every state-mutating
+  method so the helpers are exercised in isolation.
+  - happy path of both helpers (counter assertions)
+  - throw-while-Active → end + rollback path
+  - throw-while-Prepared → rollback_prepared path
+  - `startFn` returning `null` → `StateError` with hint
+  - per-step failure (`end`, `prepare`, `commit_prepared`,
+    `commit_one_phase`) → `StateError` with the failing-step name
+    surfaced
+
+### Changed
+
+- **`example/xa_2pc_demo.dart`** gains a fifth section showing
+  the helper end-to-end: commits one branch via the helper, then
+  triggers an in-closure throw to demonstrate the rollback path
+  catching at the surrounding `try / on Exception`. Existing four
+  sections (full 2PC, 1RM, crash-recovery, DML-inside-branch)
+  remain untouched.
+- **`example/README.md`** entry for the demo updated to mention
+  the v3.4.2 helper section.
+
+### Migration notes
+
+- Pure Dart-side addition — no FFI / Rust / ABI changes; the
+  helpers compose existing methods (`xaStart`, `end`, `prepare`,
+  `commitPrepared`, etc.) so the underlying engine surface is
+  unchanged.
+- Existing manual 2PC code keeps working unmodified; the helpers
+  are an opt-in convenience.
+
 ## [3.4.1] - Oracle XA / 2PC via DBMS_XA (Sprint 4.3c Phase 2)
 
 ### Added

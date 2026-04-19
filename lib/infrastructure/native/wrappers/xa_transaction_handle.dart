@@ -146,4 +146,159 @@ class XaTransactionHandle {
     _state = XaState.failed;
     return false;
   }
+
+  /// Runs [action] inside a fresh XA branch obtained from [startFn] and
+  /// drives the full Two-Phase Commit lifecycle:
+  ///
+  /// On normal completion:
+  ///   `xa_end` → `xa_prepare` → `xa_commit_prepared`
+  ///
+  /// On any thrown exception (or runtime error):
+  ///   1. If the branch is still `Active`, emit `xa_end` to detach it
+  ///      from the connection (without `end` the engine refuses
+  ///      `xa_rollback`).
+  ///   2. Roll back via `xa_rollback` (Active/Idle) or
+  ///      `xa_rollback_prepared` (Prepared) depending on where the
+  ///      throw landed in the lifecycle.
+  ///   3. Rethrow so the caller sees the original cause.
+  ///
+  /// Mirrors the `TransactionHandle.runWithBegin` convention for local
+  /// transactions and is the recommended way to drive a 2PC branch
+  /// from Dart without leaking branches on early returns / exceptions.
+  ///
+  /// `startFn` is whatever piece of API returns a `XaTransactionHandle?`
+  /// (typically `() => native.xaStart(connId, xid)`). When it returns
+  /// `null` (the underlying `xa_start` failed) the helper throws
+  /// `StateError` with the stock diagnostic so the caller can surface
+  /// `native.getError()` if they need a richer message.
+  ///
+  /// Engine notes:
+  ///
+  /// - On Oracle, when [action] runs no DML the engine returns
+  ///   `XA_RDONLY=3` from `xa_prepare` and silently auto-completes
+  ///   the branch. The [Rust apply_xa_prepare] tolerates this rc as
+  ///   success and the follow-up `xa_commit_prepared` tolerates the
+  ///   resulting `XAER_NOTA=-4` as a no-op, so the helper completes
+  ///   normally even for read-only branches. PG / MySQL / MariaDB /
+  ///   DB2 always log a prepare entry, regardless of DML.
+  /// - Returns `T` directly (not `Result<T>`) so it composes with both
+  ///   `try/catch` and `on Object catch (e, st)` styles. Rollback
+  ///   failures are swallowed by design — they would obscure the
+  ///   original throw — but the underlying engine logs them via the
+  ///   structured-error channel.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await XaTransactionHandle.runWithStart<int>(
+  ///   () => native.xaStart(connId, xid),
+  ///   (xa) async {
+  ///     final r = native.executeQueryParams(
+  ///       connId, 'INSERT INTO logs(msg) VALUES (?)', ['hello'],
+  ///     );
+  ///     if (r == null) throw StateError('insert failed');
+  ///     return 42;
+  ///   },
+  /// );
+  /// ```
+  static Future<T> runWithStart<T>(
+    XaTransactionHandle? Function() startFn,
+    Future<T> Function(XaTransactionHandle xa) action,
+  ) async {
+    final xa = startFn();
+    if (xa == null) {
+      throw StateError(
+        'XaTransactionHandle.runWithStart: xa_start returned null '
+        '(check native.getError() for the underlying ODBC diagnostic).',
+      );
+    }
+    try {
+      final result = await action(xa);
+      // Happy path: end → prepare → commit_prepared. Each step is
+      // checked because a silent failure would leave the branch
+      // dangling (or, worse, half-committed across RMs).
+      if (!xa.end()) {
+        throw StateError(
+          'XaTransactionHandle.runWithStart: xa_end failed on xid=${xa.xid}',
+        );
+      }
+      if (!xa.prepare()) {
+        throw StateError(
+          'XaTransactionHandle.runWithStart: xa_prepare failed '
+          'on xid=${xa.xid}',
+        );
+      }
+      if (!xa.commitPrepared()) {
+        throw StateError(
+          'XaTransactionHandle.runWithStart: xa_commit_prepared failed '
+          'on xid=${xa.xid}',
+        );
+      }
+      return result;
+    } on Object {
+      // Best-effort rollback: emit xa_end if still attached, then
+      // rollback via the path appropriate for the branch's current
+      // state. Failures here are intentionally swallowed — they
+      // would mask the original throw — but the engine logs them
+      // through the structured-error channel.
+      try {
+        if (xa.state == XaState.active) {
+          xa.end(); // advances to idle (or failed)
+        }
+        if (xa.state == XaState.prepared) {
+          xa.rollbackPrepared();
+        } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
+          xa.rollback();
+        }
+      } on Object catch (_) {
+        // Defensive: nothing useful to do from here.
+      }
+      rethrow;
+    }
+  }
+
+  /// 1RM-optimised variant of [runWithStart]: fuses `xa_prepare` and
+  /// `xa_commit` into a single `xa_commit_one_phase` call when this
+  /// RM is the sole participant in the global transaction.
+  ///
+  /// **Only safe when no other Resource Manager has enlisted in the
+  /// same global transaction** — a normal Transaction Manager will
+  /// not pick this path; it's an explicit single-RM shortcut.
+  ///
+  /// Same exception-safety contract as [runWithStart]: thrown actions
+  /// are rolled back via `xa_end` + `xa_rollback` and the original
+  /// cause is rethrown.
+  static Future<T> runWithStartOnePhase<T>(
+    XaTransactionHandle? Function() startFn,
+    Future<T> Function(XaTransactionHandle xa) action,
+  ) async {
+    final xa = startFn();
+    if (xa == null) {
+      throw StateError(
+        'XaTransactionHandle.runWithStartOnePhase: xa_start returned null '
+        '(check native.getError() for the underlying ODBC diagnostic).',
+      );
+    }
+    try {
+      final result = await action(xa);
+      if (!xa.commitOnePhase()) {
+        throw StateError(
+          'XaTransactionHandle.runWithStartOnePhase: xa_commit_one_phase '
+          'failed on xid=${xa.xid}',
+        );
+      }
+      return result;
+    } on Object {
+      try {
+        if (xa.state == XaState.active) {
+          xa.end();
+        }
+        if (xa.state == XaState.idle || xa.state == XaState.failed) {
+          xa.rollback();
+        }
+      } on Object catch (_) {
+        // Defensive — see runWithStart.
+      }
+      rethrow;
+    }
+  }
 }
