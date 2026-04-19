@@ -165,3 +165,91 @@ final class EnvironmentNotInitializedError extends OdbcError {
   const EnvironmentNotInitializedError()
       : super(message: 'ODBC environment not initialized');
 }
+
+// ---------------------------------------------------------------------------
+// v3.0 — structured error variants mirroring Rust `OdbcError`
+// ---------------------------------------------------------------------------
+
+/// `SQLMoreResults` reports there are no further result sets.
+/// Informational: producers may stop iterating without treating it as failure.
+final class NoMoreResultsError extends OdbcError {
+  const NoMoreResultsError() : super(message: 'No more result sets available');
+
+  @override
+  ErrorCategory get category => ErrorCategory.fatal;
+}
+
+/// Wire-format payload is malformed (truncated, length mismatch, invalid tag).
+/// Always indicates a protocol bug in the caller — NOT retryable.
+final class MalformedPayloadError extends OdbcError {
+  const MalformedPayloadError({required super.message});
+
+  @override
+  ErrorCategory get category => ErrorCategory.validation;
+}
+
+/// Rollback failed during cleanup. Carries the original failure so callers
+/// can decide between retry and connection destruction.
+final class RollbackFailedError extends OdbcError {
+  const RollbackFailedError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+  });
+}
+
+/// Resource limit reached (too many handles, payload too large, queue full).
+/// Generally NOT retryable without backoff.
+final class ResourceLimitReachedError extends OdbcError {
+  const ResourceLimitReachedError({required super.message});
+
+  @override
+  ErrorCategory get category => ErrorCategory.transient;
+}
+
+/// Operation cancelled by the caller (cooperative cancellation).
+/// Distinct from a driver error: the request was successfully aborted.
+final class CancelledError extends OdbcError {
+  const CancelledError() : super(message: 'Operation cancelled');
+
+  @override
+  ErrorCategory get category => ErrorCategory.fatal;
+}
+
+/// A worker thread (streaming/async pipeline) crashed or disconnected
+/// without sending end-of-stream. Indicates a serious internal failure.
+final class WorkerCrashedError extends OdbcError {
+  const WorkerCrashedError({required super.message});
+
+  @override
+  ErrorCategory get category => ErrorCategory.fatal;
+}
+
+/// Bulk insert split into chunks failed mid-way.
+///
+/// Carries the number of rows committed before the failure and the index of
+/// the failed chunk so the caller can decide whether to retry or compensate.
+final class BulkPartialFailureError extends OdbcError {
+  const BulkPartialFailureError({
+    required this.rowsInsertedBeforeFailure,
+    required this.failedChunks,
+    required this.detail,
+  }) : super(message: 'Bulk insert partial failure');
+
+  /// Number of rows successfully committed before the first failure.
+  final int rowsInsertedBeforeFailure;
+
+  /// Number of chunks that failed.
+  final int failedChunks;
+
+  /// Per-chunk failure details (free-form text from the native side).
+  final String detail;
+
+  @override
+  String toString() => 'BulkPartialFailureError: $message '
+      '(rowsInsertedBeforeFailure=$rowsInsertedBeforeFailure, '
+      'failedChunks=$failedChunks, detail=$detail)';
+
+  @override
+  ErrorCategory get category => ErrorCategory.fatal;
+}

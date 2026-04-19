@@ -1,25 +1,31 @@
+import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 
 const Endian _littleEndian = Endian.little;
 
 /// Metadata for a single column in a query result.
 ///
-/// Contains the column name and ODBC type code.
+/// Contains the column name and the **protocol type discriminant** (mirror
+/// of the Rust `OdbcType` enum, NOT the ODBC `SQL_*` type code).
 class ColumnMetadata {
   /// Creates a new [ColumnMetadata] instance.
   ///
   /// The [name] is the column name as returned from the database.
-  /// The [odbcType] is the ODBC SQL type code (e.g., 1=CHAR, 2=INTEGER).
-  const ColumnMetadata({
-    required this.name,
-    required this.odbcType,
-  });
+  /// The [odbcType] is the protocol discriminant (1..19); see [OdbcType]
+  /// for the canonical mapping.
+  const ColumnMetadata({required this.name, required this.odbcType});
 
   /// Column name.
   final String name;
 
-  /// ODBC SQL type code.
+  /// Protocol type discriminant (matches `OdbcType.discriminant`).
   final int odbcType;
+
+  /// Typed view of [odbcType]. Unknown discriminants degrade to
+  /// [OdbcType.varchar] (forward-compatible).
+  OdbcType get type => OdbcType.fromDiscriminant(odbcType);
 }
 
 /// Parsed result buffer containing rows and column metadata.
@@ -146,30 +152,44 @@ class BinaryProtocolParser {
     );
   }
 
-  /// Converts binary data to a Dart value based on ODBC type.
+  /// Converts binary data to a Dart value based on the protocol
+  /// discriminant. See [OdbcType] for the wire layout per variant.
   ///
-  /// Type 1: String
-  /// Type 2: 32-bit integer
-  /// Type 3: 64-bit integer
-  /// Default: String
+  /// Returns:
+  /// - [int] for [OdbcType.integer], [OdbcType.bigInt]
+  /// - [Uint8List] for [OdbcType.binary]
+  /// - [String] (UTF-8 decoded) for everything else
+  ///
+  /// UTF-8 decoding falls back to `String.fromCharCodes` (latin1-ish) when
+  /// the bytes are not valid UTF-8, mirroring the previous loose behaviour
+  /// for backwards compatibility.
   static dynamic _convertData(Uint8List data, int odbcType) {
-    switch (odbcType) {
-      case 1:
-        return String.fromCharCodes(data);
-      case 2:
-        if (data.length >= 4) {
-          final byteData = ByteData.sublistView(data);
-          return byteData.getInt32(0, _littleEndian);
-        }
-        return String.fromCharCodes(data);
-      case 3:
-        if (data.length >= 8) {
-          final byteData = ByteData.sublistView(data);
-          return byteData.getInt64(0, _littleEndian);
-        }
-        return String.fromCharCodes(data);
-      default:
-        return String.fromCharCodes(data);
+    final type = OdbcType.fromDiscriminant(odbcType);
+    if (type == OdbcType.binary) {
+      return Uint8List.fromList(data);
+    }
+    if (type == OdbcType.integer) {
+      if (data.length >= 4) {
+        return ByteData.sublistView(data).getInt32(0, _littleEndian);
+      }
+      return _decodeText(data);
+    }
+    if (type == OdbcType.bigInt) {
+      if (data.length >= 8) {
+        return ByteData.sublistView(data).getInt64(0, _littleEndian);
+      }
+      return _decodeText(data);
+    }
+    // All other variants are UTF-8 text on the wire.
+    return _decodeText(data);
+  }
+
+  /// Strict UTF-8 decoding with a graceful fallback.
+  static String _decodeText(Uint8List data) {
+    try {
+      return utf8.decode(data);
+    } on FormatException {
+      return String.fromCharCodes(data);
     }
   }
 }

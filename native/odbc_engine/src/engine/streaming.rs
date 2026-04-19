@@ -471,9 +471,14 @@ impl BatchedStreamingState {
                     self.stream_error = Some(m.clone());
                     return Err(OdbcError::InternalError(m));
                 }
-                Err(_) => {
+                Err(disc_err) => {
+                    // A5 fix: receiver disconnected without sending Done/Error. The
+                    // worker thread crashed or panicked. Surface as a real error
+                    // instead of pretending the stream finished cleanly.
                     self.done = true;
-                    return Ok(None);
+                    let msg = format!("Stream worker disconnected unexpectedly: {disc_err}");
+                    self.stream_error = Some(msg.clone());
+                    return Err(OdbcError::WorkerCrashed(msg));
                 }
             }
         }
@@ -612,9 +617,12 @@ impl AsyncStreamingState {
                     self.stream_error = Some(m.clone());
                     return Err(OdbcError::InternalError(m));
                 }
-                Err(_) => {
+                Err(disc_err) => {
+                    // A5 fix: see BatchedStreamingState above for rationale.
                     self.done = true;
-                    return Ok(None);
+                    let msg = format!("Async stream worker disconnected unexpectedly: {disc_err}");
+                    self.stream_error = Some(msg.clone());
+                    return Err(OdbcError::WorkerCrashed(msg));
                 }
             }
         }
@@ -694,15 +702,16 @@ impl StreamingStateFileBacked {
 
         let to_read = (self.chunk_size).min(self.total_len - self.offset);
         let mut buf = vec![0u8; to_read];
-        let n = f
-            .read(&mut buf)
-            .map_err(|e| OdbcError::InternalError(format!("spill file read: {}", e)))?;
-        self.offset += n;
+        // A6 fix: a single `read()` may return fewer bytes than requested
+        // (especially on Windows for files >64 KiB). Use `read_exact` so the
+        // caller never observes a short chunk silently.
+        f.read_exact(&mut buf)
+            .map_err(|e| OdbcError::InternalError(format!("spill file read_exact: {}", e)))?;
+        self.offset += to_read;
 
-        if n == 0 {
+        if to_read == 0 {
             Ok(None)
         } else {
-            buf.truncate(n);
             Ok(Some(buf))
         }
     }

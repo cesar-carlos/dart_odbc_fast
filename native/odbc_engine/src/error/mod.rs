@@ -41,6 +41,46 @@ pub enum OdbcError {
 
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
+
+    /// Returned by SQLMoreResults when no further result sets exist.
+    /// This is informational, not a failure.
+    #[error("No more result sets available")]
+    NoMoreResults,
+
+    /// Wire-format payload is malformed (truncated, length mismatch, invalid tag, etc).
+    /// Always indicates a protocol bug in the caller.
+    #[error("Malformed payload: {0}")]
+    MalformedPayload(String),
+
+    /// Rollback failed during cleanup. Carries the failure context so callers
+    /// can decide whether to retry or destroy the connection.
+    #[error("Rollback failed: {0}")]
+    RollbackFailed(String),
+
+    /// Resource limit reached (too many handles, payload too large, queue full, etc).
+    #[error("Resource limit reached: {0}")]
+    ResourceLimitReached(String),
+
+    /// Operation cancelled by the caller (cooperative cancellation).
+    #[error("Operation cancelled")]
+    Cancelled,
+
+    /// Worker thread crashed or disconnected without sending end-of-stream.
+    #[error("Worker thread crashed: {0}")]
+    WorkerCrashed(String),
+
+    /// A bulk insert split into chunks failed mid-way. The error carries the
+    /// number of rows that were committed before the failure and the index of
+    /// the failed chunk so the caller can decide whether to retry or compensate.
+    #[error(
+        "Bulk insert partial failure: {failed_chunks} chunk(s) failed; \
+         {rows_inserted_before_failure} rows inserted before failure: {detail}"
+    )]
+    BulkPartialFailure {
+        rows_inserted_before_failure: usize,
+        failed_chunks: usize,
+        detail: String,
+    },
 }
 
 impl From<odbc_api::Error> for OdbcError {

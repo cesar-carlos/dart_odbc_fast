@@ -1,6 +1,18 @@
 use crate::error::{OdbcError, Result};
 use std::str;
 
+/// Hard cap on column count to bound memory in `parse_bulk_insert_payload`.
+/// Chosen to comfortably exceed any real-world table while preventing
+/// allocation-bomb attacks via crafted payloads.
+pub const MAX_BULK_COLUMNS: usize = 4096;
+
+/// Hard cap on row count per single bulk-insert payload.
+pub const MAX_BULK_ROWS: usize = 10_000_000;
+
+/// Hard cap on per-cell `max_len` (bytes). 16 MiB is well above realistic
+/// VARCHAR/VARBINARY widths.
+pub const MAX_BULK_CELL_LEN: usize = 16 * 1024 * 1024;
+
 const TAG_I32: u8 = 0;
 const TAG_I64: u8 = 1;
 const TAG_TEXT: u8 = 2;
@@ -126,15 +138,40 @@ fn read_bytes<'a>(data: &'a [u8], offset: &mut usize, len: usize) -> Result<&'a 
     Ok(slice)
 }
 
-fn null_bitmap_size(n: usize) -> usize {
+pub fn null_bitmap_size(n: usize) -> usize {
     n.div_ceil(8)
 }
 
-pub(crate) fn is_null(bitmap: &[u8], row: usize) -> bool {
+/// Read the null bit for `row` from a packed bitmap.
+///
+/// Returns `false` when `row` is beyond the bitmap (treated as "not null") to
+/// preserve historical behaviour. **The single source of truth for bitmap
+/// integrity is `parse_bulk_insert_payload`**, which rejects payloads whose
+/// bitmap length differs from `null_bitmap_size(row_count)` (C9).
+pub fn is_null(bitmap: &[u8], row: usize) -> bool {
     if row / 8 >= bitmap.len() {
         return false;
     }
     (bitmap[row / 8] & (1u8 << (row % 8))) != 0
+}
+
+/// Strict bitmap accessor: returns an error when the bit lies outside the
+/// bitmap, instead of defaulting to `false`. Use in code paths that have
+/// already been promoted to validate payloads up-front.
+pub fn is_null_strict(bitmap: &[u8], row: usize, row_count: usize) -> Result<bool> {
+    if row >= row_count {
+        return Err(OdbcError::MalformedPayload(format!(
+            "row index {row} out of range (row_count={row_count})"
+        )));
+    }
+    let byte_idx = row / 8;
+    if byte_idx >= bitmap.len() {
+        return Err(OdbcError::MalformedPayload(format!(
+            "null bitmap truncated: byte index {byte_idx} out of range (len={})",
+            bitmap.len()
+        )));
+    }
+    Ok((bitmap[byte_idx] & (1u8 << (row % 8))) != 0)
 }
 
 pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
@@ -148,6 +185,11 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
     let table = table.to_string();
 
     let col_count = read_u32_le(data, &mut o)? as usize;
+    if col_count > MAX_BULK_COLUMNS {
+        return Err(OdbcError::ResourceLimitReached(format!(
+            "column count {col_count} exceeds MAX_BULK_COLUMNS={MAX_BULK_COLUMNS}"
+        )));
+    }
     let mut columns = Vec::with_capacity(col_count);
     for _ in 0..col_count {
         let name_len = read_u32_le(data, &mut o)? as usize;
@@ -172,6 +214,11 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
         };
         o += 1;
         let max_len = read_u32_le(data, &mut o)? as usize;
+        if max_len > MAX_BULK_CELL_LEN {
+            return Err(OdbcError::ResourceLimitReached(format!(
+                "max_len {max_len} exceeds MAX_BULK_CELL_LEN={MAX_BULK_CELL_LEN}"
+            )));
+        }
         let col_type = BulkColumnType::from_tag(type_tag)?;
         columns.push(BulkColumnSpec {
             name,
@@ -182,6 +229,11 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
     }
 
     let row_count = read_u32_le(data, &mut o)? as usize;
+    if row_count > MAX_BULK_ROWS {
+        return Err(OdbcError::ResourceLimitReached(format!(
+            "row count {row_count} exceeds MAX_BULK_ROWS={MAX_BULK_ROWS}"
+        )));
+    }
 
     let mut column_data = Vec::with_capacity(columns.len());
     for spec in &columns {
@@ -204,6 +256,27 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
     })
 }
 
+/// Read a null-bitmap of exactly `null_bitmap_size(row_count)` bytes and verify it.
+fn read_null_bitmap(
+    data: &[u8],
+    o: &mut usize,
+    nullable: bool,
+    row_count: usize,
+) -> Result<Option<Vec<u8>>> {
+    if !nullable {
+        return Ok(None);
+    }
+    let expected = null_bitmap_size(row_count);
+    let bytes = read_bytes(data, o, expected)?.to_vec();
+    if bytes.len() != expected {
+        return Err(OdbcError::MalformedPayload(format!(
+            "null bitmap length mismatch: expected {expected}, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(Some(bytes))
+}
+
 fn parse_column_data(
     data: &[u8],
     start: usize,
@@ -214,13 +287,7 @@ fn parse_column_data(
 
     match &spec.col_type {
         BulkColumnType::I32 => {
-            let null_bitmap = if spec.nullable {
-                let sz = null_bitmap_size(row_count);
-                let b = read_bytes(data, &mut o, sz)?.to_vec();
-                Some(b)
-            } else {
-                None
-            };
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
             let mut values = Vec::with_capacity(row_count);
             for _ in 0..row_count {
                 let v = read_u32_le(data, &mut o)? as i32;
@@ -236,13 +303,7 @@ fn parse_column_data(
             ))
         }
         BulkColumnType::I64 => {
-            let null_bitmap = if spec.nullable {
-                let sz = null_bitmap_size(row_count);
-                let b = read_bytes(data, &mut o, sz)?.to_vec();
-                Some(b)
-            } else {
-                None
-            };
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
             let mut values = Vec::with_capacity(row_count);
             for _ in 0..row_count {
                 if data.len().saturating_sub(o) < 8 {
@@ -272,12 +333,7 @@ fn parse_column_data(
             ))
         }
         BulkColumnType::Text | BulkColumnType::Decimal => {
-            let null_bitmap = if spec.nullable {
-                let sz = null_bitmap_size(row_count);
-                Some(read_bytes(data, &mut o, sz)?.to_vec())
-            } else {
-                None
-            };
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
             let max_len = spec.max_len.max(1);
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
@@ -298,12 +354,7 @@ fn parse_column_data(
             ))
         }
         BulkColumnType::Binary => {
-            let null_bitmap = if spec.nullable {
-                let sz = null_bitmap_size(row_count);
-                Some(read_bytes(data, &mut o, sz)?.to_vec())
-            } else {
-                None
-            };
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
             let max_len = spec.max_len.max(1);
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
@@ -324,13 +375,7 @@ fn parse_column_data(
             ))
         }
         BulkColumnType::Timestamp => {
-            let null_bitmap = if spec.nullable {
-                let sz = null_bitmap_size(row_count);
-                let b = read_bytes(data, &mut o, sz)?.to_vec();
-                Some(b)
-            } else {
-                None
-            };
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
             let mut values = Vec::with_capacity(row_count);
             for _ in 0..row_count {
                 if data.len().saturating_sub(o) < 16 {
@@ -368,20 +413,49 @@ fn parse_column_data(
     }
 }
 
+/// Convert `usize` to `u32` for wire-format length fields, returning a
+/// validation error instead of silently truncating.
+fn len_to_u32(n: usize, what: &str) -> Result<u32> {
+    u32::try_from(n).map_err(|_| {
+        OdbcError::MalformedPayload(format!(
+            "{what} length {n} does not fit in u32 (max {})",
+            u32::MAX
+        ))
+    })
+}
+
 pub fn serialize_bulk_insert_payload(payload: &BulkInsertPayload) -> Result<Vec<u8>> {
+    if payload.columns.len() > MAX_BULK_COLUMNS {
+        return Err(OdbcError::ResourceLimitReached(format!(
+            "column count {} exceeds MAX_BULK_COLUMNS={MAX_BULK_COLUMNS}",
+            payload.columns.len()
+        )));
+    }
+    if payload.row_count as usize > MAX_BULK_ROWS {
+        return Err(OdbcError::ResourceLimitReached(format!(
+            "row count {} exceeds MAX_BULK_ROWS={MAX_BULK_ROWS}",
+            payload.row_count
+        )));
+    }
     let mut out = Vec::new();
     let table_b = payload.table.as_bytes();
-    out.extend_from_slice(&(table_b.len() as u32).to_le_bytes());
+    out.extend_from_slice(&len_to_u32(table_b.len(), "table name")?.to_le_bytes());
     out.extend_from_slice(table_b);
-    out.extend_from_slice(&(payload.columns.len() as u32).to_le_bytes());
+    out.extend_from_slice(&len_to_u32(payload.columns.len(), "column count")?.to_le_bytes());
 
     for spec in &payload.columns {
         let name_b = spec.name.as_bytes();
-        out.extend_from_slice(&(name_b.len() as u32).to_le_bytes());
+        out.extend_from_slice(&len_to_u32(name_b.len(), "column name")?.to_le_bytes());
         out.extend_from_slice(name_b);
         out.push(spec.col_type.to_tag());
         out.push(if spec.nullable { 1 } else { 0 });
-        out.extend_from_slice(&(spec.max_len as u32).to_le_bytes());
+        if spec.max_len > MAX_BULK_CELL_LEN {
+            return Err(OdbcError::ResourceLimitReached(format!(
+                "max_len {} exceeds MAX_BULK_CELL_LEN={MAX_BULK_CELL_LEN}",
+                spec.max_len
+            )));
+        }
+        out.extend_from_slice(&len_to_u32(spec.max_len, "max_len")?.to_le_bytes());
     }
 
     out.extend_from_slice(&payload.row_count.to_le_bytes());

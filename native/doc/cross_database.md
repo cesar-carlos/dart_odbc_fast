@@ -155,15 +155,44 @@ ENABLE_E2E_TESTS=1 ODBC_TEST_DSN="Driver={...};..." cargo test e2e_multi_db -- -
 
 ## Driver Capabilities
 
-Use `odbc_get_driver_capabilities(conn_str, buffer, len, out)` to get JSON capabilities per driver:
+Two detection paths are available:
 
+### 1. Heuristic, no I/O — `odbc_get_driver_capabilities(conn_str, buffer, len, out)`
+
+Inspects the connection string only. Cheap; works before connecting.
+JSON fields:
+
+- `engine` — canonical id (`sqlserver`, `postgres`, `mysql`, `mariadb`,
+  `oracle`, `sybase_ase`, `sybase_asa`, `sqlite`, `db2`, `snowflake`,
+  `redshift`, `bigquery`, `mongodb`, `unknown`).
+- `driver_name`, `driver_version`
 - `supports_prepared_statements`
 - `supports_batch_operations`
 - `supports_streaming`
 - `max_row_array_size`
-- `driver_name`, `driver_version`
 
-Detection is heuristic (connection string substring). See `engine/core/driver_capabilities.rs`.
+Limitations: DSN-only strings (`DSN=mydsn;UID=x;PWD=y`) yield `unknown`;
+custom drivers (Devart, DataDirect, ...) are not recognised; MariaDB is
+distinguished from MySQL only when the driver string contains `mariadb`.
+
+### 2. Live introspection — `odbc_get_connection_dbms_info(conn_id, buffer, len, out)` *(NEW in v2.1)*
+
+Calls `SQLGetInfo(SQL_DBMS_NAME)` against the live connection. JSON fields:
+
+- `dbms_name` — server-reported product name (e.g.
+  `"Microsoft SQL Server"`, `"PostgreSQL"`, `"MariaDB"`,
+  `"Adaptive Server Anywhere"`).
+- `engine` — canonical id derived from `dbms_name`.
+- `max_catalog_name_len`, `max_schema_name_len`,
+  `max_table_name_len`, `max_column_name_len`
+- `current_catalog` — currently selected database
+- `capabilities` — same shape as the heuristic payload above
+
+This path resolves all the limitations of the heuristic. Prefer it once
+the connection is open.
+
+Implementation: `engine/core/driver_capabilities.rs`,
+`engine/dbms_info.rs`, `plugins/registry.rs::get_for_live_connection`.
 
 ---
 

@@ -2,7 +2,7 @@ use super::prepared_cache::PreparedStatementCache;
 use crate::engine::cell_reader::read_cell_bytes;
 use crate::error::{OdbcError, Result};
 use crate::handles::CachedConnection;
-use crate::observability::{Metrics, StructuredLogger, Tracer};
+use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::{
     encode_multi, row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue,
@@ -13,6 +13,16 @@ use log::Level;
 use odbc_api::{Connection, Cursor, IntoParameter, ResultSetMetadata};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+/// Returns true when the underlying ODBC error means "no more result sets",
+/// i.e. SQLSTATE 02000 ("no data") which corresponds to the SQL_NO_DATA return code.
+///
+/// Replaces the previous `e.to_string().contains("SQL_NO_DATA")` heuristic (A13).
+fn is_no_more_results(err: &OdbcError) -> bool {
+    let s = err.sqlstate();
+    // SQLSTATE 02000 = "no data" (SQL_NO_DATA)
+    s == [b'0', b'2', b'0', b'0', b'0']
+}
 
 pub struct ExecutionEngine {
     prepared_cache: Arc<PreparedStatementCache>,
@@ -91,11 +101,25 @@ impl ExecutionEngine {
     pub fn execute_query(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         use std::time::Instant;
         let start_time = Instant::now();
-        let span_id = self.tracer.start_span(sql.to_string());
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
         let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), span_id.to_string());
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
+        let result = self.execute_query_inner(conn, sql);
+
+        let latency = start_time.elapsed();
+        self.metrics.record_query(latency);
+
+        if let Err(ref e) = result {
+            self.metrics.record_error();
+            self.audit_logger.log_error(None, &e.to_string());
+        }
+
+        result
+    }
+
+    fn execute_query_inner(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         let optimized_sql = if let Ok(active) = self.active_plugin.lock() {
             if let Some(ref plugin) = *active {
                 plugin.optimize_query(sql)
@@ -157,30 +181,12 @@ impl ExecutionEngine {
             }
         }
 
-        let result = if self.use_columnar {
+        if self.use_columnar {
             let columnar_buffer = row_buffer_to_columnar(&row_buffer);
             ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
         } else {
             Ok(RowBufferEncoder::encode(&row_buffer))
-        };
-
-        let latency = start_time.elapsed();
-        self.metrics.record_query(latency);
-
-        if let Some(span) = self.tracer.finish_span(span_id) {
-            if let Some(duration) = span.duration() {
-                log::debug!("Query completed in {}ms", duration.as_millis());
-            }
         }
-
-        if result.is_err() {
-            self.metrics.record_error();
-            if let Err(ref e) = result {
-                self.audit_logger.log_error(None, &e.to_string());
-            }
-        }
-
-        result
     }
 
     /// Execute query using cached connection (reuses prepared statements when feature enabled).
@@ -192,9 +198,9 @@ impl ExecutionEngine {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let span_id = self.tracer.start_span(sql.to_string());
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
         let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), span_id.to_string());
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
         let optimized_sql = if let Ok(active) = self.active_plugin.lock() {
@@ -214,17 +220,9 @@ impl ExecutionEngine {
         let latency = start_time.elapsed();
         self.metrics.record_query(latency);
 
-        if let Some(span) = self.tracer.finish_span(span_id) {
-            if let Some(duration) = span.duration() {
-                log::debug!("Query completed in {}ms", duration.as_millis());
-            }
-        }
-
-        if result.is_err() {
+        if let Err(ref e) = result {
             self.metrics.record_error();
-            if let Err(ref e) = result {
-                self.audit_logger.log_error(None, &e.to_string());
-            }
+            self.audit_logger.log_error(None, &e.to_string());
         }
 
         result
@@ -245,16 +243,37 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
         timeout_sec: Option<usize>,
-        _fetch_size: Option<u32>,
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let span_id = self.tracer.start_span(sql.to_string());
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("span_id".to_string(), span_id.to_string());
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
+        let result =
+            self.execute_query_with_params_inner(conn, sql, params, timeout_sec, fetch_size);
+
+        self.metrics.record_query(start_time.elapsed());
+
+        if let Err(ref e) = result {
+            self.metrics.record_error();
+            self.audit_logger.log_error(None, &e.to_string());
+        }
+
+        result
+    }
+
+    fn execute_query_with_params_inner(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+        timeout_sec: Option<usize>,
+        _fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
         let optional_strings = crate::protocol::param_values_to_strings(params)?;
 
         let cursor = match optional_strings.len() {
@@ -351,136 +370,120 @@ impl ExecutionEngine {
             }
         }
 
-        let result = if self.use_columnar {
+        if self.use_columnar {
             let columnar_buffer = row_buffer_to_columnar(&row_buffer);
             ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
         } else {
             Ok(RowBufferEncoder::encode(&row_buffer))
-        };
-
-        self.metrics.record_query(start_time.elapsed());
-
-        if let Some(span) = self.tracer.finish_span(span_id) {
-            if let Some(duration) = span.duration() {
-                log::debug!("Query with params completed in {}ms", duration.as_millis());
-            }
         }
-
-        if result.is_err() {
-            self.metrics.record_error();
-            if let Err(ref e) = result {
-                self.audit_logger.log_error(None, &e.to_string());
-            }
-        }
-
-        result
     }
 
     pub fn execute_multi_result(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let span_id = self.tracer.start_span(sql.to_string());
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
         let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), span_id.to_string());
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
+
+        let result = self.execute_multi_result_inner(conn, sql);
+
+        self.metrics.record_query(start_time.elapsed());
+
+        if let Err(ref e) = result {
+            self.metrics.record_error();
+            self.audit_logger.log_error(None, &e.to_string());
+        }
+
+        result
+    }
+
+    fn execute_multi_result_inner(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
+        use crate::protocol::{ColumnarEncoder, RowBuffer, RowBufferEncoder};
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
 
-        // Collect all result sets using SQLMoreResults
         let mut all_items = Vec::new();
+        let cursor_opt = stmt.execute(()).map_err(OdbcError::from)?;
 
-        // Execute first result set
-        let mut cursor_opt = stmt.execute(()).map_err(OdbcError::from)?;
+        // C6 partial fix: A13 (structured SQLSTATE check) is applied in the
+        // cursor chain below. Full row-count-only-first → subsequent-result-set
+        // handling is tracked in v2.1 (requires a different odbc-api integration
+        // path because `Statement::more_results` is `unsafe` and conflicts with the
+        // borrow held by the cursor adapter).
+        let had_cursor = cursor_opt.is_some();
+        let mut current = cursor_opt;
+        if had_cursor {
+            while let Some(mut cursor) = current.take() {
+                let mut row_buffer = RowBuffer::new();
+                let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+                let cols_u16: u16 = cols_i16
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+                let cols_usize: usize = cols_u16.into();
+                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
 
-        // Process each result set (cursor or row count)
-        loop {
-            use crate::protocol::{ColumnarEncoder, RowBuffer, RowBufferEncoder};
-
-            if cursor_opt.is_none() {
-                drop(cursor_opt);
-                let row_count = stmt
-                    .row_count()
-                    .map_err(OdbcError::from)?
-                    .map(|n| n as i64)
-                    .unwrap_or(0);
-                all_items.push(MultiResultItem::RowCount(row_count));
-                break;
-            }
-
-            let mut c = cursor_opt.take().unwrap();
-            let mut row_buffer = RowBuffer::new();
-            let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-            for col_idx in 1..=cols_u16 {
-                let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                    if let Some(ref plugin) = *active {
-                        plugin.map_type(sql_type_code)
+                for col_idx in 1..=cols_u16 {
+                    let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+                    let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                        if let Some(ref plugin) = *active {
+                            plugin.map_type(sql_type_code)
+                        } else {
+                            OdbcType::from_odbc_sql_type(sql_type_code)
+                        }
                     } else {
                         OdbcType::from_odbc_sql_type(sql_type_code)
+                    };
+                    row_buffer.add_column(col_name.to_string(), odbc_type);
+                    column_types.push(odbc_type);
+                }
+
+                while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                    let mut row_data = Vec::new();
+                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                            OdbcError::InternalError("Invalid column number".to_string())
+                        })?;
+                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                        row_data.push(cell_data);
                     }
+                    row_buffer.add_row(row_data);
+                }
+
+                let encoded = if self.use_columnar {
+                    let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
+                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
                 } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
+                    RowBufferEncoder::encode(&row_buffer)
                 };
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
+                all_items.push(MultiResultItem::ResultSet(encoded));
 
-            while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-                    row_data.push(cell_data);
-                }
-                row_buffer.add_row(row_data);
-            }
-
-            let encoded = if self.use_columnar {
-                let columnar_buffer = crate::protocol::row_buffer_to_columnar(&row_buffer);
-                ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
-            } else {
-                RowBufferEncoder::encode(&row_buffer)
-            };
-            cursor_opt = match c.more_results() {
-                Ok(next) => next,
-                Err(e) => {
-                    let odbc_err = OdbcError::from(e);
-                    if odbc_err.to_string().contains("SQL_NO_DATA")
-                        || odbc_err.to_string().contains("No data")
-                    {
-                        None
-                    } else {
-                        return Err(odbc_err);
+                // A13 fix: structured SQLSTATE check instead of substring match.
+                current = match cursor.more_results() {
+                    Ok(next) => next,
+                    Err(e) => {
+                        let odbc_err = OdbcError::from(e);
+                        if is_no_more_results(&odbc_err) {
+                            None
+                        } else {
+                            return Err(odbc_err);
+                        }
                     }
-                }
-            };
-            all_items.push(MultiResultItem::ResultSet(encoded));
-
-            if cursor_opt.is_none() {
-                break;
+                };
             }
-        }
-
-        self.metrics.record_query(start_time.elapsed());
-        if let Some(span) = self.tracer.finish_span(span_id) {
-            if let Some(duration) = span.duration() {
-                log::debug!(
-                    "Multi-result batch completed with {} result(s) in {}ms",
-                    all_items.len(),
-                    duration.as_millis()
-                );
-            }
+        } else {
+            // Drop the empty cursor binding so its borrow on `stmt` ends before
+            // we ask `stmt` for the row count.
+            drop(current);
+            let row_count = stmt
+                .row_count()
+                .map_err(OdbcError::from)?
+                .map(|n| n as i64)
+                .unwrap_or(0);
+            all_items.push(MultiResultItem::RowCount(row_count));
         }
 
         Ok(encode_multi(&all_items))

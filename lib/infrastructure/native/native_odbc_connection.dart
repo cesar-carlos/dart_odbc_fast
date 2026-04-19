@@ -108,6 +108,18 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   String? getDriverCapabilitiesJson(String connectionString) =>
       _native.getDriverCapabilitiesJson(connectionString);
 
+  /// Whether the loaded native library exposes live DBMS introspection
+  /// (v2.1 `odbc_get_connection_dbms_info`).
+  bool get supportsConnectionDbmsInfoApi =>
+      _native.supportsConnectionDbmsInfoApi;
+
+  /// Returns the live DBMS introspection JSON for [connectionId], or null
+  /// when the call fails or the API is unavailable. Use the high-level
+  /// `OdbcDriverCapabilities.getDbmsInfoForConnection` to obtain a typed
+  /// `DbmsInfo` instead of raw JSON.
+  String? getConnectionDbmsInfoJson(int connectionId) =>
+      _native.getConnectionDbmsInfoJson(connectionId);
+
   /// Gets the last error message from the native engine.
   ///
   /// Returns an empty string if no error occurred.

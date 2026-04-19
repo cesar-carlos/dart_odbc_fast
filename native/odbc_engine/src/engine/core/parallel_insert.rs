@@ -6,6 +6,20 @@ use std::sync::Arc;
 
 const DEFAULT_BATCH_SIZE: usize = 10_000;
 
+/// Atomicity contract for `insert_i32_parallel`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ParallelMode {
+    /// Each chunk runs in its own connection with autocommit. A mid-flight
+    /// failure leaves committed chunks in the database (not atomic).
+    /// Fastest, but caller must own compensation/retry logic.
+    #[default]
+    Independent,
+    /// Each chunk runs inside its own transaction (`BEGIN`/`COMMIT`).
+    /// On failure, that chunk is rolled back; other chunks already committed
+    /// stay committed (per-chunk atomicity, not global).
+    PerChunkTransactional,
+}
+
 pub(crate) fn validate_i32_parallel_input(columns: &[&str], data: &[Vec<i32>]) -> Result<()> {
     let n_cols = columns.len();
     if data.len() != n_cols {
@@ -31,6 +45,7 @@ pub struct ParallelBulkInsert {
     pool: Arc<ConnectionPool>,
     batch_size: usize,
     parallelism: usize,
+    mode: ParallelMode,
 }
 
 impl ParallelBulkInsert {
@@ -39,11 +54,18 @@ impl ParallelBulkInsert {
             pool,
             batch_size: DEFAULT_BATCH_SIZE,
             parallelism: parallelism.max(1),
+            mode: ParallelMode::Independent,
         }
     }
 
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size.max(1);
+        self
+    }
+
+    /// Configure the atomicity contract. See [`ParallelMode`] for trade-offs.
+    pub fn with_mode(mut self, mode: ParallelMode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -53,6 +75,10 @@ impl ParallelBulkInsert {
 
     pub fn parallelism(&self) -> usize {
         self.parallelism
+    }
+
+    pub fn mode(&self) -> ParallelMode {
+        self.mode
     }
 
     pub fn insert_i32_parallel(
@@ -84,6 +110,7 @@ impl ParallelBulkInsert {
         let columns: Arc<Vec<String>> =
             Arc::new(columns.iter().map(|s| (*s).to_string()).collect());
         let batch_size = self.batch_size;
+        let mode = self.mode;
 
         let results: Vec<Result<usize>> = chunks
             .into_par_iter()
@@ -92,7 +119,43 @@ impl ParallelBulkInsert {
                 let odbc_conn = conn.get_connection();
                 let ab = ArrayBinding::new(batch_size);
                 let cols: Vec<&str> = columns.iter().map(String::as_str).collect();
-                ab.bulk_insert_i32(odbc_conn, &table, &cols, &chunk)
+
+                match mode {
+                    ParallelMode::Independent => {
+                        ab.bulk_insert_i32(odbc_conn, &table, &cols, &chunk)
+                    }
+                    ParallelMode::PerChunkTransactional => {
+                        // Per-chunk atomicity: open a transaction on the borrowed
+                        // connection, run the insert, then commit or rollback.
+                        // Note: `bulk_insert_i32` borrows the connection
+                        // immutably while we need a brief mutable borrow for
+                        // autocommit toggles. We perform them around the call.
+                        let mut conn_mut = conn;
+                        conn_mut
+                            .get_connection_mut()
+                            .set_autocommit(false)
+                            .map_err(OdbcError::from)?;
+                        let result =
+                            ab.bulk_insert_i32(conn_mut.get_connection(), &table, &cols, &chunk);
+                        match result {
+                            Ok(n) => {
+                                conn_mut
+                                    .get_connection_mut()
+                                    .commit()
+                                    .map_err(OdbcError::from)?;
+                                let _ = conn_mut.get_connection_mut().set_autocommit(true);
+                                Ok(n)
+                            }
+                            Err(e) => {
+                                if let Err(re) = conn_mut.get_connection_mut().rollback() {
+                                    log::error!("ParallelBulkInsert: rollback after failure: {re}");
+                                }
+                                let _ = conn_mut.get_connection_mut().set_autocommit(true);
+                                Err(e)
+                            }
+                        }
+                    }
+                }
             })
             .collect();
 
@@ -107,17 +170,17 @@ impl ParallelBulkInsert {
         if errors.is_empty() {
             Ok(total)
         } else {
-            let msg = errors
+            let detail = errors
                 .iter()
                 .map(|(idx, err)| format!("chunk[{}]: {}", idx, err))
                 .collect::<Vec<_>>()
                 .join("; ");
-            Err(OdbcError::InternalError(format!(
-                "Parallel bulk insert: {} failed chunk(s) ({} rows inserted before failure): {}",
-                errors.len(),
-                total,
-                msg
-            )))
+            // C8 fix: structured error so callers can react programmatically.
+            Err(OdbcError::BulkPartialFailure {
+                rows_inserted_before_failure: total,
+                failed_chunks: errors.len(),
+                detail,
+            })
         }
     }
 }

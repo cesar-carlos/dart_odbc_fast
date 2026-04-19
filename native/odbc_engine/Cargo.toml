@@ -1,6 +1,11 @@
 [package]
 name = "odbc_engine"
-version = "0.1.0"
+# v3.0.0 release: 7 capability traits (BulkLoader, Upsertable, Returnable,
+# TypeCatalog, IdentifierQuoter, CatalogProvider, SessionInitializer); 4 new
+# plugins (SQLite, IBM Db2, Snowflake, MariaDB) on top of the existing 5; 12
+# new OdbcType variants; 3 new FFI entry points. See CHANGELOG.md for the
+# complete list and migration notes.
+version = "3.0.0"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

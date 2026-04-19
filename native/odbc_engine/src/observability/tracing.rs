@@ -79,11 +79,81 @@ impl Tracer {
             }
         }
     }
+
+    /// Number of in-flight spans (started but not yet finished).
+    /// Useful for leak detection in tests.
+    pub fn active_span_count(&self) -> usize {
+        self.spans
+            .lock()
+            .map(|s| s.len())
+            .unwrap_or_else(|e| e.into_inner().len())
+    }
 }
 
 impl Default for Tracer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII guard that ensures a span is finished even if the surrounding code
+/// returns early via `?` or panics.
+///
+/// Replaces the manual `start_span`/`finish_span` pattern that previously
+/// leaked spans on error paths.
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use odbc_engine::observability::{SpanGuard, Tracer};
+/// fn run(tracer: Arc<Tracer>) -> Result<(), &'static str> {
+///     let _guard = SpanGuard::new(Arc::clone(&tracer), "select 1".to_string());
+///     // any early return finishes the span automatically
+///     Err("boom")
+/// }
+/// ```
+pub struct SpanGuard {
+    tracer: Arc<Tracer>,
+    span_id: u64,
+    finished: bool,
+}
+
+impl SpanGuard {
+    /// Start a new span and return a guard that finishes it on drop.
+    pub fn new(tracer: Arc<Tracer>, query: String) -> Self {
+        let span_id = tracer.start_span(query);
+        Self {
+            tracer,
+            span_id,
+            finished: false,
+        }
+    }
+
+    /// Span id, useful when the caller needs to attach metadata.
+    pub fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    /// Attach metadata to the underlying span.
+    pub fn add_metadata(&self, key: impl Into<String>, value: impl Into<String>) {
+        self.tracer
+            .add_metadata(self.span_id, key.into(), value.into());
+    }
+
+    /// Explicitly finish the span and return it. Subsequent `Drop` is a no-op.
+    pub fn finish(mut self) -> Option<QuerySpan> {
+        self.finished = true;
+        self.tracer.finish_span(self.span_id)
+    }
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            // Discard the returned span; this is the implicit cleanup path.
+            let _ = self.tracer.finish_span(self.span_id);
+        }
     }
 }
 

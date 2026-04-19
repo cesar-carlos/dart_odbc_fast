@@ -1,5 +1,6 @@
 use crate::engine::core::QueryPipeline;
 use crate::error::{OdbcError, Result};
+use crate::plugins::capabilities::catalog_provider::CatalogQuery;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
 use std::sync::Arc;
@@ -8,14 +9,72 @@ lazy_static::lazy_static! {
     static ref PIPELINE: Arc<QueryPipeline> = Arc::new(QueryPipeline::new(100));
 }
 
-/// Lists tables from INFORMATION_SCHEMA.TABLES.
-/// Uses catalog/schema filters when provided (non-empty); empty or null = no filter.
-/// Returns binary protocol (same as odbc_exec_query).
+/// Resolve the dialect-specific `CatalogQuery` for the live connection. Falls
+/// back to the supplied default when no `CatalogProvider` plugin matches.
+///
+/// `live_query` is invoked with `&dyn CatalogProvider` *if* the connection's
+/// DBMS name maps to a registered plugin that implements the trait. This is
+/// what makes `list_tables` work on Oracle/Sybase/SQLite/Db2 (which do NOT
+/// have `INFORMATION_SCHEMA`) without changing the FFI signature.
+fn dispatch_catalog<F>(conn: &Connection<'static>, live_query: F) -> Option<Result<CatalogQuery>>
+where
+    F: FnOnce(
+        &dyn crate::plugins::capabilities::catalog_provider::CatalogProvider,
+    ) -> Result<CatalogQuery>,
+{
+    use crate::engine::core::DriverCapabilities;
+    use crate::plugins::{
+        capabilities::catalog_provider::CatalogProvider, db2::Db2Plugin, mariadb::MariaDbPlugin,
+        mysql::MySqlPlugin, oracle::OraclePlugin, postgres::PostgresPlugin,
+        snowflake::SnowflakePlugin, sqlite::SqlitePlugin, sqlserver::SqlServerPlugin,
+        sybase::SybasePlugin, PluginRegistry,
+    };
+
+    // 1. Ask the live connection who it is via `SQLGetInfo(SQL_DBMS_NAME)`.
+    let dbms_name = conn.database_management_system_name().ok()?;
+    let caps = DriverCapabilities::from_driver_name(&dbms_name);
+    let plugin_id = PluginRegistry::plugin_id_for_dbms_name(&caps.driver_name)?;
+
+    // 2. Dispatch to the concrete plugin (each implements `CatalogProvider`).
+    let q = match plugin_id {
+        "sqlserver" => live_query(&SqlServerPlugin::new() as &dyn CatalogProvider),
+        "postgres" => live_query(&PostgresPlugin::new() as &dyn CatalogProvider),
+        "mysql" => live_query(&MySqlPlugin::new() as &dyn CatalogProvider),
+        "mariadb" => live_query(&MariaDbPlugin::new() as &dyn CatalogProvider),
+        "oracle" => live_query(&OraclePlugin::new() as &dyn CatalogProvider),
+        "sybase" => live_query(&SybasePlugin::new() as &dyn CatalogProvider),
+        "sqlite" => live_query(&SqlitePlugin::new() as &dyn CatalogProvider),
+        "db2" => live_query(&Db2Plugin::new() as &dyn CatalogProvider),
+        "snowflake" => live_query(&SnowflakePlugin::new() as &dyn CatalogProvider),
+        _ => return None,
+    };
+    Some(q)
+}
+
+fn execute_catalog_query(conn: &Connection<'static>, q: CatalogQuery) -> Result<Vec<u8>> {
+    if q.params.is_empty() {
+        PIPELINE.execute_direct(conn, &q.sql)
+    } else {
+        PIPELINE.execute_with_params(conn, &q.sql, &q.params)
+    }
+}
+
+/// Lists tables. Uses the dialect-specific `CatalogProvider` of the
+/// connection's plugin (Oracle ALL_TABLES, Sybase sysobjects, SQLite
+/// sqlite_master, Db2 SYSCAT, ...) when available, falling back to
+/// `INFORMATION_SCHEMA` for engines without a registered plugin.
+///
+/// Returns binary protocol (same as `odbc_exec_query`).
 pub fn list_tables(
     conn: &Connection<'static>,
     catalog: Option<&str>,
     schema: Option<&str>,
 ) -> Result<Vec<u8>> {
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_tables_sql(catalog, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
+
+    // Fallback: legacy INFORMATION_SCHEMA path used when no plugin matches.
     let cat = catalog.unwrap_or("").trim();
     let sch = schema.unwrap_or("").trim();
 
@@ -90,12 +149,14 @@ pub(crate) fn validate_and_parse_table(table: &str) -> Result<(Option<String>, S
     Ok((schema, table_name))
 }
 
-/// Lists columns for a table from INFORMATION_SCHEMA.COLUMNS.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
+/// Lists columns for a table. Uses the dialect-specific `CatalogProvider`
+/// when available; falls back to `INFORMATION_SCHEMA.COLUMNS` otherwise.
 pub fn list_columns(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
     let (schema, table_name) = validate_and_parse_table(table)?;
     let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_columns_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
 
     let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
         (
@@ -142,6 +203,9 @@ pub fn get_type_info(conn: &Connection<'static>) -> Result<Vec<u8>> {
 pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
     let (schema, table_name) = validate_and_parse_table(table)?;
     let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_primary_keys_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
 
     let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
         (
@@ -195,6 +259,9 @@ pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
 pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
     let (schema, table_name) = validate_and_parse_table(table)?;
     let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_foreign_keys_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
 
     let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
         (
@@ -262,6 +329,9 @@ pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
 pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
     let (schema, table_name) = validate_and_parse_table(table)?;
     let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_indexes_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
 
     // Unified query that works across major databases
     // We return indexes from constraints (PKs and unique constraints) as a baseline

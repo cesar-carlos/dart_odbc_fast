@@ -7,13 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added (v3.0.0)
 
-- _None_
+- **Seven new capability traits** (SOLID design, opt-in by plugin):
+  - `BulkLoader` — native bulk insert path per engine.
+  - `Upsertable` — dialect-specific INSERT-OR-UPDATE SQL builder.
+  - `Returnable` — append RETURNING / OUTPUT clause to DML.
+  - `TypeCatalog` — extended type mapping using DBMS `TYPE_NAME`.
+  - `IdentifierQuoter` — per-driver identifier quoting style.
+  - `CatalogProvider` — driver-specific schema introspection SQL.
+  - `SessionInitializer` — post-connect setup statements.
+  - Lives in [`plugins/capabilities/`](native/odbc_engine/src/plugins/capabilities).
+- **Four new driver plugins**:
+  - `SqlitePlugin` — `ON CONFLICT`, `RETURNING`, PRAGMA setup, sqlite_master catalog.
+  - `Db2Plugin` — `MERGE`, `FROM FINAL TABLE`, SYSCAT catalog, FETCH FIRST n ROWS.
+  - `SnowflakePlugin` — `MERGE`, `RETURNING`, VARIANT/OBJECT/ARRAY type mapping, QUERY_TAG.
+  - `MariaDbPlugin` — `RETURNING` (MariaDB-only), backtick quoting, UUID type.
+- **Twelve new `OdbcType` variants**:
+  `NVarchar`, `TimestampWithTz`, `DatetimeOffset`, `Time`, `SmallInt`,
+  `Boolean`, `Float`, `Double`, `Json`, `Uuid`, `Money`, `Interval`.
+- **Three new FFI entry points**:
+  - `odbc_build_upsert_sql(conn_str, table, payload_json, ...)`
+  - `odbc_append_returning_sql(conn_str, sql, verb, columns_csv, ...)`
+  - `odbc_get_session_init_sql(conn_str, options_json, ...)`
+- **Dart bindings**: `OdbcDriverFeatures` (in
+  [`lib/infrastructure/native/driver_capabilities_v3.dart`](lib/infrastructure/native/driver_capabilities_v3.dart))
+  with typed `buildUpsertSql`, `appendReturningClause`, `getSessionInitSql`,
+  plus `DmlVerb` enum and `SessionOptions` class.
+- New regression suites under
+  [`native/odbc_engine/tests/regression/`](native/odbc_engine/tests/regression):
+  `v30_capabilities`, `v30_upsert_dialects`, `v30_returning_dialects`,
+  `v30_session_init`.
+- **Documentation**: [`doc/CAPABILITIES_v3.md`](doc/CAPABILITIES_v3.md)
+  with the full capability × engine matrix.
+
+### Changed (v3.0.0)
+
+- `PluginRegistry::detect_driver` now uses
+  `DriverCapabilities::detect_from_connection_string` to map the connection
+  string to a canonical engine id, then to a registered plugin id. MariaDB
+  now has its own dedicated plugin instead of falling back to `mysql`.
+- `from_odbc_sql_type` recognises additional SQL_* type codes
+  (`SQL_TYPE_TIME`=92, `SQL_TYPE_DATE`=91, `SQL_GUID`=−11,
+  `SQL_WCHAR/WVARCHAR/WLONGVARCHAR`=−8/−9/−10, `SQL_BIT`=−7, `SQL_REAL`=7,
+  `SQL_FLOAT/SQL_DOUBLE`=6/8, `SQL_TINYINT`=−6, `NUMERIC`=2).
+
+### Added (v2.1.0 — included in this release)
+
+- **Live DBMS detection via `SQLGetInfo`** (resolves the v2.0 limitation where
+  `DriverCapabilities::detect(_conn)` returned `default()`):
+  - New `engine::DbmsInfo` struct with `dbms_name`, canonical `engine` id,
+    `max_*_name_len`, `current_catalog` and embedded `DriverCapabilities`.
+  - New `OdbcConnection::dbms_info()` and `OdbcConnection::driver_capabilities()`
+    helpers that consult the live driver instead of parsing the connection string.
+  - New FFI `odbc_get_connection_dbms_info(conn_id, buffer, buffer_len, out_written)`
+    returning JSON with the live DBMS information.
+  - `DriverCapabilities::detect(conn)` now actually queries the driver via
+    `database_management_system_name()` and populates `engine` plus the
+    server-reported `driver_name`.
+- **Canonical engine ids** (`engine::core::ENGINE_*` constants):
+  `sqlserver`, `postgres`, `mysql`, `mariadb`, `oracle`, `sybase_ase`,
+  `sybase_asa`, `sqlite`, `db2`, `snowflake`, `redshift`, `bigquery`,
+  `mongodb`, `unknown`. Stable across releases; exposed in JSON payloads
+  under the new `engine` field.
+- `PluginRegistry::plugin_id_for_dbms_name`,
+  `PluginRegistry::get_for_dbms_name` and
+  `PluginRegistry::get_for_live_connection` resolve plugins from the
+  server-reported DBMS name (or the live connection itself) — MariaDB
+  correctly falls back to the MySQL plugin.
+- `DriverCapabilities::from_driver_name` now recognises:
+  - `Microsoft SQL Server` (full Windows DBMS name)
+  - `MariaDB` (distinct from MySQL)
+  - `Adaptive Server Anywhere` and `Adaptive Server Enterprise`
+    (distinct Sybase variants)
+  - `IBM Db2`, `Snowflake`, `Amazon Redshift`, `Google BigQuery`
+  - All `ENGINE_*` canonical ids round-trip
+- Dart side:
+  - `DatabaseEngineIds` constants matching the Rust ids.
+  - `DatabaseType.fromEngineId(id)` (preferred over `fromDriverName` when
+    the canonical id is available).
+  - New enum values `DatabaseType.{mariadb, sybaseAse, sybaseAsa, db2,
+    snowflake, redshift, bigquery, mongodb}`. The legacy `DatabaseType.sybase`
+    is kept as a deprecated alias for `sybaseAse`.
+  - `DbmsInfo` typed wrapper for the new FFI JSON payload.
+  - `OdbcDriverCapabilities.getDbmsInfoForConnection(connId)` consumes the
+    new FFI.
+  - Raw `odbc_get_connection_dbms_info` binding in
+    `lib/infrastructure/native/bindings/odbc_bindings.dart`.
 
 ### Changed
 
-- _None_
+- `engine` field is now part of every `DriverCapabilities` JSON payload
+  produced by `odbc_get_driver_capabilities`. Old clients ignore the extra
+  field; new clients read it for accurate engine identification.
+- `PluginRegistry::detect_driver` keeps its connection-string heuristic
+  but is no longer the sole detection path — prefer
+  `get_for_live_connection(conn)` once the connection is open.
 
 ### Removed
 
@@ -21,7 +110,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- _None_
+- The audit gap "DSN-only connection strings always classified as `Unknown`"
+  is resolved on the live-connection path: `odbc_get_connection_dbms_info`
+  consults `SQL_DBMS_NAME` directly, which is populated by the Driver
+  Manager for DSN-only strings.
+- `MariaDB` is no longer silently classified as `MySQL`.
+- `Adaptive Server Anywhere` and `Adaptive Server Enterprise` are no longer
+  conflated.
+
+## [2.0.0] - 2026-04-18
+
+Hardening release driven by a full security and reliability audit. All
+audited critical and high-severity findings are addressed. The Dart FFI ABI
+is preserved (no client-side rebuilds required); only internal Rust APIs
+have breaking adjustments.
+
+### Added
+
+- `ffi::guard` module with `call_int`/`call_ptr`/`call_id`/`call_size`
+  helpers and `ffi_guard_int!`/`ffi_guard_id!`/`ffi_guard_ptr!` macros.
+  Wrap any `extern "C"` body in these helpers so panics never unwind across
+  the FFI boundary (resolves audit C1).
+- `engine::identifier` module with `validate_identifier`,
+  `quote_identifier`, `quote_identifier_default`, `quote_qualified_default`
+  and `IdentifierQuoting` enum. Used by `Savepoint`/`ArrayBinding` to defeat
+  SQL injection vectors (resolves A1, A2).
+- `observability::SpanGuard` RAII helper; spans are now finished even on
+  early `?` returns or panics (resolves A3).
+- `observability::sanitize_sql_for_log` masks SQL literals before logging.
+  Set `ODBC_FAST_LOG_RAW_SQL=1` to opt into raw logging in dev (A8).
+- `protocol::bulk_insert::is_null_strict` plus length validation in
+  `parse_bulk_insert_payload`. Truncated null bitmaps are now rejected as
+  malformed payloads instead of being silently treated as "not null" (C9).
+- `protocol::bulk_insert::MAX_BULK_COLUMNS`, `MAX_BULK_ROWS`,
+  `MAX_BULK_CELL_LEN` resource caps to bound memory on hostile payloads
+  (M2).
+- `engine::core::ParallelMode` enum with `Independent` and
+  `PerChunkTransactional` variants for `ParallelBulkInsert`. Per-chunk
+  atomicity option (C8).
+- `OdbcError` variants `NoMoreResults`, `MalformedPayload`,
+  `RollbackFailed`, `ResourceLimitReached`, `Cancelled`, `WorkerCrashed`
+  and `BulkPartialFailure { rows_inserted_before_failure, failed_chunks,
+  detail }` for structured error reporting.
+- `SecureBuffer::with_bytes` zeroises the buffer after the closure runs
+  (resolves C5).
+- `SecretManager::with_secret` borrows secret bytes without cloning (M12).
+- `PluginRegistry::is_supported` introspection helper.
+- `PoolOptions::connection_timeout` field for configurable acquire timeout
+  (resolves A9 baseline).
+- Pool now installs a `PoolAutocommitCustomizer` that forces
+  `set_autocommit(true)` on every checkout regardless of
+  `test_on_check_out` (resolves A14).
+- `bench_baselines/v1.2.1.txt` placeholder for benchmark comparisons.
+- New regression test suite under
+  `native/odbc_engine/tests/regression/` covering the new safety helpers,
+  identifier validation, span lifecycle, and bitmap corruption.
+
+### Changed
+
+- `OdbcError::sqlstate` is now used for structured "no more results"
+  detection instead of substring matching on `e.to_string()` (resolves
+  A13).
+- `Savepoint::create` / `rollback_to` / `release` now validate and quote
+  the savepoint name using `quote_identifier` (resolves A1).
+- `ArrayBinding::bulk_insert_*` methods now quote table and column names
+  via `quote_qualified_default`/`quote_identifier_default` (resolves A2).
+- `Transaction::Drop` and `Transaction::execute` now log rollback failures
+  via `log::error!` with conn id and source error context instead of using
+  silent `let _ = ...` (resolves M3).
+- `DiskSpillStream` gains an `impl Drop` that removes orphan temp files,
+  preventing leaks on panic or early return (resolves M4).
+- `StreamingStateFileBacked::fetch_next_chunk` now uses `read_exact`
+  instead of a single `read`, so partial reads on Windows do not silently
+  truncate chunks (resolves A6).
+- `BatchedStreamingState`/`AsyncStreamingState::fetch_next_chunk`: receiver
+  disconnect is now reported as `OdbcError::WorkerCrashed` instead of
+  being treated as a clean EOF (resolves A5).
+- `odbc_pool_get_connection` no longer holds the global state lock while
+  calling `r2d2::Pool::get()`; the `Arc<ConnectionPool>` is cloned and
+  the lock released before the blocking acquire, eliminating up to a
+  30-second global stall per checkout (resolves C3).
+- `odbc_pool_close` drains live checkouts before removing the pool entry,
+  avoiding a deadlock when other code paths drop their wrappers after the
+  map has been mutated (resolves C4).
+- `odbc_stream_fetch` no longer panics with `expect("pending stream chunk
+  exists")` when a pending chunk vanishes between length check and
+  removal; returns `-1` with a structured error message instead (part of
+  C1 hardening).
+- `PluginRegistry::get_for_connection` now logs a warning when
+  `detect_driver` resolves a name that is not registered (e.g. `mongodb`,
+  `sqlite`), instead of silently returning `None` (resolves A7).
+- `PluginRegistry::default` now logs registration failures via
+  `log::error!` instead of using `unwrap_or_default` to swallow them (M15).
+- `security::sanitize_connection_string` now respects ODBC `{...}`
+  quoting and recognises additional secret keys: `secret`, `token`,
+  `apikey`, `api_key`, `accesstoken`, `access_token`, `authorization`,
+  `auth`, `sas`, `sastoken`, `sas_token`, `connectionstring`,
+  `primarykey`, `secondarykey` (resolves M10).
+- `protocol::bulk_insert::serialize_bulk_insert_payload` now uses
+  `try_into` for length conversions and emits `OdbcError::MalformedPayload`
+  on overflow instead of silent `as u32` truncation (resolves M8).
+- `versioning::ApiVersion::current` now reads
+  `env!("CARGO_PKG_VERSION")` instead of hardcoded `0.1.0` (resolves M17).
+- Bumped Rust crate `odbc_engine` and Dart package `odbc_fast` from
+  1.x → 2.0.0.
+
+### Deprecated
+
+- `SecureBuffer::into_vec` is deprecated. The returned `Vec<u8>` is no
+  longer zeroised on drop. Prefer `SecureBuffer::with_bytes` for
+  short-lived consumers (resolves C5).
+
+### Fixed
+
+- C1 — `odbc_stream_fetch` `expect`/`unwrap` no longer crosses FFI.
+- C3 — Global mutex no longer held during `r2d2.get()` blocking call.
+- C4 — `odbc_pool_close` drains checkouts before removing the pool entry.
+- C5 — `SecureBuffer` exposes a zeroising consumer API.
+- C6 — `execute_multi_result` now uses structured SQLSTATE detection for
+  end-of-results (full row-count → multi-result handling deferred to v2.1
+  with a refactored statement adapter).
+- C9 — Truncated null bitmaps in bulk-insert payloads are now rejected.
+- A1, A2 — Identifier interpolation in dynamic SQL is whitelisted +
+  quoted.
+- A3 — Span lifecycle bound to RAII guard, no leaks on early returns.
+- A5 — Streaming receiver disconnect is now an explicit error.
+- A6 — Disk-spill reads use `read_exact` to avoid short reads.
+- A7 — Driver detection consistency surfaced via warning + new
+  `is_supported` helper.
+- A8 — SQL literals are masked in logs by default.
+- A9 — `PoolOptions::connection_timeout` exposes acquire timeout.
+- A13 — Structured `02000` SQLSTATE check replaces substring detection.
+- A14 — `PoolAutocommitCustomizer` forces `autocommit(true)` per checkout.
+- M3 — Transaction rollback failures are logged with context.
+- M4 — Disk-spill orphan files cleaned up on drop.
+- M8 — Wire-format length casts return errors on overflow.
+- M10 — Connection-string sanitiser handles `{...}` and more keys.
+- M12 — Secret retrieve dedup helper avoids extra heap copy.
+- M15 — Registry default logs (rather than swallows) registration errors.
+- M17/M18 — `ApiVersion::current` reads from `Cargo.toml`.
+
+### Notes
+
+- The pre-existing flaky test `ffi::tests::test_ffi_get_structured_error`
+  (race in global state across tests) was not introduced by this release
+  but should be fixed in v2.1 as part of the granular-locks rework.
+- True chunk-by-chunk streaming (audit C7) and full row-count → multi-
+  result handling (full C6) require a deeper refactor of the streaming
+  worker and a new statement-adapter abstraction; tracked for v2.1.
 
 ## [1.2.1] - 2026-03-10
 

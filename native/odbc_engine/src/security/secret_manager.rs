@@ -55,7 +55,24 @@ impl SecretManager {
             .get(key)
             .ok_or_else(|| OdbcError::InternalError(format!("Secret not found: {}", key)))?;
 
+        // M12 fix: keep duplication explicit (caller owns a separate Secret) but
+        // document the cost. Use [`with_secret`] when only short-lived access is
+        // required to avoid the extra heap copy.
         Ok(Secret::new(secret.as_bytes().to_vec()))
+    }
+
+    /// Run `f` with read-only access to the secret bytes without cloning.
+    /// The lock on the secret store is held only for the duration of `f`.
+    /// Prefer this over [`retrieve`] for code paths that only read the value.
+    pub fn with_secret<R>(&self, key: &str, f: impl FnOnce(&[u8]) -> R) -> Result<R> {
+        let secrets = self
+            .secrets
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let secret = secrets
+            .get(key)
+            .ok_or_else(|| OdbcError::InternalError(format!("Secret not found: {}", key)))?;
+        Ok(f(secret.as_bytes()))
     }
 
     pub fn remove(&self, key: &str) -> Result<()> {

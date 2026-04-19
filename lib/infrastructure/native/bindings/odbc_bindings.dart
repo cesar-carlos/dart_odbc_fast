@@ -82,6 +82,13 @@ class OdbcBindings {
     }
     _odbc_stream_start_batched_ptr = _dylib.lookup('odbc_stream_start_batched');
     _odbc_pool_create_ptr = _dylib.lookup('odbc_pool_create');
+    try {
+      _odbc_pool_create_with_options_ptr = _dylib.lookup(
+        'odbc_pool_create_with_options',
+      );
+    } on Object catch (_) {
+      _odbc_pool_create_with_options_ptr = null;
+    }
     _odbc_pool_get_connection_ptr = _dylib.lookup('odbc_pool_get_connection');
     _odbc_pool_release_connection_ptr =
         _dylib.lookup('odbc_pool_release_connection');
@@ -109,6 +116,23 @@ class OdbcBindings {
           _dylib.lookup('odbc_get_driver_capabilities');
     } on Object catch (_) {
       _odbc_get_driver_capabilities_ptr = null;
+    }
+    try {
+      _odbc_get_connection_dbms_info_ptr =
+          _dylib.lookup('odbc_get_connection_dbms_info');
+    } on Object catch (_) {
+      _odbc_get_connection_dbms_info_ptr = null;
+    }
+    try {
+      _odbc_build_upsert_sql_ptr = _dylib.lookup('odbc_build_upsert_sql');
+      _odbc_append_returning_sql_ptr =
+          _dylib.lookup('odbc_append_returning_sql');
+      _odbc_get_session_init_sql_ptr =
+          _dylib.lookup('odbc_get_session_init_sql');
+    } on Object catch (_) {
+      _odbc_build_upsert_sql_ptr = null;
+      _odbc_append_returning_sql_ptr = null;
+      _odbc_get_session_init_sql_ptr = null;
     }
     try {
       _odbc_metadata_cache_enable_ptr =
@@ -215,6 +239,8 @@ class OdbcBindings {
       _odbc_stream_start_batched_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_pool_create_func>>
       _odbc_pool_create_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_pool_create_with_options_func>>?
+      _odbc_pool_create_with_options_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_pool_get_connection_func>>
       _odbc_pool_get_connection_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_pool_release_connection_func>>
@@ -244,6 +270,14 @@ class OdbcBindings {
       _odbc_audit_get_status_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_get_driver_capabilities_func>>?
       _odbc_get_driver_capabilities_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_get_connection_dbms_info_func>>?
+      _odbc_get_connection_dbms_info_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_build_upsert_sql_func>>?
+      _odbc_build_upsert_sql_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_append_returning_sql_func>>?
+      _odbc_append_returning_sql_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_get_session_init_sql_func>>?
+      _odbc_get_session_init_sql_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_enable_func>>?
       _odbc_metadata_cache_enable_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_stats_func>>?
@@ -259,6 +293,18 @@ class OdbcBindings {
 
   bool get supportsDriverCapabilitiesApi =>
       _odbc_get_driver_capabilities_ptr != null;
+
+  /// True when the loaded native library exposes the v2.1 live DBMS
+  /// introspection FFI (`odbc_get_connection_dbms_info`).
+  bool get supportsConnectionDbmsInfoApi =>
+      _odbc_get_connection_dbms_info_ptr != null;
+
+  /// True when the v3.0 capability FFIs are available (UPSERT / RETURNING /
+  /// session init builders).
+  bool get supportsCapabilitiesApi =>
+      _odbc_build_upsert_sql_ptr != null &&
+      _odbc_append_returning_sql_ptr != null &&
+      _odbc_get_session_init_sql_ptr != null;
 
   bool get supportsMetadataCacheApi =>
       _odbc_metadata_cache_enable_ptr != null &&
@@ -570,6 +616,87 @@ class OdbcBindings {
         )>()(connStr, buffer, bufferLen, outWritten);
   }
 
+  int odbc_get_connection_dbms_info(
+    int connId,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_get_connection_dbms_info_ptr;
+    if (ptr == null) return -1;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connId, buffer, bufferLen, outWritten);
+  }
+
+  int odbc_build_upsert_sql(
+    ffi.Pointer<Utf8> connStr,
+    ffi.Pointer<Utf8> table,
+    ffi.Pointer<Utf8> payloadJson,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_build_upsert_sql_ptr;
+    if (ptr == null) return -1;
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connStr, table, payloadJson, outBuf, bufLen, outWritten);
+  }
+
+  int odbc_append_returning_sql(
+    ffi.Pointer<Utf8> connStr,
+    ffi.Pointer<Utf8> sql,
+    int verb,
+    ffi.Pointer<Utf8> columnsCsv,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_append_returning_sql_ptr;
+    if (ptr == null) return -1;
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>,
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connStr, sql, verb, columnsCsv, outBuf, bufLen, outWritten);
+  }
+
+  int odbc_get_session_init_sql(
+    ffi.Pointer<Utf8> connStr,
+    ffi.Pointer<Utf8>? optionsJson,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final ptr = _odbc_get_session_init_sql_ptr;
+    if (ptr == null) return -1;
+    final optsPtr = optionsJson ?? ffi.Pointer<Utf8>.fromAddress(0);
+    return ptr.asFunction<
+        int Function(
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          ffi.Pointer<ffi.Uint32>,
+        )>()(connStr, optsPtr, outBuf, bufLen, outWritten);
+  }
+
   int odbc_exec_query_params(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -782,6 +909,22 @@ class OdbcBindings {
         connStr,
         maxSize,
       );
+
+  bool get supportsPoolCreateWithOptions =>
+      _odbc_pool_create_with_options_ptr != null;
+
+  int odbc_pool_create_with_options(
+    ffi.Pointer<Utf8> connStr,
+    int maxSize,
+    ffi.Pointer<Utf8>? optionsJson,
+  ) {
+    final ptr = _odbc_pool_create_with_options_ptr;
+    if (ptr == null) return 0;
+    final optsPtr = optionsJson ?? ffi.Pointer<Utf8>.fromAddress(0);
+    final fn = ptr
+        .asFunction<int Function(ffi.Pointer<Utf8>, int, ffi.Pointer<Utf8>)>();
+    return fn(connStr, maxSize, optsPtr);
+  }
 
   int odbc_pool_get_connection(int poolId) =>
       _odbc_pool_get_connection_ptr.asFunction<int Function(int)>()(poolId);
@@ -1196,6 +1339,11 @@ typedef odbc_pool_create_func = ffi.Uint32 Function(
   ffi.Pointer<Utf8>,
   ffi.Uint32,
 );
+typedef odbc_pool_create_with_options_func = ffi.Uint32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+);
 typedef odbc_pool_get_connection_func = ffi.Uint32 Function(ffi.Uint32);
 typedef odbc_pool_release_connection_func = ffi.Int32 Function(ffi.Uint32);
 typedef odbc_pool_health_check_func = ffi.Int32 Function(ffi.Uint32);
@@ -1249,6 +1397,36 @@ typedef odbc_audit_get_status_func = ffi.Int32 Function(
   ffi.Pointer<ffi.Uint32>,
 );
 typedef odbc_get_driver_capabilities_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_get_connection_dbms_info_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_build_upsert_sql_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_append_returning_sql_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Int32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_get_session_init_sql_func = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,

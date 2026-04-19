@@ -183,7 +183,12 @@ impl BulkCopyExecutor {
 
     fn should_fallback_to_array_binding(error: &OdbcError) -> bool {
         match error {
+            // Caller-side validation errors are programming bugs; do not retry.
             OdbcError::ValidationError(_) => false,
+            OdbcError::MalformedPayload(_) => false,
+            OdbcError::Cancelled => false,
+            OdbcError::NoMoreResults => false,
+            // Real driver/transport problems can succeed via the slower path.
             OdbcError::UnsupportedFeature(_) => true,
             OdbcError::InternalError(_) => true,
             OdbcError::OdbcApi(_) => true,
@@ -192,6 +197,10 @@ impl BulkCopyExecutor {
             OdbcError::InvalidHandle(_) => true,
             OdbcError::EmptyConnectionString => true,
             OdbcError::EnvironmentNotInitialized => true,
+            OdbcError::RollbackFailed(_) => true,
+            OdbcError::ResourceLimitReached(_) => false,
+            OdbcError::WorkerCrashed(_) => false,
+            OdbcError::BulkPartialFailure { .. } => false,
         }
     }
 }

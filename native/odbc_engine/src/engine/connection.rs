@@ -1,4 +1,6 @@
+use super::dbms_info::DbmsInfo;
 use super::transaction::{IsolationLevel, SavepointDialect, Transaction};
+use crate::engine::core::DriverCapabilities;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 
@@ -102,6 +104,29 @@ impl OdbcConnection {
             savepoint_dialect,
             f,
         )
+    }
+
+    /// Live DBMS introspection via `SQLGetInfo`. Returns the server-reported
+    /// DBMS name plus identifier limits and the canonical engine id.
+    /// More accurate than parsing the connection string (NEW in v2.1).
+    pub fn dbms_info(&self) -> Result<DbmsInfo> {
+        DbmsInfo::detect_for_conn_id(&self.handles, self.conn_id)
+    }
+
+    /// Capabilities derived from the live DBMS name (uses `SQLGetInfo`).
+    /// Equivalent to `self.dbms_info()?.capabilities`.
+    pub fn driver_capabilities(&self) -> Result<DriverCapabilities> {
+        let conn_arc = {
+            let h = self
+                .handles
+                .lock()
+                .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
+            h.get_connection(self.conn_id)?
+        };
+        let cached = conn_arc
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+        DriverCapabilities::detect(cached.connection())
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::engine::identifier::{quote_identifier_default, quote_qualified_default};
 use crate::error::{OdbcError, Result};
 use crate::protocol::bulk_insert::{
     is_null, BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp,
@@ -6,6 +7,19 @@ use odbc_api::handles::AsStatementRef;
 use odbc_api::sys::NULL_DATA;
 use odbc_api::{buffers::BufferDesc, Connection};
 use std::iter::once;
+
+/// Validate and quote each `&str` in `columns`, returning a comma-separated
+/// list ready to inject into a SQL `INSERT (...)` clause.
+///
+/// A2 fix: every column identifier passes through `quote_identifier_default`
+/// before reaching the wire, eliminating SQL injection vectors.
+fn quote_column_list(columns: &[&str]) -> Result<String> {
+    let mut quoted = Vec::with_capacity(columns.len());
+    for c in columns {
+        quoted.push(quote_identifier_default(c)?);
+    }
+    Ok(quoted.join(", "))
+}
 
 const DEFAULT_PARAMSET_SIZE: usize = 1000;
 
@@ -67,11 +81,9 @@ impl ArrayBinding {
             .take(n_cols)
             .collect::<Vec<_>>()
             .join(", ");
-        let col_list = columns.join(", ");
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            table, col_list, placeholders
-        );
+        let col_list = quote_column_list(columns)?;
+        let qtable = quote_qualified_default(table)?;
+        let sql = format!("INSERT INTO {qtable} ({col_list}) VALUES ({placeholders})");
 
         let prepared = conn.prepare(&sql).map_err(OdbcError::from)?;
         let descs: Vec<BufferDesc> = (0..n_cols)
@@ -122,10 +134,10 @@ impl ArrayBinding {
             return Ok(0);
         }
 
-        let sql = format!(
-            "INSERT INTO {} ({}, {}) VALUES (?, ?)",
-            table, columns[0], columns[1]
-        );
+        let qtable = quote_qualified_default(table)?;
+        let qcol0 = quote_identifier_default(columns[0])?;
+        let qcol1 = quote_identifier_default(columns[1])?;
+        let sql = format!("INSERT INTO {qtable} ({qcol0}, {qcol1}) VALUES (?, ?)");
         let prepared = conn.prepare(&sql).map_err(OdbcError::from)?;
         let descs = [
             BufferDesc::I32 { nullable: false },
@@ -184,21 +196,18 @@ impl ArrayBinding {
             ));
         }
 
-        let col_list: String = payload
-            .columns
-            .iter()
-            .map(|s| s.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let mut quoted_cols = Vec::with_capacity(payload.columns.len());
+        for s in &payload.columns {
+            quoted_cols.push(quote_identifier_default(&s.name)?);
+        }
+        let col_list = quoted_cols.join(", ");
         let placeholders = once("?")
             .cycle()
             .take(n_cols)
             .collect::<Vec<_>>()
             .join(", ");
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            payload.table, col_list, placeholders
-        );
+        let qtable = quote_qualified_default(&payload.table)?;
+        let sql = format!("INSERT INTO {qtable} ({col_list}) VALUES ({placeholders})");
 
         let descs: Vec<BufferDesc> = payload
             .columns

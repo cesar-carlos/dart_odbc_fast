@@ -1,6 +1,7 @@
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OdbcType {
+    // Stable v1.x discriminants (do NOT renumber).
     Varchar = 1,
     Integer = 2,
     BigInt = 3,
@@ -8,10 +9,24 @@ pub enum OdbcType {
     Date = 5,
     Timestamp = 6,
     Binary = 7,
+    // v3.0 additions (driver-specific or richer types).
+    NVarchar = 8,
+    TimestampWithTz = 9,
+    DatetimeOffset = 10,
+    Time = 11,
+    SmallInt = 12,
+    Boolean = 13,
+    Float = 14,
+    Double = 15,
+    Json = 16,
+    Uuid = 17,
+    Money = 18,
+    Interval = 19,
 }
 
 impl OdbcType {
     /// Decode from protocol binary format (enum discriminant).
+    /// Unknown codes degrade to `Varchar` for forward compatibility.
     pub fn from_protocol_discriminant(code: u16) -> Self {
         match code {
             1 => Self::Varchar,
@@ -21,19 +36,41 @@ impl OdbcType {
             5 => Self::Date,
             6 => Self::Timestamp,
             7 => Self::Binary,
+            8 => Self::NVarchar,
+            9 => Self::TimestampWithTz,
+            10 => Self::DatetimeOffset,
+            11 => Self::Time,
+            12 => Self::SmallInt,
+            13 => Self::Boolean,
+            14 => Self::Float,
+            15 => Self::Double,
+            16 => Self::Json,
+            17 => Self::Uuid,
+            18 => Self::Money,
+            19 => Self::Interval,
             _ => Self::Varchar,
         }
     }
 
     pub fn from_odbc_sql_type(sql_type: i16) -> Self {
+        // Reference: msodbcsql / sqltypes.h SQL_* constants.
         match sql_type {
             1 => Self::Varchar,
             4 => Self::Integer,
             -5 => Self::BigInt,
             3 => Self::Decimal,
-            9 => Self::Date,
-            11 => Self::Timestamp,
-            -2 => Self::Binary,
+            9 | 91 => Self::Date,       // SQL_DATE / SQL_TYPE_DATE
+            11 | 93 => Self::Timestamp, // SQL_TIMESTAMP / SQL_TYPE_TIMESTAMP
+            -4..=-2 => Self::Binary,    // BINARY / VARBINARY / LONGVARBINARY
+            -10..=-8 => Self::NVarchar, // WCHAR / WVARCHAR / WLONGVARCHAR
+            5 => Self::SmallInt,
+            -6 => Self::SmallInt,  // TINYINT degrades to SmallInt
+            -7 => Self::Boolean,   // SQL_BIT
+            7 => Self::Float,      // SQL_REAL
+            6 | 8 => Self::Double, // SQL_FLOAT / SQL_DOUBLE
+            10 | 92 => Self::Time, // SQL_TIME / SQL_TYPE_TIME
+            2 => Self::Decimal,    // NUMERIC
+            -11 => Self::Uuid,     // SQL_GUID
             _ => Self::Varchar,
         }
     }

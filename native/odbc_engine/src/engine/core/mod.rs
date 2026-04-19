@@ -20,7 +20,11 @@ pub use batch_executor::{BatchExecutor, BatchParam, BatchQuery};
 pub use bulk_copy::{BulkCopyExecutor, BulkCopyFormat};
 pub use connection_manager::ConnectionManager;
 pub use disk_spill::{DiskSpillStream, DiskSpillWriter, SpillReadSource};
-pub use driver_capabilities::DriverCapabilities;
+pub use driver_capabilities::{
+    DriverCapabilities, ENGINE_BIGQUERY, ENGINE_DB2, ENGINE_MARIADB, ENGINE_MONGODB, ENGINE_MYSQL,
+    ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_REDSHIFT, ENGINE_SNOWFLAKE, ENGINE_SQLITE,
+    ENGINE_SQLSERVER, ENGINE_SYBASE_ASA, ENGINE_SYBASE_ASE, ENGINE_UNKNOWN,
+};
 pub use execution_engine::ExecutionEngine;
 pub use memory_engine::MemoryEngine;
 pub use metadata_cache::{ColumnMetadata, MetadataCache, TableSchema};

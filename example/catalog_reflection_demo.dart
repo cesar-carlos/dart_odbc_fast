@@ -16,7 +16,7 @@ void main() async {
   final native = NativeOdbcConnection();
   final repository = OdbcRepositoryImpl(native);
   final service = OdbcService(repository);
-  
+
   try {
     // Initialize ODBC environment
     final initResult = await service.initialize();
@@ -24,25 +24,25 @@ void main() async {
       print('Failed to initialize: ${initResult.exceptionOrNull()}');
       return;
     }
-    
+
     // Connect to database
     final connectResult = await service.connect(dsn);
-    
+
     if (connectResult.isError()) {
       print('Connection failed: ${connectResult.exceptionOrNull()}');
       return;
     }
-    
+
     final connection = connectResult.getOrThrow();
     print('Connected: ${connection.id}\n');
 
     // Example table to inspect
     const tableName = 'users';
-    
+
     // 1. List Primary Keys
     print('=== Primary Keys for "$tableName" ===');
     final pkResult = await service.catalogPrimaryKeys(connection.id, tableName);
-    
+
     if (pkResult.isSuccess()) {
       final pkData = pkResult.getOrThrow();
       print('Columns: ${pkData.columns}');
@@ -53,11 +53,11 @@ void main() async {
     } else {
       print('Error: ${pkResult.exceptionOrNull()}\n');
     }
-    
+
     // 2. List Foreign Keys
     print('=== Foreign Keys for "$tableName" ===');
     final fkResult = await service.catalogForeignKeys(connection.id, tableName);
-    
+
     if (fkResult.isSuccess()) {
       final fkData = fkResult.getOrThrow();
       print('Columns: ${fkData.columns}');
@@ -68,11 +68,11 @@ void main() async {
     } else {
       print('Error: ${fkResult.exceptionOrNull()}\n');
     }
-    
+
     // 3. List Indexes
     print('=== Indexes for "$tableName" ===');
     final idxResult = await service.catalogIndexes(connection.id, tableName);
-    
+
     if (idxResult.isSuccess()) {
       final idxData = idxResult.getOrThrow();
       print('Columns: ${idxData.columns}');
@@ -83,7 +83,7 @@ void main() async {
     } else {
       print('Error: ${idxResult.exceptionOrNull()}\n');
     }
-    
+
     // Cleanup
     await service.disconnect(connection.id);
     print('Disconnected.');

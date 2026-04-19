@@ -164,6 +164,25 @@ impl Default for DiskSpillStream {
     }
 }
 
+impl Drop for DiskSpillStream {
+    /// M4 fix: ensure any unread spill file is removed when the stream is
+    /// dropped (e.g. on panic / early `?`). Best-effort: errors are logged.
+    fn drop(&mut self) {
+        // Drop the writer first so the OS releases the handle on Windows.
+        drop(self.file.take());
+        if let Some(path) = self.temp_path.take() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "DiskSpillStream::drop: failed to remove temp file {}: {e}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

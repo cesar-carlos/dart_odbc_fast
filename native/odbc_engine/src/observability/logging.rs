@@ -1,6 +1,75 @@
 use log::Level;
 use std::collections::HashMap;
 
+/// Environment variable that opts-in to logging raw SQL (literals included).
+/// When unset, [`sanitize_sql_for_log`] replaces literals with `?`.
+pub const ENV_LOG_RAW_SQL: &str = "ODBC_FAST_LOG_RAW_SQL";
+
+/// Replace string and numeric literals in `sql` with `?` so logs do not leak
+/// PII or sensitive payload data (A8).
+///
+/// The implementation is intentionally simple: it scans the string, replacing
+/// `'...'` (single-quoted strings, with `''` escape) and runs of digits/decimal
+/// numbers with `?`. Identifiers in double quotes (`"name"`) are preserved.
+///
+/// Set `ODBC_FAST_LOG_RAW_SQL=1` to bypass sanitisation (useful in
+/// dev/troubleshooting; never set in production).
+pub fn sanitize_sql_for_log(sql: &str) -> String {
+    if std::env::var(ENV_LOG_RAW_SQL)
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        return sql.to_string();
+    }
+    let mut out = String::with_capacity(sql.len());
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'\'' => {
+                out.push('?');
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\'' {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'0'..=b'9' => {
+                out.push('?');
+                while i < bytes.len() {
+                    let c = bytes[i];
+                    if c.is_ascii_digit()
+                        || c == b'.'
+                        || c == b'e'
+                        || c == b'E'
+                        || c == b'+'
+                        || c == b'-'
+                    {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                // Push raw character (preserves UTF-8 because `b` matched ASCII fast path).
+                // For multi-byte UTF-8, just copy the byte; we don't decode.
+                out.push(b as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 pub struct StructuredLogger {
     enabled: bool,
 }
@@ -15,7 +84,8 @@ impl StructuredLogger {
             return;
         }
 
-        let mut message = format!("Query: {}", query);
+        let sanitized = sanitize_sql_for_log(query);
+        let mut message = format!("Query: {}", sanitized);
         for (key, value) in metadata {
             message.push_str(&format!(", {}={}", key, value));
         }

@@ -2,16 +2,16 @@
 ///
 /// These options apply to a single execution and override
 /// any connection-level or global options.
+///
+/// > **v3.0.0**: the legacy `asyncFetch` flag has been removed (it had no
+/// > runtime effect since v2.x). For asynchronous execution use
+/// > `AsyncNativeOdbcConnection` or configure `OdbcService` with the async
+/// > backend.
 class StatementOptions {
   const StatementOptions({
     this.timeout,
     this.fetchSize,
     this.maxBufferSize,
-    @Deprecated(
-      'asyncFetch has no runtime effect and will be removed in a future '
-      'major version. Use AsyncNativeOdbcConnection/OdbcService async mode.',
-    )
-    this.asyncFetch = false,
   });
 
   /// Timeout for this specific execution (overrides connection/global).
@@ -29,16 +29,4 @@ class StatementOptions {
   /// When set, caps the result buffer; otherwise uses package default.
   /// Reduces memory usage for large result sets.
   final int? maxBufferSize;
-
-  /// Use async fetch when available.
-  ///
-  /// Deprecated: this flag has no runtime effect.
-  ///
-  /// Keep using async mode via `AsyncNativeOdbcConnection` or service
-  /// configured with async backend.
-  @Deprecated(
-    'asyncFetch has no runtime effect and will be removed in a future '
-    'major version. Use AsyncNativeOdbcConnection/OdbcService async mode.',
-  )
-  final bool asyncFetch;
 }

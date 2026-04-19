@@ -19,14 +19,31 @@
 - Prepared statements and named parameters (`@name`, `:name`)
 - Multi-result queries (`executeQueryMulti`, `executeQueryMultiFull`)
 - Streaming queries (`streamQueryBatched`, `streamQuery`)
-- Connection pooling
-- Transactions and savepoints
+- Connection pooling with **configurable eviction/timeouts** (v3.0
+  `PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`)
+- Transactions and savepoints (Sql-92 / SQL Server dialects)
 - Bulk insert payload builder and parallel bulk insert via pool
 - Connection string validation, driver capabilities, and runtime version APIs
+- **Live DBMS introspection** via `SQLGetInfo` (v2.1+): typed `DbmsInfo` with
+  canonical engine id, identifier limits, current catalog
+- **Driver-specific SQL builders** (v3.0): UPSERT, RETURNING/OUTPUT, and
+  per-engine session initialization through `OdbcDriverFeatures`
+- **9 supported engines** with dedicated plugins: SQL Server, PostgreSQL,
+  MySQL, **MariaDB** (v3.0), Oracle, Sybase, **SQLite** (v3.0),
+  **IBM Db2** (v3.0), **Snowflake** (v3.0)
+- **Per-driver catalog dispatch** (v3.0): `catalogTables`/`catalogColumns`
+  etc. now use `ALL_TABLES`/`sysobjects`/`sqlite_master`/`SYSCAT.*`
+  automatically when targeting Oracle/Sybase/SQLite/Db2 (no more
+  `INFORMATION_SCHEMA` failures on those engines)
 - Audit API and metadata cache controls
 - Async query/stream lifecycle controls (`executeAsyncStart/asyncPoll/...`)
-- Structured errors (SQLSTATE/native code)
-- Runtime metrics and telemetry hooks
+- **Structured errors** with 12+ typed Dart classes: `ConnectionError`,
+  `QueryError`, `ValidationError`, `UnsupportedFeatureError`,
+  `EnvironmentNotInitializedError`, plus v3.0: `NoMoreResultsError`,
+  `MalformedPayloadError`, `RollbackFailedError`,
+  `ResourceLimitReachedError`, `CancelledError`, `WorkerCrashedError`,
+  `BulkPartialFailureError` (with structured fields)
+- Runtime metrics and telemetry hooks (in-memory + OpenTelemetry OTLP)
 
 ## Type Mapping
 
@@ -39,15 +56,44 @@
   - `DateTime` → UTC ISO8601 string
     - year must be in `[1, 9999]` (otherwise `ArgumentError`)
 
-**Implemented result types** (Database → Dart):
-- String (UTF-8), Int32, Int64
-- Nullability preserved
+**Implemented result types** (Database → Dart) — **v3.0** typed enum
+[`OdbcType`](lib/infrastructure/native/protocol/odbc_type.dart) with
+**19 variants** matching the Rust wire protocol 1:1:
+
+| Discriminant | Variant            | Dart return type             |
+|--------------|--------------------|------------------------------|
+| 1            | `varchar`          | `String` (UTF-8)             |
+| 2            | `integer`          | `int` (4-byte LE i32)        |
+| 3            | `bigInt`           | `int` (8-byte LE i64)        |
+| 4            | `decimal`          | `String` (textual)           |
+| 5            | `date`             | `String` (`YYYY-MM-DD`)      |
+| 6            | `timestamp`        | `String`                     |
+| 7            | `binary`           | `Uint8List` (raw bytes)      |
+| 8            | `nVarchar`         | `String`                     |
+| 9            | `timestampWithTz`  | `String` (ISO 8601 + offset) |
+| 10           | `datetimeOffset`   | `String`                     |
+| 11           | `time`             | `String`                     |
+| 12           | `smallInt`         | `String` (textual)           |
+| 13           | `boolean`          | `String` (`0`/`1`)           |
+| 14           | `float`            | `String` (textual)           |
+| 15           | `doublePrecision`  | `String`                     |
+| 16           | `json`             | `String` (raw JSON text)     |
+| 17           | `uuid`             | `String`                     |
+| 18           | `money`            | `String`                     |
+| 19           | `interval`         | `String`                     |
+
+Use `OdbcType.fromDiscriminant(int)` or `ColumnMetadata.type` to access
+the typed variant. Unknown discriminants degrade to `OdbcType.varchar`
+for forward compatibility.
 
 **Planned (not yet implemented)**:
 - Explicit SQL typing API (`SqlDataType`)
-- Output parameters (SQL Server, Oracle)
+- Output parameters (SQL Server, Oracle) — Oracle uses `RETURNING ... INTO`
+  via `OdbcDriverFeatures.appendReturningClause` today
 
-See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed reference and roadmap.
+See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed
+reference and [`doc/CAPABILITIES_v3.md`](doc/CAPABILITIES_v3.md) for the
+full driver-capability matrix.
 
 ### Bulk insert validation behavior
 
@@ -141,6 +187,55 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 - Telemetry services/entities: `ITelemetryService`, `SimpleTelemetryService`, `ITelemetryRepository`, `Trace`, `Span`, `Metric`, `TelemetryEvent`
 - Telemetry infrastructure: `OpenTelemetryFFI`, `TelemetryRepositoryImpl`, `TelemetryBuffer`
 
+### v2.1 — Live DBMS introspection
+
+- `OdbcDriverCapabilities.getDbmsInfoForConnection(connId)` returns a typed
+  [`DbmsInfo`](lib/infrastructure/native/driver_capabilities.dart) with
+  the server-reported product name, canonical engine id, identifier
+  length limits, and current catalog. More accurate than parsing the
+  connection string (works for DSN-only, distinguishes MariaDB/MySQL,
+  ASE/ASA, etc).
+- `DatabaseEngineIds` and `DatabaseType.fromEngineId(id)` for stable
+  switch/case across releases.
+
+### v3.0 — Driver-specific capability builders
+
+[`OdbcDriverFeatures`](lib/infrastructure/native/driver_capabilities_v3.dart)
+exposes three pure SQL builders that resolve the dialect from the
+connection string:
+
+- `buildUpsertSql(...)` — generates dialect UPSERT (`ON CONFLICT`,
+  `ON DUPLICATE KEY UPDATE`, `MERGE`, depending on engine).
+- `appendReturningClause(sql, verb, columns)` — appends `RETURNING` /
+  `OUTPUT INSERTED.*` / `RETURNING ... INTO` / `FROM FINAL TABLE`.
+- `getSessionInitSql(connStr, options)` — returns the post-connect setup
+  statements per engine (`SET application_name`, `ALTER SESSION SET
+  NLS_*`, `PRAGMA foreign_keys=ON`, ...).
+
+### v3.0 — Pool eviction/timeout options
+
+[`PoolOptions`](lib/infrastructure/native/pool_options.dart) +
+[`OdbcPoolFactory`](lib/infrastructure/native/pool_options.dart)
+expose the new FFI `odbc_pool_create_with_options`:
+
+```dart
+final factory = OdbcPoolFactory(native);
+final poolId = factory.createPool(
+  'DSN=MyDsn',
+  10,
+  options: const PoolOptions(
+    idleTimeout: Duration(minutes: 5),
+    maxLifetime: Duration(hours: 1),
+    connectionTimeout: Duration(seconds: 10),
+  ),
+);
+```
+
+Falls back to the legacy `poolCreate` (no options) when either:
+- `options` is `null` or has no field set, OR
+- the loaded native library does not expose the v3.0 entry point
+  (use `factory.supportsApi` to check beforehand).
+
 ## Requirements
 
 - Dart SDK `>=3.6.0 <4.0.0`
@@ -152,7 +247,7 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 
 ```yaml
 dependencies:
-  odbc_fast: ^1.0.0
+  odbc_fast: ^3.0.0
 ```
 
 Then:
@@ -288,7 +383,21 @@ Validation rules:
 
 ## Connection String Builder
 
-Fluent API for building ODBC connection strings:
+Fluent API for building ODBC connection strings. Seven builders ship by
+default — three from v1, four added in v3.0:
+
+```dart
+// v1
+SqlServerBuilder()...build();
+PostgreSqlBuilder()...build();
+MySqlBuilder()...build();
+
+// v3.0 (NEW)
+MariaDbBuilder()...build();   // {MariaDB ODBC 3.1 Driver}, port 3306
+SqliteBuilder()...build();    // {SQLite3 ODBC Driver}, no Server/Port
+Db2Builder()...build();       // {IBM DB2 ODBC DRIVER}, port 50000
+SnowflakeBuilder()...build(); // {SnowflakeDSIIDriver}
+```
 
 ```dart
 final connStr = SqlServerBuilder()
@@ -321,21 +430,40 @@ Connection-string override takes precedence over environment value.
 All examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment variable or `.env` in project root.
 
 ```bash
+# Core API
 dart run example/main.dart
 dart run example/service_api_coverage_demo.dart
 dart run example/advanced_entities_demo.dart
-dart run example/connection_string_builder_demo.dart
 dart run example/simple_demo.dart
+
+# Connection / pool
+dart run example/connection_string_builder_demo.dart   # 7 builders incl. MariaDB/SQLite/Db2/Snowflake
+dart run example/pool_demo.dart
+dart run example/pool_with_options_demo.dart           # NEW v3.0 (PoolOptions)
+
+# Async
 dart run example/async_demo.dart
 dart run example/async_service_locator_demo.dart
+dart run example/execute_async_demo.dart
+
+# Queries / parameters
 dart run example/named_parameters_demo.dart
 dart run example/multi_result_demo.dart
 dart run example/streaming_demo.dart
-dart run example/pool_demo.dart
+
+# Transactions / savepoints
 dart run example/savepoint_demo.dart
+
+# Schema introspection
 dart run example/catalog_reflection_demo.dart
+dart run example/dbms_info_demo.dart                   # NEW v2.1 (live SQLGetInfo)
+
+# Driver-specific SQL builders (v3.0)
+dart run example/driver_features_demo.dart             # NEW v3.0 (UPSERT/RETURNING/SessionInit)
+
+# Errors / observability
+dart run example/structured_errors_demo.dart           # NEW v3.0 (12+ typed error classes)
 dart run example/audit_example.dart
-dart run example/execute_async_demo.dart
 dart run example/telemetry_demo.dart
 dart run example/otel_repository_demo.dart
 ```
@@ -513,6 +641,48 @@ Primary keys, foreign keys, and indexes
 - 🛡 Safe error recovery points
 - 📝 Clean transaction management patterns
 - 🔄 Granular control over transaction boundaries
+
+#### Pool with options (v3.0)
+
+**[pool_with_options_demo.dart](example/pool_with_options_demo.dart)** -
+Configurable pool eviction/timeouts
+
+- ✅ `PoolOptions(idleTimeout, maxLifetime, connectionTimeout)`
+- ✅ `OdbcPoolFactory.createPool(...)` with automatic legacy fallback
+- ✅ Supports detection of `supportsApi` for old native libraries
+- ✅ JSON-encoded options sent through `odbc_pool_create_with_options`
+
+#### Live DBMS introspection (v2.1)
+
+**[dbms_info_demo.dart](example/dbms_info_demo.dart)** - Real
+`SQLGetInfo` discovery
+
+- ✅ `OdbcDriverCapabilities.getDbmsInfoForConnection`
+- ✅ Distinguishes MariaDB vs MySQL, ASE vs ASA via the live driver
+- ✅ Reports `dbms_name`, `engine` id, identifier limits, current catalog
+- ✅ Works for DSN-only connection strings
+
+#### Driver-specific SQL builders (v3.0)
+
+**[driver_features_demo.dart](example/driver_features_demo.dart)** -
+UPSERT, RETURNING, and SessionInit
+
+- ✅ `buildUpsertSql` for any of the 9 supported engines
+- ✅ `appendReturningClause` with INSERT/UPDATE/DELETE positioning
+- ✅ `getSessionInitSql` per dialect
+- ✅ No DB connection needed — pure SQL generation
+
+#### Structured error handling (v3.0)
+
+**[structured_errors_demo.dart](example/structured_errors_demo.dart)** -
+12+ typed error classes
+
+- ✅ `ConnectionError`, `QueryError`, `ValidationError`, ... (v1)
+- ✅ `NoMoreResultsError`, `MalformedPayloadError`, `RollbackFailedError`,
+  `ResourceLimitReachedError`, `CancelledError`, `WorkerCrashedError`,
+  `BulkPartialFailureError` (v3.0)
+- ✅ `ErrorCategory` enum (transient/fatal/validation/connectionLost)
+  for retry/abort/reconnect decision making
 
 ## Build from source
 

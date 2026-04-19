@@ -2,6 +2,8 @@
 // This is expected and safe for extern "C" FFI boundaries
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+pub mod guard;
+
 use crate::async_bridge;
 #[cfg(not(feature = "sqlserver-bcp"))]
 use crate::engine::ArrayBinding;
@@ -1770,6 +1772,340 @@ pub extern "C" fn odbc_get_driver_capabilities(
     }
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *out_written = bytes.len() as c_uint;
+    }
+    0
+}
+
+/// Live DBMS introspection via `SQLGetInfo` for an OPEN connection (NEW in v2.1).
+///
+/// Returns a JSON document:
+/// ```json
+/// {
+///   "dbms_name": "Microsoft SQL Server",
+///   "engine": "sqlserver",
+///   "max_catalog_name_len": 128,
+///   "max_schema_name_len": 128,
+///   "max_table_name_len": 128,
+///   "max_column_name_len": 128,
+///   "current_catalog": "master",
+///   "capabilities": { ... }
+/// }
+/// ```
+///
+/// Use this instead of `odbc_get_driver_capabilities` when you have already
+/// established a connection and want the most accurate identification:
+///
+/// - DSN-only connection strings (no `Driver=` token) are correctly classified.
+/// - MariaDB vs MySQL is distinguished.
+/// - Custom / vendor-specific drivers (Devart, DataDirect, ...) work because
+///   the *server* tells us who it is.
+///
+/// `conn_id`: connection ID from `odbc_connect*` or `odbc_pool_get_connection`.
+/// `buffer`/`buffer_len`: pre-allocated UTF-8 output buffer.
+/// `out_written`: actual bytes written (excluding any null terminator).
+///
+/// Returns: `0` on success, `-1` on error (invalid handle / SQLGetInfo failed),
+/// `-2` if `buffer_len` is too small.
+#[no_mangle]
+pub extern "C" fn odbc_get_connection_dbms_info(
+    conn_id: c_uint,
+    buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    use crate::engine::DbmsInfo;
+
+    if buffer.is_null() || out_written.is_null() || buffer_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+    let Some(state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+
+    // Try direct connections first, then pooled connections.
+    let info_result = if let Some(conn) = state.connections.get(&conn_id) {
+        let handles = conn.get_handles();
+        DbmsInfo::detect_for_conn_id(&handles, conn_id)
+    } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
+        DbmsInfo::detect(pooled.get_connection())
+    } else {
+        let mut state_mut = state;
+        set_error(&mut state_mut, format!("Invalid connection ID: {conn_id}"));
+        set_out_written_zero(out_written);
+        return -1;
+    };
+    drop(state);
+
+    let info = match info_result {
+        Ok(i) => i,
+        Err(e) => {
+            if let Some(mut s) = try_lock_global_state() {
+                set_connection_error(&mut s, conn_id, e.to_string());
+            }
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+    let json = match info.to_json() {
+        Ok(j) => j,
+        Err(_) => {
+            set_out_written_zero(out_written);
+            return -1;
+        }
+    };
+    let bytes = json.as_bytes();
+    if bytes.len() > buffer_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+    // SAFETY: `buffer` and `out_written` were checked non-null above; `buffer_len`
+    // covers `bytes.len()` (verified just above). UTF-8 bytes are copied byte-for-byte.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
+        *out_written = bytes.len() as c_uint;
+    }
+    0
+}
+
+/// Build a dialect-specific UPSERT SQL for the connection-string-resolved plugin (NEW v3.0).
+///
+/// `conn_str`: NUL-terminated UTF-8 connection string (only the driver token is used).
+/// `table`: NUL-terminated UTF-8 table name (may be schema.table).
+/// `payload_json`: NUL-terminated UTF-8 JSON `{ "columns": [...], "conflict": [...], "update": [...]? }`.
+/// `out_buf`/`buf_len`/`out_written`: standard output buffer contract.
+/// Returns: 0 on success, -1 invalid argument, -2 buffer too small, -3 unsupported plugin.
+#[no_mangle]
+pub extern "C" fn odbc_build_upsert_sql(
+    conn_str: *const c_char,
+    table: *const c_char,
+    payload_json: *const c_char,
+    out_buf: *mut u8,
+    buf_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if conn_str.is_null()
+        || table.is_null()
+        || payload_json.is_null()
+        || out_buf.is_null()
+        || out_written.is_null()
+        || buf_len == 0
+    {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+    // SAFETY: each pointer was checked non-null above; caller guarantees C-string contract.
+    let conn_str_rs = match unsafe { CStr::from_ptr(conn_str).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let table_rs = match unsafe { CStr::from_ptr(table).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let payload_rs = match unsafe { CStr::from_ptr(payload_json).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+
+    #[derive(serde::Deserialize)]
+    struct UpsertPayload {
+        columns: Vec<String>,
+        conflict: Vec<String>,
+        #[serde(default)]
+        update: Option<Vec<String>>,
+    }
+    let payload: UpsertPayload = match serde_json::from_str(payload_rs) {
+        Ok(p) => p,
+        Err(_) => return -1,
+    };
+    let columns: Vec<&str> = payload.columns.iter().map(String::as_str).collect();
+    let conflict: Vec<&str> = payload.conflict.iter().map(String::as_str).collect();
+    let update_owned: Option<Vec<&str>> = payload
+        .update
+        .as_ref()
+        .map(|v| v.iter().map(String::as_str).collect());
+
+    let registry = PluginRegistry::default();
+    let result = match registry.build_upsert_sql(
+        conn_str_rs,
+        table_rs,
+        &columns,
+        &conflict,
+        update_owned.as_deref(),
+    ) {
+        Some(r) => r,
+        None => return -3,
+    };
+    let sql = match result {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    let bytes = sql.as_bytes();
+    if bytes.len() > buf_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+    // SAFETY: out_buf has buf_len capacity, verified above; out_written non-null.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        *out_written = bytes.len() as c_uint;
+    }
+    0
+}
+
+/// Append a dialect-specific RETURNING/OUTPUT clause to a DML statement (NEW v3.0).
+///
+/// `conn_str`: NUL-terminated UTF-8 connection string.
+/// `sql`: NUL-terminated UTF-8 INSERT/UPDATE/DELETE.
+/// `verb`: 0=Insert, 1=Update, 2=Delete.
+/// `columns_csv`: NUL-terminated UTF-8 comma-separated column names.
+/// Returns: 0 success, -1 invalid argument, -2 buffer too small, -3 unsupported plugin.
+#[no_mangle]
+pub extern "C" fn odbc_append_returning_sql(
+    conn_str: *const c_char,
+    sql: *const c_char,
+    verb: c_int,
+    columns_csv: *const c_char,
+    out_buf: *mut u8,
+    buf_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    use crate::plugins::capabilities::returning::DmlVerb;
+
+    if conn_str.is_null()
+        || sql.is_null()
+        || columns_csv.is_null()
+        || out_buf.is_null()
+        || out_written.is_null()
+        || buf_len == 0
+    {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+    let conn_str_rs = match unsafe { CStr::from_ptr(conn_str).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let sql_rs = match unsafe { CStr::from_ptr(sql).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let cols_rs = match unsafe { CStr::from_ptr(columns_csv).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let verb = match verb {
+        0 => DmlVerb::Insert,
+        1 => DmlVerb::Update,
+        2 => DmlVerb::Delete,
+        _ => return -1,
+    };
+    let cols: Vec<&str> = cols_rs
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let registry = PluginRegistry::default();
+    let r = match registry.append_returning_sql(conn_str_rs, sql_rs, verb, &cols) {
+        Some(r) => r,
+        None => return -3,
+    };
+    let out_sql = match r {
+        Ok(s) => s,
+        Err(_) => return -3,
+    };
+    let bytes = out_sql.as_bytes();
+    if bytes.len() > buf_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        *out_written = bytes.len() as c_uint;
+    }
+    0
+}
+
+/// Get the post-connect session-init SQL statements as a JSON array of strings (NEW v3.0).
+///
+/// `conn_str`: NUL-terminated UTF-8 connection string.
+/// `options_json`: NUL-terminated UTF-8 JSON of `SessionOptions`
+///   `{ "application_name"?: str, "timezone"?: str, "charset"?: str, "schema"?: str, "extra_sql"?: [str] }`
+///   or empty/null for defaults.
+#[no_mangle]
+pub extern "C" fn odbc_get_session_init_sql(
+    conn_str: *const c_char,
+    options_json: *const c_char,
+    out_buf: *mut u8,
+    buf_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    use crate::plugins::capabilities::SessionOptions;
+
+    if conn_str.is_null() || out_buf.is_null() || out_written.is_null() || buf_len == 0 {
+        set_out_written_zero(out_written);
+        return -1;
+    }
+    let conn_str_rs = match unsafe { CStr::from_ptr(conn_str).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let opts: SessionOptions = if options_json.is_null() {
+        SessionOptions::default()
+    } else {
+        let s = match unsafe { CStr::from_ptr(options_json).to_str() } {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        if s.trim().is_empty() {
+            SessionOptions::default()
+        } else {
+            #[derive(serde::Deserialize)]
+            struct OptsJson {
+                #[serde(default)]
+                application_name: Option<String>,
+                #[serde(default)]
+                timezone: Option<String>,
+                #[serde(default)]
+                charset: Option<String>,
+                #[serde(default)]
+                schema: Option<String>,
+                #[serde(default)]
+                extra_sql: Vec<String>,
+            }
+            let parsed: OptsJson = match serde_json::from_str(s) {
+                Ok(p) => p,
+                Err(_) => return -1,
+            };
+            SessionOptions {
+                application_name: parsed.application_name,
+                timezone: parsed.timezone,
+                charset: parsed.charset,
+                schema: parsed.schema,
+                extra_sql: parsed.extra_sql,
+            }
+        }
+    };
+
+    let registry = PluginRegistry::default();
+    let stmts = registry
+        .session_init_sql(conn_str_rs, &opts)
+        .unwrap_or_default();
+    let json = match serde_json::to_string(&stmts) {
+        Ok(j) => j,
+        Err(_) => return -1,
+    };
+    let bytes = json.as_bytes();
+    if bytes.len() > buf_len as usize {
+        set_out_written_zero(out_written);
+        return -2;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
         *out_written = bytes.len() as c_uint;
     }
     0
@@ -3881,14 +4217,25 @@ pub extern "C" fn odbc_stream_fetch(
             return -2;
         }
 
-        let pending = state
-            .pending_stream_chunks
-            .remove(&stream_id)
-            .expect("pending stream chunk exists");
+        let pending = match state.pending_stream_chunks.remove(&stream_id) {
+            Some(p) => p,
+            None => {
+                // Race: chunk vanished between length check and removal. Treat as
+                // an internal-state error rather than panicking across the FFI.
+                set_error(
+                    &mut state,
+                    format!("Stream {} pending chunk vanished concurrently", stream_id),
+                );
+                return -1;
+            }
+        };
         // Keep has_more from the original fetch that produced this chunk.
         // This preserves stream semantics across buffer-resize retries.
         let has_more_value = pending.has_more;
         let written_len = pending.data.len();
+        // SAFETY: `out_buf` was checked non-null and `buf_len` covers `written_len`
+        // (verified above against `needed_len`). `out_written`/`has_more` were
+        // checked non-null at function entry.
         unsafe {
             std::ptr::copy_nonoverlapping(pending.data.as_ptr(), out_buf, written_len);
             *out_written = written_len as c_uint;
@@ -4023,7 +4370,73 @@ pub extern "C" fn odbc_pool_create(conn_str: *const c_char, max_size: c_uint) ->
         Err(_) => return 0,
     };
 
-    match ConnectionPool::new(conn_str_rust, max_size) {
+    pool_create_inner(conn_str_rust, max_size, crate::pool::PoolOptions::default())
+}
+
+/// Create a connection pool with explicit eviction/timeout options (NEW v3.0).
+///
+/// `conn_str`: NUL-terminated UTF-8 connection string.
+/// `max_size`: maximum number of connections.
+/// `options_json`: NUL-terminated UTF-8 JSON
+///   `{ "idle_timeout_ms"?: int, "max_lifetime_ms"?: int, "connection_timeout_ms"?: int }`.
+///   May be null/empty to use defaults.
+///
+/// Returns: pool_id (>0) on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn odbc_pool_create_with_options(
+    conn_str: *const c_char,
+    max_size: c_uint,
+    options_json: *const c_char,
+) -> c_uint {
+    if conn_str.is_null() {
+        return 0;
+    }
+    let c_str = unsafe { CStr::from_ptr(conn_str) };
+    let conn_str_rust = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let opts = if options_json.is_null() {
+        crate::pool::PoolOptions::default()
+    } else {
+        let s = match unsafe { CStr::from_ptr(options_json).to_str() } {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        if s.trim().is_empty() {
+            crate::pool::PoolOptions::default()
+        } else {
+            #[derive(serde::Deserialize)]
+            struct OptsJson {
+                #[serde(default)]
+                idle_timeout_ms: Option<u64>,
+                #[serde(default)]
+                max_lifetime_ms: Option<u64>,
+                #[serde(default)]
+                connection_timeout_ms: Option<u64>,
+            }
+            let parsed: OptsJson = match serde_json::from_str(s) {
+                Ok(p) => p,
+                Err(_) => return 0,
+            };
+            crate::pool::PoolOptions {
+                idle_timeout: parsed.idle_timeout_ms.map(Duration::from_millis),
+                max_lifetime: parsed.max_lifetime_ms.map(Duration::from_millis),
+                connection_timeout: parsed.connection_timeout_ms.map(Duration::from_millis),
+            }
+        }
+    };
+
+    pool_create_inner(conn_str_rust, max_size, opts)
+}
+
+fn pool_create_inner(
+    conn_str: &str,
+    max_size: c_uint,
+    options: crate::pool::PoolOptions,
+) -> c_uint {
+    match ConnectionPool::new_with_options(conn_str, max_size, options) {
         Ok(pool) => {
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
@@ -4062,18 +4475,31 @@ pub extern "C" fn odbc_pool_create(conn_str: *const c_char, max_size: c_uint) ->
 /// Returns: connection_id (>0) on success, 0 on failure
 #[no_mangle]
 pub extern "C" fn odbc_pool_get_connection(pool_id: c_uint) -> c_uint {
+    // C3 fix: do NOT hold the global state lock while calling `r2d2::Pool::get()`,
+    // which can block for the configured pool timeout (~30s). We clone the
+    // Arc<ConnectionPool>, release the lock, perform the blocking acquire,
+    // then re-acquire the lock briefly to install the connection.
+    let pool_arc = {
+        let Some(state) = try_lock_global_state() else {
+            return 0;
+        };
+        match state.pools.get(&pool_id) {
+            Some(p) => Arc::clone(p),
+            None => {
+                drop(state);
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+                }
+                return 0;
+            }
+        }
+    };
+
+    let pooled_wrapper = pool_arc.get();
+
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
-
-    let pooled_wrapper = match state.pools.get(&pool_id) {
-        Some(p) => p,
-        None => {
-            set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
-            return 0;
-        }
-    }
-    .get();
 
     match pooled_wrapper {
         Ok(pooled_wrapper) => {
@@ -4347,27 +4773,36 @@ pub extern "C" fn odbc_pool_close(pool_id: c_uint) -> c_int {
         return -1;
     };
 
-    if state.pools.remove(&pool_id).is_some() {
-        let conn_ids: Vec<u32> = state
-            .pooled_connections
-            .iter()
-            .filter(|(_, (pid, _))| *pid == pool_id)
-            .map(|(cid, _)| *cid)
-            .collect();
-        for cid in conn_ids {
-            state.statements.retain(|_, stmt| stmt.conn_id() != cid);
-            if let Some((_, mut pooled)) = state.pooled_connections.remove(&cid) {
-                let conn = pooled.get_connection_mut();
-                let _ = conn.rollback();
-                let _ = conn.set_autocommit(true);
-            }
-        }
-        state.pooled_free_ids.remove(&pool_id);
-        0
-    } else {
+    if !state.pools.contains_key(&pool_id) {
         set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
-        1
+        return 1;
     }
+
+    // C4 fix: drain checked-out connections **before** removing the pool from
+    // the map. r2d2 returns a `PooledConnection` that releases back to the
+    // pool on Drop; if we removed the pool first and then dropped the last
+    // wrapper, r2d2 could deadlock waiting on internals that we just
+    // dismantled. Order matters: drop conns → drop free-id buckets → drop pool.
+    let conn_ids: Vec<u32> = state
+        .pooled_connections
+        .iter()
+        .filter(|(_, (pid, _))| *pid == pool_id)
+        .map(|(cid, _)| *cid)
+        .collect();
+    for cid in conn_ids {
+        state.statements.retain(|_, stmt| stmt.conn_id() != cid);
+        if let Some((_, mut pooled)) = state.pooled_connections.remove(&cid) {
+            let conn = pooled.get_connection_mut();
+            let _ = conn.rollback();
+            let _ = conn.set_autocommit(true);
+            // `pooled` is dropped here, releasing the connection back to the pool.
+        }
+    }
+    state.pooled_free_ids.remove(&pool_id);
+
+    // Now safe to remove the pool itself; no live checkouts remain.
+    state.pools.remove(&pool_id);
+    0
 }
 
 /// Bulk insert using array binding (ODBC SQL_ATTR_PARAMSET_SIZE).

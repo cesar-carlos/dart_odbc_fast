@@ -224,6 +224,23 @@ pub struct PoolOptions {
     pub idle_timeout: Option<Duration>,
     /// Connections are closed when they exceed this lifetime (checked on return).
     pub max_lifetime: Option<Duration>,
+    /// Maximum time `get()` will wait for an available connection.
+    /// Defaults to 30 s when `None`. (A9)
+    pub connection_timeout: Option<Duration>,
+}
+
+/// A14 fix: customizer that forces `set_autocommit(true)` on every checkout
+/// regardless of `test_on_check_out`. Prevents conn reuse in mid-transaction
+/// state when validation is disabled.
+#[derive(Debug)]
+struct PoolAutocommitCustomizer;
+
+impl r2d2::CustomizeConnection<Connection<'static>, OdbcError> for PoolAutocommitCustomizer {
+    fn on_acquire(&self, conn: &mut Connection<'static>) -> std::result::Result<(), OdbcError> {
+        // Best-effort rollback (in case the previous user left a transaction open).
+        let _ = conn.rollback();
+        conn.set_autocommit(true).map_err(OdbcError::from)
+    }
 }
 
 impl ConnectionPool {
@@ -242,10 +259,14 @@ impl ConnectionPool {
             &config.sanitized_connection_string,
             &config.health_check_query,
         )?;
+        let connection_timeout = options
+            .connection_timeout
+            .unwrap_or_else(|| Duration::from_secs(30));
         let mut builder = Pool::builder()
             .max_size(max_size)
-            .connection_timeout(Duration::from_secs(30))
-            .test_on_check_out(config.test_on_check_out);
+            .connection_timeout(connection_timeout)
+            .test_on_check_out(config.test_on_check_out)
+            .connection_customizer(Box::new(PoolAutocommitCustomizer));
         if let Some(d) = options.idle_timeout {
             builder = builder.idle_timeout(Some(d));
         }

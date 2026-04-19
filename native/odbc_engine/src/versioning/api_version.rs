@@ -18,10 +18,20 @@ impl ApiVersion {
         }
     }
 
+    /// Single source of truth for the API version: parses `CARGO_PKG_VERSION`
+    /// at compile time. Replaces the previously hardcoded `0.1.0`. (M17)
     pub fn current() -> Self {
-        Self::new(0, 1, 0)
+        const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+        let mut parts = PKG_VERSION.split('.');
+        let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        Self::new(major, minor, patch)
     }
 
+    /// Two versions are compatible when the major matches and the right-hand
+    /// side does not require a newer minor than ours. We deliberately ignore
+    /// `patch` because patch-level changes are bug fixes by SemVer convention. (M18)
     pub fn is_compatible_with(&self, other: &ApiVersion) -> bool {
         self.major == other.major && self.minor >= other.minor
     }
@@ -56,11 +66,10 @@ mod tests {
     }
 
     #[test]
-    fn test_api_version_current() {
+    fn test_api_version_current_matches_cargo_pkg_version() {
         let v = ApiVersion::current();
-        assert_eq!(v.major, 0);
-        assert_eq!(v.minor, 1);
-        assert_eq!(v.patch, 0);
+        let pkg = env!("CARGO_PKG_VERSION");
+        assert_eq!(v.to_string(), pkg);
     }
 
     #[test]

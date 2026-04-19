@@ -1,10 +1,12 @@
 name: odbc_fast
-# v1.0.0 - Stable major release
+# v3.0.0 - Driver-specific capabilities (UPSERT, RETURNING, native bulk,
+# session init, per-dialect quoting, extended types) + 4 new plugins
+# (SQLite, Db2, Snowflake, MariaDB).
 # Breaking changes: MAJOR bumps (2.0.0, 3.0.0)
 # New features: MINOR bumps (1.1.0, 1.2.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
-# See doc/VERSIONING_STRATEGY.md for versioning guidelines
-version: 1.2.1
+# See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.0.0 details.
+version: 3.0.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast
@@ -36,7 +38,7 @@ dev_dependencies:
   ffigen: ^20.1.1
   lints: ^6.0.0
   test: ^1.29.0
-  very_good_analysis: ^10.0.0
+  very_good_analysis: ^10.2.0
 
 topics:
   - db

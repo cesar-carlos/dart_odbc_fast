@@ -115,3 +115,38 @@ class PostgreSqlBuilder extends ConnectionStringBuilder {
 class MySqlBuilder extends ConnectionStringBuilder {
   MySqlBuilder() : super(driver: '{MySQL ODBC 8.0 Driver}', port: 3306);
 }
+
+/// Builder preconfigured for MariaDB (NEW v3.0).
+///
+/// Default driver is `{MariaDB ODBC 3.1 Driver}`, default port `3306`. Wire-
+/// protocol compatible with MySQL but selects the MariaDB-specific Rust
+/// plugin (which enables `RETURNING`).
+class MariaDbBuilder extends ConnectionStringBuilder {
+  MariaDbBuilder() : super(driver: '{MariaDB ODBC 3.1 Driver}', port: 3306);
+}
+
+/// Builder preconfigured for SQLite (NEW v3.0).
+///
+/// Default driver is `{SQLite3 ODBC Driver}`. SQLite is file-based, so this
+/// builder typically only needs the `Database` (path) field.
+class SqliteBuilder extends ConnectionStringBuilder {
+  SqliteBuilder() : super(driver: '{SQLite3 ODBC Driver}');
+}
+
+/// Builder preconfigured for IBM Db2 (NEW v3.0).
+///
+/// Default driver is `{IBM DB2 ODBC DRIVER}`, default port `50000`. Use
+/// [database] for the database alias (catalogued in the Db2 client) and
+/// [credentials] for `Uid`/`Pwd`.
+class Db2Builder extends ConnectionStringBuilder {
+  Db2Builder() : super(driver: '{IBM DB2 ODBC DRIVER}', port: 50000);
+}
+
+/// Builder preconfigured for Snowflake (NEW v3.0).
+///
+/// Default driver is `{SnowflakeDSIIDriver}`. Snowflake connection strings
+/// commonly include `Server`, `Database`, `Schema`, `Warehouse`, `Role`, and
+/// `Authenticator` — pass them via [option].
+class SnowflakeBuilder extends ConnectionStringBuilder {
+  SnowflakeBuilder() : super(driver: '{SnowflakeDSIIDriver}');
+}

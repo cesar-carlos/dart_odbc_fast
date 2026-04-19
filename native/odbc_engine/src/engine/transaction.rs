@@ -1,3 +1,4 @@
+use crate::engine::identifier::{quote_identifier, validate_identifier, IdentifierQuoting};
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use std::sync::{Arc, Mutex};
@@ -209,9 +210,13 @@ impl Transaction {
                 txn.commit()?;
                 Ok(result)
             }
-            Err(e) => {
-                let _ = txn.rollback();
-                Err(e)
+            Err(original) => {
+                if let Err(rollback_err) = txn.rollback() {
+                    log::error!(
+                        "Rollback after error failed on conn_id {conn_id}: original={original}, rollback={rollback_err}"
+                    );
+                }
+                Err(original)
             }
         }
     }
@@ -275,16 +280,54 @@ impl Drop for Transaction {
             .lock()
             .map(|s| *s)
             .unwrap_or(TransactionState::None);
-        if s == TransactionState::Active {
-            log::warn!("Transaction dropped without commit - auto-rollback");
-            if let Ok(h) = self.handles.lock() {
-                if let Ok(conn_arc) = h.get_connection(self.conn_id) {
-                    if let Ok(mut conn) = conn_arc.lock() {
-                        let _ = conn.connection_mut().rollback();
-                        let _ = conn.connection_mut().set_autocommit(true);
-                    }
-                }
+        if s != TransactionState::Active {
+            return;
+        }
+        log::warn!(
+            "Transaction on conn_id {} dropped without commit - auto-rollback",
+            self.conn_id
+        );
+        let h = match self.handles.lock() {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!(
+                    "Transaction Drop: failed to lock handles for conn_id {}: {e}",
+                    self.conn_id
+                );
+                return;
             }
+        };
+        let conn_arc = match h.get_connection(self.conn_id) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!(
+                    "Transaction Drop: connection {} not found: {e}",
+                    self.conn_id
+                );
+                return;
+            }
+        };
+        let mut conn = match conn_arc.lock() {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!(
+                    "Transaction Drop: failed to lock connection {}: {e}",
+                    self.conn_id
+                );
+                return;
+            }
+        };
+        if let Err(e) = conn.connection_mut().rollback() {
+            log::error!(
+                "Transaction Drop: rollback failed on conn_id {}: {e}",
+                self.conn_id
+            );
+        }
+        if let Err(e) = conn.connection_mut().set_autocommit(true) {
+            log::error!(
+                "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
+                self.conn_id
+            );
         }
     }
 }
@@ -294,11 +337,22 @@ pub struct Savepoint<'t> {
     name: String,
 }
 
+/// Choose the appropriate identifier quoting style for a savepoint dialect.
+fn quoting_for(dialect: SavepointDialect) -> IdentifierQuoting {
+    match dialect {
+        SavepointDialect::Sql92 => IdentifierQuoting::DoubleQuote,
+        SavepointDialect::SqlServer => IdentifierQuoting::Brackets,
+    }
+}
+
 impl<'t> Savepoint<'t> {
     pub fn create(transaction: &'t Transaction, name: &str) -> Result<Self> {
+        // A1 fix: validate + quote savepoint identifier to prevent SQL injection.
+        validate_identifier(name)?;
+        let qname = quote_identifier(name, quoting_for(transaction.savepoint_dialect()))?;
         let sql = match transaction.savepoint_dialect() {
-            SavepointDialect::Sql92 => format!("SAVEPOINT {}", name),
-            SavepointDialect::SqlServer => format!("SAVE TRANSACTION {}", name),
+            SavepointDialect::Sql92 => format!("SAVEPOINT {qname}"),
+            SavepointDialect::SqlServer => format!("SAVE TRANSACTION {qname}"),
         };
         transaction.execute_sql(&sql)?;
         Ok(Self {
@@ -308,9 +362,13 @@ impl<'t> Savepoint<'t> {
     }
 
     pub fn rollback_to(&self) -> Result<()> {
+        let qname = quote_identifier(
+            &self.name,
+            quoting_for(self.transaction.savepoint_dialect()),
+        )?;
         let sql = match self.transaction.savepoint_dialect() {
-            SavepointDialect::Sql92 => format!("ROLLBACK TO SAVEPOINT {}", self.name),
-            SavepointDialect::SqlServer => format!("ROLLBACK TRANSACTION {}", self.name),
+            SavepointDialect::Sql92 => format!("ROLLBACK TO SAVEPOINT {qname}"),
+            SavepointDialect::SqlServer => format!("ROLLBACK TRANSACTION {qname}"),
         };
         self.transaction.execute_sql(&sql)
     }
@@ -318,11 +376,12 @@ impl<'t> Savepoint<'t> {
     pub fn release(self) -> Result<()> {
         match self.transaction.savepoint_dialect() {
             SavepointDialect::Sql92 => {
-                let sql = format!("RELEASE SAVEPOINT {}", self.name);
+                let qname = quote_identifier(&self.name, IdentifierQuoting::DoubleQuote)?;
+                let sql = format!("RELEASE SAVEPOINT {qname}");
                 self.transaction.execute_sql(&sql)
             }
             SavepointDialect::SqlServer => {
-                // SQL Server has no RELEASE SAVEPOINT; savepoint is released on commit/rollback
+                // SQL Server has no RELEASE SAVEPOINT; savepoint is released on commit/rollback.
                 Ok(())
             }
         }

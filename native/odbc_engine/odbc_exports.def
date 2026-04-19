@@ -45,6 +45,7 @@ odbc_cancel
 odbc_close_statement
 odbc_clear_all_statements
 odbc_pool_create
+odbc_pool_create_with_options
 odbc_pool_get_connection
 odbc_pool_release_connection
 odbc_pool_health_check
@@ -56,6 +57,10 @@ odbc_bulk_insert_array
 odbc_bulk_insert_parallel
 odbc_detect_driver
 odbc_get_driver_capabilities
+odbc_get_connection_dbms_info
+odbc_build_upsert_sql
+odbc_append_returning_sql
+odbc_get_session_init_sql
 odbc_audit_enable
 odbc_audit_get_events
 odbc_audit_clear

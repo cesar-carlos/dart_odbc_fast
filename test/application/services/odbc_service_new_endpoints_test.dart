@@ -63,8 +63,7 @@ void main() {
     group('getDriverCapabilities', () {
       test('returns capabilities map and delegates to repository', () async {
         await service.initialize();
-        final result =
-            await service.getDriverCapabilities('DSN=MyDb');
+        final result = await service.getDriverCapabilities('DSN=MyDb');
         expect(result.isSuccess(), isTrue);
         final caps = result.getOrNull()!;
         expect(caps['driver_name'], equals('mock'));
@@ -213,8 +212,7 @@ void main() {
       });
 
       test('streamStartAsync returns stream ID', () async {
-        final result =
-            await service.streamStartAsync(connectionId, 'SELECT 1');
+        final result = await service.streamStartAsync(connectionId, 'SELECT 1');
         expect(result.isSuccess(), isTrue);
         expect(result.getOrNull(), equals(1));
         expect(mockRepo.streamStartAsyncCalled, isTrue);

@@ -36,6 +36,21 @@ class OdbcNative {
   late final bindings.OdbcBindings _bindings;
   late final ffi.DynamicLibrary _library;
 
+  /// Read-only access to the raw bindings. Use only for new capabilities
+  /// implemented in companion modules (e.g. `driver_capabilities_v3.dart`).
+  bindings.OdbcBindings get rawBindings => _bindings;
+
+  /// Re-export of the buffer-allocation helper so capability modules can
+  /// reuse the same retry/grow logic used internally.
+  Uint8List? execWithBuffer(
+    int Function(
+      ffi.Pointer<ffi.Uint8> buf,
+      int bufLen,
+      ffi.Pointer<ffi.Uint32> outWritten,
+    ) op,
+  ) =>
+      callWithBuffer(op);
+
   /// True when the loaded native library exposes the audit FFI API.
   bool get supportsAuditApi => _bindings.supportsAuditApi;
 
@@ -258,6 +273,36 @@ class OdbcNative {
     } finally {
       malloc.free(connStrPtr);
     }
+  }
+
+  /// True when the loaded native library exposes the v2.1 live DBMS
+  /// introspection FFI (`odbc_get_connection_dbms_info`).
+  bool get supportsConnectionDbmsInfoApi =>
+      _bindings.supportsConnectionDbmsInfoApi;
+
+  /// Live DBMS introspection (v2.1). Returns the JSON document produced by
+  /// `odbc_get_connection_dbms_info` for the given connection id, or null
+  /// when the FFI is unavailable / the call fails.
+  ///
+  /// Far more accurate than [getDriverCapabilitiesJson] because it queries
+  /// the actual driver via `SQLGetInfo(SQL_DBMS_NAME)` instead of parsing
+  /// the connection string.
+  String? getConnectionDbmsInfoJson(int connectionId) {
+    if (!_bindings.supportsConnectionDbmsInfoApi) {
+      return null;
+    }
+    final data = callWithBuffer(
+      (buf, bufLen, outWritten) => _bindings.odbc_get_connection_dbms_info(
+        connectionId,
+        buf,
+        bufLen,
+        outWritten,
+      ),
+    );
+    if (data == null) {
+      return null;
+    }
+    return utf8.decode(data);
   }
 
   /// Detects the database driver from a connection string.
@@ -1165,6 +1210,38 @@ class OdbcNative {
       );
     } finally {
       malloc.free(connStrPtr);
+    }
+  }
+
+  /// Whether the loaded native library exposes the v3.0
+  /// `odbc_pool_create_with_options` entry point.
+  bool get supportsPoolCreateWithOptions =>
+      _bindings.supportsPoolCreateWithOptions;
+
+  /// Creates a pool with explicit eviction/timeout options (v3.0).
+  ///
+  /// `optionsJson` keys (all optional, in milliseconds):
+  /// `idle_timeout_ms`, `max_lifetime_ms`, `connection_timeout_ms`.
+  /// Returns 0 on failure or when the FFI is not available.
+  int poolCreateWithOptions(
+    String connectionString,
+    int maxSize, {
+    String? optionsJson,
+  }) {
+    if (!_bindings.supportsPoolCreateWithOptions) return 0;
+    final connStrPtr = connectionString.toNativeUtf8();
+    final optsPtr = optionsJson?.toNativeUtf8().cast<bindings.Utf8>();
+    try {
+      return _bindings.odbc_pool_create_with_options(
+        connStrPtr.cast<bindings.Utf8>(),
+        maxSize,
+        optsPtr,
+      );
+    } finally {
+      malloc.free(connStrPtr);
+      if (optsPtr != null) {
+        malloc.free(optsPtr.cast<Utf8>());
+      }
     }
   }
 

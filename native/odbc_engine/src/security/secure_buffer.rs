@@ -18,12 +18,40 @@ impl SecureBuffer {
         &self.data
     }
 
+    /// Run `f` with read-only access to the buffer bytes, then zeroise the
+    /// buffer in place before returning. Recommended over [`into_vec`] for
+    /// short-lived consumers that just need to forward bytes (C5).
+    pub fn with_bytes<R>(mut self, f: impl FnOnce(&[u8]) -> R) -> R {
+        let r = f(&self.data);
+        self.data.zeroize();
+        r
+    }
+
+    /// Move the underlying bytes out of the buffer.
+    ///
+    /// **Security note (C5)**: the returned `Vec<u8>` is **not** zeroised when
+    /// the caller drops it. Prefer [`with_bytes`] when you only need temporary
+    /// access. Use this method only when the bytes must outlive the buffer for
+    /// architectural reasons (e.g. handing off to ODBC `connect` immediately).
+    #[deprecated(
+        since = "2.0.0",
+        note = "Bytes returned by `into_vec` are not zeroised on drop. \
+                Prefer `with_bytes` for short-lived consumers."
+    )]
     pub fn into_vec(mut self) -> Vec<u8> {
         std::mem::take(&mut self.data)
     }
 
     pub fn to_string_lossy(&self) -> String {
         String::from_utf8_lossy(&self.data).to_string()
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 
@@ -59,7 +87,15 @@ mod tests {
     }
 
     #[test]
-    fn test_into_vec() {
+    fn test_with_bytes_zeroes_after_use() {
+        let buffer = SecureBuffer::new(vec![1, 2, 3]);
+        let copy = buffer.with_bytes(|b| b.to_vec());
+        assert_eq!(copy, vec![1, 2, 3]);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_into_vec_legacy() {
         let data = vec![1, 2, 3];
         let buffer = SecureBuffer::new(data.clone());
         let extracted = buffer.into_vec();
@@ -129,7 +165,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_string_then_into_vec() {
+    #[allow(deprecated)]
+    fn test_from_string_then_into_vec_legacy() {
         let original = "test data".to_string();
         let buffer = SecureBuffer::from_string(original.clone());
         let extracted = buffer.into_vec();
