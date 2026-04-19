@@ -8,6 +8,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -238,8 +239,9 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Future<Result<int>> beginTransaction(
     String connectionId,
-    IsolationLevel isolationLevel,
-  ) async {
+    IsolationLevel isolationLevel, {
+    SavepointDialect savepointDialect = SavepointDialect.auto,
+  }) async {
     beginTransactionCalled = true;
     return const Success(1);
   }

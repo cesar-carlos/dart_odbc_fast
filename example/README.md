@@ -43,7 +43,8 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 
 ### Transactions / savepoints
 
-- [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit.
+- [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit. Uses the high-level `OdbcService` API.
+- **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(NEW v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
 
 ### Schema introspection
 

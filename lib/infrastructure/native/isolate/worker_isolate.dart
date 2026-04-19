@@ -144,6 +144,7 @@ void _handleRequest(
         final txnId = conn.beginTransaction(
           request.connectionId,
           request.isolationLevel,
+          savepointDialect: request.savepointDialect,
         );
         sendPort.send(IntResponse(request.requestId, txnId));
 

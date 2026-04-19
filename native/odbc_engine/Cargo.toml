@@ -1,11 +1,15 @@
 [package]
 name = "odbc_engine"
-# v3.0.0 release: 7 capability traits (BulkLoader, Upsertable, Returnable,
-# TypeCatalog, IdentifierQuoter, CatalogProvider, SessionInitializer); 4 new
-# plugins (SQLite, IBM Db2, Snowflake, MariaDB) on top of the existing 5; 12
-# new OdbcType variants; 3 new FFI entry points. See CHANGELOG.md for the
-# complete list and migration notes.
-version = "3.0.0"
+# v3.1.0 release: transaction control hardening.
+# - SavepointDialect::Auto resolved via SQLGetInfo at Transaction::begin (B2).
+# - FFI odbc_savepoint_* now route through Transaction::savepoint_* with
+#   identifier validation + dialect-aware quoting (B1 / closes A1 via FFI).
+# - apply_isolation engine-aware (SQLite PRAGMA, Db2 SET CURRENT, Oracle
+#   restricted, Snowflake skip, Sql92 default).
+# - commit / rollback always restore autocommit (B7).
+# - 6 new regression tests under tests/regression/a1_ffi_savepoint_injection.
+# See CHANGELOG.md for the complete list and migration notes.
+version = "3.1.0"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

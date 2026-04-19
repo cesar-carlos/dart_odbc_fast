@@ -1069,10 +1069,9 @@ pub extern "C" fn odbc_transaction_begin(
         return 0;
     }
 
-    let txn_result = match dialect {
-        SavepointDialect::Sql92 => conn.begin_transaction(isolation),
-        SavepointDialect::SqlServer => conn.begin_transaction_with_dialect(isolation, dialect),
-    };
+    // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
+    // `DbmsInfo::detect_for_conn_id` (live SQLGetInfo) — see v3.1 fix B2.
+    let txn_result = conn.begin_transaction_with_dialect(isolation, dialect);
 
     match txn_result {
         Ok(txn) => {
@@ -1158,12 +1157,16 @@ pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
     }
 }
 
-/// Create a savepoint within an active transaction.
-/// txn_id: transaction ID from odbc_transaction_begin
-/// name: savepoint name (UTF-8, null-terminated)
-/// Returns: 0 on success, non-zero on failure
-#[no_mangle]
-pub extern "C" fn odbc_savepoint_create(txn_id: c_uint, name: *const c_char) -> c_int {
+/// Generic dispatcher for the three savepoint FFI entry points.
+///
+/// All paths go through `Transaction::savepoint_*` which performs identifier
+/// validation + dialect-aware quoting (B1 + A1 fix). The previous
+/// implementation used inline `format!("SAVEPOINT {}", name)` which bypassed
+/// the safety net and reintroduced SQL injection via the FFI surface.
+fn savepoint_dispatch<F>(txn_id: c_uint, name: *const c_char, op: &str, action: F) -> c_int
+where
+    F: Fn(&Transaction, &str) -> Result<()>,
+{
     if name.is_null() {
         return 1;
     }
@@ -1174,90 +1177,53 @@ pub extern "C" fn odbc_savepoint_create(txn_id: c_uint, name: *const c_char) -> 
     let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
-    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
-    let res = state
-        .transactions
-        .get(&txn_id)
-        .map(|txn| txn.execute_sql(&format!("SAVEPOINT {}", name_str)));
-    match (conn_id, res) {
-        (Some(_cid), Some(Ok(_))) => 0,
-        (Some(cid), Some(Err(e))) => {
-            set_connection_error(&mut state, cid, format!("Savepoint create failed: {}", e));
-            1
-        }
-        _ => {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
+    let Some(txn) = state.transactions.get(&txn_id) else {
+        set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
+        return 1;
+    };
+    let conn_id = txn.conn_id();
+    match action(txn, name_str) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_connection_error(&mut state, conn_id, format!("Savepoint {op} failed: {}", e));
             1
         }
     }
+}
+
+/// Create a savepoint within an active transaction.
+/// txn_id: transaction ID from odbc_transaction_begin
+/// name: savepoint name (UTF-8, null-terminated). Must match the identifier
+///       grammar enforced by `engine::identifier::validate_identifier`
+///       (ASCII letter or `_`, then letters/digits/`_`, ≤128 chars). Names
+///       containing semicolons, quotes or whitespace are rejected.
+/// Returns: 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn odbc_savepoint_create(txn_id: c_uint, name: *const c_char) -> c_int {
+    savepoint_dispatch(txn_id, name, "create", |txn, n| txn.savepoint_create(n))
 }
 
 /// Rollback to a savepoint. Transaction remains active.
 /// txn_id: transaction ID from odbc_transaction_begin
-/// name: savepoint name (UTF-8, null-terminated)
+/// name: savepoint name (UTF-8, null-terminated; same grammar as
+///       `odbc_savepoint_create`).
 /// Returns: 0 on success, non-zero on failure
 #[no_mangle]
 pub extern "C" fn odbc_savepoint_rollback(txn_id: c_uint, name: *const c_char) -> c_int {
-    if name.is_null() {
-        return 1;
-    }
-    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 1,
-    };
-    let Some(mut state) = try_lock_global_state() else {
-        return -1;
-    };
-    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
-    let res = state
-        .transactions
-        .get(&txn_id)
-        .map(|txn| txn.execute_sql(&format!("ROLLBACK TO SAVEPOINT {}", name_str)));
-    match (conn_id, res) {
-        (Some(_cid), Some(Ok(_))) => 0,
-        (Some(cid), Some(Err(e))) => {
-            set_connection_error(&mut state, cid, format!("Savepoint rollback failed: {}", e));
-            1
-        }
-        _ => {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
-            1
-        }
-    }
+    savepoint_dispatch(txn_id, name, "rollback", |txn, n| {
+        txn.savepoint_rollback_to(n)
+    })
 }
 
 /// Release a savepoint. Transaction remains active.
+/// On SQL Server this is a successful no-op (the dialect has no RELEASE).
 /// txn_id: transaction ID from odbc_transaction_begin
-/// name: savepoint name (UTF-8, null-terminated)
+/// name: savepoint name (UTF-8, null-terminated; same grammar as
+///       `odbc_savepoint_create`).
 /// Returns: 0 on success, non-zero on failure
 #[no_mangle]
 pub extern "C" fn odbc_savepoint_release(txn_id: c_uint, name: *const c_char) -> c_int {
-    if name.is_null() {
-        return 1;
-    }
-    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 1,
-    };
-    let Some(mut state) = try_lock_global_state() else {
-        return -1;
-    };
-    let conn_id = state.transactions.get(&txn_id).map(|t| t.conn_id());
-    let res = state
-        .transactions
-        .get(&txn_id)
-        .map(|txn| txn.execute_sql(&format!("RELEASE SAVEPOINT {}", name_str)));
-    match (conn_id, res) {
-        (Some(_cid), Some(Ok(_))) => 0,
-        (Some(cid), Some(Err(e))) => {
-            set_connection_error(&mut state, cid, format!("Savepoint release failed: {}", e));
-            1
-        }
-        _ => {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
-            1
-        }
-    }
+    savepoint_dispatch(txn_id, name, "release", |txn, n| txn.savepoint_release(n))
 }
 
 /// Get last error message

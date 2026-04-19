@@ -2,7 +2,7 @@
 
 Consolidated backlog of items not yet included in implemented scope.
 
-**Last verified against code:** 2026-03-10
+**Last verified against code:** 2026-04-18
 
 > Note: this file is in `doc/notes/` and intentionally documents pending
 > implementation work.
@@ -12,8 +12,52 @@ Consolidated backlog of items not yet included in implemented scope.
 | Item                               | Status               | Priority |
 | ---------------------------------- | -------------------- | -------- |
 | ~~Schema reflection (PK/FK/Indexes)~~ | ✅ **Implemented (2026-03-10)** | ~~High~~ |
+| ~~SavepointDialect autodetect (B2/B4)~~ | ✅ **Implemented (v3.1.0)**     | ~~High~~ |
+| ~~FFI savepoint identifier injection (B1)~~ | ✅ **Implemented (v3.1.0)** | ~~Critical~~ |
+| Transaction Sprint 4 — `READ ONLY`, lock_timeout, XA / 2PC | Planned (not started) | Medium |
 | Explicit SQL typing API (`SqlDataType`) | Planned (not started) | Medium |
 | Output parameters by driver/plugin | Out of current scope | Medium   |
+
+## 0. Transaction control — Sprint 4 (Planned)
+
+The v3.1.0 release closed the four critical bugs (B1, B2, B4, B7) and shipped
+the Dart safety helpers (`runWithBegin`, `withSavepoint`, `Finalizable`).
+Sprint 4 covers the optional / advanced surface that did **not** make it into
+v3.1 because none of it is required for correctness.
+
+### 4.1 `SET TRANSACTION READ ONLY`
+
+- **Why**: PostgreSQL and MySQL skip locking and use REPEATABLE READ snapshot
+  semantics for read-only transactions. Significant perf win for reporting.
+- **Sketch**: `IsolationLevel.asReadOnly()` modifier + extra strategy in
+  `IsolationStrategy::Sql92` to append ` READ ONLY`. New `bool readOnly` flag
+  on `SavepointDialect` -- prefer dropping it on a sibling enum.
+- **Engines**: PostgreSQL, MySQL/MariaDB, Db2 (`READ ONLY`), Oracle
+  (`READ ONLY` after isolation). SQL Server has no equivalent → no-op.
+
+### 4.2 Lock / statement timeouts per transaction
+
+- **Why**: today the only knob is the per-statement timeout. There is no
+  `lock_timeout` (`SET LOCK_TIMEOUT` on SQL Server, `SET lock_timeout` on
+  Postgres, `WAIT n` clause on Oracle).
+- **Sketch**: `Transaction::with_timeout(Duration)` helper that emits the
+  right `SET` for each engine *before* `set_autocommit(false)`.
+
+### 4.3 XA / two-phase commit / distributed transactions
+
+- **Why**: cross-resource coordination (TCC, MS-DTC). Out of scope for most
+  apps but a recurring request in the fintech space.
+- **Sketch**: new `engine::xa` module with `XaTransaction::{prepare, commit,
+  rollback}` calling `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC)` via
+  `odbc-api`'s raw escape hatch. Likely a paid-tier feature.
+
+### 4.4 `with_transaction` exposed natively in the Service layer
+
+- **Why**: today users get the `runWithBegin` helper at the
+  `TransactionHandle` level, but the `OdbcService` API still requires manual
+  begin/commit/rollback in language-server discoverable surfaces.
+- **Sketch**: `IOdbcService.runInTransaction<T>(connId, action,
+  {isolation, dialect})` wrapping the same try/commit/rollback discipline.
 
 ## ~~1. Schema reflection (PK/FK/Indexes)~~ — ✅ IMPLEMENTED
 

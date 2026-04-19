@@ -235,24 +235,35 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [isolationLevel] should be a numeric value (0-3) corresponding
   /// to isolation level enum values (0=ReadUncommitted, 1=ReadCommitted,
   /// 2=RepeatableRead, 3=Serializable).
+  /// The [savepointDialect] is the wire code from `SavepointDialect.code`
+  /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
   ///
   /// Returns a transaction ID on success, 0 on failure.
-  int beginTransaction(int connectionId, int isolationLevel) =>
-      _native.transactionBegin(connectionId, isolationLevel);
+  int beginTransaction(
+    int connectionId,
+    int isolationLevel, {
+    int savepointDialect = 0,
+  }) =>
+      _native.transactionBegin(
+        connectionId,
+        isolationLevel,
+        savepointDialect: savepointDialect,
+      );
 
   /// Begins a new transaction and returns a [TransactionHandle] wrapper.
   ///
-  /// The [connectionId] must be a valid active connection.
-  /// The [isolationLevel] should be a numeric value (0-3) corresponding
-  /// to isolation level enum values (0=ReadUncommitted, 1=ReadCommitted,
-  /// 2=RepeatableRead, 3=Serializable).
-  ///
+  /// See [beginTransaction] for the parameter contract.
   /// Returns a [TransactionHandle] on success, null on failure.
   TransactionHandle? beginTransactionHandle(
     int connectionId,
-    int isolationLevel,
-  ) {
-    final txnId = beginTransaction(connectionId, isolationLevel);
+    int isolationLevel, {
+    int savepointDialect = 0,
+  }) {
+    final txnId = beginTransaction(
+      connectionId,
+      isolationLevel,
+      savepointDialect: savepointDialect,
+    );
     if (txnId == 0) return null;
     return TransactionHandle(this, txnId);
   }

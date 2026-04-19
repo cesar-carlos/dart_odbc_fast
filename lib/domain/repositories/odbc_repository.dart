@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -70,12 +71,18 @@ abstract class IOdbcRepository {
   /// Begins a new transaction with the specified isolation level.
   ///
   /// The [connectionId] must be a valid active connection.
+  /// [savepointDialect] selects the SQL flavour used by subsequent savepoint
+  /// operations on the returned transaction. Default is
+  /// `SavepointDialect.auto`, which lets the engine pick the right dialect
+  /// from `SQLGetInfo` (B2 fix in v3.1).
+  ///
   /// Returns a transaction ID on success, which must be used for
   /// [commitTransaction] or [rollbackTransaction].
   Future<Result<int>> beginTransaction(
     String connectionId,
-    IsolationLevel isolationLevel,
-  );
+    IsolationLevel isolationLevel, {
+    SavepointDialect savepointDialect = SavepointDialect.auto,
+  });
 
   /// Commits a transaction.
   ///

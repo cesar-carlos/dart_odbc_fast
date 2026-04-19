@@ -737,11 +737,22 @@ class OdbcNative {
   /// Begins a new transaction with the specified isolation level.
   ///
   /// The [connectionId] must be a valid active connection.
-  /// The [isolationLevel] should be a numeric value (0-3).
+  /// The [isolationLevel] should be a numeric value (0-3 — see
+  /// `IsolationLevel`).
+  /// The [savepointDialect] is the wire code from `SavepointDialect.code`
+  /// (default `0` = `auto`, resolved on the Rust side via SQLGetInfo).
   ///
   /// Returns a transaction ID on success, 0 on failure.
-  int transactionBegin(int connectionId, int isolationLevel) {
-    return _bindings.odbc_transaction_begin(connectionId, isolationLevel);
+  int transactionBegin(
+    int connectionId,
+    int isolationLevel, {
+    int savepointDialect = 0,
+  }) {
+    return _bindings.odbc_transaction_begin(
+      connectionId,
+      isolationLevel,
+      savepointDialect,
+    );
   }
 
   /// Commits a transaction.

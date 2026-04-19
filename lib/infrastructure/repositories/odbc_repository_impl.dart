@@ -9,6 +9,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -701,8 +702,9 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   @override
   Future<Result<int>> beginTransaction(
     String connectionId,
-    IsolationLevel isolationLevel,
-  ) async {
+    IsolationLevel isolationLevel, {
+    SavepointDialect savepointDialect = SavepointDialect.auto,
+  }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<int, OdbcError>(
@@ -711,10 +713,16 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
     try {
       final txnId = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection)
-              .beginTransaction(nativeId, isolationLevel.value)
-          : (_native as NativeOdbcConnection)
-              .beginTransaction(nativeId, isolationLevel.value);
+          ? await (_native as AsyncNativeOdbcConnection).beginTransaction(
+              nativeId,
+              isolationLevel.value,
+              savepointDialect: savepointDialect.code,
+            )
+          : (_native as NativeOdbcConnection).beginTransaction(
+              nativeId,
+              isolationLevel.value,
+              savepointDialect: savepointDialect.code,
+            );
 
       if (txnId == 0) {
         return await _convertNativeErrorToFailure<int>(

@@ -1,4 +1,15 @@
 // Savepoint demo with OdbcService.
+//
+// This demo uses the high-level `OdbcService` API (which goes through the
+// repository / isolate / FFI stack) and exercises:
+//   - explicit `beginTransaction` (the default `SavepointDialect.auto`
+//     resolves the right syntax via SQLGetInfo at the engine layer);
+//   - `createSavepoint` / `rollbackToSavepoint` / `commitTransaction` on the
+//     same connection.
+//
+// For the new fluent API (`runWithBegin` + `withSavepoint`) on top of
+// `TransactionHandle`, see `example/transaction_helpers_demo.dart`.
+//
 // Run: dart run example/savepoint_demo.dart
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -30,6 +41,9 @@ void main() async {
   }
 
   try {
+    // `savepointDialect` defaults to `SavepointDialect.auto` (v3.1+):
+    // the engine will pick the right SQL flavour based on `SQLGetInfo`.
+    // To pin it explicitly (e.g. for testing), pass it here.
     final txnResult = await service.beginTransaction(conn.id);
     final txnId = txnResult.getOrNull();
     if (txnId == null) {

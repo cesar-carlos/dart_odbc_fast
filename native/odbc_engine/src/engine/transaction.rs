@@ -1,3 +1,7 @@
+use crate::engine::core::{
+    ENGINE_DB2, ENGINE_ORACLE, ENGINE_SNOWFLAKE, ENGINE_SQLITE, ENGINE_SQLSERVER, ENGINE_UNKNOWN,
+};
+use crate::engine::dbms_info::DbmsInfo;
 use crate::engine::identifier::{quote_identifier, validate_identifier, IdentifierQuoting};
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
@@ -32,6 +36,16 @@ impl IsolationLevel {
             Self::Serializable => "SERIALIZABLE",
         }
     }
+
+    /// DB2-style keyword for `SET CURRENT ISOLATION = <X>`.
+    fn to_db2_keyword(self) -> &'static str {
+        match self {
+            Self::ReadUncommitted => "UR", // Uncommitted Read
+            Self::ReadCommitted => "CS",   // Cursor Stability
+            Self::RepeatableRead => "RS",  // Read Stability
+            Self::Serializable => "RR",    // Repeatable Read (DB2 semantics)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,22 +56,84 @@ pub enum TransactionState {
     RolledBack,
 }
 
-/// Savepoint SQL dialect. SQL Server uses SAVE TRANSACTION / ROLLBACK TRANSACTION;
-/// SQL-92 (PostgreSQL, MySQL, etc.) uses SAVEPOINT / ROLLBACK TO SAVEPOINT.
+/// Savepoint SQL dialect.
+///
+/// `Auto` (NEW in v3.1) is the recommended default: the dialect is resolved
+/// from the connection's live DBMS via `SQLGetInfo` at `Transaction::begin`.
+/// SQL Server resolves to `SqlServer`; everything else to `Sql92`.
+///
+/// `Sql92` and `SqlServer` remain available for callers that already know the
+/// engine and want to skip the round-trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SavepointDialect {
-    /// SAVEPOINT, ROLLBACK TO SAVEPOINT, RELEASE SAVEPOINT (PostgreSQL, MySQL, etc.)
+    /// Resolve at runtime via `SQLGetInfo(SQL_DBMS_NAME)` on the connection.
+    Auto,
+    /// `SAVEPOINT`, `ROLLBACK TO SAVEPOINT`, `RELEASE SAVEPOINT` (PostgreSQL,
+    /// MySQL, MariaDB, Oracle, DB2, SQLite, Snowflake, ...).
     Sql92,
-    /// SAVE TRANSACTION, ROLLBACK TRANSACTION (SQL Server; no RELEASE)
+    /// `SAVE TRANSACTION`, `ROLLBACK TRANSACTION` (SQL Server; no `RELEASE`).
     SqlServer,
 }
 
 impl SavepointDialect {
+    /// FFI mapping (stable):
+    /// - `0` → `Auto` (default since v3.1)
+    /// - `1` → `SqlServer`
+    /// - `2` → `Sql92`
+    /// - anything else → `Auto`
     pub fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::SqlServer,
+            2 => Self::Sql92,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// Strategy for applying `IsolationLevel` to a connection across vendors.
+///
+/// Different drivers honour wildly different syntax (SQLite uses a `PRAGMA`,
+/// DB2 uses `SET CURRENT ISOLATION`, Snowflake ignores per-tx isolation, etc).
+/// This enum is internal to `Transaction::begin_with_dialect`.
+#[derive(Debug, Clone, Copy)]
+enum IsolationStrategy {
+    /// SQL-92 `SET TRANSACTION ISOLATION LEVEL <X>` (SQL Server, PostgreSQL,
+    /// MySQL, MariaDB, Sybase ASE, Redshift, ...).
+    Sql92,
+    /// SQLite: only Read Uncommitted vs Serializable, via
+    /// `PRAGMA read_uncommitted = 0|1`.
+    SqlitePragma,
+    /// DB2 LUW / z/OS: `SET CURRENT ISOLATION = UR|CS|RS|RR`.
+    Db2SetCurrent,
+    /// Oracle: only `READ COMMITTED` and `SERIALIZABLE` are supported.
+    /// The other two levels are rejected with `ValidationError`.
+    OracleRestricted,
+    /// Snowflake / BigQuery / engines without per-transaction isolation:
+    /// silently skip the SET.
+    Skip,
+}
+
+impl IsolationStrategy {
+    fn for_engine(engine: &str) -> Self {
+        match engine {
+            ENGINE_SQLITE => Self::SqlitePragma,
+            ENGINE_DB2 => Self::Db2SetCurrent,
+            ENGINE_ORACLE => Self::OracleRestricted,
+            ENGINE_SNOWFLAKE => Self::Skip,
+            // SqlServer, Postgres, MySQL, MariaDB, Sybase, Redshift,
+            // Sybase ASA, Unknown, ... → SQL-92 dialect.
             _ => Self::Sql92,
         }
+    }
+}
+
+/// Resolve `SavepointDialect::Auto` to a concrete dialect using the live DBMS
+/// info. SqlServer → `SqlServer`; everything else (including Unknown) → `Sql92`.
+fn resolve_savepoint_dialect_for_engine(engine: &str) -> SavepointDialect {
+    if engine == ENGINE_SQLSERVER {
+        SavepointDialect::SqlServer
+    } else {
+        SavepointDialect::Sql92
     }
 }
 
@@ -75,7 +151,7 @@ impl Transaction {
         conn_id: u32,
         isolation_level: IsolationLevel,
     ) -> Result<Self> {
-        Self::begin_with_dialect(handles, conn_id, isolation_level, SavepointDialect::Sql92)
+        Self::begin_with_dialect(handles, conn_id, isolation_level, SavepointDialect::Auto)
     }
 
     pub fn begin_with_dialect(
@@ -84,6 +160,12 @@ impl Transaction {
         isolation_level: IsolationLevel,
         savepoint_dialect: SavepointDialect,
     ) -> Result<Self> {
+        // Resolve `Auto` ahead of time so the rest of the lifecycle is
+        // dialect-agnostic. Best-effort: if `SQLGetInfo` fails we fall back to
+        // `Sql92` (the safe default for unknown engines).
+        let (engine_id, resolved_dialect) =
+            Self::detect_engine_and_dialect(&handles, conn_id, savepoint_dialect);
+
         let state = Arc::new(Mutex::new(TransactionState::Active));
         let conn_arc = {
             let h = handles
@@ -95,17 +177,10 @@ impl Transaction {
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
 
-        // Apply isolation level via SQL (SET TRANSACTION ISOLATION LEVEL). odbc-api does not
-        // expose SQL_ATTR_TXN_ISOLATION; we use SQL-92 syntax supported by SQL Server, PostgreSQL,
-        // etc. Drivers that lack support will error here. Must run before set_autocommit(false).
-        let sql = format!(
-            "SET TRANSACTION ISOLATION LEVEL {}",
-            isolation_level.to_sql_keyword()
-        );
-        conn.connection()
-            .execute(&sql, (), None)
-            .map(|_| ())
-            .map_err(OdbcError::from)?;
+        // Apply isolation level using a dialect-aware strategy. Must run BEFORE
+        // `set_autocommit(false)` because some engines (notably SQL Server)
+        // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
+        Self::apply_isolation(conn.connection_mut(), &engine_id, isolation_level)?;
 
         conn.connection_mut()
             .set_autocommit(false)
@@ -116,8 +191,95 @@ impl Transaction {
             conn_id,
             state,
             isolation_level,
-            savepoint_dialect,
+            savepoint_dialect: resolved_dialect,
         })
+    }
+
+    /// Returns `(engine_id, resolved_dialect)`. Best-effort:
+    /// - When the caller passed `Sql92` or `SqlServer` we keep it.
+    /// - When `Auto`, we ask `DbmsInfo::detect_for_conn_id`. On failure we fall
+    ///   back to `Sql92` and `engine = ENGINE_UNKNOWN`.
+    fn detect_engine_and_dialect(
+        handles: &SharedHandleManager,
+        conn_id: u32,
+        requested: SavepointDialect,
+    ) -> (String, SavepointDialect) {
+        match requested {
+            SavepointDialect::Sql92 => (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92),
+            SavepointDialect::SqlServer => {
+                (ENGINE_SQLSERVER.to_string(), SavepointDialect::SqlServer)
+            }
+            SavepointDialect::Auto => match DbmsInfo::detect_for_conn_id(handles, conn_id) {
+                Ok(info) => {
+                    let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
+                    (info.engine, dialect)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); falling back to Sql92"
+                    );
+                    (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
+                }
+            },
+        }
+    }
+
+    /// Vendor-aware isolation-level setter.
+    fn apply_isolation(
+        conn: &mut odbc_api::Connection<'static>,
+        engine_id: &str,
+        level: IsolationLevel,
+    ) -> Result<()> {
+        let strategy = IsolationStrategy::for_engine(engine_id);
+        match strategy {
+            IsolationStrategy::Sql92 => {
+                let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", level.to_sql_keyword());
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            IsolationStrategy::SqlitePragma => {
+                // SQLite only distinguishes Serializable (default) from Read
+                // Uncommitted (shared-cache only). Other levels are no-ops on
+                // the safe side.
+                let sql = match level {
+                    IsolationLevel::ReadUncommitted => "PRAGMA read_uncommitted = 1",
+                    _ => "PRAGMA read_uncommitted = 0",
+                };
+                conn.execute(sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            IsolationStrategy::Db2SetCurrent => {
+                let sql = format!("SET CURRENT ISOLATION = {}", level.to_db2_keyword());
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            IsolationStrategy::OracleRestricted => match level {
+                IsolationLevel::ReadCommitted => conn
+                    .execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED", (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from),
+                IsolationLevel::Serializable => conn
+                    .execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from),
+                IsolationLevel::ReadUncommitted | IsolationLevel::RepeatableRead => {
+                    Err(OdbcError::ValidationError(format!(
+                        "Oracle does not support isolation level {level:?}; \
+                         only ReadCommitted and Serializable are supported"
+                    )))
+                }
+            },
+            IsolationStrategy::Skip => {
+                log::debug!(
+                    "apply_isolation: engine {engine_id:?} ignores per-transaction isolation; \
+                     requested {level:?} silently skipped"
+                );
+                Ok(())
+            }
+        }
     }
 
     pub fn savepoint_dialect(&self) -> SavepointDialect {
@@ -144,13 +306,31 @@ impl Transaction {
         let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.connection_mut().commit().map_err(OdbcError::from)?;
-        conn.connection_mut()
-            .set_autocommit(true)
-            .map_err(OdbcError::from)?;
+        let commit_result = conn.connection_mut().commit().map_err(OdbcError::from);
+        // ALWAYS try to restore autocommit, regardless of commit outcome (B7 fix).
+        // If commit failed the driver may already have rolled back and reset
+        // autocommit; the call is a best-effort safety net so the connection
+        // is never returned to the caller / pool stuck in autocommit=off.
+        if let Err(e) = conn.connection_mut().set_autocommit(true) {
+            log::error!(
+                "Transaction::commit: failed to restore autocommit on conn_id {}: {e}",
+                self.conn_id
+            );
+        }
 
-        *s = TransactionState::Committed;
-        Ok(())
+        match commit_result {
+            Ok(()) => {
+                *s = TransactionState::Committed;
+                Ok(())
+            }
+            Err(e) => {
+                // Commit failed → driver semantics say the transaction was
+                // rolled back (or is in an undefined state, which we model as
+                // RolledBack to allow reuse). Surface the original error.
+                *s = TransactionState::RolledBack;
+                Err(e)
+            }
+        }
     }
 
     pub fn rollback(self) -> Result<()> {
@@ -173,13 +353,19 @@ impl Transaction {
         let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.connection_mut().rollback().map_err(OdbcError::from)?;
-        conn.connection_mut()
-            .set_autocommit(true)
-            .map_err(OdbcError::from)?;
+        let rollback_result = conn.connection_mut().rollback().map_err(OdbcError::from);
+        // ALWAYS restore autocommit (B7 fix), same rationale as `commit`.
+        if let Err(e) = conn.connection_mut().set_autocommit(true) {
+            log::error!(
+                "Transaction::rollback: failed to restore autocommit on conn_id {}: {e}",
+                self.conn_id
+            );
+        }
 
+        // Whether the engine accepted the rollback or not, this Transaction
+        // value is consumed and can no longer be used.
         *s = TransactionState::RolledBack;
-        Ok(())
+        rollback_result
     }
 
     pub fn execute<F, T>(
@@ -191,7 +377,7 @@ impl Transaction {
     where
         F: FnOnce(&Transaction) -> Result<T>,
     {
-        Self::execute_with_dialect(handles, conn_id, isolation, SavepointDialect::Sql92, f)
+        Self::execute_with_dialect(handles, conn_id, isolation, SavepointDialect::Auto, f)
     }
 
     pub fn execute_with_dialect<F, T>(
@@ -237,6 +423,50 @@ impl Transaction {
             .map_err(OdbcError::from)
     }
 
+    /// Validate, quote and execute a `SAVEPOINT` (or `SAVE TRANSACTION` on
+    /// SQL Server) for `name`. Used by the FFI layer so that all callers go
+    /// through identifier validation (B1 fix — closes A1 regression via FFI).
+    pub fn savepoint_create(&self, name: &str) -> Result<()> {
+        validate_identifier(name)?;
+        let qname = quote_identifier(name, quoting_for(self.savepoint_dialect))?;
+        let sql = match self.savepoint_dialect {
+            SavepointDialect::SqlServer => format!("SAVE TRANSACTION {qname}"),
+            // `Auto` should never reach this point because `begin_with_dialect`
+            // resolves it; treat it as Sql92 defensively.
+            SavepointDialect::Sql92 | SavepointDialect::Auto => format!("SAVEPOINT {qname}"),
+        };
+        self.execute_sql(&sql)
+    }
+
+    /// Validate, quote and emit a `ROLLBACK TO [SAVEPOINT] <name>` for the
+    /// transaction's dialect.
+    pub fn savepoint_rollback_to(&self, name: &str) -> Result<()> {
+        validate_identifier(name)?;
+        let qname = quote_identifier(name, quoting_for(self.savepoint_dialect))?;
+        let sql = match self.savepoint_dialect {
+            SavepointDialect::SqlServer => format!("ROLLBACK TRANSACTION {qname}"),
+            SavepointDialect::Sql92 | SavepointDialect::Auto => {
+                format!("ROLLBACK TO SAVEPOINT {qname}")
+            }
+        };
+        self.execute_sql(&sql)
+    }
+
+    /// Validate, quote and emit `RELEASE SAVEPOINT <name>`. SQL Server has no
+    /// equivalent (savepoints are released on commit/rollback) so this is a
+    /// successful no-op there.
+    pub fn savepoint_release(&self, name: &str) -> Result<()> {
+        validate_identifier(name)?;
+        match self.savepoint_dialect {
+            SavepointDialect::SqlServer => Ok(()),
+            SavepointDialect::Sql92 | SavepointDialect::Auto => {
+                let qname = quote_identifier(name, IdentifierQuoting::DoubleQuote)?;
+                let sql = format!("RELEASE SAVEPOINT {qname}");
+                self.execute_sql(&sql)
+            }
+        }
+    }
+
     pub fn is_active(&self) -> bool {
         self.state
             .lock()
@@ -256,7 +486,11 @@ impl Transaction {
         self.handles.clone()
     }
 
-    #[cfg(test)]
+    /// Test-only constructor. Builds a `Transaction` value without touching the
+    /// driver — useful for unit / regression tests that exercise validation
+    /// logic (identifier quoting, state-machine guards) in isolation.
+    /// Hidden from rustdoc; not part of the public API surface.
+    #[doc(hidden)]
     pub fn for_test(
         handles: SharedHandleManager,
         conn_id: u32,
@@ -269,6 +503,49 @@ impl Transaction {
             state: Arc::new(Mutex::new(state)),
             isolation_level,
             savepoint_dialect: SavepointDialect::Sql92,
+        }
+    }
+
+    /// Test-only constructor that lets the caller pin a specific
+    /// `SavepointDialect`. See [`for_test`] for caveats.
+    #[doc(hidden)]
+    pub fn for_test_with_dialect(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        state: TransactionState,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+    ) -> Self {
+        Self {
+            handles,
+            conn_id,
+            state: Arc::new(Mutex::new(state)),
+            isolation_level,
+            savepoint_dialect,
+        }
+    }
+
+    /// Test-only constructor that builds a fresh empty `SharedHandleManager`
+    /// internally — useful for **integration tests** (`tests/`) that cannot
+    /// import the private `handles` module.
+    /// Hidden from rustdoc; not part of the public API surface.
+    #[doc(hidden)]
+    pub fn for_test_no_conn(
+        state: TransactionState,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+    ) -> Self {
+        let handles: SharedHandleManager =
+            Arc::new(Mutex::new(crate::handles::HandleManager::new()));
+        Self {
+            handles,
+            // u32::MAX is guaranteed not to collide with a real connection id;
+            // identifier validation runs BEFORE any handle lookup so this is
+            // safe for tests that only exercise `savepoint_*` validation paths.
+            conn_id: u32::MAX,
+            state: Arc::new(Mutex::new(state)),
+            isolation_level,
+            savepoint_dialect,
         }
     }
 }
@@ -340,7 +617,9 @@ pub struct Savepoint<'t> {
 /// Choose the appropriate identifier quoting style for a savepoint dialect.
 fn quoting_for(dialect: SavepointDialect) -> IdentifierQuoting {
     match dialect {
-        SavepointDialect::Sql92 => IdentifierQuoting::DoubleQuote,
+        // `Auto` should be resolved before reaching this point; default to
+        // SQL-92 quoting if it ever leaks through.
+        SavepointDialect::Sql92 | SavepointDialect::Auto => IdentifierQuoting::DoubleQuote,
         SavepointDialect::SqlServer => IdentifierQuoting::Brackets,
     }
 }
@@ -348,13 +627,7 @@ fn quoting_for(dialect: SavepointDialect) -> IdentifierQuoting {
 impl<'t> Savepoint<'t> {
     pub fn create(transaction: &'t Transaction, name: &str) -> Result<Self> {
         // A1 fix: validate + quote savepoint identifier to prevent SQL injection.
-        validate_identifier(name)?;
-        let qname = quote_identifier(name, quoting_for(transaction.savepoint_dialect()))?;
-        let sql = match transaction.savepoint_dialect() {
-            SavepointDialect::Sql92 => format!("SAVEPOINT {qname}"),
-            SavepointDialect::SqlServer => format!("SAVE TRANSACTION {qname}"),
-        };
-        transaction.execute_sql(&sql)?;
+        transaction.savepoint_create(name)?;
         Ok(Self {
             transaction,
             name: name.to_string(),
@@ -362,29 +635,11 @@ impl<'t> Savepoint<'t> {
     }
 
     pub fn rollback_to(&self) -> Result<()> {
-        let qname = quote_identifier(
-            &self.name,
-            quoting_for(self.transaction.savepoint_dialect()),
-        )?;
-        let sql = match self.transaction.savepoint_dialect() {
-            SavepointDialect::Sql92 => format!("ROLLBACK TO SAVEPOINT {qname}"),
-            SavepointDialect::SqlServer => format!("ROLLBACK TRANSACTION {qname}"),
-        };
-        self.transaction.execute_sql(&sql)
+        self.transaction.savepoint_rollback_to(&self.name)
     }
 
     pub fn release(self) -> Result<()> {
-        match self.transaction.savepoint_dialect() {
-            SavepointDialect::Sql92 => {
-                let qname = quote_identifier(&self.name, IdentifierQuoting::DoubleQuote)?;
-                let sql = format!("RELEASE SAVEPOINT {qname}");
-                self.transaction.execute_sql(&sql)
-            }
-            SavepointDialect::SqlServer => {
-                // SQL Server has no RELEASE SAVEPOINT; savepoint is released on commit/rollback.
-                Ok(())
-            }
-        }
+        self.transaction.savepoint_release(&self.name)
     }
 }
 
@@ -434,6 +689,14 @@ mod tests {
             IsolationLevel::Serializable.to_sql_keyword(),
             "SERIALIZABLE"
         );
+    }
+
+    #[test]
+    fn isolation_level_to_db2_keyword() {
+        assert_eq!(IsolationLevel::ReadUncommitted.to_db2_keyword(), "UR");
+        assert_eq!(IsolationLevel::ReadCommitted.to_db2_keyword(), "CS");
+        assert_eq!(IsolationLevel::RepeatableRead.to_db2_keyword(), "RS");
+        assert_eq!(IsolationLevel::Serializable.to_db2_keyword(), "RR");
     }
 
     #[test]
@@ -548,14 +811,15 @@ mod tests {
     }
 
     #[test]
-    fn savepoint_dialect_from_u32_sql92_default() {
-        assert_eq!(SavepointDialect::from_u32(0), SavepointDialect::Sql92);
-        assert_eq!(SavepointDialect::from_u32(99), SavepointDialect::Sql92);
+    fn savepoint_dialect_from_u32_default_is_auto() {
+        assert_eq!(SavepointDialect::from_u32(0), SavepointDialect::Auto);
+        assert_eq!(SavepointDialect::from_u32(99), SavepointDialect::Auto);
     }
 
     #[test]
-    fn savepoint_dialect_from_u32_sqlserver() {
+    fn savepoint_dialect_from_u32_explicit_codes() {
         assert_eq!(SavepointDialect::from_u32(1), SavepointDialect::SqlServer);
+        assert_eq!(SavepointDialect::from_u32(2), SavepointDialect::Sql92);
     }
 
     #[test]
@@ -623,5 +887,79 @@ mod tests {
         );
         assert_eq!(txn.conn_id(), 42);
         assert_eq!(txn.isolation_level(), IsolationLevel::Serializable);
+    }
+
+    #[test]
+    fn savepoint_create_rejects_injection_via_transaction_method() {
+        // Transaction with no real connection — savepoint_create must reject
+        // BEFORE attempting any SQL execution, so the missing connection is
+        // never reached.
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            999, // bogus conn_id; identifier validation must short-circuit
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        for bad in [
+            "sp; DROP TABLE users--",
+            "sp\";DROP TABLE x;--",
+            "sp' OR '1'='1",
+            "",
+            "1bad_leading_digit",
+            "sp space",
+        ] {
+            let r = txn.savepoint_create(bad);
+            assert!(
+                matches!(r, Err(OdbcError::ValidationError(_))),
+                "savepoint_create must reject {bad:?}, got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn savepoint_rollback_to_rejects_injection() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            999,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        let r = txn.savepoint_rollback_to("sp; DROP TABLE x--");
+        assert!(matches!(r, Err(OdbcError::ValidationError(_))));
+    }
+
+    #[test]
+    fn savepoint_release_is_noop_on_sqlserver_dialect() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_dialect(
+            handles,
+            999,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::SqlServer,
+        );
+        // SQL Server has no RELEASE SAVEPOINT — implementation returns Ok(())
+        // without touching the connection (so the bogus conn_id is fine).
+        assert!(txn.savepoint_release("sp1").is_ok());
+    }
+
+    #[test]
+    fn savepoint_release_still_validates_identifier_on_sqlserver() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_dialect(
+            handles,
+            999,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::SqlServer,
+        );
+        // Even though SQL Server has no RELEASE, we still validate the name to
+        // give the same defensive guarantee on every dialect.
+        assert!(matches!(
+            txn.savepoint_release("sp; DROP TABLE x--"),
+            Err(OdbcError::ValidationError(_))
+        ));
     }
 }

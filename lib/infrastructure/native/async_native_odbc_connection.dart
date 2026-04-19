@@ -507,9 +507,21 @@ class AsyncNativeOdbcConnection {
 
   /// Starts a transaction in the worker for [connectionId] with
   /// [isolationLevel]. Returns the transaction ID on success.
-  Future<int> beginTransaction(int connectionId, int isolationLevel) async {
+  ///
+  /// [savepointDialect] is the wire code from `SavepointDialect.code`
+  /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
+  Future<int> beginTransaction(
+    int connectionId,
+    int isolationLevel, {
+    int savepointDialect = 0,
+  }) async {
     final r = await _sendRequest<IntResponse>(
-      BeginTransactionRequest(_nextRequestId(), connectionId, isolationLevel),
+      BeginTransactionRequest(
+        _nextRequestId(),
+        connectionId,
+        isolationLevel,
+        savepointDialect: savepointDialect,
+      ),
     );
     return r.value;
   }

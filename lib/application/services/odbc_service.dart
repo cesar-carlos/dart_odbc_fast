@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -38,6 +39,7 @@ abstract class IOdbcService {
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
   });
 
   Future<Result<void>> commitTransaction(
@@ -315,10 +317,12 @@ class OdbcService implements IOdbcService {
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
   }) async {
     return _repository.beginTransaction(
       connectionId,
       isolationLevel ?? IsolationLevel.readCommitted,
+      savepointDialect: savepointDialect ?? SavepointDialect.auto,
     );
   }
 

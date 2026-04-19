@@ -1,12 +1,19 @@
 name: odbc_fast
-# v3.0.0 - Driver-specific capabilities (UPSERT, RETURNING, native bulk,
-# session init, per-dialect quoting, extended types) + 4 new plugins
-# (SQLite, Db2, Snowflake, MariaDB).
+# v3.1.0 - Transaction control hardening:
+#   - SavepointDialect::Auto resolved via SQLGetInfo at begin (B2 fix).
+#   - FFI savepoint_create/_rollback/_release now go through
+#     Transaction::savepoint_* with full identifier validation +
+#     dialect-aware quoting (B1 / closes A1 regression via FFI).
+#   - apply_isolation engine-aware: SQLite (PRAGMA), Db2 (SET CURRENT),
+#     Oracle (validate level), Snowflake (skip), Sql92 default.
+#   - commit / rollback always restore autocommit (B7).
+#   - New TransactionHandle helpers: runWithBegin, withSavepoint, savepoint
+#     methods, NativeFinalizer (best-effort token reclaim).
 # Breaking changes: MAJOR bumps (2.0.0, 3.0.0)
-# New features: MINOR bumps (1.1.0, 1.2.0)
+# New features: MINOR bumps (3.1.0)
 # Bug fixes: PATCH bumps (1.0.1, 1.0.2)
-# See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.0.0 details.
-version: 3.0.0
+# See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.0 details.
+version: 3.1.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast

@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - Transaction control hardening
+
+### Fixed
+
+- **B1 / closes A1 regression via FFI** — `odbc_savepoint_create`,
+  `odbc_savepoint_rollback` and `odbc_savepoint_release` no longer build SQL
+  with `format!("SAVEPOINT {}", name)`. They now route through
+  `Transaction::savepoint_create / _rollback_to / _release`, which run
+  `validate_identifier` + `quote_identifier` for the active dialect. A
+  savepoint name like `"sp; DROP TABLE x--"` arriving over the FFI is now
+  rejected with `ValidationError` instead of being executed.
+- **B2** — Dart could not reach the SQL Server savepoint dialect.
+  `OdbcNative.transactionBegin` now exposes `savepointDialect` (default `0`
+  = `SavepointDialect.auto`); the dialect propagates through
+  `AsyncNativeOdbcConnection`, `BeginTransactionRequest`,
+  `OdbcRepositoryImpl`, `IOdbcService.beginTransaction` and
+  `TelemetryOdbcServiceDecorator`.
+- **B4** — `Transaction::begin_with_dialect` no longer fires
+  `SET TRANSACTION ISOLATION LEVEL <X>` blindly. The new
+  `IsolationStrategy::for_engine` dispatches per `engine_id`:
+  - SQL-92 dialect → `SET TRANSACTION ISOLATION LEVEL <X>` (SQL Server,
+    PostgreSQL, MySQL, MariaDB, Sybase, Redshift, …).
+  - SQLite → `PRAGMA read_uncommitted = 0|1`.
+  - Db2 → `SET CURRENT ISOLATION = UR|CS|RS|RR`.
+  - Oracle → only `READ COMMITTED` and `SERIALIZABLE`; the other two now
+    return `ValidationError` instead of erroring at the driver.
+  - Snowflake → silent skip (engine has no per-tx isolation).
+- **B7** — `Transaction::commit` and `rollback` always attempt
+  `set_autocommit(true)`, even when the underlying commit/rollback fails.
+  Connections can no longer be returned to the caller stuck in
+  `autocommit=off`.
+
+### Added
+
+- **`SavepointDialect::Auto`** (Rust) and `SavepointDialect.auto` (Dart) —
+  resolved at `Transaction::begin` via `DbmsInfo::detect_for_conn_id`
+  (`SQLGetInfo`). SQL Server resolves to `SqlServer`; everything else
+  (PostgreSQL, MySQL, MariaDB, Oracle, SQLite, Db2, Snowflake, …) to
+  `Sql92`. Wire mapping (stable):
+  - `0` → `Auto` (default, recommended)
+  - `1` → `SqlServer`
+  - `2` → `Sql92`
+- **`Transaction::savepoint_create / savepoint_rollback_to /
+  savepoint_release`** — new public Rust methods that validate the name and
+  emit the right SQL for the transaction's dialect (including the `RELEASE`
+  no-op on SQL Server). `Savepoint::create / rollback_to / release` are now
+  thin shims over them.
+- **`TransactionHandle.runWithBegin(beginFn, action)`** (Dart) — static
+  helper that opens a transaction, runs `action`, commits on success and
+  rolls back on **any** thrown exception. Mirrors `Transaction::execute` on
+  the Rust side and is the recommended way to write leak-proof transaction
+  code in Dart.
+- **`TransactionHandle.withSavepoint(name, action)`** (Dart) — runs `action`
+  inside a named savepoint, releasing on success and rolling back to the
+  savepoint on exception (transaction stays active).
+- **`TransactionHandle.createSavepoint / rollbackToSavepoint /
+  releaseSavepoint`** (Dart) — the wrapper now exposes the full savepoint
+  surface so callers do not need to skip down to `OdbcService`.
+- **`TransactionHandle implements Finalizable`** (Dart) — best-effort
+  `NativeFinalizer` reclaims the small token allocated for tracking when the
+  Dart object is GC'd without explicit commit/rollback. The transaction
+  itself is rolled back by the engine in `odbc_disconnect`.
+- **`Transaction::for_test_no_conn`** (Rust, `#[doc(hidden)]`) — convenience
+  constructor for integration tests that exercise validation paths without
+  a real connection.
+
+### New tests
+
+- `tests/regression/a1_ffi_savepoint_injection.rs` — 6 new tests covering
+  every malicious-name case across both dialects, plus the `Auto` default.
+- 4 new lib unit tests in `engine::transaction::tests` covering the new
+  Db2 keyword, the SqlServer no-op `release`, the `from_u32` Auto default
+  and identifier validation through the new methods.
+
+### Documentation
+
+- `example/transaction_helpers_demo.dart` — NEW demo showcasing
+  `runWithBegin`, `withSavepoint` and the `SavepointDialect` wire codes.
+- `example/savepoint_demo.dart` — updated to reference v3.1 helpers and
+  point to the new demo.
+- `example/README.md` — new entry under "Transactions / savepoints".
+
+### Migration notes
+
+- 100% backwards compatible at the source level. Existing callers that pass
+  no `savepointDialect` keep working: they now use `Auto` instead of
+  `Sql92`, which produces **identical SQL on every engine except SQL Server**
+  (where the new behaviour is the correct one).
+- Wire-level: the FFI default for the third argument of
+  `odbc_transaction_begin` changed from `Sql92` to `Auto`. C callers passing
+  the explicit literal `1` (= `SqlServer`) keep working unchanged. Callers
+  that previously relied on the default value `0` to mean `Sql92` should
+  pass `2` if they need the explicit pre-v3.1 behaviour, but typically just
+  benefit from the new auto-detection.
+
 ### Added (v3.0.0)
 
 - **Seven new capability traits** (SOLID design, opt-in by plugin):

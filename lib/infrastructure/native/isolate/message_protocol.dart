@@ -144,10 +144,15 @@ class BeginTransactionRequest extends WorkerRequest {
   const BeginTransactionRequest(
     int requestId,
     this.connectionId,
-    this.isolationLevel,
-  ) : super(requestId, RequestType.beginTransaction);
+    this.isolationLevel, {
+    this.savepointDialect = 0,
+  }) : super(requestId, RequestType.beginTransaction);
   final int connectionId;
   final int isolationLevel;
+
+  /// Wire code from `SavepointDialect.code` (`0=auto`, `1=sqlServer`,
+  /// `2=sql92`). Default is `auto` so legacy callers keep working.
+  final int savepointDialect;
 }
 
 /// Commit transaction.

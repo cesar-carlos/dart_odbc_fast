@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:result_dart/result_dart.dart';
@@ -89,12 +90,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
   }) async {
     return _telemetry.inOperation(
       'ODBC.beginTransaction',
       () => _service.beginTransaction(
         connectionId,
         isolationLevel: isolationLevel,
+        savepointDialect: savepointDialect,
       ),
     );
   }
