@@ -25,6 +25,7 @@
 #             cargo test --features ffi-tests -- --include-ignored
 
 ARG RUST_VERSION=1.86
+ARG INCLUDE_ORACLE=false
 
 FROM rust:${RUST_VERSION}-bookworm
 
@@ -114,6 +115,52 @@ Description     = Microsoft ODBC Driver 18 for SQL Server
 Driver          = /opt/microsoft/msodbcsql18/lib64/libmsodbcsql-18.5.so.1.1
 UsageCount      = 1
 EOF
+
+# -- Oracle Instant Client + ODBC (optional) --------------------------------
+#
+# Pulled at build time from the public Oracle CDN URLs that don't require a
+# login (the same URLs the GitHub Actions Oracle job uses). Skipped by
+# default to keep the base image small. To opt in:
+#
+#     docker compose --profile oracle-test build test-runner-oracle
+#
+# Once installed, the driver is registered as
+# `[Oracle Instant Client ODBC]` and the runtime libs land under
+# `/opt/oracle/instantclient_23_6` (added to ld.so.conf so cargo doesn't
+# need LD_LIBRARY_PATH wrangling).
+#
+# Placed AFTER the `cat > /etc/odbcinst.ini` step above so its append
+# doesn't get overwritten.
+
+ARG INCLUDE_ORACLE
+ENV INCLUDE_ORACLE=${INCLUDE_ORACLE}
+
+RUN if [ "$INCLUDE_ORACLE" = "true" ] || [ "$INCLUDE_ORACLE" = "1" ]; then \
+        set -eux; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends unzip libaio1 || \
+            apt-get install -y --no-install-recommends unzip libaio1t64; \
+        curl -fsSL -o /tmp/ic-basiclite.zip \
+            "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-basiclite-linux.x64-23.6.0.24.10.zip"; \
+        curl -fsSL -o /tmp/ic-odbc.zip \
+            "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-odbc-linux.x64-23.6.0.24.10.zip"; \
+        mkdir -p /opt/oracle; \
+        unzip -oq /tmp/ic-basiclite.zip -d /opt/oracle; \
+        unzip -oq /tmp/ic-odbc.zip -d /opt/oracle; \
+        rm /tmp/ic-basiclite.zip /tmp/ic-odbc.zip; \
+        echo "/opt/oracle/instantclient_23_6" > /etc/ld.so.conf.d/oracle-instantclient.conf; \
+        ldconfig; \
+        { \
+            echo ""; \
+            echo "[Oracle Instant Client ODBC]"; \
+            echo "Description = Oracle Instant Client ODBC"; \
+            echo "Driver      = /opt/oracle/instantclient_23_6/libsqora.so.23.1"; \
+            echo "Setup       = /opt/oracle/instantclient_23_6/libsqorasb23.so"; \
+            echo "FileUsage   = 1"; \
+            echo "UsageCount  = 1"; \
+        } >> /etc/odbcinst.ini; \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # -- Dart SDK (optional; pulled lazily for `dart` invocations) --------------
 #

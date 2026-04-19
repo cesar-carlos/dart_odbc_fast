@@ -63,6 +63,8 @@ pub mod test_helpers {
 
             if let Some(env_path) = found_env {
                 if let Ok(contents) = std::fs::read_to_string(&env_path) {
+                    let mut set = 0usize;
+                    let mut skipped = 0usize;
                     for line in contents.lines() {
                         let line = line.trim();
                         if line.is_empty() || line.starts_with('#') {
@@ -72,10 +74,25 @@ pub mod test_helpers {
                             let key = line[..equal_pos].trim();
                             let value = line[equal_pos + 1..].trim();
                             let value = value.trim_matches('"').trim_matches('\'');
-                            std::env::set_var(key, value);
+                            // Don't overwrite vars already set in the
+                            // process environment. This matches the
+                            // documented dotenv semantics ("file is a
+                            // fallback") and lets `docker run -e VAR=...`
+                            // / CI matrices override .env as expected.
+                            if std::env::var_os(key).is_none() {
+                                std::env::set_var(key, value);
+                                set += 1;
+                            } else {
+                                skipped += 1;
+                            }
                         }
                     }
-                    eprintln!("Loaded .env from: {}", env_path.display());
+                    eprintln!(
+                        "Loaded .env from: {} ({} set, {} kept from process env)",
+                        env_path.display(),
+                        set,
+                        skipped,
+                    );
                 }
             } else {
                 let _ = dotenvy::dotenv();

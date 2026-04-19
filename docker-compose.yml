@@ -147,6 +147,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test-runner
+      args:
+        INCLUDE_ORACLE: "false"
     container_name: odbc_test_runner
     profiles: ["test"]
     # The Rust workspace lives at native/odbc_engine; the Dart side at /.
@@ -175,6 +177,37 @@ services:
       mssql:
         condition: service_healthy
     command: ["bash", "-c", "cargo --version && odbcinst -q -d && pwd && echo OK"]
+
+  # Variant of `test-runner` with Oracle Instant Client + ODBC baked in.
+  # ~150 MB heavier but unblocks XA Sprint 4.3c Phase 2 work against the
+  # `oracle` service. Same volume mounts and entry semantics.
+  test-runner-oracle:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+      args:
+        INCLUDE_ORACLE: "true"
+    container_name: odbc_test_runner_oracle
+    profiles: ["oracle-test"]
+    working_dir: /workspace/native/odbc_engine
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/native/target
+    environment:
+      ENABLE_E2E_TESTS: "1"
+      ODBC_TEST_DSN: "Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;"
+      ORACLE_TEST_SERVER: "oracle"
+      ORACLE_TEST_PORT: "1521"
+      ORACLE_TEST_SERVICE_NAME: "XEPDB1"
+      ORACLE_TEST_USER: "system"
+      ORACLE_TEST_PASSWORD: "OdbcTest123!"
+      LD_LIBRARY_PATH: "/opt/oracle/instantclient_23_6"
+      RUST_BACKTRACE: "1"
+    depends_on:
+      oracle:
+        condition: service_healthy
+    command: ["bash", "-c", "cargo --version && odbcinst -q -d && echo OK"]
 
 volumes:
   cargo-cache:

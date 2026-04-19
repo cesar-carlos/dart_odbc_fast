@@ -1,0 +1,156 @@
+# Validates the Docker test stack described in
+# `doc/development/docker-test-stack.md`. Runs the engine's E2E suite from
+# inside the `test-runner` container against each DB service, mirroring the
+# local developer workflow exactly.
+#
+# This is intentionally complementary to `e2e_multidb.yml`:
+# - `e2e_multidb.yml` installs ODBC drivers directly on the GitHub
+#   `ubuntu-latest` runner and connects to GitHub `services:` containers.
+#   Faster, but the driver layout and `odbcinst.ini` only exist on the
+#   runner -- not reproducible locally.
+# - `e2e_docker_stack.yml` (this file) builds `Dockerfile.test-runner` and
+#   talks to docker-compose services. Slower (image build), but the
+#   container is byte-identical to what developers run on their laptops
+#   via `scripts/docker_e2e.{ps1,sh}`.
+#
+# Use it as the canonical regression for "the docker stack still works".
+
+name: E2E Docker Stack
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "docker-compose.yml"
+      - "Dockerfile.test-runner"
+      - "scripts/docker_*.sh"
+      - "scripts/docker_*.ps1"
+      - ".github/workflows/e2e_docker_stack.yml"
+      - "native/odbc_engine/src/engine/xa_transaction.rs"
+      - "native/odbc_engine/tests/e2e_xa_transaction_test.rs"
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - "Dockerfile.test-runner"
+      - ".github/workflows/e2e_docker_stack.yml"
+
+jobs:
+  smoke:
+    name: docker-stack (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [postgres, mysql, mariadb, mssql]
+        include:
+          - engine: postgres
+            filter: test_e2e_xa_postgresql
+          - engine: mysql
+            filter: test_e2e_xa_mysql
+          - engine: mariadb
+            # MariaDB plugin reuses the MySQL XA grammar; the dedicated
+            # mariadb tests live alongside the mysql ones with the same prefix.
+            filter: test_e2e_xa_mysql
+          - engine: mssql
+            # SQL Server XA Phase 2 is still pending (see FUTURE_IMPLEMENTATIONS
+            # 4.3b). For this matrix we exercise the read-only / lock-timeout
+            # surface that v3.4.0 *did* finish for SQL Server.
+            filter: test_e2e_transaction_access_mode
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show docker / compose versions
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker compose version
+
+      - name: Validate compose
+        run: docker compose config --quiet
+
+      - name: Build test-runner image (BuildKit cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.test-runner
+          tags: dart_odbc_fast-test-runner:ci
+          load: true
+          cache-from: type=gha,scope=test-runner
+          cache-to:   type=gha,scope=test-runner,mode=max
+          # Mirrors the docker-compose default (no Oracle layer).
+          build-args: |
+            INCLUDE_ORACLE=false
+
+      - name: Bring up DB stack
+        run: |
+          set -euo pipefail
+          # docker compose up only the engine we need + its deps.
+          docker compose up -d ${{ matrix.engine }}
+          # Wait for healthcheck.
+          for i in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Health.Status}}' "odbc_test_${{ matrix.engine }}" 2>/dev/null || true)
+            echo "  $state"
+            if [ "$state" = "healthy" ]; then exit 0; fi
+            if [ "$state" = "unhealthy" ]; then
+              docker logs --tail 50 "odbc_test_${{ matrix.engine }}"
+              exit 1
+            fi
+            sleep 3
+          done
+          echo "Timed out waiting for ${{ matrix.engine }}" >&2
+          exit 1
+
+      - name: Resolve DSN for engine
+        id: dsn
+        run: |
+          case "${{ matrix.engine }}" in
+            postgres) echo "value=Driver={PostgreSQL Unicode};Server=postgres;Port=5432;Database=odbc_test;UID=postgres;PWD=postgres;" >> "$GITHUB_OUTPUT" ;;
+            mysql)    echo "value=Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
+            mariadb)  echo "value=Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
+            mssql)    echo "value=Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Smoke test (cargo --version + odbcinst -q -d)
+        run: |
+          docker run --rm \
+            --network dart_odbc_fast_default \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/native/odbc_engine \
+            dart_odbc_fast-test-runner:ci \
+            bash -c "cargo --version && odbcinst -q -d"
+
+      - name: Run E2E tests against ${{ matrix.engine }}
+        env:
+          ODBC_TEST_DSN: ${{ steps.dsn.outputs.value }}
+        run: |
+          docker run --rm \
+            --network dart_odbc_fast_default \
+            -v "${{ github.workspace }}":/workspace \
+            -w /workspace/native/odbc_engine \
+            -e "ODBC_TEST_DSN=${ODBC_TEST_DSN}" \
+            -e "ENABLE_E2E_TESTS=1" \
+            -e "POSTGRES_TEST_SERVER=postgres" \
+            -e "POSTGRES_TEST_DATABASE=odbc_test" \
+            -e "POSTGRES_TEST_USER=postgres" \
+            -e "POSTGRES_TEST_PASSWORD=postgres" \
+            -e "MYSQL_TEST_SERVER=mysql" \
+            -e "MYSQL_TEST_DATABASE=odbc_test" \
+            -e "MYSQL_TEST_USER=odbc" \
+            -e "MYSQL_TEST_PASSWORD=odbc" \
+            -e "MARIADB_TEST_SERVER=mariadb" \
+            -e "MARIADB_TEST_DATABASE=odbc_test" \
+            -e "MARIADB_TEST_USER=odbc" \
+            -e "MARIADB_TEST_PASSWORD=odbc" \
+            -e "SQLSERVER_TEST_SERVER=mssql" \
+            -e "SQLSERVER_TEST_DATABASE=master" \
+            -e "SQLSERVER_TEST_USER=sa" \
+            -e "SQLSERVER_TEST_PASSWORD=OdbcTest123!" \
+            -e "SQLSERVER_TEST_PORT=1433" \
+            dart_odbc_fast-test-runner:ci \
+            bash -c "cargo test --features ffi-tests ${{ matrix.filter }} -- --include-ignored --test-threads=1"
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --remove-orphans

@@ -41,8 +41,17 @@ case "$ENGINE" in
     mysql)    DSN='Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;' ;;
     mariadb)  DSN='Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;' ;;
     mssql)    DSN='Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;' ;;
+    oracle)   DSN='Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;' ;;
     *) echo "Unsupported engine: $ENGINE" >&2; exit 1 ;;
 esac
+
+if [[ "$ENGINE" == "oracle" ]]; then
+    COMPOSE_PROFILE="oracle-test"
+    RUNNER_SERVICE="test-runner-oracle"
+else
+    COMPOSE_PROFILE="test"
+    RUNNER_SERVICE="test-runner"
+fi
 
 step() { printf '\033[36m[docker_e2e]\033[0m %s\n' "$*"; }
 ok2()  { printf '\033[32m[docker_e2e]\033[0m %s\n' "$*"; }
@@ -55,8 +64,8 @@ step 'Ensuring DB stack is up...'
 "$SCRIPT_DIR/docker_db_up.sh" --timeout 240
 
 if [[ $NO_BUILD -eq 0 ]]; then
-    step 'Building test-runner image (cached)...'
-    docker compose --profile test build test-runner
+    step "Building $RUNNER_SERVICE image (cached)..."
+    docker compose --profile "$COMPOSE_PROFILE" build "$RUNNER_SERVICE"
 fi
 
 if [[ $SMOKE_ONLY -eq 1 ]]; then
@@ -71,10 +80,10 @@ fi
 
 step "Inside container: $cargo_cmd"
 
-if docker compose --profile test run --rm \
+if docker compose --profile "$COMPOSE_PROFILE" run --rm \
         -e "ODBC_TEST_DSN=$DSN" \
         -e "ENABLE_E2E_TESTS=1" \
-        test-runner bash -c "$cargo_cmd"; then
+        "$RUNNER_SERVICE" bash -c "$cargo_cmd"; then
     ok2 "All requested tests passed for engine=$ENGINE."
 else
     fail "Test run failed for engine=$ENGINE."

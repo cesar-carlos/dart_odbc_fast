@@ -11,7 +11,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('postgres', 'mysql', 'mariadb', 'mssql')]
+    [ValidateSet('postgres', 'mysql', 'mariadb', 'mssql', 'oracle')]
     [string]$Engine = 'postgres',
 
     # Filter passed to `cargo test` (substring match against test names).
@@ -42,11 +42,18 @@ $dsnByEngine = @{
     mysql    = 'Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;'
     mariadb  = 'Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;'
     mssql    = 'Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;'
+    oracle   = 'Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;'
 }
 
 $dsn = $dsnByEngine[$Engine]
 Write-Step "Engine: $Engine"
 Write-Step "DSN:    $dsn"
+
+# Oracle uses a different runner image (test-runner-oracle) because the
+# Instant Client + ODBC driver are licensed and add ~150 MB to the layer.
+$useOracleRunner = ($Engine -eq 'oracle')
+$composeProfile = if ($useOracleRunner) { 'oracle-test' } else { 'test' }
+$runnerService  = if ($useOracleRunner) { 'test-runner-oracle' } else { 'test-runner' }
 
 # -- Make sure the DB containers are up ---------------------------------
 
@@ -57,9 +64,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # -- Build runner image (cached) ----------------------------------------
 
 if (-not $NoBuild) {
-    Write-Step 'Building test-runner image (cached)...'
-    docker compose --profile test build test-runner
-    if ($LASTEXITCODE -ne 0) { Write-Err2 'test-runner image build failed.'; exit $LASTEXITCODE }
+    Write-Step "Building $runnerService image (cached)..."
+    docker compose --profile $composeProfile build $runnerService
+    if ($LASTEXITCODE -ne 0) { Write-Err2 "$runnerService image build failed."; exit $LASTEXITCODE }
 }
 
 # -- Compose run --------------------------------------------------------
@@ -73,10 +80,10 @@ if ($SmokeOnly) {
 
 Write-Step "Inside container: $cargoCmd"
 
-docker compose --profile test run --rm `
+docker compose --profile $composeProfile run --rm `
     -e "ODBC_TEST_DSN=$dsn" `
     -e 'ENABLE_E2E_TESTS=1' `
-    test-runner bash -c $cargoCmd
+    $runnerService bash -c $cargoCmd
 
 $exit = $LASTEXITCODE
 if ($exit -eq 0) {
