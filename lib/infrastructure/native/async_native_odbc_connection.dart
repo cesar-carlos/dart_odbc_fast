@@ -512,11 +512,14 @@ class AsyncNativeOdbcConnection {
   /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
   /// [accessMode] is the wire code from `TransactionAccessMode.code`
   /// (default `0` = `readWrite`). Sprint 4.1.
+  /// [lockTimeoutMs] is the per-transaction lock timeout in milliseconds
+  /// (default `0` = engine default). Sprint 4.2.
   Future<int> beginTransaction(
     int connectionId,
     int isolationLevel, {
     int savepointDialect = 0,
     int accessMode = 0,
+    int lockTimeoutMs = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       BeginTransactionRequest(
@@ -525,6 +528,7 @@ class AsyncNativeOdbcConnection {
         isolationLevel,
         savepointDialect: savepointDialect,
         accessMode: accessMode,
+        lockTimeoutMs: lockTimeoutMs,
       ),
     );
     return r.value;

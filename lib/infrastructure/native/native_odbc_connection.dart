@@ -239,6 +239,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// (default `0` = `auto`, resolved by the Rust engine via SQLGetInfo).
   /// The [accessMode] is the wire code from `TransactionAccessMode.code`
   /// (default `0` = `readWrite`). Sprint 4.1.
+  /// The [lockTimeoutMs] is the per-transaction lock timeout in
+  /// milliseconds (default `0` = engine default). Sprint 4.2.
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int beginTransaction(
@@ -246,12 +248,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     int isolationLevel, {
     int savepointDialect = 0,
     int accessMode = 0,
+    int lockTimeoutMs = 0,
   }) =>
       _native.transactionBegin(
         connectionId,
         isolationLevel,
         savepointDialect: savepointDialect,
         accessMode: accessMode,
+        lockTimeoutMs: lockTimeoutMs,
       );
 
   /// Begins a new transaction and returns a [TransactionHandle] wrapper.
@@ -263,12 +267,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     int isolationLevel, {
     int savepointDialect = 0,
     int accessMode = 0,
+    int lockTimeoutMs = 0,
   }) {
     final txnId = beginTransaction(
       connectionId,
       isolationLevel,
       savepointDialect: savepointDialect,
       accessMode: accessMode,
+      lockTimeoutMs: lockTimeoutMs,
     );
     if (txnId == 0) return null;
     return TransactionHandle(this, txnId);
@@ -280,6 +286,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// and every transaction is `READ WRITE`.
   bool get supportsTransactionAccessMode =>
       _native.supportsTransactionAccessMode;
+
+  /// True when the loaded native library supports
+  /// `odbc_transaction_begin_v3` (Sprint 4.2, the `lockTimeoutMs`
+  /// parameter of [beginTransaction]). When false, `lockTimeoutMs` is
+  /// silently ignored and every transaction uses the engine default
+  /// lock timeout.
+  bool get supportsTransactionLockTimeout =>
+      _native.supportsTransactionLockTimeout;
 
   @override
   bool commitTransaction(int txnId) => _native.transactionCommit(txnId);

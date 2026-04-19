@@ -813,6 +813,10 @@ class OdbcNative {
   /// (default `0` = `readWrite`). When the loaded native library predates
   /// Sprint 4.1 the parameter is silently ignored — see
   /// [supportsTransactionAccessMode].
+  /// The [lockTimeoutMs] is the per-transaction lock timeout in
+  /// milliseconds (default `0` = engine default). Sprint 4.2. When the
+  /// loaded native library predates Sprint 4.2 the parameter is
+  /// silently ignored — see [supportsTransactionLockTimeout].
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int transactionBegin(
@@ -820,23 +824,35 @@ class OdbcNative {
     int isolationLevel, {
     int savepointDialect = 0,
     int accessMode = 0,
+    int lockTimeoutMs = 0,
   }) {
-    if (accessMode == 0) {
-      // Stay on the v1 entry-point when the caller is OK with the
-      // engine default (READ WRITE). Avoids touching v2 at all so any
-      // FFI mismatch surfaces only when the caller actually asks for
-      // READ ONLY.
+    if (accessMode == 0 && lockTimeoutMs == 0) {
+      // Stay on the v1 entry-point when the caller is OK with every
+      // engine default. Avoids touching v2/v3 at all so any FFI
+      // mismatch surfaces only when the caller actually asks for the
+      // newer features.
       return _bindings.odbc_transaction_begin(
         connectionId,
         isolationLevel,
         savepointDialect,
       );
     }
-    return _bindings.odbc_transaction_begin_v2(
+    if (lockTimeoutMs == 0) {
+      // Caller wants accessMode but not the timeout — stay on v2 so
+      // we don't require a v3 binary unnecessarily.
+      return _bindings.odbc_transaction_begin_v2(
+        connectionId,
+        isolationLevel,
+        savepointDialect,
+        accessMode,
+      );
+    }
+    return _bindings.odbc_transaction_begin_v3(
       connectionId,
       isolationLevel,
       savepointDialect,
       accessMode,
+      lockTimeoutMs,
     );
   }
 
@@ -846,6 +862,13 @@ class OdbcNative {
   /// ONLY` becomes a silent no-op.
   bool get supportsTransactionAccessMode =>
       _bindings.supportsTransactionAccessMode;
+
+  /// True when the loaded native library exports `odbc_transaction_begin_v3`
+  /// (Sprint 4.2). Callers that intend to pass a non-default
+  /// `lockTimeoutMs` should gate on this flag; older binaries fall back
+  /// to v2/v1 and the timeout becomes a silent no-op (engine default).
+  bool get supportsTransactionLockTimeout =>
+      _bindings.supportsTransactionLockTimeout;
 
   /// Commits a transaction.
   ///

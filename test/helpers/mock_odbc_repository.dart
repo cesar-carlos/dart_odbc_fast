@@ -58,6 +58,23 @@ class MockOdbcRepository implements IOdbcRepository {
   bool executePreparedNamedCalled = false;
   int _queryCount = 0;
 
+  // ---- runInTransaction harness (Sprint 4.4) -----------------------
+  // Toggleable failure flags so tests can drive each branch of the
+  // begin/commit/rollback dance without hand-rolling a new mock per
+  // scenario. Each flag is a one-shot — flip it, run the test, flip
+  // back. The captured fields record what the SUT actually requested
+  // so tests can assert on isolation/dialect/access-mode threading.
+  bool beginTransactionShouldFail = false;
+  bool commitTransactionShouldFail = false;
+  bool rollbackTransactionShouldFail = false;
+  IsolationLevel? lastBeginIsolationLevel;
+  SavepointDialect? lastBeginSavepointDialect;
+  TransactionAccessMode? lastBeginAccessMode;
+  Duration? lastBeginLockTimeout;
+  // Sequential txn-id source so successive `beginTransaction` calls
+  // don't collide. Starts at 1 to mirror the FFI contract (0 = error).
+  int _nextTxnId = 1;
+
   @override
   Future<Result<Unit>> initialize() async {
     initializeCalled = true;
@@ -243,9 +260,19 @@ class MockOdbcRepository implements IOdbcRepository {
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
     TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
+    Duration? lockTimeout,
   }) async {
     beginTransactionCalled = true;
-    return const Success(1);
+    lastBeginIsolationLevel = isolationLevel;
+    lastBeginSavepointDialect = savepointDialect;
+    lastBeginAccessMode = accessMode;
+    lastBeginLockTimeout = lockTimeout;
+    if (beginTransactionShouldFail) {
+      return const Failure<int, OdbcError>(
+        QueryError(message: 'mock: beginTransaction forced failure'),
+      );
+    }
+    return Success(_nextTxnId++);
   }
 
   @override
@@ -254,6 +281,11 @@ class MockOdbcRepository implements IOdbcRepository {
     int txnId,
   ) async {
     commitTransactionCalled = true;
+    if (commitTransactionShouldFail) {
+      return const Failure<Unit, OdbcError>(
+        QueryError(message: 'mock: commitTransaction forced failure'),
+      );
+    }
     return const Success(unit);
   }
 
@@ -263,6 +295,13 @@ class MockOdbcRepository implements IOdbcRepository {
     int txnId,
   ) async {
     rollbackTransactionCalled = true;
+    if (rollbackTransactionShouldFail) {
+      return const Failure<Unit, OdbcError>(
+        RollbackFailedError(
+          message: 'mock: rollbackTransaction forced failure',
+        ),
+      );
+    }
     return const Success(unit);
   }
 

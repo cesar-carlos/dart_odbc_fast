@@ -82,6 +82,12 @@ abstract class IOdbcRepository {
   /// hint (SQL Server, SQLite, Snowflake) `readOnly` is silently treated
   /// as a no-op — see [TransactionAccessMode] for the engine matrix.
   /// Sprint 4.1.
+  /// [lockTimeout] caps how long a statement inside the transaction will
+  /// wait for a lock before failing. `null` (default) leaves the engine
+  /// default in place. Engines that natively express waits in seconds
+  /// (MySQL/MariaDB, DB2) round sub-second values up to 1 second.
+  /// Engines without a per-tx lock-timeout hint (Oracle, Snowflake)
+  /// silently no-op. Sprint 4.2.
   ///
   /// Returns a transaction ID on success, which must be used for
   /// [commitTransaction] or [rollbackTransaction].
@@ -90,6 +96,7 @@ abstract class IOdbcRepository {
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
     TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
+    Duration? lockTimeout,
   });
 
   /// Commits a transaction.

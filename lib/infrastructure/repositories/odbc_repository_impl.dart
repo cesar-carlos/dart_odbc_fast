@@ -838,6 +838,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     IsolationLevel isolationLevel, {
     SavepointDialect savepointDialect = SavepointDialect.auto,
     TransactionAccessMode accessMode = TransactionAccessMode.readWrite,
+    Duration? lockTimeout,
   }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
@@ -845,6 +846,15 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         ValidationError(message: 'Invalid connection ID'),
       );
     }
+    // Convert Duration → ms at the FFI boundary. `null` means engine
+    // default (wire `0`). Sub-millisecond positive durations round up
+    // to 1ms so the caller's intent ("wait a tiny bit") is preserved
+    // — same policy as `LockTimeout::from_duration` on the Rust side.
+    final lockTimeoutMs = lockTimeout == null
+        ? 0
+        : (lockTimeout.inMilliseconds == 0 && lockTimeout > Duration.zero
+            ? 1
+            : lockTimeout.inMilliseconds.clamp(0, 0xFFFFFFFF));
     try {
       final txnId = _isAsync
           ? await (_native as AsyncNativeOdbcConnection).beginTransaction(
@@ -852,12 +862,14 @@ class OdbcRepositoryImpl implements IOdbcRepository {
               isolationLevel.value,
               savepointDialect: savepointDialect.code,
               accessMode: accessMode.code,
+              lockTimeoutMs: lockTimeoutMs,
             )
           : (_native as NativeOdbcConnection).beginTransaction(
               nativeId,
               isolationLevel.value,
               savepointDialect: savepointDialect.code,
               accessMode: accessMode.code,
+              lockTimeoutMs: lockTimeoutMs,
             );
 
       if (txnId == 0) {

@@ -165,6 +165,7 @@ class BeginTransactionRequest extends WorkerRequest {
     this.isolationLevel, {
     this.savepointDialect = 0,
     this.accessMode = 0,
+    this.lockTimeoutMs = 0,
   }) : super(requestId, RequestType.beginTransaction);
   final int connectionId;
   final int isolationLevel;
@@ -177,6 +178,11 @@ class BeginTransactionRequest extends WorkerRequest {
   /// `1=readOnly`). Default is `readWrite` so legacy callers keep
   /// working unchanged. Sprint 4.1.
   final int accessMode;
+
+  /// Per-transaction lock timeout in milliseconds. `0` = engine default
+  /// (no override). Default is `0` so legacy callers keep working
+  /// unchanged. Sprint 4.2.
+  final int lockTimeoutMs;
 }
 
 /// Commit transaction.

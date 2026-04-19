@@ -7,6 +7,7 @@ use crate::engine::identifier::{quote_identifier, validate_identifier, Identifie
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolationLevel {
@@ -59,6 +60,102 @@ impl TransactionAccessMode {
 
     pub fn is_read_only(self) -> bool {
         matches!(self, Self::ReadOnly)
+    }
+}
+
+/// Maximum time a statement inside the transaction will wait to acquire
+/// a lock before failing with the engine's lock-timeout error.
+///
+/// Sprint 4.2 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.2.
+///
+/// The wire/FFI representation is `u32` *milliseconds*:
+///
+/// - `0` → engine default (no override; behaves exactly like the v3.3.0
+///   transaction path).
+/// - any other value → that many milliseconds.
+///
+/// The struct is purely a typed wrapper; the engine matrix lives in
+/// [`Transaction::apply_lock_timeout`].
+///
+/// **Engine matrix**:
+///
+/// | Engine               | SQL                                            | Native unit    |
+/// | -------------------- | ---------------------------------------------- | -------------- |
+/// | SQL Server           | `SET LOCK_TIMEOUT <n>`                         | ms             |
+/// | PostgreSQL           | `SET LOCAL lock_timeout = '<n>ms'`             | ms             |
+/// | MySQL / MariaDB      | `SET SESSION innodb_lock_wait_timeout = <s>`   | s (rounded up) |
+/// | DB2                  | `SET CURRENT LOCK TIMEOUT <s>`                 | s (rounded up) |
+/// | SQLite               | `PRAGMA busy_timeout = <n>`                    | ms             |
+/// | Oracle / Snowflake / others | no-op (logged at debug)                  | —              |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockTimeout {
+    millis: Option<u32>,
+}
+
+impl LockTimeout {
+    /// No override — let the engine apply its default lock-timeout.
+    pub const fn engine_default() -> Self {
+        Self { millis: None }
+    }
+
+    /// Build a [`LockTimeout`] from a millisecond count.
+    /// `0` is interpreted as "engine default" so the wire `0` stays
+    /// equivalent to "no override" and round-trips through the FFI
+    /// without surprises.
+    pub fn from_millis(millis: u32) -> Self {
+        if millis == 0 {
+            Self { millis: None }
+        } else {
+            Self {
+                millis: Some(millis),
+            }
+        }
+    }
+
+    /// Build a [`LockTimeout`] from a [`Duration`]. Sub-millisecond
+    /// precision is rounded up so a request of "wait at least 1µs"
+    /// never silently becomes "engine default".
+    pub fn from_duration(dur: Duration) -> Self {
+        let raw_ms = dur.as_millis();
+        if raw_ms == 0 && !dur.is_zero() {
+            // Sub-ms positive duration → bump to 1ms to honour intent
+            // ("wait a tiny bit") rather than collapse to "engine
+            // default".
+            return Self { millis: Some(1) };
+        }
+        if raw_ms == 0 {
+            return Self::engine_default();
+        }
+        let clamped = u32::try_from(raw_ms).unwrap_or(u32::MAX);
+        Self {
+            millis: Some(clamped),
+        }
+    }
+
+    /// Returns `true` when the caller wants to fall through to the
+    /// engine default (no `SET` is emitted).
+    pub fn is_engine_default(self) -> bool {
+        self.millis.is_none()
+    }
+
+    /// Returns the override in milliseconds, or `None` for "engine
+    /// default".
+    pub fn millis(self) -> Option<u32> {
+        self.millis
+    }
+
+    /// Convert the override to *seconds*, rounded up. Used by engines
+    /// that natively express lock waits in seconds (MySQL, DB2). Sub-
+    /// second overrides become 1 second so we never silently relax
+    /// the caller's bound.
+    pub(crate) fn millis_as_seconds_rounded_up(self) -> Option<u32> {
+        self.millis.map(|ms| ms.div_ceil(1000).max(1))
+    }
+}
+
+impl Default for LockTimeout {
+    fn default() -> Self {
+        Self::engine_default()
     }
 }
 
@@ -191,6 +288,7 @@ pub struct Transaction {
     isolation_level: IsolationLevel,
     savepoint_dialect: SavepointDialect,
     access_mode: TransactionAccessMode,
+    lock_timeout: LockTimeout,
 }
 
 impl Transaction {
@@ -229,6 +327,32 @@ impl Transaction {
         savepoint_dialect: SavepointDialect,
         access_mode: TransactionAccessMode,
     ) -> Result<Self> {
+        Self::begin_with_lock_timeout(
+            handles,
+            conn_id,
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
+            LockTimeout::engine_default(),
+        )
+    }
+
+    /// Begin a transaction with full control over isolation, savepoint
+    /// dialect, access mode AND per-transaction lock timeout.
+    ///
+    /// Sprint 4.2 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.2 and
+    /// the [`LockTimeout`] doc for the engine matrix. Pass
+    /// [`LockTimeout::engine_default`] (the `Default` impl) to skip
+    /// the override and behave exactly like
+    /// [`begin_with_access_mode`].
+    pub fn begin_with_lock_timeout(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+    ) -> Result<Self> {
         // Resolve `Auto` ahead of time so the rest of the lifecycle is
         // dialect-agnostic. Best-effort: if `SQLGetInfo` fails we fall back to
         // `Sql92` (the safe default for unknown engines).
@@ -256,6 +380,14 @@ impl Transaction {
         // the previous isolation choice on that engine.
         Self::apply_access_mode(conn.connection_mut(), &engine_id, access_mode)?;
 
+        // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
+        // (so it auto-resets on commit/rollback); other engines apply
+        // session-wide. The override is best-effort: failure here would
+        // prevent the transaction from starting, which is too coarse,
+        // so we surface the engine error verbatim and let the caller
+        // decide.
+        Self::apply_lock_timeout(conn.connection_mut(), &engine_id, lock_timeout)?;
+
         conn.connection_mut()
             .set_autocommit(false)
             .map_err(OdbcError::from)?;
@@ -267,6 +399,7 @@ impl Transaction {
             isolation_level,
             savepoint_dialect: resolved_dialect,
             access_mode,
+            lock_timeout,
         })
     }
 
@@ -410,12 +543,122 @@ impl Transaction {
         }
     }
 
+    /// Apply the per-transaction lock timeout to the connection using a
+    /// vendor-aware strategy. See [`LockTimeout`] for the engine matrix.
+    ///
+    /// **No-op when [`LockTimeout::is_engine_default`]**, which is the
+    /// universal default — the engine's existing setting is left
+    /// untouched and no `SET` is emitted. This keeps the connection's
+    /// session log clean for callers that don't need the override and
+    /// avoids paying for it in the hot path.
+    fn apply_lock_timeout(
+        conn: &mut odbc_api::Connection<'static>,
+        engine_id: &str,
+        lock_timeout: LockTimeout,
+    ) -> Result<()> {
+        if lock_timeout.is_engine_default() {
+            return Ok(());
+        }
+        let ms = lock_timeout.millis().expect(
+            "is_engine_default just returned false; millis() must be Some",
+        );
+
+        match engine_id {
+            ENGINE_SQLSERVER => {
+                // SQL Server: milliseconds, session-wide. Note that this
+                // setting persists past the transaction; resetting to the
+                // engine default would require remembering the previous
+                // value, which the abstraction doesn't promise. Document
+                // it; callers that need strict per-tx isolation should
+                // wrap in a fresh connection.
+                let sql = format!("SET LOCK_TIMEOUT {}", ms);
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            ENGINE_POSTGRES => {
+                // PostgreSQL: `SET LOCAL` is the per-transaction variant
+                // and auto-resets on commit/rollback — exactly what we
+                // want. The unit suffix `ms` makes the value unambiguous
+                // regardless of any cluster-wide GUC unit override.
+                let sql = format!("SET LOCAL lock_timeout = '{}ms'", ms);
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            ENGINE_MYSQL | ENGINE_MARIADB => {
+                // MySQL/MariaDB: `innodb_lock_wait_timeout` is in
+                // *seconds*, range 1..=1073741824. There is no SET LOCAL
+                // equivalent, so this leaks past the transaction; same
+                // caveat as SQL Server. Round sub-second requests up to
+                // 1s so we never silently relax the caller's bound.
+                let secs = lock_timeout
+                    .millis_as_seconds_rounded_up()
+                    .expect("override must round to a positive seconds value");
+                let sql = format!("SET SESSION innodb_lock_wait_timeout = {}", secs);
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            ENGINE_DB2 => {
+                // DB2: `SET CURRENT LOCK TIMEOUT` accepts integers in
+                // *seconds*. Same rounding policy as MySQL.
+                let secs = lock_timeout
+                    .millis_as_seconds_rounded_up()
+                    .expect("override must round to a positive seconds value");
+                let sql = format!("SET CURRENT LOCK TIMEOUT {}", secs);
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            ENGINE_SQLITE => {
+                // SQLite: `PRAGMA busy_timeout` is in milliseconds and
+                // applies to every subsequent statement on this
+                // connection. It's the closest equivalent to a lock
+                // timeout SQLite offers.
+                let sql = format!("PRAGMA busy_timeout = {}", ms);
+                conn.execute(&sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            }
+            ENGINE_ORACLE | ENGINE_SNOWFLAKE => {
+                // Oracle expresses lock waits per-statement (`FOR UPDATE
+                // WAIT n`); per-tx hint does not exist. Snowflake has
+                // `STATEMENT_TIMEOUT_IN_SECONDS` but that's a statement
+                // timeout, not a lock timeout — different semantics, so
+                // we deliberately *don't* repurpose it.
+                log::debug!(
+                    "apply_lock_timeout: engine {engine_id:?} has no per-transaction \
+                     lock-timeout hint; requested {ms}ms silently skipped. \
+                     Use per-statement options (Oracle: FOR UPDATE WAIT n; \
+                     Snowflake: STATEMENT_TIMEOUT_IN_SECONDS) instead."
+                );
+                Ok(())
+            }
+            _ => {
+                // Sybase, Redshift, BigQuery, MongoDB, unknown — log and
+                // skip so the abstraction stays callable without
+                // surprises on engines we haven't mapped yet.
+                log::debug!(
+                    "apply_lock_timeout: engine {engine_id:?} is not in the lock-timeout \
+                     matrix; requested {ms}ms silently skipped. File an issue if you \
+                     need first-class support."
+                );
+                Ok(())
+            }
+        }
+    }
+
     pub fn savepoint_dialect(&self) -> SavepointDialect {
         self.savepoint_dialect
     }
 
     pub fn access_mode(&self) -> TransactionAccessMode {
         self.access_mode
+    }
+
+    pub fn lock_timeout(&self) -> LockTimeout {
+        self.lock_timeout
     }
 
     pub fn commit(self) -> Result<()> {
@@ -546,12 +789,39 @@ impl Transaction {
     where
         F: FnOnce(&Transaction) -> Result<T>,
     {
-        let txn = Self::begin_with_access_mode(
+        Self::execute_with_lock_timeout(
+            handles,
+            conn_id,
+            isolation,
+            savepoint_dialect,
+            access_mode,
+            LockTimeout::engine_default(),
+            f,
+        )
+    }
+
+    /// Run `f` inside a fully-qualified transaction (isolation + savepoint
+    /// dialect + access mode + lock timeout) with automatic commit on
+    /// success and rollback on error.
+    pub fn execute_with_lock_timeout<F, T>(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        isolation: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+        f: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&Transaction) -> Result<T>,
+    {
+        let txn = Self::begin_with_lock_timeout(
             handles.clone(),
             conn_id,
             isolation,
             savepoint_dialect,
             access_mode,
+            lock_timeout,
         )?;
         match f(&txn) {
             Ok(result) => {
@@ -666,6 +936,7 @@ impl Transaction {
             isolation_level,
             savepoint_dialect: SavepointDialect::Sql92,
             access_mode: TransactionAccessMode::ReadWrite,
+            lock_timeout: LockTimeout::engine_default(),
         }
     }
 
@@ -686,6 +957,7 @@ impl Transaction {
             isolation_level,
             savepoint_dialect,
             access_mode: TransactionAccessMode::ReadWrite,
+            lock_timeout: LockTimeout::engine_default(),
         }
     }
 
@@ -707,6 +979,31 @@ impl Transaction {
             isolation_level,
             savepoint_dialect,
             access_mode,
+            lock_timeout: LockTimeout::engine_default(),
+        }
+    }
+
+    /// Test-only constructor that lets the caller pin every dimension
+    /// (dialect + access mode + lock timeout). See [`for_test`] for
+    /// caveats.
+    #[doc(hidden)]
+    pub fn for_test_with_lock_timeout(
+        handles: SharedHandleManager,
+        conn_id: u32,
+        state: TransactionState,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+    ) -> Self {
+        Self {
+            handles,
+            conn_id,
+            state: Arc::new(Mutex::new(state)),
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
+            lock_timeout,
         }
     }
 
@@ -732,6 +1029,7 @@ impl Transaction {
             isolation_level,
             savepoint_dialect,
             access_mode: TransactionAccessMode::ReadWrite,
+            lock_timeout: LockTimeout::engine_default(),
         }
     }
 }
@@ -832,11 +1130,13 @@ impl<'t> Savepoint<'t> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IsolationLevel, SavepointDialect, Transaction, TransactionAccessMode, TransactionState,
+        IsolationLevel, LockTimeout, SavepointDialect, Transaction, TransactionAccessMode,
+        TransactionState,
     };
     use crate::error::OdbcError;
     use crate::handles::{HandleManager, SharedHandleManager};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     #[test]
     fn isolation_level_from_u32_maps_odbc_values() {
@@ -1214,6 +1514,167 @@ mod tests {
             TransactionAccessMode::ReadWrite.to_sql_keyword()
         );
         assert_eq!(rw, "SET TRANSACTION READ WRITE");
+    }
+
+    // ---------------------------------------------------------------
+    // LockTimeout (Sprint 4.2) regression coverage
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn lock_timeout_default_is_engine_default() {
+        let lt = LockTimeout::default();
+        assert!(lt.is_engine_default());
+        assert_eq!(lt.millis(), None);
+    }
+
+    #[test]
+    fn lock_timeout_engine_default_const_is_none() {
+        let lt = LockTimeout::engine_default();
+        assert!(lt.is_engine_default());
+        assert_eq!(lt.millis(), None);
+    }
+
+    #[test]
+    fn lock_timeout_from_millis_zero_collapses_to_engine_default() {
+        // The wire `0` MUST round-trip as "engine default" so the FFI
+        // `lock_timeout_ms = 0` parameter is unambiguous.
+        let lt = LockTimeout::from_millis(0);
+        assert!(lt.is_engine_default());
+        assert_eq!(lt.millis(), None);
+    }
+
+    #[test]
+    fn lock_timeout_from_millis_non_zero_preserves_value() {
+        let lt = LockTimeout::from_millis(2500);
+        assert!(!lt.is_engine_default());
+        assert_eq!(lt.millis(), Some(2500));
+    }
+
+    #[test]
+    fn lock_timeout_from_duration_zero_is_engine_default() {
+        let lt = LockTimeout::from_duration(Duration::ZERO);
+        assert!(lt.is_engine_default(),
+            "Duration::ZERO must be the canonical 'engine default' input");
+    }
+
+    #[test]
+    fn lock_timeout_from_duration_sub_millisecond_rounds_up_to_one_ms() {
+        // Anyone passing a sub-ms positive duration almost certainly
+        // wants "wait a tiny bit", not "engine default". Bump to 1ms.
+        let lt = LockTimeout::from_duration(Duration::from_micros(500));
+        assert_eq!(
+            lt.millis(),
+            Some(1),
+            "sub-ms positive durations must NOT silently collapse to \
+             engine default — they round up to 1ms"
+        );
+    }
+
+    #[test]
+    fn lock_timeout_from_duration_milliseconds_round_trip() {
+        let lt = LockTimeout::from_duration(Duration::from_millis(2_500));
+        assert_eq!(lt.millis(), Some(2_500));
+    }
+
+    #[test]
+    fn lock_timeout_from_duration_clamps_at_u32_max() {
+        // 60 minutes > u32 ms range (~49.7 days). Use a value that
+        // overflows u32 *milliseconds* to verify the saturating cast.
+        let big = Duration::from_secs(u64::from(u32::MAX) + 1);
+        let lt = LockTimeout::from_duration(big);
+        assert_eq!(
+            lt.millis(),
+            Some(u32::MAX),
+            "duration > u32::MAX ms must clamp to the largest u32 \
+             rather than wrap around to a tiny value"
+        );
+    }
+
+    #[test]
+    fn lock_timeout_seconds_rounding_for_mysql_db2() {
+        // Exact second.
+        assert_eq!(
+            LockTimeout::from_millis(1_000).millis_as_seconds_rounded_up(),
+            Some(1),
+        );
+        // Sub-second positive → bump to 1.
+        assert_eq!(
+            LockTimeout::from_millis(500).millis_as_seconds_rounded_up(),
+            Some(1),
+            "sub-second timeouts must round UP so we never silently \
+             relax the caller's bound"
+        );
+        // 1 ms over a boundary → next second.
+        assert_eq!(
+            LockTimeout::from_millis(1_001).millis_as_seconds_rounded_up(),
+            Some(2),
+        );
+        // 2.999 s → 3 s.
+        assert_eq!(
+            LockTimeout::from_millis(2_999).millis_as_seconds_rounded_up(),
+            Some(3),
+        );
+        // Engine-default → None.
+        assert_eq!(
+            LockTimeout::engine_default().millis_as_seconds_rounded_up(),
+            None,
+        );
+    }
+
+    #[test]
+    fn transaction_default_lock_timeout_is_engine_default() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(txn.lock_timeout().is_engine_default());
+    }
+
+    #[test]
+    fn transaction_for_test_with_lock_timeout_pins_the_value() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_lock_timeout(
+            handles,
+            7,
+            TransactionState::Active,
+            IsolationLevel::Serializable,
+            SavepointDialect::Sql92,
+            TransactionAccessMode::ReadOnly,
+            LockTimeout::from_millis(2_500),
+        );
+        assert_eq!(txn.lock_timeout().millis(), Some(2_500));
+        // Other dimensions also survive intact.
+        assert_eq!(txn.access_mode(), TransactionAccessMode::ReadOnly);
+        assert_eq!(txn.isolation_level(), IsolationLevel::Serializable);
+    }
+
+    /// Pure SQL formatting checks (no driver involved) for each engine
+    /// in the lock-timeout matrix. Pins the wire format so future
+    /// edits to `apply_lock_timeout` can't silently change SQL output.
+    #[test]
+    fn lock_timeout_sql_format_per_engine() {
+        let lt = LockTimeout::from_millis(2_500);
+        let ms = lt.millis().unwrap();
+        let secs = lt.millis_as_seconds_rounded_up().unwrap();
+
+        assert_eq!(format!("SET LOCK_TIMEOUT {}", ms), "SET LOCK_TIMEOUT 2500");
+        assert_eq!(
+            format!("SET LOCAL lock_timeout = '{}ms'", ms),
+            "SET LOCAL lock_timeout = '2500ms'",
+        );
+        assert_eq!(
+            format!("SET SESSION innodb_lock_wait_timeout = {}", secs),
+            "SET SESSION innodb_lock_wait_timeout = 3",
+            "MySQL/MariaDB rounds 2500ms up to 3s",
+        );
+        assert_eq!(
+            format!("SET CURRENT LOCK TIMEOUT {}", secs),
+            "SET CURRENT LOCK TIMEOUT 3",
+        );
+        assert_eq!(format!("PRAGMA busy_timeout = {}", ms), "PRAGMA busy_timeout = 2500");
     }
 
     #[test]

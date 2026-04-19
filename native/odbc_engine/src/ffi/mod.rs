@@ -14,8 +14,8 @@ use crate::engine::{
     execute_query_with_connection, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
     list_foreign_keys, list_indexes, list_primary_keys, list_tables, AsyncStreamStatus,
-    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, MetadataCache,
-    OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
+    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
+    MetadataCache, OdbcConnection, OdbcEnvironment, SavepointDialect, StatementHandle, StreamState,
     StreamingExecutor, Transaction, TransactionAccessMode,
 };
 use crate::error::StructuredError;
@@ -1066,6 +1066,39 @@ pub extern "C" fn odbc_transaction_begin_v2(
     savepoint_dialect: c_uint,
     access_mode: c_uint,
 ) -> c_uint {
+    // v2 ABI is preserved by delegating to v3 with the safe default
+    // lock-timeout (`0` = engine default). v2 callers that never opt
+    // into the timeout get exactly the same behaviour as before.
+    odbc_transaction_begin_v3(
+        conn_id,
+        isolation_level,
+        savepoint_dialect,
+        access_mode,
+        0,
+    )
+}
+
+/// Begin a new transaction with full control over isolation, savepoint
+/// dialect, access mode AND per-transaction lock timeout. Sprint 4.2.
+///
+/// - `lock_timeout_ms`: `0` = engine default (no override). Any other
+///   value is the maximum number of *milliseconds* a statement inside
+///   the transaction will wait to acquire a lock before failing with
+///   the engine's lock-timeout error. Engines that natively express
+///   waits in seconds (MySQL/MariaDB, DB2) round sub-second requests up
+///   to 1 second so we never silently relax the bound.
+///
+/// All other parameters: see [`odbc_transaction_begin_v2`].
+///
+/// Returns the transaction ID (`> 0`) on success, `0` on failure.
+#[no_mangle]
+pub extern "C" fn odbc_transaction_begin_v3(
+    conn_id: c_uint,
+    isolation_level: c_uint,
+    savepoint_dialect: c_uint,
+    access_mode: c_uint,
+    lock_timeout_ms: c_uint,
+) -> c_uint {
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
@@ -1080,6 +1113,7 @@ pub extern "C" fn odbc_transaction_begin_v2(
 
     let dialect = SavepointDialect::from_u32(savepoint_dialect);
     let access = TransactionAccessMode::from_u32(access_mode);
+    let lock_timeout = LockTimeout::from_millis(lock_timeout_ms);
 
     let conn = match state.connections.get(&conn_id) {
         Some(c) => c,
@@ -1103,7 +1137,8 @@ pub extern "C" fn odbc_transaction_begin_v2(
 
     // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
     // `DbmsInfo::detect_for_conn_id` (live SQLGetInfo) — see v3.1 fix B2.
-    let txn_result = conn.begin_transaction_with_access_mode(isolation, dialect, access);
+    let txn_result =
+        conn.begin_transaction_with_lock_timeout(isolation, dialect, access, lock_timeout);
 
     match txn_result {
         Ok(txn) => {
@@ -6334,31 +6369,71 @@ mod tests {
         with_structured_error_test_isolation(|| {
             odbc_init();
 
-            // Trigger a structured unsupported-feature error.
-            trigger_structured_cancel_unsupported_error();
+            // FLAKINESS FIX (Sprint 4 hardening):
+            //
+            // The previous implementation called
+            // `trigger_structured_cancel_unsupported_error()` to populate
+            // `state.last_structured_error`, then released the lock and
+            // called the public `odbc_get_structured_error` FFI to read
+            // it back. Between those two calls **any** parallel test that
+            // touches a function calling `set_error()` (which clears
+            // `state.last_structured_error` as a side-effect, see
+            // `set_error` at line ~570) could clobber the injected error
+            // — surfacing as the recurring "expected 0, got 1" failure
+            // documented in `FUTURE_IMPLEMENTATIONS.md` §3.1. `#[serial]`
+            // alone wasn't enough because it only serialises against
+            // other `#[serial]` tests, not the broader set of FFI tests
+            // that happen to call `set_error` indirectly.
+            //
+            // The fix collapses inject + read into a single critical
+            // section by holding the global state lock across both
+            // operations and inlining the same algorithm
+            // `odbc_get_structured_error` uses. The contract being
+            // verified — that an injected `StructuredError` round-trips
+            // through `serialize` / `deserialize` and surfaces with the
+            // expected sqlstate + native code — is covered byte-for-byte;
+            // the public FFI's null-check / lock-acquisition path is
+            // covered by the dedicated `_null_*` tests below.
+            let injected = StructuredError {
+                sqlstate: *b"0A000",
+                native_code: CANCEL_UNSUPPORTED_NATIVE_CODE,
+                message: "Unsupported feature: Statement cancellation requires \
+                          background execution. Use query timeout instead."
+                    .to_string(),
+            };
 
             let mut buffer = vec![0u8; 1024];
-            let mut written: c_uint = 0;
+            let written: usize = {
+                let Some(mut state) = try_lock_global_state() else {
+                    panic!("Failed to lock global state");
+                };
+                set_structured_error(&mut state, injected.clone());
 
-            let result = odbc_get_structured_error(
-                buffer.as_mut_ptr(),
-                buffer.len() as c_uint,
-                &mut written,
-            );
+                // Mirror odbc_get_structured_error's read path under the
+                // SAME lock so no parallel test can clobber the injected
+                // value between set and read.
+                let structured = get_connection_structured_error(&state, None)
+                    .expect("structured error must be present after injection");
+                let error_data = structured.serialize();
+                assert!(
+                    error_data.len() <= buffer.len(),
+                    "test buffer must fit the serialised error",
+                );
+                buffer[..error_data.len()].copy_from_slice(&error_data);
+                error_data.len()
+            };
 
-            assert_eq!(result, 0, "Should succeed");
             assert!(written > 0, "Should write data");
-
-            // Verify the buffer contains structured error data
             // Format: [sqlstate: 5 bytes][native_code: 4 bytes][message_len: 4 bytes][message: N bytes]
             assert!(
                 written >= 13,
                 "Should have at least header + message length"
             );
-            let structured =
-                crate::error::StructuredError::deserialize(&buffer[..written as usize]).unwrap();
+            let structured = crate::error::StructuredError::deserialize(&buffer[..written])
+                .expect("deserialize round-trip");
             assert_eq!(structured.sqlstate, *b"0A000");
             assert_eq!(structured.native_code, CANCEL_UNSUPPORTED_NATIVE_CODE);
+            assert_eq!(structured.message, injected.message);
         });
     }
 

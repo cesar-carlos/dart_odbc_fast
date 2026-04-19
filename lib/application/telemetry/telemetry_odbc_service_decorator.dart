@@ -93,6 +93,7 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     IsolationLevel? isolationLevel,
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
   }) async {
     return _telemetry.inOperation(
       'ODBC.beginTransaction',
@@ -101,6 +102,7 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
         isolationLevel: isolationLevel,
         savepointDialect: savepointDialect,
         accessMode: accessMode,
+        lockTimeout: lockTimeout,
       ),
     );
   }
@@ -124,6 +126,32 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.rollbackTransaction',
       () => _service.rollbackTransaction(connectionId, txnId),
+    );
+  }
+
+  @override
+  Future<Result<T>> runInTransaction<T extends Object>(
+    String connectionId,
+    Future<Result<T>> Function(int txnId) action, {
+    IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
+    TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
+  }) async {
+    // Wrap the whole unit of work in a single span so traces show the
+    // transaction lifecycle as one logical operation. Inner
+    // beginTransaction / commit / rollback calls each get their own
+    // child span via the wrapped service's method delegates.
+    return _telemetry.inOperation(
+      'ODBC.runInTransaction',
+      () => _service.runInTransaction<T>(
+        connectionId,
+        action,
+        isolationLevel: isolationLevel,
+        savepointDialect: savepointDialect,
+        accessMode: accessMode,
+        lockTimeout: lockTimeout,
+      ),
     );
   }
 

@@ -1,5 +1,7 @@
 use super::dbms_info::DbmsInfo;
-use super::transaction::{IsolationLevel, SavepointDialect, Transaction, TransactionAccessMode};
+use super::transaction::{
+    IsolationLevel, LockTimeout, SavepointDialect, Transaction, TransactionAccessMode,
+};
 use crate::engine::core::DriverCapabilities;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
@@ -95,6 +97,25 @@ impl OdbcConnection {
             isolation_level,
             savepoint_dialect,
             access_mode,
+        )
+    }
+
+    /// Begin a transaction with full control over isolation, savepoint
+    /// dialect, access mode AND per-transaction lock timeout. Sprint 4.2.
+    pub fn begin_transaction_with_lock_timeout(
+        &self,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+    ) -> Result<Transaction> {
+        Transaction::begin_with_lock_timeout(
+            self.handles.clone(),
+            self.conn_id,
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
+            lock_timeout,
         )
     }
 

@@ -21,7 +21,10 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~Streaming multi-result (M8)~~                            | ✅ **Implemented (v3.3.0)**                     | ~~Medium~~  |
 | ~~UTF-16 wide-text column decoding~~                       | ✅ **Implemented (v3.3.0)**                     | ~~High~~    |
 | ~~Transaction Sprint 4.1 — `READ ONLY`~~                   | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
-| Transaction Sprint 4.2/4.3/4.4 — lock_timeout, XA, runInTx | Partial — 4.1 done; 4.2/4.3/4.4 still pending  | Medium      |
+| ~~Transaction Sprint 4.2 — lock_timeout~~                  | ✅ **Implemented (Unreleased)**                 | ~~Medium~~  |
+| ~~Transaction Sprint 4.4 — `runInTransaction<T>` helper~~  | ✅ **Implemented (Unreleased)**                 | ~~Low~~     |
+| Transaction Sprint 4.3 — XA / 2PC / distributed            | Planned (large scope; needs odbc-api escape hatch) | Medium  |
+| ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (Unreleased)** — atomic inject+read   | ~~Low~~     |
 | `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
 | `SqlDataType` extended kinds (smallInt, json, uuid, …)     | Incremental (10/30 kinds shipped in v3.0.0)     | Low         |
@@ -45,13 +48,17 @@ Server / SQLite / Snowflake silently no-op. v1 FFI ABI preserved.
 Verified by 8 unit tests + 4 E2E tests (`tests/e2e_transaction_access_mode_test.rs`).
 See CHANGELOG `[Unreleased] / Added` for the full surface.
 
-### 4.2 Lock / statement timeouts per transaction
+### ~~4.2 Lock / statement timeouts per transaction~~ — ✅ IMPLEMENTED (Unreleased)
 
-- **Why**: today the only knob is the per-statement timeout. There is no
-  `lock_timeout` (`SET LOCK_TIMEOUT` on SQL Server, `SET lock_timeout` on
-  Postgres, `WAIT n` clause on Oracle).
-- **Sketch**: `Transaction::with_timeout(Duration)` helper that emits the
-  right `SET` for each engine *before* `set_autocommit(false)`.
+`engine::LockTimeout` typed wrapper exposed end-to-end (Rust core →
+FFI v3 → Dart `Duration?` → Service). Engine matrix: SQL Server emits
+`SET LOCK_TIMEOUT <ms>`; PostgreSQL `SET LOCAL lock_timeout = '<n>ms'`
+(auto-resets on commit/rollback); MySQL/MariaDB and DB2 use the
+session-wide seconds-granular variants with sub-second values rounding
+UP to 1s; SQLite uses `PRAGMA busy_timeout = <ms>`; Oracle/Snowflake
+silently no-op. v1/v2 ABIs preserved via v3 delegation. Verified by
+12 unit tests + 4 E2E tests
+(`tests/e2e_transaction_lock_timeout_test.rs`).
 
 ### 4.3 XA / two-phase commit / distributed transactions
 
@@ -61,13 +68,19 @@ See CHANGELOG `[Unreleased] / Added` for the full surface.
   commit, rollback}` calling `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC)`
   via `odbc-api`'s raw escape hatch. Likely a paid-tier feature.
 
-### 4.4 `with_transaction` exposed natively in the Service layer
+### ~~4.4 `runInTransaction` exposed natively in the Service layer~~ — ✅ IMPLEMENTED (Unreleased)
 
-- **Why**: today users get the `runWithBegin` helper at the
-  `TransactionHandle` level, but the `OdbcService` API still requires
-  manual begin/commit/rollback in language-server-discoverable surfaces.
-- **Sketch**: `IOdbcService.runInTransaction<T>(connId, action,
-  {isolation, dialect})` wrapping the same try/commit/rollback discipline.
+`IOdbcService.runInTransaction<T>(connId, action, {isolationLevel,
+savepointDialect, accessMode, lockTimeout})` ships in
+`OdbcService` with a tracing wrapper in
+`TelemetryOdbcServiceDecorator`. Honours the
+`begin → action → commit/rollback` contract atomically: action throws
+become `QueryError` (typed catch in the action's stack), action
+`Failure` rolls back and propagates verbatim, `commit` failure surfaces
+as the unit-of-work failure, and rollback failures during cleanup are
+swallowed so they never overwrite the original cause. Verified by
+9 Dart unit tests in
+`test/application/services/odbc_service_run_in_transaction_test.dart`.
 
 ## 1. Output parameters by driver/plugin
 
@@ -104,14 +117,23 @@ These are **not** product bugs — they affect test runs against specific
 local infrastructures. Documented here so they don't get re-discovered
 each release cycle.
 
-### 3.1 `test_ffi_get_structured_error` is flaky in parallel
+### ~~3.1 `test_ffi_get_structured_error` is flaky in parallel~~ — ✅ FIXED (Unreleased)
 
-- **Why**: shared global state pollution between parallel ffi unit tests.
-- **Workaround**: passes deterministically with `cargo test --lib --
-  --test-threads=1`.
-- **Fix sketch**: extract the per-connection structured-error map from
-  the ffi mod global state into a per-test fixture (would require
-  refactoring `GlobalState::connection_errors`).
+The previous implementation triggered the structured error via
+`trigger_structured_cancel_unsupported_error()`, released the global
+state lock, and only then called the public `odbc_get_structured_error`
+FFI to read it back. Any parallel test calling a function that invokes
+`set_error()` (which clears `state.last_structured_error` as a
+side-effect, see `set_error` at `ffi/mod.rs:570`) could clobber the
+injected value in that window. `#[serial]` only serialised against
+other `#[serial]` tests, not the broader set of FFI tests that touch
+`set_error` indirectly.
+
+The fix collapses inject + read into a single critical section by
+holding the global state lock across both operations and inlining the
+same algorithm `odbc_get_structured_error` uses. Verified by 5
+consecutive `cargo test --lib` runs with 0 failures (was an
+intermittent failure documented since v3.0).
 
 ### 3.2 `e2e_pool_test` / `e2e_savepoint_test` hang on slow DSN
 

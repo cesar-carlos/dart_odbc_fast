@@ -37,6 +37,6 @@ pub use streaming::{
     MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
 pub use transaction::{
-    IsolationLevel, Savepoint, SavepointDialect, Transaction, TransactionAccessMode,
+    IsolationLevel, LockTimeout, Savepoint, SavepointDialect, Transaction, TransactionAccessMode,
     TransactionState,
 };

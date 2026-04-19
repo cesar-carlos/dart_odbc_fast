@@ -42,6 +42,7 @@ abstract class IOdbcService {
     IsolationLevel? isolationLevel,
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
   });
 
   Future<Result<void>> commitTransaction(
@@ -53,6 +54,51 @@ abstract class IOdbcService {
     String connectionId,
     int txnId,
   );
+
+  /// Runs [action] inside a transaction with automatic commit on success
+  /// and rollback on any failure (returned `Failure` or thrown exception).
+  ///
+  /// Sprint 4.4 — ergonomic helper that captures the begin/commit/rollback
+  /// dance behind a single call so application code never has to manage
+  /// the `txnId` lifecycle by hand.
+  ///
+  /// - `action` receives the live `txnId` and returns a `Result<T>`.
+  ///   Returning `Success(value)` triggers `commitTransaction`; returning
+  ///   `Failure(error)` triggers `rollbackTransaction` and the original
+  ///   error is propagated.
+  /// - When [action] throws, the transaction is rolled back and the
+  ///   exception is converted to a `QueryError`. The original exception
+  ///   is preserved in the error message for diagnostics.
+  /// - When the rollback itself fails, the original error wins; the
+  ///   rollback failure is logged via the underlying repository (which
+  ///   already does this in [rollbackTransaction]).
+  /// - Default isolation is `IsolationLevel.readCommitted`,
+  ///   default dialect is `SavepointDialect.auto`, default access mode
+  ///   is `TransactionAccessMode.readWrite` — same defaults as
+  ///   [beginTransaction].
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await service.runInTransaction<int>(
+  ///   connId,
+  ///   (txnId) async {
+  ///     final r1 = await service.executeQueryParams(
+  ///       connId, 'INSERT INTO logs(msg) VALUES (?)', ['hi'],
+  ///     );
+  ///     if (r1.isError()) return Failure(r1.exceptionOrNull()!);
+  ///     return const Success(42);
+  ///   },
+  ///   accessMode: TransactionAccessMode.readWrite,
+  /// );
+  /// ```
+  Future<Result<T>> runInTransaction<T extends Object>(
+    String connectionId,
+    Future<Result<T>> Function(int txnId) action, {
+    IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
+    TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
+  });
 
   Future<Result<void>> createSavepoint(
     String connectionId,
@@ -335,12 +381,14 @@ class OdbcService implements IOdbcService {
     IsolationLevel? isolationLevel,
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
   }) async {
     return _repository.beginTransaction(
       connectionId,
       isolationLevel ?? IsolationLevel.readCommitted,
       savepointDialect: savepointDialect ?? SavepointDialect.auto,
       accessMode: accessMode ?? TransactionAccessMode.readWrite,
+      lockTimeout: lockTimeout,
     );
   }
 
@@ -358,6 +406,80 @@ class OdbcService implements IOdbcService {
     int txnId,
   ) async {
     return _repository.rollbackTransaction(connectionId, txnId);
+  }
+
+  @override
+  Future<Result<T>> runInTransaction<T extends Object>(
+    String connectionId,
+    Future<Result<T>> Function(int txnId) action, {
+    IsolationLevel? isolationLevel,
+    SavepointDialect? savepointDialect,
+    TransactionAccessMode? accessMode,
+    Duration? lockTimeout,
+  }) async {
+    final beginResult = await beginTransaction(
+      connectionId,
+      isolationLevel: isolationLevel,
+      savepointDialect: savepointDialect,
+      accessMode: accessMode,
+      lockTimeout: lockTimeout,
+    );
+    // Early-out when we couldn't even open the transaction. The wire
+    // format guarantees the failure carries an OdbcError, so we just
+    // forward it untouched.
+    if (beginResult.isError()) {
+      return Failure(beginResult.exceptionOrNull()!);
+    }
+    final txnId = beginResult.getOrNull()!;
+
+    Result<T> userResult;
+    try {
+      userResult = await action(txnId);
+    } on Object catch (e, st) {
+      // The whole point of the helper is to catch *any* throw the user
+      // emits and convert it into a Failure + rollback. Typed catches
+      // would defeat the contract — exceptions must never escape
+      // `runInTransaction`.
+      await _safelyRollback(connectionId, txnId);
+      return Failure(
+        QueryError(
+          message: 'runInTransaction: action threw ${e.runtimeType}: $e\n$st',
+        ),
+      );
+    }
+
+    if (userResult.isError()) {
+      // The action returned a Failure. Roll back, then propagate the
+      // original error verbatim so the caller's diagnostics aren't
+      // muddied by transaction bookkeeping.
+      await _safelyRollback(connectionId, txnId);
+      return userResult;
+    }
+
+    final commitResult = await commitTransaction(connectionId, txnId);
+    if (commitResult.isError()) {
+      // Commit failed *after* the action succeeded. By driver contract
+      // the engine has rolled back (or is in an undefined state, which
+      // we model as rolled back). Surface the commit failure so the
+      // caller knows the unit of work didn't actually persist.
+      return Failure(commitResult.exceptionOrNull()!);
+    }
+    return userResult;
+  }
+
+  /// Rolls back [txnId] without surfacing the rollback's own failure to
+  /// the caller. The underlying repository already logs structured
+  /// errors on rollback failure (see Transaction::rollback in Rust);
+  /// we don't want a noisy rollback error to overwrite the original
+  /// problem the user is debugging.
+  Future<void> _safelyRollback(String connectionId, int txnId) async {
+    try {
+      await rollbackTransaction(connectionId, txnId);
+    } on Object catch (_) {
+      // Defensive: any throw from the rollback path is logged elsewhere
+      // by the underlying repository and intentionally not re-raised
+      // here. See the method doc for the rationale.
+    }
   }
 
   @override

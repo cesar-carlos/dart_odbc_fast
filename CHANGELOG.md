@@ -9,6 +9,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sprint 4.2 — Per-transaction `LockTimeout`.** Transactions can now
+  cap how long a statement waits for a lock without the caller having
+  to emit raw `SET` themselves.
+  - **Rust core**: new `engine::LockTimeout` typed wrapper (`u32` ms,
+    with `0` = engine default). `Transaction::begin_with_lock_timeout`
+    is the new full-control entry point;
+    `begin_with_access_mode` / `begin_with_dialect` / `begin` keep
+    their signatures and forward to it with `LockTimeout::engine_default()`.
+    `Transaction::lock_timeout()` getter exposes the resolved value.
+    `OdbcConnection::begin_transaction_with_lock_timeout(...)`.
+    `Transaction::execute_with_lock_timeout(...)` mirror.
+    `Transaction::for_test_with_lock_timeout(...)` test-only constructor.
+  - **Engine matrix** (`apply_lock_timeout`):
+    SQL Server emits `SET LOCK_TIMEOUT <ms>`;
+    PostgreSQL uses `SET LOCAL lock_timeout = '<ms>ms'` (auto-resets
+    on commit/rollback);
+    MySQL/MariaDB use `SET SESSION innodb_lock_wait_timeout = <s>` with
+    sub-second values rounded UP to 1 second so we never silently
+    relax the caller's bound;
+    DB2 uses `SET CURRENT LOCK TIMEOUT <s>` with the same rounding;
+    SQLite uses `PRAGMA busy_timeout = <ms>`;
+    Oracle / Snowflake / Sybase / Redshift / BigQuery / unknown silently
+    no-op (logged at debug). `LockTimeout::engine_default()` is the
+    universal default and emits **no** `SET` so the connection's
+    session log stays clean.
+  - **FFI**: new export `odbc_transaction_begin_v3(conn_id, isolation,
+    savepoint_dialect, access_mode, lock_timeout_ms)`. v2 delegates to
+    v3 with `lock_timeout_ms = 0`; v1 still delegates to v2. All three
+    ABIs are preserved byte-for-byte.
+  - **Dart**: `Duration? lockTimeout` threaded through `OdbcBindings`
+    (new `odbc_transaction_begin_v3` + typedef +
+    `supportsTransactionLockTimeout` getter), `OdbcNative.transactionBegin`
+    (new `lockTimeoutMs` named arg, smart routing v1/v2/v3 to minimise
+    binary surface area when the caller is on defaults),
+    `NativeOdbcConnection.beginTransaction`,
+    `AsyncNativeOdbcConnection.beginTransaction`,
+    `BeginTransactionRequest` (new field, default `0`),
+    `IOdbcRepository.beginTransaction` (new optional named arg —
+    converts `Duration` → ms at the FFI boundary, with sub-ms positive
+    durations rounding UP to 1 ms to mirror Rust-side semantics),
+    `IOdbcService.beginTransaction`, `OdbcService.runInTransaction`,
+    and `TelemetryOdbcServiceDecorator`. Existing call sites keep
+    working unchanged because every new parameter defaults to `null`
+    (engine default) / wire `0`.
+  - **Graceful fallback**: when an older native library predates
+    Sprint 4.2, `OdbcBindings.odbc_transaction_begin_v3` silently
+    delegates to v2 (or v1 if v2 is also missing) and `lockTimeoutMs`
+    is ignored — the transaction uses the engine default.
+- **Sprint 4.4 — `IOdbcService.runInTransaction<T>(...)` helper.**
+  Captures the `begin → action → commit/rollback` dance behind a
+  single Service-layer call so application code never has to manage
+  the `txnId` lifecycle by hand.
+  - Returns `Failure` on any combination of `beginTransaction`
+    failure, `action` returning `Failure`, `action` throwing (which
+    is caught and converted to a `QueryError` with the original
+    type/message preserved), or `commit` failure.
+  - Rollback runs automatically on any non-happy path; rollback
+    failure is swallowed so a noisy rollback never overwrites the
+    original error the caller is debugging.
+  - Threads through every `beginTransaction` knob (isolation,
+    savepoint dialect, access mode, lock timeout) with the same
+    defaults as `IOdbcService.beginTransaction`.
+  - Implementation in `OdbcService` plus a tracing wrapper in
+    `TelemetryOdbcServiceDecorator` that emits a single
+    `ODBC.runInTransaction` span around the whole unit of work.
 - **Sprint 4.1 — `TransactionAccessMode` (`READ ONLY` / `READ WRITE`).**
   Transactions can now opt into the SQL-92 access-mode hint without
   having to emit raw `SET TRANSACTION` themselves.
@@ -51,29 +116,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     transaction is always `READ WRITE`. Callers that need the
     distinction gate on `supportsTransactionAccessMode`.
 
+### Fixed
+
+- **`test_ffi_get_structured_error` flaky in parallel runs**
+  (long-standing `FUTURE_IMPLEMENTATIONS.md` §3.1). The previous
+  implementation triggered the structured error via
+  `trigger_structured_cancel_unsupported_error()`, released the global
+  state lock, and only then called the public
+  `odbc_get_structured_error` FFI. Any parallel test that touched a
+  function calling `set_error()` (which clears
+  `state.last_structured_error` as a side-effect) could clobber the
+  injected value in that window — surfacing as the recurring
+  `assertion 'left == right' failed: Should succeed left:1 right:0`.
+  `#[serial]` alone wasn't enough because it only serialises against
+  *other* `#[serial]` tests, not the broader set of FFI tests that
+  call `set_error` indirectly. The fix collapses inject + read into a
+  single critical section by holding the lock across both operations
+  and inlining the same algorithm `odbc_get_structured_error` uses.
+  Verified by 5 consecutive `cargo test --lib` runs with 0 failures.
+
 ### Tests
 
-- 8 new lib unit tests under `engine::transaction::tests::*` covering
-  the `TransactionAccessMode` from-`u32` mapping, SQL keyword
-  formatting, the `is_read_only` predicate, the default value attached
-  to the `Transaction` struct, and the `for_test_with_access_mode`
-  test-only constructor.
-- `tests/e2e_transaction_access_mode_test.rs` — 4 new E2E tests gated
-  by `should_run_e2e_tests()`. Verified against a live SQL Server:
-  default `ReadWrite` preserves v1 behaviour, `ReadOnly` is a silent
-  no-op on SQL Server (the recorded `access_mode()` still reflects
-  what the caller asked for), the v1 path defaults to `ReadWrite`,
-  and a placeholder for the
-  Postgres/MySQL/Oracle native-hint exercise (skipped when the DSN
-  isn't one of those engines).
+- **Sprint 4.1**: 8 new lib unit tests under
+  `engine::transaction::tests::*` (`TransactionAccessMode` from-`u32`
+  mapping, SQL keyword formatting, `is_read_only` predicate, default
+  value attached to the `Transaction` struct,
+  `for_test_with_access_mode` constructor).
+  `tests/e2e_transaction_access_mode_test.rs` — 4 new E2E tests gated
+  by `should_run_e2e_tests()`, verified against a live SQL Server
+  (default `ReadWrite` preserves v1 behaviour, `ReadOnly` is a silent
+  no-op on SQL Server, v1 path defaults to `ReadWrite`,
+  Postgres/MySQL/Oracle native-hint placeholder).
+- **Sprint 4.2**: 12 new lib unit tests under
+  `engine::transaction::tests::lock_timeout_*`
+  (`from_millis(0)` collapses to engine-default; sub-ms positive
+  durations round up to 1 ms; `from_duration` clamps at `u32::MAX` ms;
+  `millis_as_seconds_rounded_up` policy for MySQL/DB2; SQL formatting
+  per engine; default attached to `Transaction`;
+  `for_test_with_lock_timeout` constructor).
+  `tests/e2e_transaction_lock_timeout_test.rs` — 4 new E2E tests
+  verified against SQL Server (engine_default is a pure no-op,
+  `SET LOCK_TIMEOUT 2500` is accepted, sub-ms round-up survives the
+  driver, the Sprint 4.1 entry point still defaults to engine-default).
+- **Sprint 4.4**: 9 new Dart unit tests in
+  `test/application/services/odbc_service_run_in_transaction_test.dart`
+  covering the full state machine (happy path, action `Failure`,
+  action throw, `begin` failure, `commit` failure, rollback failure
+  swallowing, parameter threading, defaults, async-await ordering).
 
 ### Migration
 
-- 100% backwards compatible. Every existing call site keeps working
-  unchanged because the new parameter is optional with a `ReadWrite`
-  default. Wire-level v1 is also preserved: `odbc_transaction_begin`
-  still ships, still has the same signature, and now delegates to v2
-  with `access_mode = 0`.
+- 100% backwards compatible across all three sub-features.
+  - Every new parameter is optional with a sensible default
+    (`ReadWrite` / `engine_default` / `null lockTimeout` / etc.).
+  - Wire-level: `odbc_transaction_begin` (v1) still ships and now
+    delegates to `_v2` with `access_mode = 0`; `_v2` delegates to
+    `_v3` with `lock_timeout_ms = 0`. All three ABIs are preserved.
+  - When an older native library is loaded, the higher-level Dart
+    layer detects the missing FFI symbols (via the `supports*`
+    getters on `OdbcBindings`) and silently falls back to the closest
+    older entry point. The new parameters become no-ops in that case
+    rather than producing errors.
 
 ### Notes
 

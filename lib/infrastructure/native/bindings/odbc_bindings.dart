@@ -67,6 +67,15 @@ class OdbcBindings {
       // that require READ ONLY support gate on `supportsTransactionAccessMode`.
       _odbc_transaction_begin_v2_ptr = null;
     }
+    try {
+      _odbc_transaction_begin_v3_ptr =
+          _dylib.lookup('odbc_transaction_begin_v3');
+    } on Object catch (_) {
+      // Older native libraries (pre-Sprint 4.2) don't ship v3. Callers
+      // that require lock_timeout support gate on
+      // `supportsTransactionLockTimeout`.
+      _odbc_transaction_begin_v3_ptr = null;
+    }
     _odbc_transaction_commit_ptr = _dylib.lookup('odbc_transaction_commit');
     _odbc_transaction_rollback_ptr = _dylib.lookup('odbc_transaction_rollback');
     _odbc_savepoint_create_ptr = _dylib.lookup('odbc_savepoint_create');
@@ -220,6 +229,8 @@ class OdbcBindings {
       _odbc_transaction_begin_ptr;
   late ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_v2_func>>?
       _odbc_transaction_begin_v2_ptr;
+  late ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_v3_func>>?
+      _odbc_transaction_begin_v3_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_commit_func>>
       _odbc_transaction_commit_ptr;
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_rollback_func>>
@@ -374,6 +385,15 @@ class OdbcBindings {
   /// equivalent to always passing `accessMode = readWrite`.
   bool get supportsTransactionAccessMode =>
       _odbc_transaction_begin_v2_ptr != null;
+
+  /// True when the loaded native library exports
+  /// `odbc_transaction_begin_v3` (added in Sprint 4.2). Callers that need
+  /// the `lockTimeoutMs` parameter should gate on this flag; older
+  /// binaries silently fall back to v2 (or v1, depending on what they
+  /// export) and the lock-timeout argument is ignored — every
+  /// transaction uses the engine default.
+  bool get supportsTransactionLockTimeout =>
+      _odbc_transaction_begin_v3_ptr != null;
 
   /// True when both multi-result streaming start FFIs and the existing
   /// async-poll FFI are available.
@@ -661,6 +681,43 @@ class OdbcBindings {
       isolationLevel,
       savepointDialect,
       accessMode,
+    );
+  }
+
+  /// Sprint 4.2 — begin a transaction with full control over isolation,
+  /// savepoint dialect, access mode AND per-transaction lock timeout.
+  ///
+  /// `lockTimeoutMs = 0` means "use the engine default" — strictly
+  /// equivalent to calling [`odbc_transaction_begin_v2`]. Any other
+  /// positive value is the maximum number of milliseconds a statement
+  /// inside the transaction will wait for a lock.
+  ///
+  /// When the loaded native library predates Sprint 4.2
+  /// (`supportsTransactionLockTimeout == false`), this falls through to
+  /// the v2 entry-point and `lockTimeoutMs` is ignored. Use the
+  /// `supports*` getter to detect the capability at the high level.
+  int odbc_transaction_begin_v3(
+    int connId,
+    int isolationLevel,
+    int savepointDialect,
+    int accessMode,
+    int lockTimeoutMs,
+  ) {
+    final ptr = _odbc_transaction_begin_v3_ptr;
+    if (ptr == null) {
+      return odbc_transaction_begin_v2(
+        connId,
+        isolationLevel,
+        savepointDialect,
+        accessMode,
+      );
+    }
+    return ptr.asFunction<int Function(int, int, int, int, int)>()(
+      connId,
+      isolationLevel,
+      savepointDialect,
+      accessMode,
+      lockTimeoutMs,
     );
   }
 
@@ -1393,6 +1450,13 @@ typedef odbc_transaction_begin_func = ffi.Uint32 Function(
   ffi.Uint32,
 );
 typedef odbc_transaction_begin_v2_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_transaction_begin_v3_func = ffi.Uint32 Function(
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,

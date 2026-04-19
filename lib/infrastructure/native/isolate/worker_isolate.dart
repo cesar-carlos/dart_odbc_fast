@@ -166,6 +166,7 @@ void _handleRequest(
           request.isolationLevel,
           savepointDialect: request.savepointDialect,
           accessMode: request.accessMode,
+          lockTimeoutMs: request.lockTimeoutMs,
         );
         sendPort.send(IntResponse(request.requestId, txnId));
 
