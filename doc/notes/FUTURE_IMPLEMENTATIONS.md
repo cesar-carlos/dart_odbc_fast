@@ -27,7 +27,7 @@ Consolidated backlog of items not yet included in implemented scope.
 | ~~`test_ffi_get_structured_error` flakiness~~              | ✅ **Fixed (Unreleased)** — atomic inject+read   | ~~Low~~     |
 | `IOdbcService.runInTransaction` helper                     | Planned (not started)                           | Low         |
 | Output parameters by driver/plugin                         | Out of current scope                            | Medium      |
-| `SqlDataType` extended kinds (incremental)                 | 15/30 kinds shipped (10 in v3.0.0, +5 unreleased) | Low      |
+| `SqlDataType` extended kinds (incremental)                 | 20/30 kinds shipped (10 in v3.0.0, +10 unreleased) | Low     |
 | Columnar protocol v2 (sketch)                              | Orphaned — see `doc/notes/columnar_protocol_sketch.md` | Low   |
 | `test_ffi_get_structured_error` flakiness on parallel runs | Known issue — passes serially                   | Low         |
 | `e2e_pool_test`, `e2e_savepoint_test` hang on slow DSN     | Known infra — gated by `ENABLE_E2E_TESTS=1`     | Low         |
@@ -101,17 +101,20 @@ swallowed so they never overwrite the original cause. Verified by
 
 v3.0.0 shipped 10 kinds (`int32`, `int64`, `decimal`, `varChar`,
 `nVarChar`, `varBinary`, `dateTime`, `date`, `time`, `boolAsInt32`).
-**Unreleased adds 5 more** (`smallInt`, `bigInt`, `json`, `uuid`,
-`money`) — see CHANGELOG `[Unreleased] / Added` and
+**Unreleased adds 10 more**:
+
+- First batch (smallInt, bigInt, json, uuid, money)
+- Final batch (tinyInt, bit, text, xml, interval)
+
+See CHANGELOG `[Unreleased] / Added` and
 `test/infrastructure/native/protocol/param_value_test.dart` for the
-full validation matrix.
+full validation matrix per kind.
 
-Still pending (each is a non-breaking change; ship as v3.x.0 minor
-bumps when there is a concrete consumer asking for it):
-
-- `tinyInt`, `bit`
-- `text`, `xml`
-- `interval`
+The 20 kinds now shipped cover every common SQL data type for
+PostgreSQL, MySQL/MariaDB, SQL Server, Oracle and SQLite. Engine-
+specific exotics (PostgreSQL `range`, `cidr`, `tsvector`; SQL Server
+`hierarchyid`, `geography`; Oracle `RAW`, `BFILE`) remain out of
+scope unless a concrete consumer asks for them.
 
 ## 3. Known test infrastructure issues (low priority)
 

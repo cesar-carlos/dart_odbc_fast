@@ -560,6 +560,289 @@ void main() {
     });
   });
 
+  // -----------------------------------------------------------------
+  // Final batch of SqlDataType extras
+  // (tinyInt, bit, text, xml, interval)
+  // -----------------------------------------------------------------
+
+  group('SqlDataType.tinyInt', () {
+    test('accepts the full unsigned [0, 255] range', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.tinyInt, 0),
+        typedParam(SqlDataType.tinyInt, 128),
+        typedParam(SqlDataType.tinyInt, 255),
+      ]);
+      expect(
+        params.every((p) => p is ParamValueInt32),
+        isTrue,
+        reason: 'tinyInt serialises as int32 on the wire — '
+            'distinction lives in the validation, not the encoding',
+      );
+      expect((params[0] as ParamValueInt32).value, equals(0));
+      expect((params[1] as ParamValueInt32).value, equals(128));
+      expect((params[2] as ParamValueInt32).value, equals(255));
+    });
+
+    test('rejects values just outside the unsigned-tinyint boundaries', () {
+      for (final bad in [-1, 256, -128, 32767]) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.tinyInt, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('out of range [0, 255]'),
+            ),
+          ),
+          reason: 'tinyInt must reject $bad',
+        );
+      }
+    });
+
+    test('rejects non-int payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.tinyInt, '42'),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.bit', () {
+    test('maps bool to 0/1', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.bit, true),
+        typedParam(SqlDataType.bit, false),
+      ]);
+      expect((params[0] as ParamValueInt32).value, equals(1));
+      expect((params[1] as ParamValueInt32).value, equals(0));
+    });
+
+    test('accepts int 0 and int 1 verbatim', () {
+      final params = paramValuesFromObjects([
+        typedParam(SqlDataType.bit, 0),
+        typedParam(SqlDataType.bit, 1),
+      ]);
+      expect((params[0] as ParamValueInt32).value, equals(0));
+      expect((params[1] as ParamValueInt32).value, equals(1));
+    });
+
+    test('rejects any int that is not 0 or 1', () {
+      for (final bad in [-1, 2, 255, 100]) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.bit, bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('expects exactly 0 or 1'),
+            ),
+          ),
+          reason: 'bit must reject int $bad — only 0 / 1 are valid',
+        );
+      }
+    });
+
+    test('rejects non-bool, non-int payloads with actionable message', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.bit, 'true'),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('SqlDataType.bit'), contains('bool or int')),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('SqlDataType.text', () {
+    test('passes a String payload through verbatim', () {
+      const payload = 'lorem ipsum dolor sit amet';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.text, payload),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+      expect((p as ParamValueString).value, equals(payload));
+    });
+
+    test('handles empty strings', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.text, ''),
+      ])[0];
+      expect((p as ParamValueString).value, isEmpty);
+    });
+
+    test('handles multi-line and unicode payloads', () {
+      // TEXT must round-trip arbitrary content — line breaks, BMP and
+      // non-BMP characters, you name it.
+      const payload =
+          'line1\nline2\r\nline3\n管理员 🚀 العربية';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.text, payload),
+      ])[0];
+      expect((p as ParamValueString).value, equals(payload));
+    });
+
+    test('rejects non-String payloads', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.text, 42),
+        ]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
+  group('SqlDataType.xml', () {
+    const sample = '<root><child attr="x">value</child></root>';
+
+    test('default (validate=false) passes payload through verbatim', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.xml(), sample),
+      ])[0];
+      expect((p as ParamValueString).value, equals(sample));
+    });
+
+    test('default (validate=false) accepts malformed XML without checking', () {
+      // Hot-path safety net: the engine remains the source of truth
+      // for full schema/well-formedness validation. We deliberately
+      // do NOT parse on the happy path so multi-KB XML payloads
+      // don't pay an extra check per call.
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.xml(), 'not-xml-at-all'),
+      ])[0];
+      expect((p as ParamValueString).value, equals('not-xml-at-all'));
+    });
+
+    test('validate=true accepts well-formed-looking payloads', () {
+      // Cheap shape check, not full XML parsing — these are all OK.
+      for (final ok in [
+        sample,
+        '<empty/>',
+        '<a><b><c/></b></a>',
+        '   <root>x</root>   ', // leading whitespace tolerated
+      ]) {
+        final p = paramValuesFromObjects([
+          typedParam(SqlDataType.xml(validate: true), ok),
+        ])[0];
+        expect((p as ParamValueString).value, equals(ok));
+      }
+    });
+
+    test('validate=true rejects empty / non-XML-looking payloads', () {
+      for (final bad in ['', '   ', 'not-xml', '<unterminated']) {
+        expect(
+          () => paramValuesFromObjects([
+            typedParam(SqlDataType.xml(validate: true), bad),
+          ]),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              contains('SqlDataType.xml(validate: true)'),
+            ),
+          ),
+          reason: 'xml(validate: true) must reject "$bad"',
+        );
+      }
+    });
+
+    test('rejects non-String payloads regardless of validate flag', () {
+      for (final type in [SqlDataType.xml(), SqlDataType.xml(validate: true)]) {
+        expect(
+          () => paramValuesFromObjects([typedParam(type, 42)]),
+          throwsA(isA<ArgumentError>()),
+        );
+      }
+    });
+  });
+
+  group('SqlDataType.interval', () {
+    test('formats Duration as "<n> seconds"', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.interval, const Duration(hours: 1, minutes: 30)),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+      expect(
+        (p as ParamValueString).value,
+        equals('5400 seconds'),
+        reason: '1h30m == 5400s; format must be portable across '
+            'PostgreSQL/MySQL/Oracle/Db2',
+      );
+    });
+
+    test('preserves sub-second precision as 3-digit decimal', () {
+      final p = paramValuesFromObjects([
+        typedParam(
+          SqlDataType.interval,
+          const Duration(seconds: 1, milliseconds: 500),
+        ),
+      ])[0];
+      expect(
+        (p as ParamValueString).value,
+        equals('1.500 seconds'),
+        reason: '1.5s round-trips as 1.500 (padded so engines parse '
+            'unambiguously)',
+      );
+    });
+
+    test('handles zero duration cleanly', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.interval, Duration.zero),
+      ])[0];
+      expect((p as ParamValueString).value, equals('0 seconds'));
+    });
+
+    test('handles negative durations symmetrically', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.interval, const Duration(seconds: -90)),
+      ])[0];
+      expect(
+        (p as ParamValueString).value,
+        equals('-90 seconds'),
+        reason: 'PostgreSQL interpretes negative seconds intervals',
+      );
+    });
+
+    test('passes pre-formatted String through verbatim (engine-specific)', () {
+      // Oracle expects `INTERVAL '1' DAY`; SQL Server has no INTERVAL at
+      // all and emulates via DATEADD. Callers that need engine-specific
+      // syntax pass a String shaped to that engine's grammar.
+      const oracle = "INTERVAL '1' DAY";
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.interval, oracle),
+      ])[0];
+      expect((p as ParamValueString).value, equals(oracle));
+    });
+
+    test('rejects unsupported payload types', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.interval, 42),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('SqlDataType.interval'),
+              contains('Duration or String'),
+            ),
+          ),
+        ),
+      );
+    });
+  });
+
   group('Unsupported type errors (Phase 1)', () {
     test('unsupported type message remains identical', () {
       final custom = _CustomObject();

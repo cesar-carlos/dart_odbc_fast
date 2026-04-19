@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`SqlDataType` extras (final batch): `tinyInt`, `bit`, `text`, `xml`,
+  `interval`.** Five additional typed kinds in
+  `lib/infrastructure/native/protocol/param_value.dart`. Together with
+  the previous batch this brings the `SqlDataType` surface from
+  10/30 → **20/30** of the
+  [TYPE_MAPPING.md](../doc/notes/TYPE_MAPPING.md) roadmap. Same
+  contract as before: non-breaking, no FFI changes, no wire changes,
+  no existing call site has to be touched.
+  - **`SqlDataType.tinyInt`** — accepts `int`, validates against
+    `[0, 255]` (SQL Server / Sybase ASE / Sybase ASA convention; the
+    broadest interoperable contract). Serialises as `ParamValueInt32`.
+    For MySQL/MariaDB *signed* `TINYINT` use [`SqlDataType.smallInt`]
+    instead — its range comfortably covers the signed-tinyint domain.
+  - **`SqlDataType.bit`** — accepts `bool` (mapped to 1/0) **or** `int`
+    (must be exactly 0 or 1). Serialises as `ParamValueInt32`.
+    Idiomatic for columns whose *type name* is `BIT`; semantically
+    distinct from [`SqlDataType.boolAsInt32`] (which rejects `int`).
+  - **`SqlDataType.text`** — long-form character data (`TEXT` / `NTEXT`
+    / `CLOB`). Accepts `String` only; no length cap. Wire-compatible
+    with [`SqlDataType.varChar`] / [`SqlDataType.nVarChar`] — the
+    distinction is purely semantic.
+  - **`SqlDataType.xml({validate})`** — accepts `String`. Default is
+    pass-through (engine validates at execute-time). `validate: true`
+    runs a *cheap structural sanity check* (must start with `<` and
+    contain a closing `>` after trimming) — catches obvious mistakes
+    without paying the cost of a real XML parser.
+  - **`SqlDataType.interval`** — accepts `Duration` (formatted as
+    `'<n> seconds'`, the broadest portable spelling: PostgreSQL
+    `INTERVAL`, MySQL `INTERVAL`, Oracle `NUMTODSINTERVAL(n,
+    'SECOND')`, Db2 `<n> SECONDS` all accept it directly) **or**
+    `String` (passed through verbatim, for engines whose preferred
+    syntax differs — e.g. Oracle `INTERVAL '1' DAY`). Sub-second
+    precision is preserved by emitting a 3-digit decimal so values
+    round-trip back to the same `Duration`.
+  - **Tests**: 22 new Dart unit tests in
+    `test/infrastructure/native/protocol/param_value_test.dart`
+    covering the full unsigned-tinyint range, the `bit` int/bool
+    duality with strict 0/1 enforcement, multi-line/Unicode TEXT
+    payloads, the XML validate-flag opt-in, and the `Duration` →
+    "seconds" formatter (whole, sub-second, zero, negative,
+    pre-formatted String passthrough).
 - **`SqlDataType` extras: `smallInt`, `bigInt`, `json`, `uuid`, `money`.**
   Five new typed kinds in `lib/infrastructure/native/protocol/param_value.dart`,
   bringing the total to 15/30 from the

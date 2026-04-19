@@ -15,6 +15,14 @@ const int _maxDateTimeYear = 9999;
 const int _smallIntMin = -32768;
 const int _smallIntMax = 32767;
 
+/// `TINYINT` range chosen to match SQL Server / Sybase ASE / Sybase ASA
+/// (unsigned 0..255). PostgreSQL has no `TINYINT`, MySQL/MariaDB
+/// default to *signed* `[-128, 127]` but accept the unsigned range via
+/// `TINYINT UNSIGNED`; we pick the broadest interoperable contract so
+/// callers don't get an unexpected truncation on SQL Server.
+const int _tinyIntMin = 0;
+const int _tinyIntMax = 255;
+
 /// SQL Server / Sybase / DB2 MONEY type carries 4 fractional digits
 /// (the canonical `monetary` precision). Other engines (PostgreSQL
 /// `money`, MySQL `DECIMAL(15,4)`) follow the same convention. We
@@ -104,6 +112,19 @@ class SqlDataType {
   factory SqlDataType.json({bool validate = false}) =>
       SqlDataType._(validate ? 'json_validated' : 'json');
 
+  /// SQL `XML` — XML payload. Accepts a `String`. Serialised as a
+  /// UTF-8 string on the wire (engines without a native `XML` type
+  /// accept this transparently as `NVARCHAR`).
+  ///
+  /// Pass `validate: true` to run a *cheap structural sanity check*
+  /// (must start with `<` and contain a matching `>` after trimming)
+  /// before sending — useful for catching obvious mistakes early
+  /// without paying the cost of a real XML parser. The default is
+  /// `false` so multi-KB payloads don't pay the check on the hot
+  /// path.
+  factory SqlDataType.xml({bool validate = false}) =>
+      SqlDataType._(validate ? 'xml_validated' : 'xml');
+
   /// Semantic SQL kind used for validation and conversion.
   final String kind;
 
@@ -150,6 +171,53 @@ class SqlDataType {
   /// `NaN` / `Infinity` are rejected. Use [SqlDataType.decimal] for
   /// arbitrary scale.
   static const SqlDataType money = SqlDataType._('money');
+
+  /// SQL `TINYINT` (unsigned 8-bit on SQL Server / Sybase; the
+  /// broadest interoperable contract). Validates the input against
+  /// `[0, 255]` and serialises as a 32-bit integer on the wire (the
+  /// engine has no separate 8-bit slot in our binary protocol; the
+  /// validation is what makes this type distinct from
+  /// [SqlDataType.int32]).
+  ///
+  /// MySQL/MariaDB callers using **signed** `TINYINT` (`[-128, 127]`)
+  /// should use [SqlDataType.smallInt] instead — its `[-32768, 32767]`
+  /// range comfortably covers the signed-tinyint domain without
+  /// imposing an artificial restriction.
+  static const SqlDataType tinyInt = SqlDataType._('tinyint');
+
+  /// SQL `BIT` (boolean). Accepts `bool` (mapped to 1/0) or `int`
+  /// (must be exactly 0 or 1). Serialises as a 32-bit integer on the
+  /// wire — the canonical representation across SQL Server,
+  /// PostgreSQL `BIT`, MySQL `BIT(1)`, Db2, Oracle (via
+  /// `NUMBER(1)`).
+  ///
+  /// Idiomatic for columns whose *type name* is `BIT`. For columns
+  /// labelled `BOOL` / `BOOLEAN` see [SqlDataType.boolAsInt32], which
+  /// is identical on the wire but rejects `int` inputs to enforce
+  /// type discipline.
+  static const SqlDataType bit = SqlDataType._('bit');
+
+  /// SQL `TEXT` / `NTEXT` / `CLOB` — long-form character data with
+  /// no caller-supplied length cap. Accepts `String` only.
+  /// Serialised as a UTF-8 string on the wire, identical to
+  /// [SqlDataType.varChar] / [SqlDataType.nVarChar]; the distinction
+  /// is purely semantic so call sites paired with a `TEXT` column
+  /// read naturally.
+  static const SqlDataType text = SqlDataType._('text');
+
+  /// SQL `INTERVAL` (PostgreSQL `INTERVAL`, Oracle `INTERVAL DAY/YEAR`,
+  /// Db2 `<n> SECONDS`). Accepts a [Duration] (formatted as
+  /// `'<n> seconds'`, the broadest portable spelling — PostgreSQL,
+  /// MySQL `INTERVAL`, Oracle `NUMTODSINTERVAL` accept it directly)
+  /// or a `String` (passed through verbatim, for engines whose
+  /// preferred syntax doesn't match the seconds form).
+  ///
+  /// Sub-second precision is preserved by emitting the fractional
+  /// part as a decimal — e.g. `Duration(milliseconds: 1500)` becomes
+  /// `'1.500 seconds'`. SQL Server has no `INTERVAL` type; its
+  /// callers should compute differences with `DATEADD` / `DATEDIFF`
+  /// instead.
+  static const SqlDataType interval = SqlDataType._('interval');
 }
 
 /// Explicitly typed parameter value.
@@ -469,9 +537,120 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
       return ParamValueString(_normaliseUuid(value));
     case 'money':
       return ParamValueDecimal(_toMoneyString(value));
+    case 'tinyint':
+      if (value is! int) {
+        throw ArgumentError(
+          'SqlDataType.tinyInt expects int, got ${value.runtimeType}',
+        );
+      }
+      if (value < _tinyIntMin || value > _tinyIntMax) {
+        throw ArgumentError(
+          'SqlDataType.tinyInt value out of range '
+          '[$_tinyIntMin, $_tinyIntMax]: $value',
+        );
+      }
+      return ParamValueInt32(value);
+    case 'bit':
+      if (value is bool) {
+        return ParamValueInt32(value ? 1 : 0);
+      }
+      if (value is int) {
+        if (value != 0 && value != 1) {
+          throw ArgumentError(
+            'SqlDataType.bit expects exactly 0 or 1 when given an int; '
+            'got $value',
+          );
+        }
+        return ParamValueInt32(value);
+      }
+      throw ArgumentError(
+        'SqlDataType.bit expects bool or int (0 or 1), '
+        'got ${value.runtimeType}',
+      );
+    case 'text':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.text expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'xml':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.xml expects String, got ${value.runtimeType}',
+        );
+      }
+      return ParamValueString(value);
+    case 'xml_validated':
+      if (value is! String) {
+        throw ArgumentError(
+          'SqlDataType.xml expects String, got ${value.runtimeType}',
+        );
+      }
+      _validateXmlShape(value);
+      return ParamValueString(value);
+    case 'interval':
+      return ParamValueString(_toIntervalString(value));
   }
 
   throw ArgumentError('Unsupported SqlDataType kind: ${type.kind}');
+}
+
+/// Cheap structural sanity check for `SqlDataType.xml(validate: true)`.
+/// Not a real XML parser — just rules out obvious mistakes (empty
+/// payload, missing root element brackets) without paying the cost of
+/// instantiating an actual parser. The engine remains the source of
+/// truth for full schema/well-formedness validation at execute-time.
+void _validateXmlShape(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) {
+    throw ArgumentError(
+      'SqlDataType.xml(validate: true): payload is empty after trimming',
+    );
+  }
+  if (!s.startsWith('<')) {
+    throw ArgumentError(
+      'SqlDataType.xml(validate: true): payload must start with "<"; '
+      'got first char "${s[0]}"',
+    );
+  }
+  if (!s.contains('>')) {
+    throw ArgumentError(
+      'SqlDataType.xml(validate: true): payload must contain a closing ">"',
+    );
+  }
+}
+
+/// Format an `INTERVAL`-typed value. `Duration` becomes
+/// `'<n> seconds'` (with millisecond precision preserved as a
+/// decimal); `String` is passed through verbatim. Anything else is
+/// rejected with an actionable error.
+///
+/// The seconds form is the broadest portable spelling: PostgreSQL,
+/// MySQL `INTERVAL`, Oracle `NUMTODSINTERVAL(n, 'SECOND')`, and Db2
+/// `<n> SECONDS` all accept it directly. Engines whose preferred
+/// syntax differs (Oracle `INTERVAL '1' DAY`, etc.) should pass a
+/// `String` shaped to that engine's grammar.
+String _toIntervalString(Object? value) {
+  if (value is Duration) {
+    final wholeSeconds = value.inSeconds;
+    final remainderMillis = value.inMilliseconds.remainder(1000).abs();
+    if (remainderMillis == 0) {
+      return '$wholeSeconds seconds';
+    }
+    // Pad the fractional component to 3 digits so '1.5s' becomes
+    // '1.500 seconds' — engines parse this unambiguously and the
+    // padding round-trips back to the same Duration.
+    final pad = remainderMillis.toString().padLeft(3, '0');
+    return '$wholeSeconds.$pad seconds';
+  }
+  if (value is String) {
+    return value;
+  }
+  throw ArgumentError(
+    'SqlDataType.interval expects Duration or String, '
+    'got ${value.runtimeType}',
+  );
 }
 
 /// Encode a value as a JSON string suitable for the engine's `JSON` /
