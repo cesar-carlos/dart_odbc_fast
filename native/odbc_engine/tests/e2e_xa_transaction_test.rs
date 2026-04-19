@@ -1,4 +1,4 @@
-//! E2E coverage for X/Open XA / 2PC transactions â€” Sprint 4.3.
+//! E2E coverage for X/Open XA / 2PC transactions — Sprint 4.3.
 //!
 //! Each engine has its own gating helper: PostgreSQL tests run when
 //! [`get_postgresql_test_dsn`] returns `Some`, MySQL tests run when
@@ -7,18 +7,18 @@
 //! tests in `xa_transaction.rs::tests`; the engines that actually
 //! require external infrastructure (MSDTC for SQL Server, OCI for
 //! Oracle) are deferred to a follow-up sprint and documented in
-//! `FUTURE_IMPLEMENTATIONS.md` Â§4.3.
+//! `FUTURE_IMPLEMENTATIONS.md` §4.3.
 //!
 //! The test pattern for the live engines is the canonical 2PC
 //! lifecycle:
 //!
 //! ```text
-//! xa_start â”€â”€â–¶ INSERT â”€â”€â–¶ xa_end â”€â”€â–¶ xa_prepare â”€â”€â–¶ xa_commit
+//! xa_start --> INSERT --> xa_end --> xa_prepare --> xa_commit
 //! ```
 //!
-//! â€¦with a separate test for the rollback path, the 1RM commit-one-
-//! phase shortcut, and the recovery flow (`xa_recover` â†’
-//! `resume_prepared` â†’ `xa_commit_prepared`).
+//! ...with a separate test for the rollback path, the 1RM commit-one-
+//! phase shortcut, and the recovery flow (`xa_recover` ->
+//! `resume_prepared` -> `xa_commit_prepared`).
 
 use odbc_engine::engine::{
     recover_prepared_xids, resume_prepared, OdbcConnection, OdbcEnvironment, XaTransaction, Xid,
@@ -41,9 +41,21 @@ fn unique_xid(label: &str) -> Xid {
 
 /// Try to connect to the engine identified by `engine_label`. Returns
 /// `None` (with a friendly skip log) when the DSN doesn't resolve to
-/// a working driver â€” which is the common case in dev environments
-/// that only have one engine installed. Any non-IM002 error is
-/// re-raised so genuine driver bugs don't silently pass.
+/// a working driver — which is the common case in dev environments
+/// (and CI runners) that only have a subset of engines installed.
+///
+/// Driver-not-found surfaces with three distinct shapes across the
+/// driver managers we target:
+///
+/// - **Windows ODBC DM** -> SQLSTATE `IM002` ("Data source name not
+///   found and no default driver specified").
+/// - **unixODBC**        -> SQLSTATE `01000` plus a body containing
+///   `Can't open lib ... : file not found`.
+/// - **iODBC**           -> similar to unixODBC; we match the same
+///   `Can't open lib` substring.
+///
+/// Any error that doesn't fit one of those patterns is re-raised so
+/// genuine driver bugs don't silently pass the test gate.
 ///
 /// Accepts the env via a fresh [`OdbcEnvironment`] to avoid leaking
 /// the private `SharedHandleManager` type at the test surface.
@@ -52,8 +64,14 @@ fn try_connect(env: &OdbcEnvironment, dsn: &str, engine_label: &str) -> Option<O
         Ok(c) => Some(c),
         Err(e) => {
             let msg = format!("{e}");
-            if msg.contains("IM002") {
-                eprintln!("âš ï¸  Skipping: {engine_label} ODBC driver not installed (IM002)");
+            let is_driver_missing = msg.contains("IM002")
+                || (msg.contains("01000") && msg.contains("Can't open lib"))
+                || msg.contains("file not found");
+            if is_driver_missing {
+                eprintln!(
+                    "[SKIP] {engine_label} ODBC driver not installed: {}",
+                    msg.lines().next().unwrap_or("").trim(),
+                );
                 None
             } else {
                 panic!("connect to {engine_label}: unexpected error: {msg}");
@@ -69,7 +87,7 @@ fn try_connect(env: &OdbcEnvironment, dsn: &str, engine_label: &str) -> Option<O
 #[test]
 fn test_e2e_xa_postgresql_full_2pc_commit_path() {
     let Some(conn_str) = get_postgresql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: PostgreSQL DSN not configured");
+        eprintln!("[SKIP] PostgreSQL DSN not configured");
         return;
     };
 
@@ -108,14 +126,14 @@ fn test_e2e_xa_postgresql_full_2pc_commit_path() {
         "xid must NOT appear in pg_prepared_xacts after COMMIT PREPARED",
     );
 
-    println!("âœ“ PostgreSQL full 2PC commit lifecycle round-trip");
+    println!("OK PostgreSQL full 2PC commit lifecycle round-trip");
     conn.disconnect().expect("disconnect");
 }
 
 #[test]
 fn test_e2e_xa_postgresql_rollback_prepared_path() {
     let Some(conn_str) = get_postgresql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: PostgreSQL DSN not configured");
+        eprintln!("[SKIP] PostgreSQL DSN not configured");
         return;
     };
 
@@ -140,14 +158,14 @@ fn test_e2e_xa_postgresql_rollback_prepared_path() {
         "xid must be gone after ROLLBACK PREPARED",
     );
 
-    println!("âœ“ PostgreSQL ROLLBACK PREPARED clears pg_prepared_xacts");
+    println!("OK PostgreSQL ROLLBACK PREPARED clears pg_prepared_xacts");
     conn.disconnect().expect("disconnect");
 }
 
 #[test]
 fn test_e2e_xa_postgresql_one_phase_commit_shortcut() {
     let Some(conn_str) = get_postgresql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: PostgreSQL DSN not configured");
+        eprintln!("[SKIP] PostgreSQL DSN not configured");
         return;
     };
 
@@ -162,7 +180,7 @@ fn test_e2e_xa_postgresql_one_phase_commit_shortcut() {
     let xid = unique_xid("pg-1rm-commit");
     let xa = XaTransaction::start(handles.clone(), conn_id, xid.clone()).expect("xa_start");
 
-    // 1RM optimisation: skip prepare â†’ straight commit.
+    // 1RM optimisation: skip prepare -> straight commit.
     xa.commit_one_phase()
         .expect("commit_one_phase (PG: plain COMMIT)");
 
@@ -173,14 +191,14 @@ fn test_e2e_xa_postgresql_one_phase_commit_shortcut() {
         "1RM commit must NOT leave a prepared entry",
     );
 
-    println!("âœ“ PostgreSQL commit_one_phase skips PREPARE");
+    println!("OK PostgreSQL commit_one_phase skips PREPARE");
     conn.disconnect().expect("disconnect");
 }
 
 #[test]
 fn test_e2e_xa_postgresql_resume_prepared_after_disconnect() {
     let Some(conn_str) = get_postgresql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: PostgreSQL DSN not configured");
+        eprintln!("[SKIP] PostgreSQL DSN not configured");
         return;
     };
 
@@ -234,7 +252,7 @@ fn test_e2e_xa_postgresql_resume_prepared_after_disconnect() {
         conn.disconnect().expect("disconnect 2");
     }
 
-    println!("âœ“ PostgreSQL prepared XID survives disconnect and is recoverable");
+    println!("OK PostgreSQL prepared XID survives disconnect and is recoverable");
 }
 
 // =========================================================================
@@ -244,7 +262,7 @@ fn test_e2e_xa_postgresql_resume_prepared_after_disconnect() {
 #[test]
 fn test_e2e_xa_mysql_full_2pc_commit_path() {
     let Some(conn_str) = get_mysql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: MySQL DSN not configured");
+        eprintln!("[SKIP] MySQL DSN not configured");
         return;
     };
 
@@ -280,14 +298,14 @@ fn test_e2e_xa_mysql_full_2pc_commit_path() {
         "xid must NOT appear in XA RECOVER after XA COMMIT",
     );
 
-    println!("âœ“ MySQL full 2PC commit lifecycle round-trip");
+    println!("OK MySQL full 2PC commit lifecycle round-trip");
     conn.disconnect().expect("disconnect");
 }
 
 #[test]
 fn test_e2e_xa_mysql_one_phase_commit_shortcut() {
     let Some(conn_str) = get_mysql_test_dsn() else {
-        eprintln!("âš ï¸  Skipping: MySQL DSN not configured");
+        eprintln!("[SKIP] MySQL DSN not configured");
         return;
     };
 
@@ -310,6 +328,6 @@ fn test_e2e_xa_mysql_one_phase_commit_shortcut() {
         "1RM commit must NOT leave a prepared entry on MySQL",
     );
 
-    println!("âœ“ MySQL commit_one_phase emits XA COMMIT ... ONE PHASE");
+    println!("OK MySQL commit_one_phase emits XA COMMIT ... ONE PHASE");
     conn.disconnect().expect("disconnect");
 }
