@@ -1,24 +1,43 @@
-# Multi-database setup for E2E tests and development.
-# Usage: docker compose up -d
-# Then set ODBC_TEST_DSN or *_TEST_* env vars (see native/doc/cross_database.md).
+# Multi-database stack for E2E tests and development.
+#
+# Usage:
+#   docker compose up -d                       # all DB engines (no Db2)
+#   docker compose --profile db2 up -d         # include Db2 (slow boot)
+#   docker compose --profile sqlite up -d sqlite-tools
+#   docker compose --profile test up -d test-runner   # see Dockerfile.test-runner
+#
+# Network: every service exposes its port on the host AND is reachable from
+# the `test-runner` container by its service name (`postgres`, `mysql`, ...).
+# Hostnames inside the network are NOT the same as `localhost` from the host.
+#
+# DSN templates ready to drop into your .env are in `.env.docker`.
 
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: odbc_test_postgres
     ports:
       - "5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: odbc_test
+      # Enable XA / 2PC support (PREPARE TRANSACTION) — needed by the
+      # XaTransaction E2E tests added in v3.4.0.
+      POSTGRES_INITDB_ARGS: ""
+    command:
+      - "postgres"
+      - "-c"
+      - "max_prepared_transactions=64"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d odbc_test"]
       interval: 2s
       timeout: 5s
-      retries: 10
+      retries: 15
 
   mysql:
     image: mysql:8.0
+    container_name: odbc_test_mysql
     ports:
       - "3306:3306"
     environment:
@@ -31,10 +50,29 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysql"]
       interval: 2s
       timeout: 5s
-      retries: 10
+      retries: 15
+
+  # MariaDB — covers the v3.4.0 XA grammar variant that differs from MySQL
+  # (RETURNING support, slightly different XA RECOVER semantics).
+  mariadb:
+    image: mariadb:11.4
+    container_name: odbc_test_mariadb
+    ports:
+      - "3307:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: mariadb
+      MARIADB_DATABASE: odbc_test
+      MARIADB_USER: odbc
+      MARIADB_PASSWORD: odbc
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: odbc_test_mssql
     ports:
       - "1433:1433"
     environment:
@@ -45,11 +83,12 @@ services:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/1433' || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 15
+      retries: 20
       start_period: 20s
 
   oracle:
     image: gvenzl/oracle-xe:21-slim-faststart
+    container_name: odbc_test_oracle
     ports:
       - "1521:1521"
     environment:
@@ -61,9 +100,82 @@ services:
       retries: 30
       start_period: 30s
 
+  # IBM Db2 Community Edition. Heavy boot (~2 minutes). Only started by
+  # `docker compose --profile db2 up -d`.
+  db2:
+    image: icr.io/db2_community/db2:latest
+    container_name: odbc_test_db2
+    profiles: ["db2"]
+    privileged: true
+    ports:
+      - "50000:50000"
+    environment:
+      LICENSE: "accept"
+      DB2INST1_PASSWORD: "OdbcTest123"
+      DBNAME: "TESTDB"
+      BLU: "false"
+      ENABLE_ORACLE_COMPATIBILITY: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB > /dev/null && db2 connect reset > /dev/null'"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
   sqlite-tools:
     image: keinos/sqlite3:latest
     profiles: ["sqlite"]
     command: ["sleep", "infinity"]
     volumes:
       - ./.tmp/sqlite:/data
+
+  # Linux test runner with unixODBC + every supported ODBC driver pre-
+  # installed. Lets you run the engine's E2E suite against the DB containers
+  # WITHOUT installing any ODBC driver on the Windows host.
+  #
+  # Usage:
+  #   docker compose --profile test build test-runner
+  #   docker compose --profile test run --rm test-runner cargo test \
+  #       --features ffi-tests -- --include-ignored --test-threads=1
+  #
+  # Inside the runner:
+  #   - DB hostnames are `postgres`, `mysql`, `mariadb`, `mssql`, `oracle`,
+  #     `db2` (Docker network DNS).
+  #   - The repo is mounted read-write at /workspace so cargo target/ caches
+  #     across runs (volume `cargo-cache`).
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+    container_name: odbc_test_runner
+    profiles: ["test"]
+    # The Rust workspace lives at native/odbc_engine; the Dart side at /.
+    # Default to the engine directory so `cargo test` JustWorks; pass
+    # `-w /workspace` on the docker compose run line when you need the
+    # repo root (e.g. for dart commands).
+    working_dir: /workspace/native/odbc_engine
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/native/target
+    environment:
+      ENABLE_E2E_TESTS: "1"
+      # The default DSN points at PostgreSQL because that engine ships the
+      # complete XA / 2PC grammar exercised by the v3.4.0 tests. Override
+      # by passing `-e ODBC_TEST_DSN=...` on the docker compose run line.
+      ODBC_TEST_DSN: "Driver={PostgreSQL Unicode};Server=postgres;Port=5432;Database=odbc_test;UID=postgres;PWD=postgres;"
+      RUST_BACKTRACE: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+      mssql:
+        condition: service_healthy
+    command: ["bash", "-c", "cargo --version && odbcinst -q -d && pwd && echo OK"]
+
+volumes:
+  cargo-cache:
+  target-cache:

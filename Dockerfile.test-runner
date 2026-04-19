@@ -1,0 +1,134 @@
+# syntax=docker/dockerfile:1.6
+#
+# Linux test runner for `dart_odbc_fast`.
+#
+# Provides:
+#   - Rust stable + cargo
+#   - unixODBC + dev headers
+#   - ODBC drivers for PostgreSQL, MySQL/MariaDB, IBM Db2 and SQL Server 18
+#   - Pre-baked /etc/odbcinst.ini that names the drivers exactly as the
+#     project's connection-string templates expect (`PostgreSQL Unicode`,
+#     `MySQL ODBC 8.0 Unicode Driver`, `MariaDB ODBC 3.1 Driver`,
+#     `IBM DB2 ODBC DRIVER`, `ODBC Driver 18 for SQL Server`).
+#
+# Notes on what is NOT included:
+#   - Oracle Instant Client + Oracle ODBC driver: redistribution requires
+#     accepting Oracle's licence; install separately if you need
+#     XA-on-Oracle E2E tests (Sprint 4.3c Phase 2).
+#   - SQL Anywhere / Sybase ASA: same, proprietary.
+#   - Snowflake: requires download from snowflake.com. Add a follow-up
+#     COPY step on top of this image when needed.
+#
+# Build:  docker compose --profile test build test-runner
+# Shell:  docker compose --profile test run --rm test-runner bash
+# Tests:  docker compose --profile test run --rm test-runner \
+#             cargo test --features ffi-tests -- --include-ignored
+
+ARG RUST_VERSION=1.86
+
+FROM rust:${RUST_VERSION}-bookworm
+
+# -- Base toolchain + unixODBC ----------------------------------------------
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        wget \
+        build-essential \
+        pkg-config \
+        unixodbc \
+        unixodbc-dev \
+        libssl-dev \
+        netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# -- PostgreSQL ODBC --------------------------------------------------------
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        odbc-postgresql \
+    && rm -rf /var/lib/apt/lists/*
+
+# -- MariaDB / MySQL ODBC ---------------------------------------------------
+#
+# `odbc-mariadb` works against both MariaDB and MySQL servers; it registers
+# itself as both `MariaDB ODBC 3.x Driver` and we add the `MySQL ODBC 8.0
+# Unicode Driver` alias below in odbcinst.ini so the project's existing
+# connection strings work out of the box.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        odbc-mariadb \
+    && rm -rf /var/lib/apt/lists/*
+
+# -- Microsoft SQL Server ODBC Driver 18 ------------------------------------
+
+RUN curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+        https://packages.microsoft.com/debian/12/prod bookworm main" \
+        > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && rm -rf /var/lib/apt/lists/*
+
+# -- IBM Db2 ODBC / CLI driver ----------------------------------------------
+#
+# The licensed bits of the Data Server Driver are downloaded at first use
+# the way the IBM `clidriver` package expects. Skipped here on purpose so
+# the base image is reusable; install at runtime with:
+#   apt-get install ibm-data-server-driver-package
+# or by pointing at IBM's tarball. The cross-vendor XA tests for Db2 are
+# gated behind `--features xa-db2` in the engine; uncomment the COPY when
+# you have the tarball locally:
+#
+# COPY ibm-data-server-driver-package_*.deb /tmp/db2.deb
+# RUN apt-get update && apt-get install -y /tmp/db2.deb && rm /tmp/db2.deb
+
+# -- ODBC INI ---------------------------------------------------------------
+#
+# Override the upstream defaults so the driver names match the connection
+# strings shipped in `.env.docker` and the example demos.
+
+RUN cat > /etc/odbcinst.ini <<'EOF'
+[PostgreSQL Unicode]
+Description     = PostgreSQL ODBC driver (Unicode)
+Driver          = /usr/lib/x86_64-linux-gnu/odbc/psqlodbcw.so
+Setup           = /usr/lib/x86_64-linux-gnu/odbc/libodbcpsqlS.so
+Threading       = 2
+UsageCount      = 1
+
+[MariaDB ODBC 3.1 Driver]
+Description     = MariaDB ODBC 3.1 driver
+Driver          = /usr/lib/x86_64-linux-gnu/libmaodbc.so
+UsageCount      = 1
+
+[MySQL ODBC 8.0 Unicode Driver]
+Description     = MariaDB driver served as MySQL alias
+Driver          = /usr/lib/x86_64-linux-gnu/libmaodbc.so
+UsageCount      = 1
+
+[ODBC Driver 18 for SQL Server]
+Description     = Microsoft ODBC Driver 18 for SQL Server
+Driver          = /opt/microsoft/msodbcsql18/lib64/libmsodbcsql-18.5.so.1.1
+UsageCount      = 1
+EOF
+
+# -- Dart SDK (optional; pulled lazily for `dart` invocations) --------------
+#
+# Many CI / dev workflows only need the Rust side here (since the FFI is
+# the surface that talks to ODBC drivers). Dart is intentionally NOT
+# baked in by default to keep the image small. Uncomment to add it:
+#
+# RUN apt-get update && apt-get install -y apt-transport-https \
+#     && curl -sSL https://dl.google.com/linux/linux_signing_key.pub \
+#         | gpg --dearmor -o /usr/share/keyrings/dart.gpg \
+#     && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] \
+#         https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" \
+#         > /etc/apt/sources.list.d/dart_stable.list \
+#     && apt-get update && apt-get install -y dart \
+#     && rm -rf /var/lib/apt/lists/*
+
+# Default workdir is mounted by docker-compose; nothing to copy here.
+WORKDIR /workspace

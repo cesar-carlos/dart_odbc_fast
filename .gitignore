@@ -41,6 +41,7 @@ desktop.ini
 .env.local
 .env.*
 !.env.example
+!.env.docker
 
 # Coverage reports
 coverage/
