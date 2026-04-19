@@ -105,5 +105,6 @@ jobs:
       - name: Publish - dry run
         run: dart pub publish --dry-run --ignore-warnings
 
+      # --ignore-warnings is only valid with --dry-run (SDK); real publish uses -f alone.
       - name: Publish to pub.dev
-        run: dart pub publish -f --ignore-warnings
+        run: dart pub publish -f
