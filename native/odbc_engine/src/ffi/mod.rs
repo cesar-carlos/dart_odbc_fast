@@ -7466,6 +7466,19 @@ mod tests {
             .filter(|s| !s.is_empty())
     }
 
+    /// `true` when the DSN targets Microsoft SQL Server. Several FFI
+    /// regression tests use T-SQL only (`WAITFOR DELAY`, `INSERT ... OUTPUT`,
+    /// `IF OBJECT_ID`) — they must skip when `ODBC_TEST_DSN` points at
+    /// PostgreSQL / MySQL / etc. (docker E2E matrix).
+    fn ffi_test_dsn_is_sql_server(dsn: &str) -> bool {
+        let lower = dsn.to_lowercase();
+        lower.contains("sql server")
+            || lower.contains("sqlserver")
+            || lower.contains("msodbcsql")
+            || lower.contains("ms sql")
+            || lower.contains("mssql")
+    }
+
     #[test]
     fn test_ffi_full_connection_query_disconnect() {
         let Some(dsn) = ffi_test_dsn() else {
@@ -8536,6 +8549,10 @@ mod tests {
             eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
             return;
         };
+        if !ffi_test_dsn_is_sql_server(&dsn) {
+            eprintln!("⚠️  Skipping: SQL Server-only T-SQL (IF OBJECT_ID / INSERT OUTPUT)");
+            return;
+        }
 
         odbc_init();
         let conn_cstr = CString::new(dsn.as_str()).expect("valid DSN");
@@ -8634,6 +8651,10 @@ mod tests {
             eprintln!("⚠️  Skipping: ODBC_TEST_DSN + ENABLE_E2E_TESTS not set");
             return;
         };
+        if !ffi_test_dsn_is_sql_server(&dsn) {
+            eprintln!("⚠️  Skipping: SQL Server-only T-SQL (WAITFOR DELAY)");
+            return;
+        }
 
         odbc_init();
         let conn_cstr = CString::new(dsn.as_str()).unwrap();
@@ -8672,6 +8693,10 @@ mod tests {
             eprintln!("⚠️  Skipping: ODBC_TEST_DSN + ENABLE_E2E_TESTS not set");
             return;
         };
+        if !ffi_test_dsn_is_sql_server(&dsn) {
+            eprintln!("⚠️  Skipping: SQL Server-only T-SQL (WAITFOR DELAY)");
+            return;
+        }
 
         odbc_init();
         let conn_cstr = CString::new(dsn.as_str()).unwrap();

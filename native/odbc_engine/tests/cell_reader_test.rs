@@ -2,13 +2,37 @@ use odbc_engine::engine::{execute_query_with_connection, OdbcConnection, OdbcEnv
 use odbc_engine::protocol::{BinaryProtocolDecoder, DecodedResult};
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
-use helpers::env::get_sqlserver_test_dsn;
+use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, DatabaseType};
+
+/// Cell reader integration tests issue T-SQL (`VARBINARY`, `N'…'`).
+/// Skip when the E2E DSN targets another engine (docker matrix sets `ODBC_TEST_DSN` per DB).
+fn cell_reader_e2e_sql_server_only() -> bool {
+    if !should_run_e2e_tests() {
+        eprintln!(
+            "⚠️  Skipping cell_reader_test: ENABLE_E2E_TESTS + working ODBC_TEST_DSN not set"
+        );
+        return false;
+    }
+    match get_connection_and_db_type() {
+        Some((_, DatabaseType::SqlServer)) => true,
+        Some((_, other)) => {
+            eprintln!(
+                "⚠️  Skipping cell_reader_test: SQL Server-specific literals; current engine is {:?}",
+                other
+            );
+            false
+        }
+        None => {
+            eprintln!("⚠️  Skipping cell_reader_test: could not build connection string");
+            false
+        }
+    }
+}
 
 /// Helper function to execute a query and return decoded results
 fn execute_and_decode(sql: &str) -> Result<DecodedResult, Box<dyn std::error::Error>> {
-    let conn_str = get_sqlserver_test_dsn()
-        .expect("Failed to build SQL Server connection string. Check environment variables.");
+    let (conn_str, _) = get_connection_and_db_type()
+        .ok_or("Failed to resolve ODBC connection string. Check ODBC_TEST_DSN / ODBC_TEST_DB.")?;
 
     let env = OdbcEnvironment::new();
     env.init()?;
@@ -32,9 +56,7 @@ fn execute_and_decode(sql: &str) -> Result<DecodedResult, Box<dyn std::error::Er
 
 #[test]
 fn test_read_cell_integer_positive() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT 42 AS value").expect("Failed to execute query");
@@ -51,9 +73,7 @@ fn test_read_cell_integer_positive() {
 
 #[test]
 fn test_read_cell_integer_negative() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT -42 AS value").expect("Failed to execute query");
@@ -69,9 +89,7 @@ fn test_read_cell_integer_negative() {
 
 #[test]
 fn test_read_cell_integer_zero() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT 0 AS value").expect("Failed to execute query");
@@ -87,9 +105,7 @@ fn test_read_cell_integer_zero() {
 
 #[test]
 fn test_read_cell_integer_max() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded =
@@ -106,9 +122,7 @@ fn test_read_cell_integer_max() {
 
 #[test]
 fn test_read_cell_integer_min() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT CAST(-2147483648 AS INTEGER) AS value")
@@ -125,9 +139,7 @@ fn test_read_cell_integer_min() {
 
 #[test]
 fn test_read_cell_bigint_positive() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT CAST(9223372036854775807 AS BIGINT) AS value")
@@ -146,9 +158,7 @@ fn test_read_cell_bigint_positive() {
 
 #[test]
 fn test_read_cell_bigint_negative() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT CAST(-9223372036854775808 AS BIGINT) AS value")
@@ -167,9 +177,7 @@ fn test_read_cell_bigint_negative() {
 
 #[test]
 fn test_read_cell_bigint_zero() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded =
@@ -188,9 +196,7 @@ fn test_read_cell_bigint_zero() {
 
 #[test]
 fn test_read_cell_text_simple() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT 'hello' AS value").expect("Failed to execute query");
@@ -206,9 +212,7 @@ fn test_read_cell_text_simple() {
 
 #[test]
 fn test_read_cell_text_empty() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT '' AS value").expect("Failed to execute query");
@@ -223,9 +227,7 @@ fn test_read_cell_text_empty() {
 
 #[test]
 fn test_read_cell_text_unicode() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded =
@@ -245,9 +247,7 @@ fn test_read_cell_text_unicode() {
 
 #[test]
 fn test_read_cell_text_special_chars() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded =
@@ -266,9 +266,7 @@ fn test_read_cell_text_special_chars() {
 
 #[test]
 fn test_read_cell_text_long() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let long_text = "a".repeat(1000);
@@ -285,9 +283,7 @@ fn test_read_cell_text_long() {
 
 #[test]
 fn test_read_cell_null() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT NULL AS value").expect("Failed to execute query");
@@ -299,9 +295,7 @@ fn test_read_cell_null() {
 
 #[test]
 fn test_read_cell_binary_simple() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT CAST(0x0102030405 AS VARBINARY(10)) AS value")
@@ -321,9 +315,7 @@ fn test_read_cell_binary_simple() {
 
 #[test]
 fn test_read_cell_binary_empty() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT CAST('' AS VARBINARY(10)) AS value")
@@ -339,9 +331,7 @@ fn test_read_cell_binary_empty() {
 
 #[test]
 fn test_read_cell_binary_large() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     // Create a 100-byte binary value
@@ -362,9 +352,7 @@ fn test_read_cell_binary_large() {
 
 #[test]
 fn test_read_cell_multiple_columns() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT 42 AS int_col, 'text' AS text_col, NULL AS null_col")
@@ -388,9 +376,7 @@ fn test_read_cell_multiple_columns() {
 
 #[test]
 fn test_read_cell_multiple_rows() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode(
@@ -418,9 +404,7 @@ fn test_read_cell_multiple_rows() {
 
 #[test]
 fn test_read_cell_mixed_types() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode(
@@ -452,9 +436,7 @@ fn test_read_cell_mixed_types() {
 
 #[test]
 fn test_read_cell_edge_case_whitespace() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT '  42  ' AS value").expect("Failed to execute query");
@@ -470,9 +452,7 @@ fn test_read_cell_edge_case_whitespace() {
 
 #[test]
 fn test_read_cell_edge_case_numeric_string() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded = execute_and_decode("SELECT '12345' AS value").expect("Failed to execute query");
@@ -488,9 +468,7 @@ fn test_read_cell_edge_case_numeric_string() {
 
 #[test]
 fn test_read_cell_edge_case_boolean_as_int() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if !cell_reader_e2e_sql_server_only() {
         return;
     }
     let decoded =

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker multi-engine E2E:** FFI tests that use T-SQL only (`WAITFOR`,
+  `INSERT … OUTPUT`, `IF OBJECT_ID`) now skip unless `ODBC_TEST_DSN`
+  targets SQL Server. `cell_reader_test` likewise runs only when the
+  resolved E2E engine is SQL Server, so `scripts/docker_e2e.ps1` with
+  PostgreSQL / MySQL / MariaDB / Oracle no longer fails on SQL
+  Server–specific SQL.
+
 ## [3.4.2] - Dart XA helpers (`runWithStart` / `runWithStartOnePhase`)
 
 ### Added
