@@ -57,7 +57,8 @@ fn test_driver_capabilities_detect() {
     println!("  - driver_name: {}", caps.driver_name);
     println!("  - driver_version: {}", caps.driver_version);
 
-    // Verify default values (currently hardcoded)
+    // Pinned to `DriverCapabilities::from_driver_name(ENGINE_SQLSERVER)` +
+    // live `SQL_DBMS_NAME` in `detect()` (see driver_capabilities.rs).
     assert!(
         caps.supports_prepared_statements,
         "Should support prepared statements"
@@ -68,16 +69,17 @@ fn test_driver_capabilities_detect() {
     );
     assert!(caps.supports_streaming, "Should support streaming");
     assert_eq!(
-        caps.max_row_array_size, 1000,
-        "Max row array size should be 1000"
+        caps.max_row_array_size, 2000,
+        "SQL Server canonical max_row_array_size is 2000"
     );
     assert_eq!(
-        caps.driver_name, "Unknown",
-        "Driver name should be Unknown (not yet implemented)"
+        caps.driver_name, "Microsoft SQL Server",
+        "detect() preserves SQLGetInfo(SQL_DBMS_NAME) verbatim"
     );
+    assert_eq!(caps.engine, "sqlserver");
     assert_eq!(
         caps.driver_version, "Unknown",
-        "Driver version should be Unknown (not yet implemented)"
+        "Driver ODBC version not surfaced in DriverCapabilities yet"
     );
 
     drop(handles_guard);

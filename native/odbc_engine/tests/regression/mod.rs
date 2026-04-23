@@ -26,3 +26,7 @@ pub mod v30_capabilities;
 pub mod v30_returning_dialects;
 pub mod v30_session_init;
 pub mod v30_upsert_dialects;
+
+// MSDTC + SQL Server XA (Windows, `--features xa-dtc`); see `xa_dtc_test.rs`.
+#[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+pub mod xa_dtc_test;

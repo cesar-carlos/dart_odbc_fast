@@ -8,8 +8,10 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Interface for ODBC service operations.
@@ -98,6 +100,22 @@ abstract class IOdbcService {
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
+  });
+
+  /// Runs [action] inside a distributed XA / 2PC branch on [connectionId].
+  ///
+  /// Two-phase (default): `xa_start` → [action] → `xa_end` → `xa_prepare` →
+  /// `xa_commit_prepared`. Set [onePhase] to use `xa_commit_one_phase` after
+  /// [action] instead (single-RM shortcut only).
+  ///
+  /// [action] returning [Failure] triggers best-effort rollback; thrown
+  /// exceptions are converted to [QueryError] and also roll back, matching
+  /// [runInTransaction].
+  Future<Result<T>> runInXaTransaction<T extends Object>(
+    String connectionId,
+    Xid xid,
+    Future<Result<T>> Function(XaTransactionHandle xa) action, {
+    bool onePhase = false,
   });
 
   Future<Result<void>> createSavepoint(
@@ -465,6 +483,103 @@ class OdbcService implements IOdbcService {
       return Failure(commitResult.exceptionOrNull()!);
     }
     return userResult;
+  }
+
+  @override
+  Future<Result<T>> runInXaTransaction<T extends Object>(
+    String connectionId,
+    Xid xid,
+    Future<Result<T>> Function(XaTransactionHandle xa) action, {
+    bool onePhase = false,
+  }) async {
+    final startResult = await _repository.xaStart(connectionId, xid);
+    if (startResult.isError()) {
+      return Failure(startResult.exceptionOrNull()!);
+    }
+    final xa = startResult.getOrNull()!;
+
+    if (onePhase) {
+      try {
+        final userResult = await action(xa);
+        if (userResult.isError()) {
+          await _xaSafelyAbort(xa);
+          return userResult;
+        }
+        if (!xa.commitOnePhase()) {
+          return Failure(
+            QueryError(
+              message: 'runInXaTransaction: xa_commit_one_phase failed '
+                  'on xid=${xa.xid}',
+            ),
+          );
+        }
+        return userResult;
+      } on Object catch (e, st) {
+        await _xaSafelyAbort(xa);
+        return Failure(
+          QueryError(
+            message: 'runInXaTransaction: action threw ${e.runtimeType}: '
+                '$e\n$st',
+          ),
+        );
+      }
+    }
+
+    try {
+      final userResult = await action(xa);
+      if (userResult.isError()) {
+        await _xaSafelyAbort(xa);
+        return userResult;
+      }
+      if (!xa.end()) {
+        return Failure(
+          QueryError(
+            message: 'runInXaTransaction: xa_end failed on xid=${xa.xid}',
+          ),
+        );
+      }
+      if (!xa.prepare()) {
+        return Failure(
+          QueryError(
+            message: 'runInXaTransaction: xa_prepare failed on xid=${xa.xid}',
+          ),
+        );
+      }
+      if (!xa.commitPrepared()) {
+        return Failure(
+          QueryError(
+            message: 'runInXaTransaction: xa_commit_prepared failed '
+                'on xid=${xa.xid}',
+          ),
+        );
+      }
+      return userResult;
+    } on Object catch (e, st) {
+      await _xaSafelyAbort(xa);
+      return Failure(
+        QueryError(
+          message: 'runInXaTransaction: action threw ${e.runtimeType}: '
+              '$e\n$st',
+        ),
+      );
+    }
+  }
+
+  /// Best-effort XA cleanup after failure; mirrors
+  /// [XaTransactionHandle.runWithStart].
+  Future<void> _xaSafelyAbort(XaTransactionHandle xa) async {
+    try {
+      if (xa.state == XaState.active) {
+        xa.end();
+      }
+      if (xa.state == XaState.prepared) {
+        xa.rollbackPrepared();
+      } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
+        xa.rollback();
+      }
+    } on Object catch (_) {
+      // Same rationale as [runInTransaction] rollback swallow.
+    }
   }
 
   /// Rolls back [txnId] without surfacing the rollback's own failure to

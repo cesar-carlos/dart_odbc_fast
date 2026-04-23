@@ -19,7 +19,7 @@
 /// );
 /// ```
 ///
-/// Sprint 4.1 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.1.
+/// Sprint 4.1 — see `CHANGELOG.md` `[3.4.0]`.
 enum TransactionAccessMode {
   /// Default. Transaction may execute any DML/DDL allowed by the user's
   /// privileges. Equivalent to `READ WRITE` on SQL-92 engines.

@@ -26,7 +26,7 @@ pub enum IsolationLevel {
 /// equivalent (SQL Server, SQLite, Snowflake) treat this as a no-op so
 /// callers can program against the abstraction unconditionally.
 ///
-/// Sprint 4.1 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.1.
+/// Sprint 4.1 — see `CHANGELOG.md` `[3.4.0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionAccessMode {
     /// Default. Transaction may execute any DML/DDL allowed by the user's
@@ -66,7 +66,7 @@ impl TransactionAccessMode {
 /// Maximum time a statement inside the transaction will wait to acquire
 /// a lock before failing with the engine's lock-timeout error.
 ///
-/// Sprint 4.2 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.2.
+/// Sprint 4.2 — see `CHANGELOG.md` `[3.4.0]`.
 ///
 /// The wire/FFI representation is `u32` *milliseconds*:
 ///
@@ -318,7 +318,7 @@ impl Transaction {
     /// Begin a transaction with full control over isolation, savepoint
     /// dialect and access mode (`READ ONLY` / `READ WRITE`).
     ///
-    /// Sprint 4.1 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.1 and
+    /// Sprint 4.1 — see `CHANGELOG.md` `[3.4.0]` and
     /// the [`TransactionAccessMode`] doc for the engine matrix.
     pub fn begin_with_access_mode(
         handles: SharedHandleManager,
@@ -340,7 +340,7 @@ impl Transaction {
     /// Begin a transaction with full control over isolation, savepoint
     /// dialect, access mode AND per-transaction lock timeout.
     ///
-    /// Sprint 4.2 — see `doc/notes/FUTURE_IMPLEMENTATIONS.md` §4.2 and
+    /// Sprint 4.2 — see `CHANGELOG.md` `[3.4.0]` and
     /// the [`LockTimeout`] doc for the engine matrix. Pass
     /// [`LockTimeout::engine_default`] (the `Default` impl) to skip
     /// the override and behave exactly like

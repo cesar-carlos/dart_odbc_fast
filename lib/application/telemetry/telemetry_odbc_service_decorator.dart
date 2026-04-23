@@ -9,7 +9,9 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Decorator that adds telemetry to all OdbcService operations.
@@ -151,6 +153,24 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
         savepointDialect: savepointDialect,
         accessMode: accessMode,
         lockTimeout: lockTimeout,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<T>> runInXaTransaction<T extends Object>(
+    String connectionId,
+    Xid xid,
+    Future<Result<T>> Function(XaTransactionHandle xa) action, {
+    bool onePhase = false,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.runInXaTransaction',
+      () => _service.runInXaTransaction<T>(
+        connectionId,
+        xid,
+        action,
+        onePhase: onePhase,
       ),
     );
   }

@@ -20,6 +20,9 @@ pub use protocol::{
     ColumnInfo, DecodedResult, MultiResultItem, ParamValue,
 };
 
+#[cfg(feature = "columnar-v2")]
+pub use protocol::columnar_v2;
+
 #[cfg(feature = "ffi-tests")]
 pub use ffi::{
     odbc_async_cancel, odbc_async_free, odbc_async_get_result, odbc_async_poll, odbc_connect,

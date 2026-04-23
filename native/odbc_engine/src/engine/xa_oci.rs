@@ -227,7 +227,7 @@ fn ensure_loaded() -> Result<&'static OciXaSymbols> {
 /// existing `XaTransaction` lifecycle in `xa_transaction.rs`
 /// (translating Phase 1 / Phase 2 calls to the OCI symbols) is
 /// **Phase 2** of this sprint and tracked in
-/// `FUTURE_IMPLEMENTATIONS.md` §4.3c.
+/// `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.2.
 ///
 /// Phase 1 deliverable: the dynamic-loading shim is correct,
 /// reachable from the `xa-oci` feature, and falls back cleanly to

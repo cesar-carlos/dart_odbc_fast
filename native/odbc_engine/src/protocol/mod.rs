@@ -11,6 +11,9 @@ pub mod param_value;
 pub mod row_buffer;
 pub mod types;
 
+#[cfg(feature = "columnar-v2")]
+pub mod columnar_v2;
+
 pub use arena::Arena;
 pub use bulk_insert::{
     parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData, BulkColumnSpec,

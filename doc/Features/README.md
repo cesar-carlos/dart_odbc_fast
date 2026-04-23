@@ -1,16 +1,17 @@
 # Features (`doc/Features`)
 
-This folder holds **feature-oriented documentation**: short indexes and summaries that sit beside the long-form technical notes under `doc/notes/`.
+This folder holds **feature-oriented documentation**: short indexes and summaries; deeper type and protocol notes live under `doc/notes/`.
 
 ## Contents
 
 | Document | Description |
 | -------- | ----------- |
-| [PENDING_IMPLEMENTATIONS.md](PENDING_IMPLEMENTATIONS.md) | PT-BR quick reference of work still **open** or **partially** implemented (XA MSDTC Phase 2, optional OCI path, service-layer XA helper, types/protocol, OUTPUT params, CI/Db2, etc.), with links into the canonical backlog. |
+| [PENDING_IMPLEMENTATIONS.md](PENDING_IMPLEMENTATIONS.md) | PT-BR quick reference of work still **open** or **partially** implemented (XA MSDTC optional hardening, OCI path deferred, OUTPUT nativo, columnar v2, infra E2E), with links to `TYPE_MAPPING` and `columnar_protocol_sketch` where relevant. |
 
 ## See also
 
-- [`doc/notes/FUTURE_IMPLEMENTATIONS.md`](../notes/FUTURE_IMPLEMENTATIONS.md) — canonical backlog, “done” criteria, and detailed notes.
+- [`CHANGELOG.md`](../../CHANGELOG.md) — entregas e histórico.
+- [`doc/notes/TYPE_MAPPING.md`](../notes/TYPE_MAPPING.md) — contrato de tipos e roadmap §3.
 - Repository overview: [`README.md`](../../README.md).
 
-When a feature listed here ships end-to-end, update `doc/notes/FUTURE_IMPLEMENTATIONS.md` and trim or archive the corresponding section in `PENDING_IMPLEMENTATIONS.md` so this folder stays a faithful snapshot.
+Quando um item listado em `PENDING_IMPLEMENTATIONS.md` fechar, actualizar o `CHANGELOG.md` e remover ou encurtar a secção correspondente aqui.

@@ -44,6 +44,7 @@ case "$ENGINE" in
     mysql)    DSN='Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;' ;;
     mariadb)  DSN='Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;' ;;
     mssql)    DSN='Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;' ;;
+    db2)      DSN='Driver={IBM DB2 ODBC DRIVER};HostName=db2;Port=50000;Database=TESTDB;Protocol=TCPIP;UID=db2inst1;PWD=OdbcTest123;' ;;
     oracle)   DSN='Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;' ;;
     *) echo "Unsupported engine: $ENGINE" >&2; exit 1 ;;
 esac
@@ -64,7 +65,11 @@ step "Engine: $ENGINE"
 step "DSN:    $DSN"
 
 step 'Ensuring DB stack is up...'
-"$SCRIPT_DIR/docker_db_up.sh" --timeout 240
+if [[ "$ENGINE" == "db2" ]]; then
+    "$SCRIPT_DIR/docker_db_up.sh" --include-db2 --timeout 600
+else
+    "$SCRIPT_DIR/docker_db_up.sh" --timeout 240
+fi
 
 if [[ $NO_BUILD -eq 0 ]]; then
     step "Building $RUNNER_SERVICE image (cached)..."

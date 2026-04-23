@@ -10,7 +10,7 @@
 
 Highlights of the work currently on `main` ahead of the next tagged
 release. See the [CHANGELOG](CHANGELOG.md) for the complete list and
-[`doc/notes/FUTURE_IMPLEMENTATIONS.md`](doc/notes/FUTURE_IMPLEMENTATIONS.md)
+[`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
 
 ### Sprint 4 — transaction control
@@ -60,7 +60,7 @@ for the remaining backlog.
   | MySQL / MariaDB       | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
   | DB2                   | ✅ same SQL grammar as MySQL                 |
   | **Oracle**            | ✅ **`SYS.DBMS_XA` PL/SQL** + `DBA_PENDING_TRANSACTIONS` (v3.4.1); needs `EXECUTE` on `DBMS_XA` + `FORCE [ANY] TRANSACTION` |
-  | SQL Server (MSDTC)    | ⚠️ Phase 1 scaffolding (`--features xa-dtc`); Phase 2 wiring pending — see `FUTURE_IMPLEMENTATIONS.md` §4.3b |
+  | SQL Server (MSDTC)    | ✅ Windows + `--features xa-dtc` (DTC enlist + XA branch); Linux/CI still unsupported — see `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.1 |
   | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
 
   1RM optimisation (`commit_one_phase`) skips the prepare-log write
@@ -827,10 +827,11 @@ dart_odbc_fast/
 - [doc/version/VERSIONING_QUICK_REFERENCE.md](doc/version/VERSIONING_QUICK_REFERENCE.md)
 - [doc/version/CHANGELOG_TEMPLATE.md](doc/version/CHANGELOG_TEMPLATE.md)
 - [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md)
-- [doc/notes/FUTURE_IMPLEMENTATIONS.md](doc/notes/FUTURE_IMPLEMENTATIONS.md)
+- [doc/Features/PENDING_IMPLEMENTATIONS.md](doc/Features/PENDING_IMPLEMENTATIONS.md) — backlog mínimo (PT)
+- [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 (não usado no *wire* ainda)
 
-Files under `doc/notes/` are working plans/backlog and may include features
-that are not implemented yet.
+`doc/notes/` holds technical notes (e.g. type mapping, columnar sketch) — some
+topics are still in progress; see `PENDING_IMPLEMENTATIONS` for a short list.
 
 ## CI/CD
 

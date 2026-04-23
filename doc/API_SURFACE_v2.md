@@ -445,3 +445,21 @@ graph TB
 Este documento espelha o estado de v2.0.0 (commit atual). Para cada
 funcionalidade marcada como "fix" há um teste de regressão correspondente
 em [`native/odbc_engine/tests/regression/`](../native/odbc_engine/tests/regression).
+
+---
+
+## Suplemento Dart / protocolo (pós v3.4.x)
+
+Não altera a contagem de **71** entradas FFI: as extensões abaixo vivem na
+*crate* Dart `odbc_fast`:
+
+| Área | Ficheiro(s) |
+|------|-------------|
+| 30 *kind* `SqlDataType` + `intervalYearToMonth` / `geometry` | `lib/infrastructure/native/protocol/param_value.dart` |
+| `ParamDirection` | `lib/domain/types/param_direction.dart` |
+| `DirectedParam` / `paramValuesFromDirected` | `lib/infrastructure/native/protocol/directed_param.dart` |
+| *Flags* columnar v2 (detecção de cabeçalho) | `lib/infrastructure/native/protocol/columnar_v2_flags.dart` |
+
+*Feature* Rust **`columnar-v2`:** `odbc_engine::columnar_v2` (`COLUMNAR_V2_*` em
+`native/odbc_engine/src/protocol/columnar_v2.rs`); o retorno de queries
+continua em protocolo *row-major* v1.

@@ -11,8 +11,10 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Mock ODBC repository for testing.
@@ -34,6 +36,7 @@ class MockOdbcRepository implements IOdbcRepository {
   bool beginTransactionCalled = false;
   bool commitTransactionCalled = false;
   bool rollbackTransactionCalled = false;
+  bool xaStartCalled = false;
   bool clearStatementCacheCalled = false;
   bool metadataCacheEnableCalled = false;
   bool metadataCacheStatsCalled = false;
@@ -74,6 +77,10 @@ class MockOdbcRepository implements IOdbcRepository {
   // Sequential txn-id source so successive `beginTransaction` calls
   // don't collide. Starts at 1 to mirror the FFI contract (0 = error).
   int _nextTxnId = 1;
+
+  /// Harness for `OdbcService.runInXaTransaction` tests.
+  XaTransactionHandle? xaStartReturn;
+  bool xaStartShouldFail = false;
 
   @override
   Future<Result<Unit>> initialize() async {
@@ -303,6 +310,26 @@ class MockOdbcRepository implements IOdbcRepository {
       );
     }
     return const Success(unit);
+  }
+
+  @override
+  Future<Result<XaTransactionHandle>> xaStart(
+    String connectionId,
+    Xid xid,
+  ) async {
+    xaStartCalled = true;
+    if (xaStartShouldFail) {
+      return const Failure<XaTransactionHandle, OdbcError>(
+        ValidationError(message: 'mock: xaStart forced failure'),
+      );
+    }
+    final h = xaStartReturn;
+    if (h == null) {
+      return const Failure<XaTransactionHandle, OdbcError>(
+        QueryError(message: 'mock: xa_start null handle'),
+      );
+    }
+    return Success(h);
   }
 
   @override

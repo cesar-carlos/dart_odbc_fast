@@ -29,11 +29,13 @@ on:
       - ".github/workflows/e2e_docker_stack.yml"
       - "native/odbc_engine/src/engine/xa_transaction.rs"
       - "native/odbc_engine/tests/e2e_xa_transaction_test.rs"
+      - "native/odbc_engine/tests/e2e_multi_db_basic_test.rs"
   pull_request:
     paths:
       - "docker-compose.yml"
       - "Dockerfile.test-runner"
       - ".github/workflows/e2e_docker_stack.yml"
+      - "native/odbc_engine/tests/e2e_multi_db_basic_test.rs"
 
 jobs:
   smoke:
@@ -46,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [postgres, mysql, mariadb, mssql, oracle]
+        engine: [postgres, mysql, mariadb, mssql, db2, oracle]
         include:
           - engine: postgres
             filter: test_e2e_xa_postgresql
@@ -60,10 +62,13 @@ jobs:
             filter: test_e2e_xa_mysql
             include_oracle: "false"
           - engine: mssql
-            # SQL Server XA Phase 2 is still pending (see FUTURE_IMPLEMENTATIONS
-            # 4.3b). For this matrix we exercise the read-only / lock-timeout
-            # surface that v3.4.0 *did* finish for SQL Server.
+            # SQL Server: XA/MSDTC Phase 2 is Windows + `xa-dtc` in the engine;
+            # Linux CI here covers the read-only / lock-timeout surface.
             filter: test_e2e_transaction_access_mode
+            include_oracle: "false"
+          - engine: db2
+            # multi_db_*: connect, SELECT 1, create/drop table (docker TESTDB).
+            filter: test_multi_db_
             include_oracle: "false"
           - engine: oracle
             # Sprint 4.3c Phase 2 (v3.4.1): Oracle XA via DBMS_XA PL/SQL.
@@ -112,10 +117,17 @@ jobs:
           # Oracle's TCP-only healthcheck flips to 'healthy' as soon as
           # port 1521 accepts connections; the listener is up well before
           # XEPDB1 can serve queries, so we extend the wait budget below.
-          docker compose up -d ${{ matrix.engine }}
+          # Db2 is under `profiles: [db2]` and needs a slower health window.
+          if [ "${{ matrix.engine }}" = "db2" ]; then
+            docker compose --profile db2 up -d db2
+          else
+            docker compose up -d ${{ matrix.engine }}
+          fi
           # Per-engine wait budget (each iteration sleeps 3s).
           if [ "${{ matrix.engine }}" = "oracle" ]; then
             attempts=120  # ~6 minutes
+          elif [ "${{ matrix.engine }}" = "db2" ]; then
+            attempts=100  # ~5 minutes (Db2 CE is slow to become ready)
           else
             attempts=60   # ~3 minutes (unchanged for the SQL-XA engines)
           fi
@@ -141,6 +153,7 @@ jobs:
             mysql)    echo "value=Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
             mariadb)  echo "value=Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;" >> "$GITHUB_OUTPUT" ;;
             mssql)    echo "value=Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;" >> "$GITHUB_OUTPUT" ;;
+            db2)      echo "value=Driver={IBM DB2 ODBC DRIVER};HostName=db2;Port=50000;Database=TESTDB;Protocol=TCPIP;UID=db2inst1;PWD=OdbcTest123;" >> "$GITHUB_OUTPUT" ;;
             oracle)   echo "value=Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;" >> "$GITHUB_OUTPUT" ;;
           esac
 

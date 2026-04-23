@@ -7,12 +7,13 @@
 #   pwsh scripts/docker_e2e.ps1 -Engine mysql
 #   pwsh scripts/docker_e2e.ps1 -Engine mariadb
 #   pwsh scripts/docker_e2e.ps1 -Engine mssql
+#   pwsh scripts/docker_e2e.ps1 -Engine db2        # (starts Db2 profile; use test_multi_db_ filter for smoke)
 #   pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_pg_
 #   pwsh scripts/docker_e2e.ps1 -Quick              # same DBs, no --include-ignored (skips long #[ignore] stress)
 
 [CmdletBinding()]
 param(
-    [ValidateSet('postgres', 'mysql', 'mariadb', 'mssql', 'oracle')]
+    [ValidateSet('postgres', 'mysql', 'mariadb', 'mssql', 'db2', 'oracle')]
     [string]$Engine = 'postgres',
 
     # Filter passed to `cargo test` (substring match against test names).
@@ -48,6 +49,7 @@ $dsnByEngine = @{
     mysql    = 'Driver={MySQL ODBC 8.0 Unicode Driver};Server=mysql;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;'
     mariadb  = 'Driver={MariaDB ODBC 3.1 Driver};Server=mariadb;Port=3306;Database=odbc_test;UID=odbc;PWD=odbc;'
     mssql    = 'Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;'
+    db2      = 'Driver={IBM DB2 ODBC DRIVER};HostName=db2;Port=50000;Database=TESTDB;Protocol=TCPIP;UID=db2inst1;PWD=OdbcTest123;'
     oracle   = 'Driver={Oracle Instant Client ODBC};DBQ=oracle:1521/XEPDB1;UID=system;PWD=OdbcTest123!;'
 }
 
@@ -64,7 +66,9 @@ $runnerService  = if ($useOracleRunner) { 'test-runner-oracle' } else { 'test-ru
 # -- Make sure the DB containers are up ---------------------------------
 
 Write-Step 'Ensuring DB stack is up...'
-& "$PSScriptRoot/docker_db_up.ps1" -TimeoutSeconds 240
+$includeDb2 = ($Engine -eq 'db2')
+$waitSeconds = if ($includeDb2) { 600 } else { 240 }
+& "$PSScriptRoot/docker_db_up.ps1" -IncludeDb2:$includeDb2 -TimeoutSeconds $waitSeconds
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # -- Build runner image (cached) ----------------------------------------

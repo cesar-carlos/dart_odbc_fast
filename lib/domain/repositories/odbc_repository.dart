@@ -8,6 +8,8 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Repository interface for ODBC database operations.
@@ -115,6 +117,17 @@ abstract class IOdbcRepository {
   Future<Result<Unit>> rollbackTransaction(
     String connectionId,
     int txnId,
+  );
+
+  /// Opens an XA / 2PC branch (`xa_start`) on [connectionId] with [xid].
+  ///
+  /// Returns `Failure` with `QueryError` when the engine rejected `xa_start`
+  /// (same condition as `NativeOdbcConnection.xaStart` returning null).
+  /// Returns `ValidationError` for an unknown connection id, missing XA FFI,
+  /// or when using the async repository backend.
+  Future<Result<XaTransactionHandle>> xaStart(
+    String connectionId,
+    Xid xid,
   );
 
   /// Creates a savepoint within an active transaction.

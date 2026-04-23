@@ -41,6 +41,9 @@
 
 use crate::engine::xa_transaction::Xid;
 use crate::error::{OdbcError, Result};
+use odbc_api::sys::{ConnectionAttribute, SQLSetConnectAttr, SqlReturn, IS_POINTER};
+use odbc_api::{handles, Connection};
+use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use windows::core::Interface;
@@ -50,10 +53,70 @@ use windows::Win32::System::DistributedTransactionCoordinator::{
     DtcGetTransactionManagerExA, ITransaction, ITransactionDispenser, ISOLATIONLEVEL_READCOMMITTED,
 };
 
+/// `SQL_ATTR_ENLIST_IN_DTC` (ODBC) — value is a pointer to `ITransaction`;
+/// set to NULL to unenlist the connection.
+const SQL_ATTR_ENLIST_IN_DTC: i32 = 1207;
+
+/// `odbc_api::Connection` does not expose the raw `HDbc` on the public
+/// type; the underlying [`handles::Connection`] is a single field at the
+/// same address, so this matches `as_sys()` on the handle type.
+fn connection_hdbc(conn: &Connection<'static>) -> odbc_api::sys::HDbc {
+    // SAFETY: `Connection` is a newtype for `handles::Connection` (single
+    // field, same size/alignment) — reborrow at offset 0.
+    let inner: &handles::Connection = unsafe { &*(std::ptr::from_ref(conn).cast()) };
+    inner.as_sys()
+}
+
 /// One-time COM init result, cached so we don't re-pay the COM
 /// apartment-init cost on every XA call. `S_OK` and `S_FALSE` both
 /// indicate "COM is usable on this thread"; everything else is fatal.
 static COM_INIT_RESULT: OnceLock<windows::core::HRESULT> = OnceLock::new();
+
+/// Enlist the ODBC connection in the MSDTC transaction (Phase 2).
+pub fn enlist_connection_in_dtc(
+    conn: &mut Connection<'static>,
+    transaction: &ITransaction,
+) -> Result<()> {
+    let hdbc = connection_hdbc(conn);
+    let value = (transaction as *const ITransaction).cast::<c_void>().cast_mut();
+    let r = unsafe {
+        SQLSetConnectAttr(
+            hdbc,
+            ConnectionAttribute(SQL_ATTR_ENLIST_IN_DTC),
+            value,
+            IS_POINTER,
+        )
+    };
+    if r == SqlReturn::SUCCESS || r == SqlReturn::SUCCESS_WITH_INFO {
+        Ok(())
+    } else {
+        Err(OdbcError::InternalError(format!(
+            "xa_dtc: SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC) failed: {:?}",
+            r
+        )))
+    }
+}
+
+/// Unenlist the connection from DTC (after `xa_end` / before Phase 2 on another RM).
+pub fn unenlist_from_dtc(conn: &mut Connection<'static>) -> Result<()> {
+    let hdbc = connection_hdbc(conn);
+    let r = unsafe {
+        SQLSetConnectAttr(
+            hdbc,
+            ConnectionAttribute(SQL_ATTR_ENLIST_IN_DTC),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if r == SqlReturn::SUCCESS || r == SqlReturn::SUCCESS_WITH_INFO {
+        Ok(())
+    } else {
+        Err(OdbcError::InternalError(format!(
+            "xa_dtc: SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, NULL) (unenlist) failed: {:?}",
+            r
+        )))
+    }
+}
 
 fn ensure_com_initialised() -> Result<()> {
     let hr = *COM_INIT_RESULT.get_or_init(|| {
@@ -159,7 +222,7 @@ fn begin_msdtc_transaction(dispenser: &ITransactionDispenser, _xid: &Xid) -> Res
 /// (specifically, the `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC,
 /// ITransaction*)` call against the ODBC connection handle) is
 /// **Phase 2** of this sprint and tracked in
-/// `FUTURE_IMPLEMENTATIONS.md` §4.3b.
+/// `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.1.
 ///
 /// Phase 1 deliverable: COM plumbing is correct, reachable from the
 /// `xa-dtc` feature, and falls back cleanly to `UnsupportedFeature`
@@ -186,6 +249,11 @@ pub struct DtcXaBranch {
     _dispenser: ITransactionDispenser,
     transaction: ITransaction,
 }
+
+// COM `IUnknown` is not `Send` in `windows` by default. We store
+// `DtcXaBranch` only while the XA call sequence is driven on the
+// connection thread (same as ODBC usage).
+unsafe impl Send for DtcXaBranch {}
 
 impl DtcXaBranch {
     pub fn transaction(&self) -> &ITransaction {

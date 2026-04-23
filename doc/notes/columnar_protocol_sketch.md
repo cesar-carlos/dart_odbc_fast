@@ -1,14 +1,14 @@
-# Columnar protocol v2 — design sketch (orphaned)
+# Columnar protocol v2 — design sketch
 
-> **Status:** orphan code. The Rust engine does not emit this format and no
-> Dart caller imports it. Moved here from
-> `lib/infrastructure/native/protocol/columnar_protocol.dart` in v3.1.0 so we
-> stop shipping dead code in the production tree.
+> **Status:** **Emitter/parser not in production** — the row-major
+> `binary_protocol.dart` (v1) is still the on-the-wire return format. Anchors
+> exist: Rust `--features columnar-v2` (`odbc_engine::columnar_v2` constants;
+> Criterion `columnar_v2_placeholder` bench) and Dart `columnar_v2_flags.dart`
+> (`isLikelyColumnarV2Header`). The historical orphan Dart module was removed
+> in v3.1.0; this document remains the spec.
 >
-> Revive this design only if there is a concrete throughput requirement that
-> the row-major `binary_protocol.dart` (version 1) cannot meet — for example
-> wide analytics result sets where columnar layout would unlock cheaper
-> CPU-vector decoding or per-column compression.
+> Revisit when a benchmark shows v1 is the bottleneck (see
+> *If this comes back* below).
 
 ## What it does
 

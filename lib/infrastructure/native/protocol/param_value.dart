@@ -306,6 +306,12 @@ class SqlDataType {
   /// [SqlDataType.varBinary] together with `geography::STGeomFromWKB`.
   static const SqlDataType geography = SqlDataType._('geography');
 
+  /// SQL Server **geometry** WKT (planar) — same wire rules as
+  /// [geography] (WKT string → [ParamValueString]). **Caller** supplies
+  /// the constructor in SQL, e.g. `geometry::STGeomFromText(?, 0)` (SRID
+  /// usually 0 for planar engine-local units).
+  static const SqlDataType geometry = SqlDataType._('geometry');
+
   /// Oracle **RAW** binary data. Accepts `List<int>` (or `Uint8List`).
   /// Wraps in [ParamValueBinary] — wire-compatible with
   /// [SqlDataType.varBinary]; the distinction is purely semantic so
@@ -348,6 +354,21 @@ class SqlDataType {
   /// callers should compute differences with `DATEADD` / `DATEDIFF`
   /// instead.
   static const SqlDataType interval = SqlDataType._('interval');
+
+  /// `INTERVAL ... YEAR TO MONTH` (ISO SQL / PostgreSQL / Oracle
+  /// `INTERVAL 'y-m' YEAR TO MONTH`). Accepts:
+  /// - a `String` in the engine’s native spelling (passed through
+  ///   verbatim);
+  /// - a `List<int>` of length 2, `[years, months]`, e.g. `[1, 2]`
+  ///   for *one year and two months* (formatted as
+  ///   `INTERVAL '1-2' YEAR TO MONTH`);
+  /// - a `Map` with `int` values for keys `years` and `months` (same
+  ///   meaning as the two-element list).
+  ///
+  /// The month field is normalised to `0..11` in the two-number form.
+  /// Use a raw `String` if your engine needs a non-standard range.
+  static const SqlDataType intervalYearToMonth =
+      SqlDataType._('interval_year_to_month');
 }
 
 /// Explicitly typed parameter value.
@@ -750,17 +771,20 @@ ParamValue _toTypedParamValue(SqlTypedValue typedValue) {
       _validateHierarchyIdLiteral(value);
       return ParamValueString(value);
     case 'geography':
+    case 'geometry':
       // We only accept WKT here (String). Binary WKB callers should
-      // use SqlDataType.varBinary together with `geography::STGeomFromWKB`.
+      // use SqlDataType.varBinary together with `*::STGeomFromWKB`.
       // Rejecting `List<int>` explicitly avoids silent ambiguity.
       if (value is! String) {
         throw ArgumentError(
-          'SqlDataType.geography expects String (WKT); for binary WKB use '
-          'SqlDataType.varBinary with geography::STGeomFromWKB. '
+          'SqlDataType.${type.kind} expects String (WKT); for binary WKB use '
+          'SqlDataType.varBinary with STGeomFromWKB. '
           'Got ${value.runtimeType}',
         );
       }
       return ParamValueString(value);
+    case 'interval_year_to_month':
+      return ParamValueString(_toIntervalYearToMonthString(value));
     case 'raw':
       if (value is! List<int>) {
         throw ArgumentError(
@@ -942,6 +966,47 @@ String _toIntervalString(Object? value) {
     'SqlDataType.interval expects Duration or String, '
     'got ${value.runtimeType}',
   );
+}
+
+/// Formats `INTERVAL 'Y-M' YEAR TO MONTH` for ISO-style engines.
+String _toIntervalYearToMonthString(Object? value) {
+  if (value is String) {
+    return value;
+  }
+  int years;
+  int months;
+  if (value is List<int>) {
+    if (value.length != 2) {
+      throw ArgumentError(
+        'SqlDataType.intervalYearToMonth expects a two-element '
+        'List<int> [years, months], got length ${value.length}',
+      );
+    }
+    years = value[0];
+    months = value[1];
+  } else if (value is Map) {
+    final y = value['years'];
+    final m = value['months'];
+    if (y is! int || m is! int) {
+      throw ArgumentError(
+        'SqlDataType.intervalYearToMonth expects Map keys "years" and '
+        '"months" with int values, got ${value.runtimeType}',
+      );
+    }
+    years = y;
+    months = m;
+  } else {
+    throw ArgumentError(
+      'SqlDataType.intervalYearToMonth expects String, List<int> of '
+      'length 2, or Map with int years/months; got ${value.runtimeType}',
+    );
+  }
+  if (months < 0 || months > 11) {
+    throw ArgumentError(
+      'SqlDataType.intervalYearToMonth: months must be in 0..11, got $months',
+    );
+  }
+  return "INTERVAL '$years-$months' YEAR TO MONTH";
 }
 
 /// Encode a value as a JSON string suitable for the engine's `JSON` /

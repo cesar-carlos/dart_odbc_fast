@@ -102,7 +102,8 @@ Code: `lib/infrastructure/native/protocol/param_value.dart` (the
 `SqlDataType` class for definitions, `_toTypedParamValue` for the
 dispatcher).
 
-**27 kinds shipped today** (10 in v3.0.0, +17 unreleased):
+**30 kinds shipped** in `SqlDataType` (roadmap complete for the
+explicit-typing layer):
 
 #### Cross-engine kinds (20)
 
@@ -120,16 +121,17 @@ dispatcher).
 | `SqlDataType.varChar({length})`       | `String`                           | `ParamValueString`    | Optional length metadata.                          |
 | `SqlDataType.nVarChar({length})`      | `String`                           | `ParamValueString`    | UTF-16 conceptually; same wire (UTF-8).            |
 | `SqlDataType.text` *(new)*            | `String`                           | `ParamValueString`    | No length cap (`TEXT` / `NTEXT` / `CLOB` convention). |
-| `SqlDataType.json({validate})` *(new)* | `String`, `Map<String,dynamic>`, `List<dynamic>` | `ParamValueString` | `validate: true` round-trips through `jsonDecode` to catch bad payloads early. |
+| `SqlDataType.json({validate})`        | `String`, `Map<String,dynamic>`, `List<dynamic>` | `ParamValueString` | `validate: true` uses kind `json_validated` and round-trips through `jsonDecode`. |
 | `SqlDataType.xml({validate})` *(new)* | `String`                           | `ParamValueString`    | `validate: true` runs a cheap structural shape check (`<...>`). |
 | `SqlDataType.uuid` *(new)*            | `String` (canonical / bare-hex / `{...}`) | `ParamValueString` | Folds to lowercase canonical 8-4-4-4-12.   |
 | `SqlDataType.varBinary({length})`     | `List<int>`                        | `ParamValueBinary`    | Optional length metadata.                          |
 | `SqlDataType.dateTime`                | `DateTime` or `String`             | `ParamValueString`    | `DateTime` validated for year ∈ `[1, 9999]`.       |
 | `SqlDataType.date`                    | `String`                           | `ParamValueString`    | Caller formats as the engine expects.              |
 | `SqlDataType.time`                    | `String`                           | `ParamValueString`    | Caller formats as the engine expects.              |
-| `SqlDataType.interval` *(new)*        | `Duration` or `String`             | `ParamValueString`    | `Duration` formatted as `'<n> seconds'` (Postgres/MySQL/Oracle/Db2 portable); sub-second values padded as 3-digit decimal. |
+| `SqlDataType.interval`                | `Duration` or `String`              | `ParamValueString`    | `Duration` → `'<n> seconds'` (broadly portable). |
+| `SqlDataType.intervalYearToMonth`     | `String`, `List<int>` length 2 `[y,m]`, or `Map` with `years` / `months` | `ParamValueString` | `INTERVAL 'y-m' YEAR TO MONTH`; months in list/map form are validated `0..11`. |
 
-#### Engine-specific kinds (7) — *new in unreleased*
+#### Engine-specific kinds (8)
 
 These wrap the same wire primitives as the cross-engine kinds; the
 value lives in the per-kind validation and the type-discipline at the
@@ -144,6 +146,7 @@ doc comment in `param_value.dart` for the convention.
 | `SqlDataType.tsvector`          | PostgreSQL    | `String` (`'fat:1A cat:2B sat:3'`)        | No client-side validation; `to_tsvector` is the real validator.  |
 | `SqlDataType.hierarchyId`       | SQL Server    | `String` (`'/1/2/3.5/'`)                  | Path validated; **caller wraps in `CAST(? AS hierarchyid)`** in the SQL. |
 | `SqlDataType.geography`         | SQL Server    | `String` (WKT)                            | **Caller wraps in `geography::STGeomFromText(?, srid)`**. `List<int>` rejected with hint pointing at `varBinary` + `STGeomFromWKB`. |
+| `SqlDataType.geometry`          | SQL Server    | `String` (WKT)                            | **Caller wraps in `geometry::STGeomFromText(?, srid)`** (planar). Same WKT wire rules as `geography`. |
 | `SqlDataType.raw`                | Oracle        | `List<int>`                               | Wire-equality pinned with `varBinary`; idiomatic alias for `RAW(N)` columns. |
 | `SqlDataType.bfile`             | Oracle        | `String` (`BFILENAME(...)` snippet)       | BFILE is a pointer to an external file; the more common pattern is two `varChar` parameters fed into `BFILENAME(?, ?)` in SQL. |
 
@@ -169,9 +172,11 @@ The dispatcher validates the runtime type against the requested kind
 and rejects mismatches with `ArgumentError` (e.g. `SqlDataType.int32`
 with a `String` value, or `SqlDataType.uuid` with a malformed string).
 
-**Pending (3 of original 30-kind roadmap)**: reserved for future
-spatial/temporal additions (`geometry`, `year/month interval`,
-`json with schema validation`) when concrete consumers ask for them.
+**Directional binding (output roadmap):** `ParamDirection`, `DirectedParam`, and
+`paramValuesFromDirected` (`lib/infrastructure/native/protocol/directed_param.dart`)
+ship for forward-compatible call sites. The engine still materialises only **IN**
+parameters today; `paramValuesFromDirected` throws `UnsupportedError` for
+`ParamDirection.output` / `inOut` until the native bind path lands (see §3.1).
 
 ### 1.4 Driver plugins (9 total)
 
@@ -249,10 +254,18 @@ surface — TVP and `request.output` are explicitly out of scope today
 
 ### 3.1 Output parameters
 
-Not supported in the public Dart API. No `request.output`-style
-contract currently exists.
+**Dart surface:** `ParamDirection`, `DirectedParam`, and
+`paramValuesFromDirected` exist so call sites can be typed
+**before** the Rust engine gains `SQLBindParameter` `OUTPUT` buffers
+and Oracle `REF CURSOR` fan-out. `paramValuesFromDirected` only accepts
+`ParamDirection.input` today; any other direction throws
+`UnsupportedError` with a deliberate message.
 
-Planning baseline:
+**Engine:** not implemented — the execution pipeline still flattens
+parameters to the existing string/binary wire (`deserialize_params` has
+no per-parameter direction nibble).
+
+Planning baseline (unchanged; tracks native work):
 
 | Driver     | Typical capability                           | Status                      |
 | ---------- | -------------------------------------------- | --------------------------- |
@@ -272,12 +285,13 @@ Decision criteria before promoting to public API:
 
 ### 3.2 Columnar protocol v2
 
-The original sketch lived in `lib/infrastructure/native/protocol/columnar_protocol.dart`
-and was orphan code (no callers in `lib/` or `test/`). Moved to
-`doc/notes/columnar_protocol_sketch.md` in v3.1.0 to preserve the design
-without keeping dead code in the production tree. Revive only if there
-is a concrete throughput requirement that the row-major v1 protocol
-cannot meet.
+- **Sketch:** `doc/notes/columnar_protocol_sketch.md` (header layout + column blocks).
+- **Rust (opt-in):** `cargo` feature `columnar-v2` exposes
+  `odbc_engine::columnar_v2` (`COLUMNAR_V2_MAGIC`, `COLUMNAR_V2_VERSION` constants)
+  and a Criterion `columnar_v2_placeholder` bench as an anchor.
+- **Dart:** `columnar_v2_flags.dart` (`columnarV2Magic`, `isLikelyColumnarV2Header`) —
+  not emitted by the engine yet; v1 row-major `binary_protocol.dart` is still the
+  only on-the-wire result format in production.
 
 ---
 
@@ -293,7 +307,7 @@ cannot meet.
 
 ## References
 
-- `doc/notes/FUTURE_IMPLEMENTATIONS.md` — open backlog items.
+- `doc/Features/PENDING_IMPLEMENTATIONS.md` — backlog mínimo (PT).
 - `doc/CAPABILITIES_v3.md` — capability × engine matrix.
 - `doc/notes/columnar_protocol_sketch.md` — orphaned v2 design (§3.2).
 - <https://www.npmjs.com/package/mssql>

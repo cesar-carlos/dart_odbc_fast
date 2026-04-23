@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/types/param_direction.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:test/test.dart';
 
@@ -1096,6 +1098,64 @@ void main() {
     });
   });
 
+  group('SqlDataType.geometry (SQL Server)', () {
+    test('mirrors geography: WKT through verbatim', () {
+      const wkt = 'POINT(0 0)';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.geometry, wkt),
+      ])[0];
+      expect((p as ParamValueString).value, equals(wkt));
+    });
+  });
+
+  group('SqlDataType.intervalYearToMonth', () {
+    test('formats two-element list as ISO INTERVAL string', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.intervalYearToMonth, <int>[1, 2]),
+      ])[0];
+      expect(
+        (p as ParamValueString).value,
+        equals("INTERVAL '1-2' YEAR TO MONTH"),
+      );
+    });
+
+    test('accepts Map years/months', () {
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.intervalYearToMonth, {
+          'years': 0,
+          'months': 11,
+        }),
+      ])[0];
+      expect(
+        (p as ParamValueString).value,
+        equals("INTERVAL '0-11' YEAR TO MONTH"),
+      );
+    });
+
+    test('passes preformatted String verbatim', () {
+      const s = "INTERVAL '14' MONTH";
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.intervalYearToMonth, s),
+      ])[0];
+      expect((p as ParamValueString).value, equals(s));
+    });
+
+    test('rejects months outside 0..11 for list form', () {
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.intervalYearToMonth, <int>[0, 12]),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('0..11'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('SqlDataType.raw (Oracle)', () {
     test('serialises List<int> as ParamValueBinary', () {
       final bytes = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -1357,6 +1417,29 @@ void main() {
       expect(buf[0], equals(0));
       const second = 5;
       expect(buf[second], equals(2));
+    });
+  });
+
+  group('paramValuesFromDirected', () {
+    test('input-only matches untyped conversion', () {
+      final a = paramValuesFromObjects([1, 'x']);
+      final b = paramValuesFromDirected([
+        const DirectedParam(value: 1),
+        const DirectedParam(value: 'x'),
+      ]);
+      expect(b.length, equals(a.length));
+      for (var i = 0; i < a.length; i++) {
+        expect(b[i].serialize(), equals(a[i].serialize()));
+      }
+    });
+
+    test('rejects ParamDirection.output', () {
+      expect(
+        () => paramValuesFromDirected([
+          const DirectedParam(value: 0, direction: ParamDirection.output),
+        ]),
+        throwsA(isA<UnsupportedError>()),
+      );
     });
   });
 }

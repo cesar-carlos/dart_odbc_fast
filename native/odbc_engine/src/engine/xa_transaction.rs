@@ -308,6 +308,9 @@ pub struct XaTransaction {
     xid: Xid,
     engine_id: String,
     state: Arc<Mutex<XaState>>,
+    /// Set when `engine_id` is SQL Server, built with `xa-dtc` on Windows: MSDTC branch.
+    #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+    dtc_branch: Option<Box<crate::engine::xa_dtc::DtcXaBranch>>,
 }
 
 /// Intermediate state after [`XaTransaction::end`]. Caller must either
@@ -327,6 +330,8 @@ pub struct PreparedXa {
     xid: Xid,
     engine_id: String,
     state: Arc<Mutex<XaState>>,
+    #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+    dtc_branch: Option<Box<crate::engine::xa_dtc::DtcXaBranch>>,
 }
 
 impl XaTransaction {
@@ -353,6 +358,23 @@ impl XaTransaction {
             .set_autocommit(false)
             .map_err(OdbcError::from)?;
 
+        #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+        {
+            if engine_id == ENGINE_SQLSERVER {
+                use crate::engine::xa_dtc::{begin_dtc_branch, enlist_connection_in_dtc};
+                let branch = begin_dtc_branch(&xid)?;
+                enlist_connection_in_dtc(conn.connection_mut(), branch.transaction())?;
+                return Ok(Self {
+                    handles,
+                    conn_id,
+                    xid,
+                    engine_id,
+                    state: Arc::new(Mutex::new(XaState::Active)),
+                    dtc_branch: Some(Box::new(branch)),
+                });
+            }
+        }
+
         apply_xa_start(conn.connection_mut(), &engine_id, &xid)?;
 
         Ok(Self {
@@ -361,7 +383,20 @@ impl XaTransaction {
             xid,
             engine_id,
             state: Arc::new(Mutex::new(XaState::Active)),
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            dtc_branch: None,
         })
+    }
+
+    fn is_mssql_mdtc(&self) -> bool {
+        #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+        {
+            self.engine_id == ENGINE_SQLSERVER && self.dtc_branch.is_some()
+        }
+        #[cfg(not(all(target_os = "windows", feature = "xa-dtc")))]
+        {
+            false
+        }
     }
 
     pub fn xid(&self) -> &Xid {
@@ -377,7 +412,11 @@ impl XaTransaction {
     /// `xa_prepare` on this branch.
     pub fn end(self) -> Result<PreparingXa> {
         self.assert_state(XaState::Active, "end")?;
-        self.run_on_conn(apply_xa_end)?;
+        if self.is_mssql_mdtc() {
+            self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c))?;
+        } else {
+            self.run_on_conn(apply_xa_end)?;
+        }
         *self.state.lock().unwrap() = XaState::Idle;
         Ok(PreparingXa { inner: self })
     }
@@ -386,8 +425,21 @@ impl XaTransaction {
     /// case where this RM is the sole participant. Avoids the disk
     /// write of the prepare log. **Only safe when no other RM has
     /// enlisted in the same global transaction.**
-    pub fn commit_one_phase(self) -> Result<()> {
+    pub fn commit_one_phase(mut self) -> Result<()> {
         self.assert_state(XaState::Active, "commit_one_phase")?;
+        if self.is_mssql_mdtc() {
+            // Single-RM: unenlist then commit the MSDTC unit of work.
+            self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c))?;
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            {
+                if let Some(b) = self.dtc_branch.take() {
+                    b.commit()?;
+                }
+            }
+            *self.state.lock().unwrap() = XaState::Committed;
+            let _ = self.try_restore_autocommit();
+            return Ok(());
+        }
         // Engine semantics: ONE_PHASE flag on `xa_commit`. The SQL-level
         // backends emit `XA END` followed immediately by
         // `XA COMMIT ... ONE PHASE` (MySQL/DB2) or by the
@@ -413,8 +465,20 @@ impl XaTransaction {
     /// to `xa_end` + `xa_rollback`. After this call the branch is
     /// gone — there is no recovery path because no prepare-log entry
     /// exists.
-    pub fn rollback(self) -> Result<()> {
+    pub fn rollback(mut self) -> Result<()> {
         self.assert_state(XaState::Active, "rollback")?;
+        if self.is_mssql_mdtc() {
+            let _ = self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c));
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            {
+                if let Some(b) = self.dtc_branch.take() {
+                    let _ = b.abort();
+                }
+            }
+            let _ = self.try_restore_autocommit();
+            *self.state.lock().unwrap() = XaState::RolledBack;
+            return Ok(());
+        }
         let _ = self.run_on_conn(apply_xa_end);
         let r = self.run_on_conn(apply_xa_rollback);
         let _ = self.try_restore_autocommit();
@@ -492,13 +556,23 @@ impl Drop for XaTransaction {
                 self.conn_id,
                 s,
             );
-            // Best-effort rollback. We can't propagate errors from Drop;
-            // the warn! above plus any structured error in the engine
-            // logs is the only signal.
-            let _ = self.run_on_conn(|c, e, x| {
-                let _ = apply_xa_end(c, e, x);
-                apply_xa_rollback(c, e, x)
-            });
+            if self.is_mssql_mdtc() {
+                let _ = self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c));
+                #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+                {
+                    if let Some(b) = self.dtc_branch.take() {
+                        let _ = b.abort();
+                    }
+                }
+            } else {
+                // Best-effort rollback. We can't propagate errors from Drop;
+                // the warn! above plus any structured error in the engine
+                // logs is the only signal.
+                let _ = self.run_on_conn(|c, e, x| {
+                    let _ = apply_xa_end(c, e, x);
+                    apply_xa_rollback(c, e, x)
+                });
+            }
             let _ = self.try_restore_autocommit();
         }
     }
@@ -509,8 +583,30 @@ impl PreparingXa {
     /// **heuristically committable** — its outcome survives a process
     /// crash and can be resolved later via [`recover_prepared_xids`].
     pub fn prepare(self) -> Result<PreparedXa> {
-        let inner = self.inner;
+        let mut inner = self.inner;
         inner.assert_state(XaState::Idle, "prepare")?;
+        if inner.is_mssql_mdtc() {
+            // MSDTC: no SQL PREPARE — branch is already coordinated by DTC.
+            *inner.state.lock().unwrap() = XaState::Prepared;
+            let _ = inner.try_restore_autocommit();
+            let handles = inner.handles.clone();
+            let conn_id = inner.conn_id;
+            let xid = inner.xid.clone();
+            let engine_id = inner.engine_id.clone();
+            let state = inner.state.clone();
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            let dtc = inner.dtc_branch.take();
+            drop(inner);
+            return Ok(PreparedXa {
+                handles,
+                conn_id,
+                xid,
+                engine_id,
+                state,
+                #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+                dtc_branch: dtc,
+            });
+        }
         let r = inner.run_on_conn(apply_xa_prepare);
         match r {
             Ok(()) => {
@@ -522,6 +618,8 @@ impl PreparingXa {
                     xid: inner.xid.clone(),
                     engine_id: inner.engine_id.clone(),
                     state: inner.state.clone(),
+                    #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+                    dtc_branch: None,
                 })
             }
             Err(e) => {
@@ -535,8 +633,20 @@ impl PreparingXa {
     /// Roll back without preparing — equivalent to
     /// [`XaTransaction::rollback`] but valid in the `Idle` state too.
     pub fn rollback(self) -> Result<()> {
-        let inner = self.inner;
+        let mut inner = self.inner;
         inner.assert_state(XaState::Idle, "rollback")?;
+        if inner.is_mssql_mdtc() {
+            let _ = inner.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c));
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            {
+                if let Some(b) = inner.dtc_branch.take() {
+                    let _ = b.abort();
+                }
+            }
+            let _ = inner.try_restore_autocommit();
+            *inner.state.lock().unwrap() = XaState::RolledBack;
+            return Ok(());
+        }
         let r = inner.run_on_conn(apply_xa_rollback);
         let _ = inner.try_restore_autocommit();
         match r {
@@ -562,6 +672,22 @@ impl PreparedXa {
     /// storage.
     pub fn commit(self) -> Result<()> {
         self.assert_state(XaState::Prepared, "commit")?;
+        #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+        {
+            if let Some(b) = self.dtc_branch {
+                let r = b.commit();
+                match r {
+                    Ok(()) => {
+                        *self.state.lock().unwrap() = XaState::Committed;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        *self.state.lock().unwrap() = XaState::Failed;
+                        return Err(e);
+                    }
+                }
+            }
+        }
         let r = self.run_on_conn(|c, e, x| apply_xa_commit(c, e, x, false));
         match r {
             Ok(()) => {
@@ -581,6 +707,22 @@ impl PreparedXa {
     /// family (MySQL/MariaDB/DB2) reuses `XA ROLLBACK`.
     pub fn rollback(self) -> Result<()> {
         self.assert_state(XaState::Prepared, "rollback")?;
+        #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+        {
+            if let Some(b) = self.dtc_branch {
+                let r = b.abort();
+                match r {
+                    Ok(()) => {
+                        *self.state.lock().unwrap() = XaState::RolledBack;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        *self.state.lock().unwrap() = XaState::Failed;
+                        return Err(e);
+                    }
+                }
+            }
+        }
         let r = self.run_on_conn(apply_xa_rollback_prepared);
         match r {
             Ok(()) => {
@@ -657,6 +799,8 @@ pub fn resume_prepared(handles: SharedHandleManager, conn_id: u32, xid: Xid) -> 
         xid,
         engine_id,
         state: Arc::new(Mutex::new(XaState::Prepared)),
+        #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+        dtc_branch: None,
     })
 }
 
@@ -721,6 +865,20 @@ fn oracle_xa_block(call: &str, allow_rcs: &[i32]) -> String {
 const ORACLE_XA_RDONLY: i32 = 3;
 #[allow(dead_code)]
 const ORACLE_XAER_NOTA: i32 = -4;
+
+/// Unenlist wrapper so `end()` / one-phase / rollback can call MSDTC
+/// unenlist without duplicating `#[cfg]`.
+fn mssql_mdtc_unenlist(conn: &mut odbc_api::Connection<'static>) -> Result<()> {
+    #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+    {
+        crate::engine::xa_dtc::unenlist_from_dtc(conn)
+    }
+    #[cfg(not(all(target_os = "windows", feature = "xa-dtc")))]
+    {
+        let _ = conn;
+        Ok(())
+    }
+}
 
 // -------------------------------------------------------------------------
 // Per-engine SQL emitters
@@ -1142,7 +1300,7 @@ fn unsupported_sqlserver() -> OdbcError {
             "XA / 2PC on SQL Server: the `xa-dtc` feature ships the \
              MSDTC COM scaffolding (engine::xa_dtc) but Phase 2 wiring \
              into the apply_xa_* matrix is pending. Track \
-             FUTURE_IMPLEMENTATIONS.md §4.3b for the integration TODO."
+             doc/Features/PENDING_IMPLEMENTATIONS.md §1.1 for follow-ups."
                 .to_string(),
         )
     } else {
@@ -1150,8 +1308,8 @@ fn unsupported_sqlserver() -> OdbcError {
             "XA / 2PC on SQL Server requires MSDTC enlistment via Windows \
              COM (SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)). \
              Build with `--features xa-dtc` on a Windows host with MSDTC \
-             enabled to activate the integration — see FUTURE_IMPLEMENTATIONS.md \
-             §4.3b for the full prerequisites."
+             enabled to activate the integration — see \
+             doc/Features/PENDING_IMPLEMENTATIONS.md §1.1 for prerequisites."
                 .to_string(),
         )
     }
@@ -1361,7 +1519,7 @@ mod tests {
         // pins the universal substring so a refactor can't accidentally
         // drop the actionable hint.
         assert!(s.contains("MSDTC"));
-        assert!(s.contains("FUTURE_IMPLEMENTATIONS"));
+        assert!(s.contains("PENDING_IMPLEMENTATIONS"));
     }
 
     #[test]
@@ -1437,6 +1595,8 @@ mod tests {
             xid: sample_xid(),
             engine_id: ENGINE_POSTGRES.to_string(),
             state: Arc::new(Mutex::new(XaState::Active)),
+            #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
+            dtc_branch: None,
         };
         let r = xa.commit();
         match r {

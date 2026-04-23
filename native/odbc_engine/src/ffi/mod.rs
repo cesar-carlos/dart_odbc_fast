@@ -6843,7 +6843,8 @@ mod tests {
             // `state.last_structured_error` as a side-effect, see
             // `set_error` at line ~570) could clobber the injected error
             // — surfacing as the recurring "expected 0, got 1" failure
-            // documented in `FUTURE_IMPLEMENTATIONS.md` §3.1. `#[serial]`
+            // See CHANGELOG [3.4.0] (structured error inject+read) and
+            // `TYPE_MAPPING` / backlog for OUTPUT param direction. `#[serial]`
             // alone wasn't enough because it only serialises against
             // other `#[serial]` tests, not the broader set of FFI tests
             // that happen to call `set_error` indirectly.

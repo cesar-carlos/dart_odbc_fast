@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`SqlDataType` (30-kind roadmap):** `geometry` (SQL Server planar WKT, same
+  wire as `geography`); `intervalYearToMonth` (`String`, `[years, months]`, or
+  `Map` with `0..11` month field → `INTERVAL 'y-m' YEAR TO MONTH`); the third
+  slot is `json` with `validate: true` (kind `json_validated`, already
+  present).
+- **Directional parameters (Dart forward-compat):** `ParamDirection` enum
+  (`input` / `output` / `inOut`), `DirectedParam`, and
+  `paramValuesFromDirected` — **IN-only** for now; `output` / `inOut` throw
+  `UnsupportedError` until the native `SQLBindParameter` path exists (see
+  `doc/notes/TYPE_MAPPING.md` §3.1; example
+  `example/output_param_directions_demo.dart`).
+- **Columnar v2 anchors:** optional Cargo `columnar-v2` feature with
+  `odbc_engine::columnar_v2` (`COLUMNAR_V2_MAGIC` / `VERSION`), Criterion
+  bench `columnar_v2_placeholder`, and Dart `columnar_v2_flags.dart`
+  (`isLikelyColumnarV2Header`); production result rows are still v1 row-major
+  only.
+- **Docker test-runner:** IBM Db2 ODBC/CLI from IBM’s public DHE tarball
+  (`IBM_ODBC_CLI_VERSION` in `Dockerfile.test-runner`); `IBM DB2 ODBC DRIVER`
+  in `/etc/odbcinst.ini`.
+- **CI (`e2e_docker_stack.yml`):** `db2` matrix (`test_multi_db_*` on `TESTDB`);
+  `scripts/docker_e2e.*` support `-Engine db2` with a longer `docker_db_up`
+  wait.
+
+### Changed
+
+- **Backlog documentation:** `doc/Features/PENDING_IMPLEMENTATIONS.md`,
+  `doc/Features/PENDING_IMPLEMENTATIONS.md`, `doc/notes/TYPE_MAPPING.md`, the
+  columnar sketch, `doc/CAPABILITIES_v3.md`, and `README.md` (MSDTC row)
+  updated to match shipped scope.
+
+### Fixed
+
+- **`odbc_engine` (unit test, `--features xa-dtc`):** `prepared_xa_commit_rejects_wrong_state`
+  now initialises `PreparedXa::dtc_branch` on Windows so the suite compiles.
+
 ## [3.4.3] - 2026-04-19
 
 ### Fixed
@@ -212,7 +249,7 @@ with these enabled out of the box for `SYSTEM`.
     did not have either dependency installed. Phase 2 wires the new
     handles into `apply_xa_*` and adds gated E2E tests against real
     MSDTC + Oracle hosts. Both phases are tracked under
-    `FUTURE_IMPLEMENTATIONS.md` §4.3b / §4.3c.
+    `PENDING_IMPLEMENTATIONS.md` §1.1 / §1.2.
   - **Sprint 4.3b — `engine::xa_dtc`** (Windows-only, behind
     `--features xa-dtc`):
     - Pulls the `windows` 0.59 crate (high-level COM bindings —
@@ -573,7 +610,7 @@ with these enabled out of the box for `SYSTEM`.
 ### Fixed
 
 - **`test_ffi_get_structured_error` flaky in parallel runs**
-  (long-standing `FUTURE_IMPLEMENTATIONS.md` §3.1). The previous
+  (see `TYPE_MAPPING` §3.1 and backlog). The previous
   implementation triggered the structured error via
   `trigger_structured_cancel_unsupported_error()`, released the global
   state lock, and only then called the public

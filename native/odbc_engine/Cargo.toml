@@ -80,6 +80,9 @@ xa-dtc = ["dep:windows"]
 # build dependency. Code outside the `xa-oci` feature gate continues
 # to behave exactly as before.
 xa-oci = ["dep:libloading"]
+# Columnar result protocol v2 (header constants + future emitter) — see
+# `doc/notes/columnar_protocol_sketch.md`.
+columnar-v2 = []
 
 [dependencies]
 odbc-api = { version = "20.1.1", default-features = false, features = ["odbc_version_3_5"] }
@@ -144,6 +147,11 @@ harness = false
 [[bench]]
 name = "comparative_bench"
 harness = false
+
+[[bench]]
+name = "columnar_v2_placeholder"
+harness = false
+required-features = ["columnar-v2"]
 
 [build-dependencies]
 cbindgen = "0.29.2"

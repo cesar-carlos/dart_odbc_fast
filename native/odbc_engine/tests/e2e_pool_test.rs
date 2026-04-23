@@ -7,6 +7,15 @@ mod helpers;
 use helpers::e2e::should_run_e2e_tests;
 use helpers::env::get_sqlserver_test_dsn;
 
+/// When the DSN is wrong or the server is cold, r2d2's default 30s acquire
+/// timeout makes the whole suite look "hung". Use 5s so failures surface quickly.
+fn e2e_pool_options() -> PoolOptions {
+    PoolOptions {
+        connection_timeout: Some(Duration::from_secs(5)),
+        ..PoolOptions::default()
+    }
+}
+
 #[test]
 fn test_pool_creation() {
     if !should_run_e2e_tests() {
@@ -18,7 +27,8 @@ fn test_pool_creation() {
 
     println!("Testing pool creation...");
 
-    let pool = ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     assert_eq!(pool.max_size(), 5, "Max size should be 5");
     assert_eq!(
@@ -41,7 +51,8 @@ fn test_pool_get_connection() {
 
     println!("Testing pool get connection...");
 
-    let pool = ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     let wrapper = pool.get().expect("Failed to get connection from pool");
 
@@ -73,7 +84,8 @@ fn test_pool_health_check() {
 
     println!("Testing pool health check...");
 
-    let pool = ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     let is_healthy = pool.health_check();
     assert!(is_healthy, "Pool should be healthy");
@@ -92,7 +104,8 @@ fn test_pool_state_initial() {
 
     println!("Testing pool initial state...");
 
-    let pool = ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     let state = pool.state();
     println!("Initial state: size={}, idle={}", state.size, state.idle);
@@ -119,7 +132,8 @@ fn test_pool_state_after_get() {
 
     println!("Testing pool state after getting connection...");
 
-    let pool = ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     let initial_state = pool.state();
     println!(
@@ -191,7 +205,8 @@ fn test_pool_multiple_connections() {
 
     println!("Testing pool with multiple connections...");
 
-    let pool = ConnectionPool::new(&conn_str, 3).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 3, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     // Get 3 connections
     let wrapper1 = pool.get().expect("Failed to get connection 1");
@@ -265,7 +280,8 @@ fn test_pool_connection_reuse() {
 
     println!("Testing pool connection reuse...");
 
-    let pool = ConnectionPool::new(&conn_str, 2).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 2, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     // Get and release connection multiple times
     for i in 1..=5 {
@@ -318,7 +334,8 @@ fn test_pool_max_size_limit() {
 
     println!("Testing pool max size limit...");
 
-    let pool = ConnectionPool::new(&conn_str, 2).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 2, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     assert_eq!(pool.max_size(), 2, "Max size should be 2");
 
@@ -372,7 +389,10 @@ fn test_pool_concurrent_access() {
     println!("Testing pool concurrent access...");
 
     let pool =
-        Arc::new(ConnectionPool::new(&conn_str, 5).expect("Failed to create connection pool"));
+        Arc::new(
+            ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+                .expect("Failed to create connection pool"),
+        );
 
     let mut handles = Vec::new();
 
@@ -442,6 +462,7 @@ fn test_pool_eviction_max_lifetime() {
 
     let options = PoolOptions {
         max_lifetime: Some(Duration::from_secs(2)),
+        connection_timeout: Some(Duration::from_secs(5)),
         ..PoolOptions::default()
     };
     let pool = ConnectionPool::new_with_options(&conn_str, 2, options)
@@ -492,7 +513,10 @@ fn test_pool_stress_checkout_release() {
         NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
     );
 
-    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let pool = Arc::new(
+        ConnectionPool::new_with_options(&conn_str, POOL_SIZE, e2e_pool_options())
+            .expect("Failed to create pool"),
+    );
 
     let handles: Vec<_> = (0..NUM_THREADS)
         .map(|t| {
@@ -550,7 +574,8 @@ fn test_pool_transaction_reset_state() {
 
     println!("Testing pool transaction reset state...");
 
-    let pool = ConnectionPool::new(&conn_str, 2).expect("Failed to create connection pool");
+    let pool = ConnectionPool::new_with_options(&conn_str, 2, e2e_pool_options())
+        .expect("Failed to create connection pool");
 
     {
         let mut wrapper = pool.get().expect("Failed to get connection");
@@ -591,7 +616,10 @@ fn test_pool_stress_high_contention() {
         NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
     );
 
-    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let pool = Arc::new(
+        ConnectionPool::new_with_options(&conn_str, POOL_SIZE, e2e_pool_options())
+            .expect("Failed to create pool"),
+    );
     let start = std::time::Instant::now();
 
     let handles: Vec<_> = (0..NUM_THREADS)
@@ -657,7 +685,10 @@ fn test_pool_timeout_when_exhausted() {
         POOL_SIZE
     );
 
-    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let pool = Arc::new(
+        ConnectionPool::new_with_options(&conn_str, POOL_SIZE, e2e_pool_options())
+            .expect("Failed to create pool"),
+    );
 
     let wrapper1 = pool.get().expect("Failed to get connection 1");
 
@@ -706,7 +737,10 @@ fn test_pool_stress_rapid_churn() {
         NUM_THREADS, CYCLES_PER_THREAD, POOL_SIZE
     );
 
-    let pool = Arc::new(ConnectionPool::new(&conn_str, POOL_SIZE).expect("Failed to create pool"));
+    let pool = Arc::new(
+        ConnectionPool::new_with_options(&conn_str, POOL_SIZE, e2e_pool_options())
+            .expect("Failed to create pool"),
+    );
     let start = std::time::Instant::now();
 
     let handles: Vec<_> = (0..NUM_THREADS)

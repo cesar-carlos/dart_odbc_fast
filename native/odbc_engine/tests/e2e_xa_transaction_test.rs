@@ -2,12 +2,11 @@
 //!
 //! Each engine has its own gating helper: PostgreSQL tests run when
 //! [`get_postgresql_test_dsn`] returns `Some`, MySQL tests run when
-//! [`get_mysql_test_dsn`] returns `Some`. SQL Server / Oracle / SQLite
-//! are covered by the unit-level "stub returns UnsupportedFeature"
-//! tests in `xa_transaction.rs::tests`; the engines that actually
-//! require external infrastructure (MSDTC for SQL Server, OCI for
-//! Oracle) are deferred to a follow-up sprint and documented in
-//! `FUTURE_IMPLEMENTATIONS.md` §4.3.
+//! [`get_mysql_test_dsn`] returns `Some`. SQL Server (MSDTC) and optional
+//! OCI XA paths are documented in `doc/Features/PENDING_IMPLEMENTATIONS.md`.
+//! Oracle live tests here use the supported `DBMS_XA` stack when a DSN is
+//! available. Engines without XA (e.g. SQLite) are covered by
+//! `UnsupportedFeature` shims in `xa_transaction.rs::tests`.
 //!
 //! The test pattern for the live engines is the canonical 2PC
 //! lifecycle:

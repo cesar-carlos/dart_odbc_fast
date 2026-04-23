@@ -12,6 +12,7 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
@@ -26,6 +27,7 @@ import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_dec
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Implementation of [IOdbcRepository] using native ODBC connection.
@@ -952,6 +954,62 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     } on Exception catch (e) {
       return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<XaTransactionHandle>> xaStart(
+    String connectionId,
+    Xid xid,
+  ) async {
+    try {
+      if (!_connectionIds.containsKey(connectionId)) {
+        return const Failure<XaTransactionHandle, OdbcError>(
+          ValidationError(message: 'Invalid connection ID'),
+        );
+      }
+      if (_isAsync) {
+        return const Failure<XaTransactionHandle, OdbcError>(
+          ValidationError(
+            message:
+                'XA / 2PC is not supported on the async ODBC repository backend',
+          ),
+        );
+      }
+      final native = _native as NativeOdbcConnection;
+      if (!native.supportsXa) {
+        return const Failure<XaTransactionHandle, OdbcError>(
+          ValidationError(
+            message: 'The loaded native library does not export the XA FFI '
+                'entry points',
+          ),
+        );
+      }
+      final cid = _connectionIds[connectionId]!;
+      final h = native.xaStart(cid, xid);
+      if (h == null) {
+        final structured = native.getStructuredErrorForConnection(cid);
+        if (structured != null) {
+          return Failure<XaTransactionHandle, OdbcError>(
+            QueryError(
+              message: structured.message,
+              sqlState: structured.sqlStateString,
+              nativeCode: structured.nativeCode,
+            ),
+          );
+        }
+        final msg = native.getError();
+        return Failure<XaTransactionHandle, OdbcError>(
+          QueryError(
+            message: msg.isNotEmpty ? msg : 'xa_start failed (null handle)',
+          ),
+        );
+      }
+      return Success(h);
+    } on Exception catch (e) {
+      return Failure<XaTransactionHandle, OdbcError>(
+        QueryError(message: e.toString()),
+      );
     }
   }
 

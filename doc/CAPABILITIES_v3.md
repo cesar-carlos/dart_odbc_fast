@@ -59,11 +59,11 @@ never silently relaxed.
 \*\* SQL Server XA requires MSDTC enlistment via Windows COM
 (`ITransaction*` + `SQL_ATTR_ENLIST_IN_DTC`). Phase 1 scaffolding
 ships behind `--features xa-dtc`; Phase 2 wiring into the
-cross-vendor `apply_xa_*` matrix is pending — see
-[`FUTURE_IMPLEMENTATIONS.md` §4.3b](notes/FUTURE_IMPLEMENTATIONS.md).
-†† Oracle XA requires the OCI XA library (`oraxa.h`, `xaoSvcCtx`).
-Phase 1 scaffolding ships behind `--features xa-oci`; Phase 2 wiring
-is pending — see [§4.3c](notes/FUTURE_IMPLEMENTATIONS.md).
+cross-vendor `apply_xa_*` matrix follow-ups — see
+[`PENDING_IMPLEMENTATIONS.md` §1.1](../Features/PENDING_IMPLEMENTATIONS.md).
+†† Optional OCI XA *shim* (`--features xa-oci`) is **not** the production
+path (Oracle uses `DBMS_XA`); the deferred OCI work is summarised in
+[`PENDING_IMPLEMENTATIONS.md` §1.2](../Features/PENDING_IMPLEMENTATIONS.md).
 
 ## OdbcType variants (v3.0 additions)
 
@@ -141,3 +141,15 @@ final stmts = features.getSessionInitSql(
 | `SQLite` | `sqlite` |
 | `IBM Db2` | `db2` |
 | `Snowflake` | `snowflake` |
+
+## Dart — `SqlDataType` (30 kinds) and directional parameters
+
+- **30** explicit `SqlDataType` *kind* strings (including `geometry`,
+  `intervalYearToMonth`, and `json` / `json_validated`); see
+  `lib/infrastructure/native/protocol/param_value.dart` and
+  `doc/notes/TYPE_MAPPING.md` §1.3.
+- **Directional API:** `ParamDirection`, `DirectedParam` — engine bind for
+  `OUT` / `INOUT` not yet implemented (`paramValuesFromDirected` is
+  input-only for now; see `TYPE_MAPPING` §3.1).
+- **Columnar v2 (results):** opt-in Rust `columnar-v2` *feature* + Dart
+  `columnarV2Flags` — production results remain row-major v1.
