@@ -6017,6 +6017,10 @@ mod tests {
     /// Starts at BASE+1 to never collide with TEST_INVALID_ID.
     /// Use in tests that assert on get_last_error() content so parallel runs
     /// don't overwrite the global error with the same ID.
+    ///
+    /// Tests that must see a specific `last_error` after an FFI call also use
+    /// `#[serial(ffi_last_error)]` so another test cannot call `set_error` in
+    /// between the failure and `odbc_get_error` (e.g. `odbc_bulk_insert_parallel` validation).
     fn next_test_invalid_id() -> u32 {
         static NEXT: AtomicU32 = AtomicU32::new(TEST_INVALID_ID_BASE.wrapping_add(1));
         NEXT.fetch_add(1, Ordering::SeqCst)
@@ -8117,6 +8121,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_close_statement_invalid() {
         odbc_init();
         let r = odbc_close_statement(TEST_INVALID_ID);
@@ -8162,6 +8167,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_cancel_invalid_stmt() {
         odbc_init();
         let r = odbc_cancel(TEST_INVALID_ID);
@@ -8343,6 +8349,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_bulk_insert_parallel_null_buffer() {
         odbc_init();
         let mut rows: c_uint = 0;
@@ -8360,6 +8367,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_bulk_insert_parallel_null_rows_inserted() {
         odbc_init();
         let payload = BulkInsertPayload {
@@ -8391,6 +8399,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_bulk_insert_parallel_zero_len() {
         odbc_init();
         let mut rows: c_uint = 0;
@@ -8409,6 +8418,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_bulk_insert_parallel_invalid_pool() {
         odbc_init();
         let payload = BulkInsertPayload {
@@ -8441,6 +8451,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ffi_last_error)]
     fn test_ffi_bulk_insert_parallel_zero_parallelism() {
         odbc_init();
         let payload = BulkInsertPayload {
