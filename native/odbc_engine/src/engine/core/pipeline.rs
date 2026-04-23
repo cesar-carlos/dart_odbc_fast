@@ -102,6 +102,26 @@ impl QueryPipeline {
         )
     }
 
+    pub fn execute_with_bound_params_and_timeout(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        bound: &[crate::protocol::bound_param::BoundParam],
+        timeout_sec: Option<usize>,
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
+        self.parse_sql(sql)?;
+        self
+            .execution_engine
+            .execute_query_with_bound_params_and_timeout(
+                conn,
+                sql,
+                bound,
+                timeout_sec,
+                fetch_size,
+            )
+    }
+
     pub fn execute_multi(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         self.parse_sql(sql)?;
         self.execution_engine.execute_multi_result(conn, sql)

@@ -923,8 +923,7 @@ class OdbcNative {
   int xaCommitPrepared(int xaId) => _bindings.odbc_xa_commit_prepared(xaId);
 
   /// `xa_rollback` (Phase 2) for a previously prepared branch.
-  int xaRollbackPrepared(int xaId) =>
-      _bindings.odbc_xa_rollback_prepared(xaId);
+  int xaRollbackPrepared(int xaId) => _bindings.odbc_xa_rollback_prepared(xaId);
 
   /// 1RM optimisation: fuse `prepare → commit` on an active branch
   /// when this RM is the sole participant.

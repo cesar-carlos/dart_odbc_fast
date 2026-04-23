@@ -4,6 +4,7 @@ pub mod bulk_copy;
 pub mod connection_manager;
 pub mod disk_spill;
 pub mod driver_capabilities;
+mod output_aware_params;
 pub mod execution_engine;
 pub mod memory_engine;
 pub mod metadata_cache;

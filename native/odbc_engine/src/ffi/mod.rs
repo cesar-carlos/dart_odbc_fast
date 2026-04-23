@@ -11,8 +11,8 @@ use crate::engine::ArrayBinding;
 use crate::engine::BulkCopyExecutor;
 use crate::engine::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
-    execute_query_with_connection, execute_query_with_params,
-    execute_query_with_params_and_timeout, get_global_metrics, get_type_info, list_columns,
+    execute_query_with_connection, execute_query_with_param_buffer,
+    execute_query_with_param_buffer_and_timeout, get_global_metrics, get_type_info, list_columns,
     list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
     resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
     DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
@@ -26,9 +26,11 @@ use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
 use crate::protocol::{
-    bulk_insert::is_null, deserialize_params, parse_bulk_insert_payload, BulkColumnData,
-    BulkInsertPayload, ParamValue,
+    bound_param::ParamList,
+    bulk_insert::is_null, deserialize_param_buffer, parse_bulk_insert_payload,
+    BulkColumnData, BulkInsertPayload, ParamValue,
 };
+use crate::protocol::bound_param::ParamDirection;
 use crate::security::AuditLogger;
 use log::LevelFilter;
 use rayon::prelude::*;
@@ -3027,19 +3029,18 @@ pub extern "C" fn odbc_exec_query_params(
     } else {
         let params_slice =
             unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-        let params: Vec<ParamValue> = match deserialize_params(params_slice) {
-            Ok(p) => p,
+        match execute_query_with_param_buffer(conn_guard.connection(), sql_str, params_slice) {
+            Ok(d) => Ok(d),
             Err(e) => {
                 metrics.record_error();
                 drop(state);
                 let Some(mut s) = try_lock_global_state() else {
                     return -1;
                 };
-                set_connection_error(&mut s, conn_id, format!("Invalid params buffer: {}", e));
+                set_connection_error(&mut s, conn_id, e.to_string());
                 return -1;
             }
-        };
-        execute_query_with_params(conn_guard.connection(), sql_str, &params)
+        }
     };
 
     match result {
@@ -3258,8 +3259,23 @@ pub extern "C" fn odbc_exec_query_multi_params(
     } else {
         let params_slice =
             unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-        match deserialize_params(params_slice) {
-            Ok(p) => p,
+        match deserialize_param_buffer(params_slice) {
+            Ok(ParamList::Legacy(p)) => p,
+            Ok(ParamList::Directed(b)) => {
+                if b.iter().any(|x| x.direction != ParamDirection::Input) {
+                    let Some(mut s) = try_lock_global_state() else {
+                        return -1;
+                    };
+                    set_connection_error(
+                        &mut s,
+                        conn_id,
+                        "odbc_exec_query_multi_params: OUTPUT/INOUT not supported (use odbc_exec_query with DRT1)"
+                            .to_string(),
+                    );
+                    return -1;
+                }
+                b.iter().map(|x| x.value.clone()).collect()
+            }
             Err(e) => {
                 let Some(mut s) = try_lock_global_state() else {
                     return -1;
@@ -4248,22 +4264,10 @@ pub extern "C" fn odbc_execute(
         }
     };
 
-    let params: Vec<ParamValue> = if params_buffer.is_null() || params_len == 0 {
-        vec![]
+    let params_slice: &[u8] = if params_buffer.is_null() || params_len == 0 {
+        &[]
     } else {
-        let params_slice =
-            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-        match deserialize_params(params_slice) {
-            Ok(p) => p,
-            Err(e) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Invalid params: {}", e));
-                return -1;
-            }
-        }
+        unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
     };
 
     let metrics = Arc::clone(&state.metrics);
@@ -4339,18 +4343,18 @@ pub extern "C" fn odbc_execute(
             }
         };
 
-        execute_query_with_params_and_timeout(
+        execute_query_with_param_buffer_and_timeout(
             conn_guard.connection(),
             &sql_str,
-            &params,
+            params_slice,
             timeout_sec,
             fetch_size_opt,
         )
     } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
-        execute_query_with_params_and_timeout(
+        execute_query_with_param_buffer_and_timeout(
             pooled.get_connection(),
             &sql_str,
-            &params,
+            params_slice,
             timeout_sec,
             fetch_size_opt,
         )

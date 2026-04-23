@@ -1,9 +1,13 @@
 use crate::protocol::compression::CompressionStrategy;
 use crate::protocol::row_buffer::RowBuffer;
+use crate::protocol::param_value::ParamValue;
 use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION: u16 = 1;
+
+/// Appended after the v1 row-major message when a query used `OUT` / `INOUT` parameters.
+pub const OUTPUT_FOOTER_MAGIC: [u8; 4] = *b"OUT1";
 
 pub struct RowBufferEncoder;
 
@@ -56,6 +60,19 @@ impl RowBufferEncoder {
         }
 
         Ok(())
+    }
+
+    /// Extends a row-major v1 [encode] result with a footer of [ParamValue] (same wire as request params).
+    pub fn append_output_footer(mut base: Vec<u8>, outputs: &[ParamValue]) -> Vec<u8> {
+        if outputs.is_empty() {
+            return base;
+        }
+        base.extend_from_slice(&OUTPUT_FOOTER_MAGIC);
+        base.extend_from_slice(&(outputs.len() as u32).to_le_bytes());
+        for p in outputs {
+            base.extend(p.serialize());
+        }
+        base
     }
 
     /// Encode then optionally compress when payload exceeds 1MB.

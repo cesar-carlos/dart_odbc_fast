@@ -124,8 +124,7 @@ void main() async {
       accessMode: TransactionAccessMode.readOnly,
       lockTimeout: const Duration(seconds: 2),
     );
-    final view =
-        readOnlyResult.getOrNull() ?? readOnlyResult.exceptionOrNull();
+    final view = readOnlyResult.getOrNull() ?? readOnlyResult.exceptionOrNull();
     AppLogger.info('  result: $view');
   } finally {
     await service.disconnect(connId);

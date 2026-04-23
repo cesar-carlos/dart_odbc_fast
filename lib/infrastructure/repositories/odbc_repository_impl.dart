@@ -771,11 +771,12 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
     try {
-      final p = BinaryProtocolParser.parse(buf);
+      final p = BinaryProtocolParser.parseWithOutputs(buf);
       return QueryResult(
-        columns: p.columns.map((c) => c.name).toList(),
-        rows: p.rows,
-        rowCount: p.rowCount,
+        columns: p.rowBuffer.columns.map((c) => c.name).toList(),
+        rows: p.rowBuffer.rows,
+        rowCount: p.rowBuffer.rowCount,
+        outputParamValues: p.outputParamValues,
       );
     } on Exception catch (_) {
       return null;
@@ -1398,6 +1399,87 @@ class OdbcRepositoryImpl implements IOdbcRepository {
                 nativeId,
                 sql,
                 pv,
+                maxBufferBytes: maxBytes,
+              );
+
+        final qr = _parseBufferToQueryResult(buf);
+        if (qr == null) {
+          return await _convertNativeErrorToFailure<QueryResult>(
+            errorFactory: ({
+              required message,
+              sqlState,
+              nativeCode,
+            }) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to execute parameterized query',
+          );
+        }
+        return Success(qr);
+      } on Exception catch (e) {
+        return _convertNativeErrorToFailure<QueryResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: e.toString(),
+        );
+      }
+    }
+
+    final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
+    Future<Result<QueryResult>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<QueryResult, OdbcError>(
+            QueryError(message: _queryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return _withReconnect(connectionId, runWithTimeout);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryParamBuffer(
+    String connectionId,
+    String sql,
+    Uint8List? paramBuffer,
+  ) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    Future<Result<QueryResult>> run() async {
+      try {
+        final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final buf = _isAsync
+            ? await (_native as AsyncNativeOdbcConnection)
+                .executeQueryParamBuffer(
+                nativeId,
+                sql,
+                paramBuffer,
+                maxBufferBytes: maxBytes,
+              )
+            : (_native as NativeOdbcConnection).executeQueryParamsRaw(
+                nativeId,
+                sql,
+                paramBuffer,
                 maxBufferBytes: maxBytes,
               );
 

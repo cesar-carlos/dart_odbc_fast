@@ -7,6 +7,7 @@ library;
 
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:test/test.dart';
 
 import '../../helpers/mock_odbc_repository.dart';
@@ -200,6 +201,19 @@ void main() {
         expect(result.isSuccess(), isTrue);
         expect(mockRepo.asyncFreeCalled, isTrue);
       });
+    });
+
+    test('executeQueryDirectedParams uses executeQueryParamBuffer', () async {
+      await service.initialize();
+      final cr = await service.connect('DSN=test');
+      final id = cr.getOrThrow().id;
+      final r = await service.executeQueryDirectedParams(
+        id,
+        'SELECT 1',
+        const [DirectedParam(value: 1)],
+      );
+      expect(r.isSuccess(), isTrue);
+      expect(mockRepo.executeQueryParamBufferCalled, isTrue);
     });
 
     group('Async stream lifecycle', () {

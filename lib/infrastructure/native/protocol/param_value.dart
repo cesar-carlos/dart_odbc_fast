@@ -503,6 +503,68 @@ Uint8List serializeParams(List<ParamValue> params) {
   return Uint8List.fromList(out);
 }
 
+/// Deserialises a single [ParamValue] from [data] starting at [offset] (mirrors
+/// `ParamValue::deserialize` in the Rust engine). Returns the value and the
+/// number of bytes consumed.
+({ParamValue value, int consumed}) deserializeParamValue(
+  Uint8List data, {
+  int offset = 0,
+}) {
+  if (data.length < offset + 5) {
+    throw const FormatException('ParamValue buffer too short');
+  }
+  final tag = data[offset];
+  final len = data.buffer.asByteData().getUint32(offset + 1, _littleEndian);
+  final consumed = 5 + len;
+  if (data.length < offset + consumed) {
+    throw const FormatException('ParamValue buffer truncated');
+  }
+  final start = offset + 5;
+  final payload = data.sublist(start, start + len);
+
+  final ParamValue v;
+  switch (tag) {
+    case _tagNull:
+      v = const ParamValueNull();
+    case _tagString:
+      v = ParamValueString(utf8.decode(payload, allowMalformed: true));
+    case _tagInteger:
+      if (len != 4) {
+        throw const FormatException('ParamValue::Integer expected 4 bytes');
+      }
+      v = ParamValueInt32(
+        ByteData.sublistView(data, start, start + 4).getInt32(0, _littleEndian),
+      );
+    case _tagBigInt:
+      if (len != 8) {
+        throw const FormatException('ParamValue::BigInt expected 8 bytes');
+      }
+      v = ParamValueInt64(
+        ByteData.sublistView(data, start, start + 8).getInt64(0, _littleEndian),
+      );
+    case _tagDecimal:
+      v = ParamValueDecimal(utf8.decode(payload, allowMalformed: true));
+    case _tagBinary:
+      v = ParamValueBinary(payload);
+    default:
+      throw FormatException('Unknown ParamValue tag: $tag');
+  }
+  return (value: v, consumed: consumed);
+}
+
+/// Deserialises every [ParamValue] in a **legacy** buffer (concatenated
+/// encodings, no DRT1 header).
+List<ParamValue> deserializeParamValues(Uint8List data) {
+  final out = <ParamValue>[];
+  var o = 0;
+  while (o < data.length) {
+    final r = deserializeParamValue(data, offset: o);
+    out.add(r.value);
+    o += r.consumed;
+  }
+  return out;
+}
+
 /// Converts a single object to a `ParamValue` instance.
 ///
 /// Supported implicit input types:
@@ -874,12 +936,10 @@ bool _isValidIpv6Address(String s) {
   if (compressedParts.length > 2) return false;
 
   if (compressedParts.length == 2) {
-    final left = compressedParts[0].isEmpty
-        ? <String>[]
-        : compressedParts[0].split(':');
-    final right = compressedParts[1].isEmpty
-        ? <String>[]
-        : compressedParts[1].split(':');
+    final left =
+        compressedParts[0].isEmpty ? <String>[] : compressedParts[0].split(':');
+    final right =
+        compressedParts[1].isEmpty ? <String>[] : compressedParts[1].split(':');
     if (left.length + right.length > 7) return false;
     for (final g in [...left, ...right]) {
       if (!_ipv6GroupPattern.hasMatch(g)) return false;

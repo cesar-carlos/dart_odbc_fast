@@ -11,6 +11,7 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -78,6 +79,18 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.executeQueryParams',
       () => _service.executeQueryParams(connectionId, sql, params),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryDirectedParams(
+    String connectionId,
+    String sql,
+    List<DirectedParam> params,
+  ) async {
+    return _telemetry.inOperation(
+      'ODBC.executeQueryDirectedParams',
+      () => _service.executeQueryDirectedParams(connectionId, sql, params),
     );
   }
 

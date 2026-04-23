@@ -26,18 +26,17 @@ implementação suportada. O *shim* `xa-oci` permanece *deferido* até existir
 API estável de partilha de sessão OCI com a pilha `odbc-api` / ODBC (detalhes
 no módulo `xa_oci` e comentários em `native/odbc_engine/src/engine/xa_oci.rs`).
 
-### 1.3 Parâmetros de saída (`OUTPUT` / `REF CURSOR`) — ligação nativa
+### 1.3 Parâmetros de saída — extensão além do MVP
 
-A superfície Dart (`ParamDirection`, `DirectedParam`,
-`paramValuesFromDirected`) existe; o motor Rust ainda não liga
-`SQLBindParameter` com buffers `OUT` / cursores. Ver
-`doc/notes/TYPE_MAPPING.md` §3.1.
+DRT1, `OUT1`, `executeQueryDirectedParams` e o MVP (escalares inteiro) em
+SQL Server estão descritos em `doc/notes/TYPE_MAPPING.md` §3.1. **Ainda
+longe do produto completo:** `OUT` textual, `REF CURSOR` / Oracle, matriz
+de *drivers*, erros de capacidade; ver o mesmo ficheiro.
 
-### 1.4 Columnar v2 (resultados)
+### 1.4 Columnar v2 (compressão e paridade de *bench*)
 
-Constantes, *feature* `columnar-v2`, *bench* placeholder e
-`columnarV2Flags` (Dart) existem. Falta: emissor no motor, parser Dart
-de colunas, e compressão opt-in. Especificação:
+O motor emite v2; o Dart decodifica v2 *sem* compressão por coluna. Falta
+port de descompressão (zstd/LZ4) e *bench* comparativo sólido. Especificação:
 [`doc/notes/columnar_protocol_sketch.md`](../notes/columnar_protocol_sketch.md).
 
 ---

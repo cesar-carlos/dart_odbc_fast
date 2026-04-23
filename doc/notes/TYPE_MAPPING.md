@@ -172,11 +172,11 @@ The dispatcher validates the runtime type against the requested kind
 and rejects mismatches with `ArgumentError` (e.g. `SqlDataType.int32`
 with a `String` value, or `SqlDataType.uuid` with a malformed string).
 
-**Directional binding (output roadmap):** `ParamDirection`, `DirectedParam`, and
-`paramValuesFromDirected` (`lib/infrastructure/native/protocol/directed_param.dart`)
-ship for forward-compatible call sites. The engine still materialises only **IN**
-parameters today; `paramValuesFromDirected` throws `UnsupportedError` for
-`ParamDirection.output` / `inOut` until the native bind path lands (see §3.1).
+**Directional binding:** `ParamDirection`, `DirectedParam`, `serializeDirectedParams`
+(DRT1), and `paramValuesFromDirected` (`lib/.../directed_param.dart`). The
+v0/legacy `paramValuesFromDirected` list is **IN-only** (throws for `output` /
+`inOut`); `OUT` / `INOUT` use DRT1 and
+`IOdbcService.executeQueryDirectedParams` (see §3.1).
 
 ### 1.4 Driver plugins (9 total)
 
@@ -250,55 +250,59 @@ surface — TVP and `request.output` are explicitly out of scope today
 
 ---
 
-## 3. Roadmap (not implemented)
+## 3. Result parameters & columnar (MVP in progress)
 
-### 3.1 Output parameters
+### 3.1 Output parameters (MVP)
 
-**Dart surface:** `ParamDirection`, `DirectedParam`, and
-`paramValuesFromDirected` exist so call sites can be typed
-**before** the Rust engine gains `SQLBindParameter` `OUTPUT` buffers
-and Oracle `REF CURSOR` fan-out. `paramValuesFromDirected` only accepts
-`ParamDirection.input` today; any other direction throws
-`UnsupportedError` with a deliberate message.
+**Wire — DRT1:** [native `bound_param`][bound_param] / Dart
+`serializeDirectedParams` / `drt1MagicBytes`: `DRT1` + u32 count + repeated
+`(u8 direction)(ParamValue)`.
 
-**Engine:** not implemented — the execution pipeline still flattens
-parameters to the existing string/binary wire (`deserialize_params` has
-no per-parameter direction nibble).
+**Execution:** the Rust engine can decode DRT1 and, when a slot is not
+`input`, use `odbc_api` with `In` / `Out` / `InOut` style binding (MVP: integer
+`OUT` / `INOUT` and `NULL` as output shell — see
+`output_aware_params.rs`). Legacy v0 (concatenated `ParamValue` only) is
+unchanged for existing callers.
 
-Planning baseline (unchanged; tracks native work):
+**Dart API:** `IOdbcService.executeQueryDirectedParams` and
+`IOdbcRepository.executeQueryParamBuffer` (raw buffer). The binary result may
+end with an `OUT1` footer; `QueryResult.outputParamValues` is populated
+when the decoder sees it. `paramValuesFromDirected` remains **v0, input only**
+(throws for `output` / `inOut` so callers that want mixed directions use DRT1).
 
-| Driver     | Typical capability                           | Status                      |
-| ---------- | -------------------------------------------- | --------------------------- |
-| SQL Server | `OUTPUT` parameters and return values        | Planned (not implemented)   |
-| Oracle     | OUT params / REF CURSOR patterns             | Planned (not implemented)   |
-| PostgreSQL | Function returns / OUT-like patterns         | Planned (not implemented)   |
-| Sybase     | OUTPUT-like support varies by driver         | Planned (not implemented)   |
+[bound_param]: ../../native/odbc_engine/src/protocol/bound_param.rs
 
-Decision criteria before promoting to public API:
+| Driver     | Status (current) |
+| ---------- | ---------------- |
+| SQL Server | MVP integer `OUT` / `INOUT` |
+| Other      | best-effort; may error per driver | 
 
-1. Stable cross-driver behavioural contract defined.
-2. Error semantics standardised (nulls, missing params, unsupported types).
-3. Integration coverage for each claimed driver capability.
-4. Non-breaking API surface with explicit feature flag/label while
-   experimental.
-5. Documentation and examples updated before promotion.
+Still **not** covered: string `OUT`, Oracle `REF CURSOR` fan-out, cross-driver
+hardening.
 
-### 3.2 Columnar protocol v2
+### 3.2 Columnar protocol v2 (decode path)
 
-- **Sketch:** `doc/notes/columnar_protocol_sketch.md` (header layout + column blocks).
-- **Rust (opt-in):** `cargo` feature `columnar-v2` exposes
-  `odbc_engine::columnar_v2` (`COLUMNAR_V2_MAGIC`, `COLUMNAR_V2_VERSION` constants)
-  and a Criterion `columnar_v2_placeholder` bench as an anchor.
-- **Dart:** `columnar_v2_flags.dart` (`columnarV2Magic`, `isLikelyColumnarV2Header`) —
-  not emitted by the engine yet; v1 row-major `binary_protocol.dart` is still the
-  only on-the-wire result format in production.
+- **Emitter:** `ColumnarEncoder` in the Rust engine (opt-in
+  `with_columnar` on the query pipeline) — v2 header in
+  [columnar_encoder.rs][colenc].
+- **Dart:** `BinaryProtocolParser.parse` / `parseWithOutputs` accept **v2**
+  (row-major and columnar) and optional `OUT1` after the main message. Column
+  blocks that use per-column zstd/LZ4 are **rejected** with a clear
+  [FormatException] until a Dart decompressor is added (uncompressed
+  columnar and v1 are supported).
+
+- **Sketch:** [columnar_protocol_sketch.md](columnar_protocol_sketch.md).
+- **Heuristic:** `lib/infrastructure/native/protocol/columnar_v2_flags.dart` —
+  `columnarV2Magic`, `isLikelyColumnarV2Header`.
+
+[colenc]: ../../native/odbc_engine/src/protocol/columnar_encoder.rs
 
 ---
 
 ## Non-goals (current release line)
 
-- Do not claim `request.output`-style support in the public API until §3.1
-  ships.
+- No parity with the full `node-mssql` `request.output` surface — only the
+  DRT1 + `OUT1` + repository/service flow above; not every ODBC output type.
 - Do not claim `TVP` (table-valued parameters) support.
 - Do not use `doc/api/` generated artifacts as source of truth for
   roadmap commitments.

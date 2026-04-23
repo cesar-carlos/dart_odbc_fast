@@ -5,6 +5,7 @@ use crate::error::{OdbcError, Result};
 use crate::handles::CachedConnection;
 use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
+use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{
     encode_multi, row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue,
     RowBuffer, RowBufferEncoder,
@@ -270,6 +271,94 @@ impl ExecutionEngine {
             self.audit_logger.log_error(None, &e.to_string());
         }
 
+        result
+    }
+
+    /// Positional `?` with `INPUT` / `OUTPUT` / `INOUT` (DRT1 wire from Dart). Integer/BigInt OUT only (MVP).
+    pub fn execute_query_with_bound_params_and_timeout(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        bound: &[BoundParam],
+        timeout_sec: Option<usize>,
+        _fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
+        use std::time::Instant;
+
+        use super::output_aware_params::bound_to_slots;
+        let start_time = Instant::now();
+        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("span_id".to_string(), _span.span_id().to_string());
+        self.logger.log_query(Level::Info, sql, &metadata);
+
+        let result: Result<Vec<u8>> = (|| {
+            let mut odbc_params = bound_to_slots(bound)?;
+            let cursor = conn
+                .execute(sql, &mut odbc_params, timeout_sec)
+                .map_err(OdbcError::from)?;
+            let mut row_buffer = RowBuffer::new();
+
+            if let Some(mut cursor) = cursor {
+                let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+                let cols_u16: u16 = cols_i16
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+                let cols_usize: usize = cols_u16.into();
+
+                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+                for col_idx in 1..=cols_u16 {
+                    let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+                    let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                        if let Some(ref plugin) = *active {
+                            plugin.map_type(sql_type_code)
+                        } else {
+                            OdbcType::from_odbc_sql_type(sql_type_code)
+                        }
+                    } else {
+                        OdbcType::from_odbc_sql_type(sql_type_code)
+                    };
+                    row_buffer.add_column(col_name.to_string(), odbc_type);
+                    column_types.push(odbc_type);
+                }
+
+                while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                    let mut row_data = Vec::new();
+
+                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                            OdbcError::InternalError("Invalid column number".to_string())
+                        })?;
+
+                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+
+                        row_data.push(cell_data);
+                    }
+
+                    row_buffer.add_row(row_data);
+                }
+            }
+
+            coalesce_for_json_rows(&mut row_buffer);
+
+            let out_vals = odbc_params.output_footer_values();
+            let body = if self.use_columnar {
+                let columnar_buffer = row_buffer_to_columnar(&row_buffer);
+                ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+            } else {
+                RowBufferEncoder::encode(&row_buffer)
+            };
+            Ok(RowBufferEncoder::append_output_footer(body, &out_vals))
+        })();
+
+        self.metrics.record_query(start_time.elapsed());
+        if let Err(ref e) = result {
+            self.metrics.record_error();
+            self.audit_logger.log_error(None, &e.to_string());
+        }
         result
     }
 

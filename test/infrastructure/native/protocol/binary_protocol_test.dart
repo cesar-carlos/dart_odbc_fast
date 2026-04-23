@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -46,6 +47,71 @@ void main() {
       final result = BinaryProtocolParser.parse(buffer);
 
       expect(result.rows[0][0], isNull);
+    });
+
+    test('v1 with OUT1 footer recovers output ParamValues', () {
+      var buffer = _createTestBuffer(
+        columns: const [
+          (name: 'a', type: 2),
+        ],
+        rows: const [
+          [1],
+        ],
+      );
+      final out = <int>[
+        ...0x4F555431.toBytes(4),
+        ...1.toBytes(4),
+        ...const ParamValueInt32(99).serialize(),
+      ];
+      buffer = Uint8List.fromList([...buffer, ...out]);
+
+      final msg = BinaryProtocolParser.parseWithOutputs(buffer);
+      expect(msg.outputParamValues.length, 1);
+      expect(msg.outputParamValues[0], isA<ParamValueInt32>());
+      expect(
+        (msg.outputParamValues[0] as ParamValueInt32).value,
+        99,
+      );
+      expect(msg.rowBuffer.rowCount, 1);
+    });
+
+    test('columnar v2 single column int round-trips', () {
+      final b = <int>[];
+      void u16(int v) {
+        b.addAll(v.toBytes(2));
+      }
+
+      void u32(int v) {
+        b.addAll(v.toBytes(4));
+      }
+
+      u32(0x4F444243);
+      u16(2);
+      u16(0);
+      u16(1);
+      u32(1);
+      b.add(0);
+      u32(0);
+      final payloadAt = b.length;
+      u16(2);
+      u16(1);
+      b
+        ..add('n'.codeUnitAt(0))
+        ..add(0);
+      u32(5);
+      b
+        ..add(0)
+        ..addAll(42.toBytes(4));
+      final pay = b.length - payloadAt;
+      b[15] = pay & 0xff;
+      b[16] = (pay >> 8) & 0xff;
+      b[17] = (pay >> 16) & 0xff;
+      b[18] = (pay >> 24) & 0xff;
+      final data = Uint8List.fromList(b);
+      final p = BinaryProtocolParser.parseWithOutputs(data);
+      expect(p.rowBuffer.rowCount, 1);
+      expect(p.rowBuffer.columnCount, 1);
+      expect(p.rowBuffer.rows[0][0], 42);
     });
 
     test('should parse multiple columns and rows', () {

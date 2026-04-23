@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod bound_param;
 pub mod bulk_insert;
 pub mod columnar;
 pub mod columnar_encoder;
@@ -28,6 +29,7 @@ pub use encoder::RowBufferEncoder;
 pub use multi_result::{
     decode_multi, encode_multi, MultiResultItem, MULTI_RESULT_MAGIC, MULTI_RESULT_VERSION,
 };
+pub use bound_param::{deserialize_param_buffer, is_directed_param_buffer, BoundParam, ParamDirection, ParamList};
 pub use param_value::{
     deserialize_params, has_null_param, max_param_string_len, param_count_exceeds_limit,
     param_values_to_strings, serialize_params, ParamValue,

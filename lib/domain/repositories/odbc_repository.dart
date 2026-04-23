@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -234,6 +236,15 @@ abstract class IOdbcRepository {
     String connectionId,
     String sql,
     List<dynamic> params,
+  );
+
+  /// Like [executeQueryParams] but the wire buffer is pre-serialised: legacy
+  /// v0 (concatenated `ParamValue` wire tags) or DRT1
+  /// (`serializeDirectedParams`).
+  Future<Result<QueryResult>> executeQueryParamBuffer(
+    String connectionId,
+    String sql,
+    Uint8List? paramBuffer,
   );
 
   /// Executes a SQL query with named parameters.

@@ -1,6 +1,8 @@
 /// Mock [IOdbcRepository] for testing OdbcService and related layers.
 library;
 
+import 'dart:typed_data';
+
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -31,6 +33,7 @@ class MockOdbcRepository implements IOdbcRepository {
   bool executeQueryCalled = false;
   bool streamQueryCalled = false;
   bool executeQueryParamsCalled = false;
+  bool executeQueryParamBufferCalled = false;
   bool executeQueryNamedCalled = false;
   bool executeQueryMultiFullCalled = false;
   bool beginTransactionCalled = false;
@@ -162,6 +165,25 @@ class MockOdbcRepository implements IOdbcRepository {
     List<dynamic> params,
   ) async {
     executeQueryParamsCalled = true;
+    _queryCount++;
+    return const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [
+          [1, 'Charlie'],
+        ],
+        rowCount: 1,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryParamBuffer(
+    String connectionId,
+    String sql,
+    Uint8List? paramBuffer,
+  ) async {
+    executeQueryParamBufferCalled = true;
     _queryCount++;
     return const Success(
       QueryResult(

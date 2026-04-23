@@ -23,6 +23,7 @@ class QueryResult {
     required this.columns,
     required this.rows,
     required this.rowCount,
+    this.outputParamValues = const <dynamic>[],
   });
 
   /// Column names in the order they appear in the query result.
@@ -35,6 +36,17 @@ class QueryResult {
 
   /// Total number of rows in the result set.
   final int rowCount;
+
+  /// Values for `OUT` / `INOUT` parameters, when a directed (DRT1) execute
+  /// is used and the engine appends the `OUT1` footer. Empty when the query
+  /// used only `INPUT` parameters or a legacy v0 parameter buffer. Entries
+  /// are typically the sealed `ParamValue` types from the package’s
+  /// `param_value` protocol in the same order as the corresponding
+  /// placeholders.
+  final List<dynamic> outputParamValues;
+
+  /// True when [outputParamValues] is non-empty.
+  bool get hasOutputParamValues => outputParamValues.isNotEmpty;
 
   /// Returns true if the result set contains no rows.
   bool get isEmpty => rowCount == 0;

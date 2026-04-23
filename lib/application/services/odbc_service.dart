@@ -11,6 +11,7 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -32,6 +33,13 @@ abstract class IOdbcService {
     String connectionId,
     String sql,
     List<dynamic> params,
+  );
+
+  /// Like [executeQueryParams] for `OUT` / `INOUT` (DRT1 on the wire).
+  Future<Result<QueryResult>> executeQueryDirectedParams(
+    String connectionId,
+    String sql,
+    List<DirectedParam> params,
   );
 
   Stream<Result<QueryResult>> streamQuery(
@@ -382,6 +390,19 @@ class OdbcService implements IOdbcService {
       connectionId,
       sql,
       params,
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryDirectedParams(
+    String connectionId,
+    String sql,
+    List<DirectedParam> params,
+  ) async {
+    return _repository.executeQueryParamBuffer(
+      connectionId,
+      sql,
+      serializeDirectedParams(params),
     );
   }
 

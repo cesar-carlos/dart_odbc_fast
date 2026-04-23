@@ -14,17 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Map` with `0..11` month field → `INTERVAL 'y-m' YEAR TO MONTH`); the third
   slot is `json` with `validate: true` (kind `json_validated`, already
   present).
-- **Directional parameters (Dart forward-compat):** `ParamDirection` enum
-  (`input` / `output` / `inOut`), `DirectedParam`, and
-  `paramValuesFromDirected` — **IN-only** for now; `output` / `inOut` throw
-  `UnsupportedError` until the native `SQLBindParameter` path exists (see
-  `doc/notes/TYPE_MAPPING.md` §3.1; example
-  `example/output_param_directions_demo.dart`).
-- **Columnar v2 anchors:** optional Cargo `columnar-v2` feature with
-  `odbc_engine::columnar_v2` (`COLUMNAR_V2_MAGIC` / `VERSION`), Criterion
-  bench `columnar_v2_placeholder`, and Dart `columnar_v2_flags.dart`
-  (`isLikelyColumnarV2Header`); production result rows are still v1 row-major
-  only.
+- **Output / INOUT (MVP):** DRT1 request buffer (`serializeDirectedParams`,
+  Rust `bound_param`); `IOdbcRepository.executeQueryParamBuffer` and
+  `IOdbcService.executeQueryDirectedParams`; `OUT1` result footer; Rust engine
+  output-aware binding (integer `OUT` / `INOUT` on SQL Server first); and
+  `QueryResult.outputParamValues`. The legacy
+  `paramValuesFromDirected` list remains **in-only** (throws for non-input).
+  `BinaryProtocolParser.parseWithOutputs` / `QueryResult` docs in
+  `doc/notes/TYPE_MAPPING.md` §3.1; `example/output_param_directions_demo.dart`
+  shows DRT1 + a live directed query when `ODBC_TEST_DSN` is set.
+- **Columnar v2 (Dart decode, uncompressed):** `BinaryProtocolParser` accepts
+  v2 columnar (same magic as v1) when column blocks are not compressed; zstd
+  or LZ4 inside a block throws a clear [FormatException] (compressors not
+  ported). Columnar v2 *anchors* remain: optional Cargo `columnar-v2` feature
+  with `odbc_engine::columnar_v2` constants, Criterion
+  `columnar_v2_placeholder` bench, and `columnar_v2_flags.dart`.
 - **Docker test-runner:** IBM Db2 ODBC/CLI from IBM’s public DHE tarball
   (`IBM_ODBC_CLI_VERSION` in `Dockerfile.test-runner`); `IBM DB2 ODBC DRIVER`
   in `/etc/odbcinst.ini`.

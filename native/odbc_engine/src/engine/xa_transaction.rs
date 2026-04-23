@@ -425,6 +425,7 @@ impl XaTransaction {
     /// case where this RM is the sole participant. Avoids the disk
     /// write of the prepare log. **Only safe when no other RM has
     /// enlisted in the same global transaction.**
+    #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
     pub fn commit_one_phase(mut self) -> Result<()> {
         self.assert_state(XaState::Active, "commit_one_phase")?;
         if self.is_mssql_mdtc() {
@@ -465,6 +466,7 @@ impl XaTransaction {
     /// to `xa_end` + `xa_rollback`. After this call the branch is
     /// gone — there is no recovery path because no prepare-log entry
     /// exists.
+    #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
     pub fn rollback(mut self) -> Result<()> {
         self.assert_state(XaState::Active, "rollback")?;
         if self.is_mssql_mdtc() {
@@ -583,6 +585,7 @@ impl PreparingXa {
     /// **heuristically committable** — its outcome survives a process
     /// crash and can be resolved later via [`recover_prepared_xids`].
     pub fn prepare(self) -> Result<PreparedXa> {
+        #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
         let mut inner = self.inner;
         inner.assert_state(XaState::Idle, "prepare")?;
         if inner.is_mssql_mdtc() {
@@ -633,6 +636,7 @@ impl PreparingXa {
     /// Roll back without preparing — equivalent to
     /// [`XaTransaction::rollback`] but valid in the `Idle` state too.
     pub fn rollback(self) -> Result<()> {
+        #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
         let mut inner = self.inner;
         inner.assert_state(XaState::Idle, "rollback")?;
         if inner.is_mssql_mdtc() {

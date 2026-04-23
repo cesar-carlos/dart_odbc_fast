@@ -686,8 +686,7 @@ void main() {
     test('handles multi-line and unicode payloads', () {
       // TEXT must round-trip arbitrary content — line breaks, BMP and
       // non-BMP characters, you name it.
-      const payload =
-          'line1\nline2\r\nline3\n管理员 🚀 العربية';
+      const payload = 'line1\nline2\r\nline3\n管理员 🚀 العربية';
       final p = paramValuesFromObjects([
         typedParam(SqlDataType.text, payload),
       ])[0];
@@ -1417,6 +1416,22 @@ void main() {
       expect(buf[0], equals(0));
       const second = 5;
       expect(buf[second], equals(2));
+    });
+
+    test('deserializeParamValue round-trips int32 and list', () {
+      final a = const ParamValueInt32(-3).serialize();
+      final p = deserializeParamValue(Uint8List.fromList(a));
+      expect(p.value, isA<ParamValueInt32>());
+      expect((p.value as ParamValueInt32).value, -3);
+      final cat = <int>[];
+      for (final q in <ParamValue>[
+        const ParamValueNull(),
+        const ParamValueString('x'),
+      ]) {
+        cat.addAll(q.serialize());
+      }
+      final d = deserializeParamValues(Uint8List.fromList(cat));
+      expect(d.length, 2);
     });
   });
 

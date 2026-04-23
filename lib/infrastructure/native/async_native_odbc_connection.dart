@@ -699,6 +699,29 @@ class AsyncNativeOdbcConnection {
     return r.data;
   }
 
+  /// Executes a parameterised query with a pre-serialised buffer (legacy v0 or
+  /// DRT1 directed parameters).
+  Future<Uint8List?> executeQueryParamBuffer(
+    int connectionId,
+    String sql,
+    Uint8List? paramBuffer, {
+    int? maxBufferBytes,
+  }) async {
+    final bytes =
+        paramBuffer == null || paramBuffer.isEmpty ? Uint8List(0) : paramBuffer;
+    final r = await _sendRequest<QueryResponse>(
+      ExecuteQueryParamsRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        bytes,
+        maxResultBufferBytes: maxBufferBytes,
+      ),
+    );
+    if (r.error != null) return null;
+    return r.data;
+  }
+
   /// Executes [sql] on [connectionId] using named parameters.
   ///
   /// Supports `@name` and `:name` syntax, converting placeholders to

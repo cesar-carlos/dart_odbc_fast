@@ -83,8 +83,21 @@ SQL Server convention), `interval` (`Duration` → portable
 
 Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
 `hierarchyId` / `geography`, Oracle `raw` / `bfile`. See
-[`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
-27-kind matrix with validation and wire-encoding details.
+  [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
+  27-kind matrix with validation and wire-encoding details.
+
+### Directed parameters, `OUT1`, and columnar v2 (MVP)
+
+- **DRT1** request buffer + **`IOdbcService.executeQueryDirectedParams`**
+  for mixed `IN` / `OUT` / `INOUT` (engine MVP: integer scalars on SQL
+  Server; see [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1). Results can
+  carry **`QueryResult.outputParamValues`** when the engine appends an `OUT1`
+  footer. Legacy `executeQueryParams` / v0 param wire is unchanged.
+- **Columnar v2 results:** the engine can emit a v2 columnar payload; the
+  Dart `BinaryProtocolParser` decodes **uncompressed** column blocks (zstd/LZ4
+  per block is not decoded yet). [columnar sketch](doc/notes/columnar_protocol_sketch.md) remains the long-form spec.
+
+  Example: [`example/output_param_directions_demo.dart`](example/output_param_directions_demo.dart).
 
 ## Why Rust + FFI
 
@@ -828,7 +841,7 @@ dart_odbc_fast/
 - [doc/version/CHANGELOG_TEMPLATE.md](doc/version/CHANGELOG_TEMPLATE.md)
 - [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md)
 - [doc/Features/PENDING_IMPLEMENTATIONS.md](doc/Features/PENDING_IMPLEMENTATIONS.md) — backlog mínimo (PT)
-- [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 (não usado no *wire* ainda)
+- [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 (formato; decode Dart só para blocos sem compressão por coluna)
 
 `doc/notes/` holds technical notes (e.g. type mapping, columnar sketch) — some
 topics are still in progress; see `PENDING_IMPLEMENTATIONS` for a short list.

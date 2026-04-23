@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 const Endian _littleEndian = Endian.little;
 
@@ -62,6 +63,22 @@ class ParsedRowBuffer {
   List<String> get columnNames => columns.map((c) => c.name).toList();
 }
 
+/// A parsed ODBC binary message: row/column payload plus optional `OUT1`
+/// parameter values.
+class ParsedQueryMessage {
+  /// Creates a new [ParsedQueryMessage] instance.
+  const ParsedQueryMessage({
+    required this.rowBuffer,
+    this.outputParamValues = const <ParamValue>[],
+  });
+
+  /// Row set (v1 row-major or v2 columnar, decoded to the same shape as v1).
+  final ParsedRowBuffer rowBuffer;
+
+  /// `OUT` / `INOUT` values from an `OUT1` trailer; empty if none.
+  final List<ParamValue> outputParamValues;
+}
+
 /// Parser for binary protocol query results.
 ///
 /// Parses binary data returned from the native ODBC engine into
@@ -70,38 +87,114 @@ class BinaryProtocolParser {
   /// Magic number identifying binary protocol data (ASCII "ODBC").
   static const int magic = 0x4F444243;
 
-  /// Size of the protocol header in bytes.
-  static const int headerSize = 16;
+  /// Trailer magic for [ParamValue] output slots (`b"OUT1"`), from the Rust
+  /// engine when the call used DRT1 `OUT` / `INOUT` parameters.
+  static const int outputFooterMagic = 0x4F555431;
 
-  /// Returns total message length (header + payload) from the first 16 bytes.
-  /// [data] must have length >= 16. Payload size at bytes 12..16 (LE).
+  /// Row-major wire format (matches [native/.../encoder.rs] v1).
+  static const int protocolVersionRowMajor = 1;
+
+  /// Columnar wire format (matches [native/.../columnar_encoder.rs] v2).
+  static const int protocolVersionColumnarV2 = 2;
+
+  /// Size of the v1 row-major header in bytes.
+  static const int headerSizeV1 = 16;
+
+  /// Size of the v2 columnar fixed header in bytes.
+  static const int headerSizeColumnarV2 = 19;
+
+  /// Size of the protocol header in bytes (v1 — kept for call sites that
+  /// pre-date columnar and `OUT1`).
+  static const int headerSize = headerSizeV1;
+
+  /// Returns total v1 **row-major** message length (header + payload) from
+  /// the first 16 bytes. [data] must have length >= 16. Payload size at
+  /// bytes 12..15 (LE). Not valid for v2 columnar buffers.
   static int messageLengthFromHeader(Uint8List data) {
-    if (data.length < headerSize) {
+    if (data.length < headerSizeV1) {
       throw const FormatException('Buffer too small for header');
     }
     final base = data.offsetInBytes;
     final payloadSize =
         data.buffer.asByteData().getUint32(base + 12, _littleEndian);
-    return headerSize + payloadSize;
+    return headerSizeV1 + payloadSize;
   }
 
-  /// Parses binary protocol data into a [ParsedRowBuffer].
+  /// Parses a full buffer into rows/columns and optional `OUT1` outputs.
   ///
-  /// The data parameter must contain valid binary protocol data starting
-  /// with the magic number, version, column count, row count, and followed
-  /// by column metadata and row data.
+  /// Supports v1 row-major, v2 columnar (uncompressed column blocks; zstd
+  /// inside a block is not supported on this path — use row-major or
+  /// disable compression in the engine), and an `OUT1` trailer after the
+  /// main message.
+  static ParsedQueryMessage parseWithOutputs(Uint8List data) {
+    if (data.length < 6) {
+      throw const FormatException('Buffer too small for version');
+    }
+    final readMagic = ByteData.sublistView(
+      data,
+      0,
+      4,
+    ).getUint32(0, _littleEndian);
+    if (readMagic != magic) {
+      throw FormatException(
+        'Invalid magic number: 0x${readMagic.toRadixString(16)}',
+      );
+    }
+    final version = ByteData.sublistView(
+      data,
+      4,
+      6,
+    ).getUint16(0, _littleEndian);
+
+    late final ParsedRowBuffer buffer;
+    late final int mainEnd;
+    if (version == protocolVersionRowMajor) {
+      if (data.length < headerSizeV1) {
+        throw const FormatException('Buffer too small for header');
+      }
+      mainEnd = messageLengthFromHeader(data);
+      if (data.length < mainEnd) {
+        throw const FormatException('Buffer too small for payload');
+      }
+      buffer = _parseRowMajorV1(Uint8List.sublistView(data, 0, mainEnd));
+    } else if (version == protocolVersionColumnarV2) {
+      if (data.length < headerSizeColumnarV2) {
+        throw const FormatException('Buffer too small for columnar v2 header');
+      }
+      final payloadSize =
+          ByteData.sublistView(data, 15, 19).getUint32(0, _littleEndian);
+      mainEnd = headerSizeColumnarV2 + payloadSize;
+      if (data.length < mainEnd) {
+        throw const FormatException('Buffer too small for columnar payload');
+      }
+      buffer = _parseColumnarV2(Uint8List.sublistView(data, 0, mainEnd));
+    } else {
+      throw FormatException('Unsupported protocol version: $version');
+    }
+
+    final outputs = <ParamValue>[];
+    if (data.length > mainEnd) {
+      _tryParseOut1Footer(
+        data: data,
+        start: mainEnd,
+        outputs: outputs,
+      );
+    }
+    return ParsedQueryMessage(
+      rowBuffer: buffer,
+      outputParamValues: outputs,
+    );
+  }
+
+  /// Parses binary protocol data into a [ParsedRowBuffer] (v1 and v2;
+  /// ignores a trailing `OUT1` block if present).
   ///
   /// Throws [FormatException] if the data is invalid or malformed.
   static ParsedRowBuffer parse(Uint8List data) {
-    if (data.length < headerSize) {
-      throw const FormatException('Buffer too small for header');
-    }
+    return parseWithOutputs(data).rowBuffer;
+  }
 
-    final messageLength = messageLengthFromHeader(data);
-    if (data.length < messageLength) {
-      throw const FormatException('Buffer too small for payload');
-    }
-
+  static ParsedRowBuffer _parseRowMajorV1(Uint8List data) {
     final reader = _BufferReader(data);
 
     final readMagic = reader.readUint32();
@@ -112,8 +205,8 @@ class BinaryProtocolParser {
     }
 
     final version = reader.readUint16();
-    if (version != 1) {
-      throw FormatException('Unsupported version: $version');
+    if (version != protocolVersionRowMajor) {
+      throw FormatException('Not a v1 buffer in _parseRowMajorV1: $version');
     }
 
     final columnCount = reader.readUint16();
@@ -136,9 +229,9 @@ class BinaryProtocolParser {
         if (isNull == 1) {
           row.add(null);
         } else {
-          final dataLen = reader.readUint32();
-          final data = reader.readBytes(dataLen);
-          row.add(_convertData(data, columns[c].odbcType));
+          final cellLen = reader.readUint32();
+          final cellBytes = reader.readBytes(cellLen);
+          row.add(_convertData(cellBytes, columns[c].odbcType));
         }
       }
       rows.add(row);
@@ -150,6 +243,218 @@ class BinaryProtocolParser {
       rowCount: rowCount,
       columnCount: columnCount,
     );
+  }
+
+  static ParsedRowBuffer _parseColumnarV2(Uint8List data) {
+    if (data.length < headerSizeColumnarV2) {
+      throw const FormatException('Columnar v2: buffer too small');
+    }
+    final colCount = ByteData.sublistView(
+      data,
+      8,
+      10,
+    ).getUint16(0, _littleEndian);
+    final rowCount = ByteData.sublistView(
+      data,
+      10,
+      14,
+    ).getUint32(0, _littleEndian);
+    final paySize = ByteData.sublistView(
+      data,
+      15,
+      19,
+    ).getUint32(0, _littleEndian);
+    if (data.length < headerSizeColumnarV2 + paySize) {
+      throw const FormatException('Columnar v2: truncated payload');
+    }
+    if (colCount == 0) {
+      return const ParsedRowBuffer(
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        columnCount: 0,
+      );
+    }
+    var off = headerSizeColumnarV2;
+    final end = headerSizeColumnarV2 + paySize;
+    final columnMetas = <ColumnMetadata>[];
+    final byCol = <List<dynamic>>[];
+
+    for (var c = 0; c < colCount; c++) {
+      if (off + 4 > end) {
+        throw const FormatException('Columnar v2: metadata truncated');
+      }
+      final odbcType = ByteData.sublistView(
+        data,
+        off,
+        off + 2,
+      ).getUint16(0, _littleEndian);
+      off += 2;
+      final nameLen = ByteData.sublistView(
+        data,
+        off,
+        off + 2,
+      ).getUint16(0, _littleEndian);
+      off += 2;
+      if (off + nameLen > end) {
+        throw const FormatException('Columnar v2: name truncated');
+      }
+      final name = String.fromCharCodes(
+        Uint8List.sublistView(data, off, off + nameLen),
+      );
+      off += nameLen;
+      columnMetas.add(ColumnMetadata(name: name, odbcType: odbcType));
+
+      if (off >= end) {
+        throw const FormatException('Columnar v2: missing column payload');
+      }
+      final isCompressed = data[off++];
+
+      if (isCompressed != 0) {
+        throw const FormatException(
+          'Columnar v2: compressed column data is not supported in this parser '
+          '(use row-major, or set engine columnar without compression, or add '
+          'a decompression port)',
+        );
+      }
+      if (off + 4 > end) {
+        throw const FormatException('Columnar v2: raw size truncated');
+      }
+      final rawLen = ByteData.sublistView(
+        data,
+        off,
+        off + 4,
+      ).getUint32(0, _littleEndian);
+      off += 4;
+      if (off + rawLen > end) {
+        throw const FormatException('Columnar v2: raw data truncated');
+      }
+      final raw = Uint8List.sublistView(data, off, off + rawLen);
+      off += rawLen;
+      byCol.add(
+        _parseColumnarRaw(
+          odbcType: odbcType,
+          raw: raw,
+          rowCount: rowCount,
+        ),
+      );
+    }
+    if (off != end) {
+      throw const FormatException('Columnar v2: extra bytes in column payload');
+    }
+    if (byCol.length != colCount) {
+      throw const FormatException('Columnar v2: column list mismatch');
+    }
+    final rows = <List<dynamic>>[];
+    for (var r = 0; r < rowCount; r++) {
+      final row = <dynamic>[];
+      for (var c = 0; c < colCount; c++) {
+        row.add(byCol[c][r]);
+      }
+      rows.add(row);
+    }
+    return ParsedRowBuffer(
+      columns: columnMetas,
+      rows: rows,
+      rowCount: rowCount,
+      columnCount: colCount,
+    );
+  }
+
+  static List<dynamic> _parseColumnarRaw({
+    required int odbcType,
+    required Uint8List raw,
+    required int rowCount,
+  }) {
+    final odbc = OdbcType.fromDiscriminant(odbcType);
+    var p = 0;
+    final out = <dynamic>[];
+    for (var i = 0; i < rowCount; i++) {
+      if (p >= raw.length) {
+        throw const FormatException('Columnar v2: row cells truncated');
+      }
+      if (odbc == OdbcType.integer) {
+        final n = raw[p++];
+        if (n == 1) {
+          out.add(null);
+        } else {
+          if (p + 4 > raw.length) {
+            throw const FormatException('Columnar v2: int cell truncated');
+          }
+          out.add(
+            ByteData.sublistView(raw, p, p + 4).getInt32(0, _littleEndian),
+          );
+          p += 4;
+        }
+      } else if (odbc == OdbcType.bigInt) {
+        final n = raw[p++];
+        if (n == 1) {
+          out.add(null);
+        } else {
+          if (p + 8 > raw.length) {
+            throw const FormatException('Columnar v2: bigint cell truncated');
+          }
+          out.add(
+            ByteData.sublistView(raw, p, p + 8).getInt64(0, _littleEndian),
+          );
+          p += 8;
+        }
+      } else {
+        final n = raw[p++];
+        if (n == 1) {
+          out.add(null);
+        } else {
+          if (p + 4 > raw.length) {
+            throw const FormatException('Columnar v2: varchar len truncated');
+          }
+          final bl = ByteData.sublistView(
+            raw,
+            p,
+            p + 4,
+          ).getUint32(0, _littleEndian);
+          p += 4;
+          if (p + bl > raw.length) {
+            throw const FormatException('Columnar v2: varchar data truncated');
+          }
+          final bytes = Uint8List.sublistView(raw, p, p + bl);
+          p += bl;
+          out.add(_convertData(bytes, odbcType));
+        }
+      }
+    }
+    if (p != raw.length) {
+      throw const FormatException('Columnar v2: raw not fully consumed');
+    }
+    if (out.length != rowCount) {
+      throw const FormatException('Columnar v2: per-column row count mismatch');
+    }
+    return out;
+  }
+
+  static void _tryParseOut1Footer({
+    required Uint8List data,
+    required int start,
+    required List<ParamValue> outputs,
+  }) {
+    if (data.length < start + 8) {
+      return;
+    }
+    final m = ByteData.sublistView(
+      data,
+      start,
+      start + 4,
+    ).getUint32(0, _littleEndian);
+    if (m != outputFooterMagic) {
+      return;
+    }
+    var p = start + 4;
+    final n = ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
+    p += 4;
+    for (var i = 0; i < n; i++) {
+      final d = deserializeParamValue(data, offset: p);
+      outputs.add(d.value);
+      p += d.consumed;
+    }
   }
 
   /// Converts binary data to a Dart value based on the protocol

@@ -54,8 +54,8 @@ class XaTransactionHandle {
     required this.xid,
     required NativeOdbcConnection conn,
     XaState initialState = XaState.active,
-  }) : _conn = conn,
-       _state = initialState;
+  })  : _conn = conn,
+        _state = initialState;
 
   /// Native XA branch id (>0). Pass to the lower-level
   /// `OdbcNative.xa*` methods if you need direct FFI access.
