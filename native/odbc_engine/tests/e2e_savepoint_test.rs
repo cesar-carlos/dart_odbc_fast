@@ -56,25 +56,33 @@ fn test_savepoint_create_and_rollback() {
         execute_query_with_connection(c.connection(), "CREATE TABLE sp_test (id INT)").unwrap();
     }
 
+    // Release both handle-manager and per-connection locks before
+    // `Transaction::{savepoint_create, savepoint_rollback_to}`; those call
+    // `execute_sql`, which re-locks the same connection. Holding `c` after
+    // `drop(h)` would deadlock.
     conn.with_transaction_with_dialect(IsolationLevel::ReadCommitted, dialect, |txn| {
-        let h = handles.lock().unwrap();
-        let conn_arc = h.get_connection(conn_id).unwrap();
-        let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (1)")?;
-        drop(h);
+        {
+            let h = handles.lock().unwrap();
+            let conn_arc = h.get_connection(conn_id).unwrap();
+            let c = conn_arc.lock().unwrap();
+            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (1)")?;
+        }
 
         let sp = Savepoint::create(txn, "sp1")?;
-        let h = handles.lock().unwrap();
-        let conn_arc = h.get_connection(conn_id).unwrap();
-        let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (2)")?;
-        drop(h);
+        {
+            let h = handles.lock().unwrap();
+            let conn_arc = h.get_connection(conn_id).unwrap();
+            let c = conn_arc.lock().unwrap();
+            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (2)")?;
+        }
 
         sp.rollback_to()?;
-        let h = handles.lock().unwrap();
-        let conn_arc = h.get_connection(conn_id).unwrap();
-        let c = conn_arc.lock().unwrap();
-        let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (3)")?;
+        {
+            let h = handles.lock().unwrap();
+            let conn_arc = h.get_connection(conn_id).unwrap();
+            let c = conn_arc.lock().unwrap();
+            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (3)")?;
+        }
         Ok::<(), odbc_engine::OdbcError>(())
     })
     .expect("with_transaction failed");
