@@ -232,3 +232,13 @@ pub fn should_run_slow_e2e_tests() -> bool {
 
     env_flag_enabled("ENABLE_SLOW_E2E_TESTS")
 }
+
+/// MSDTC + SQL Server XA smokes require a running DTC and successful
+/// `SQL_ATTR_ENLIST_IN_DTC`. Use this opt-in together with
+/// `should_run_e2e_tests` so `cargo test --include-ignored` does not fail on
+/// machines that have a SQL Server DSN but no working MSDTC enlist path.
+#[allow(dead_code)]
+pub fn should_run_msdtc_xa_tests() -> bool {
+    load_dotenv();
+    env_flag_enabled("ENABLE_MSDTC_XA_TESTS")
+}

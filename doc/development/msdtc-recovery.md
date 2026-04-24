@@ -95,6 +95,7 @@ Coordinator is running and SQL Server is reachable over ODBC.
 
 | Variable | Role |
 | -------- | ---- |
+| `ENABLE_MSDTC_XA_TESTS` | Must be `1` / `true` / `yes` in addition to E2E so the MSDTC smokes run. Without it, the tests return early (pass) even with `--include-ignored`, e.g. when a DSN is present but MSDTC enlist is not available. |
 | `ENABLE_E2E_TESTS` | Must be `1` / `true` / `yes` so the smoke body runs (in addition to `#[ignore]`, which you remove with `--ignored`). The helper `should_run_e2e_tests()` in `tests/helpers/e2e.rs` also requires a **successful** ODBC probe to SQL Server when this is set. |
 | `ODBC_TEST_DSN` | Preferred: full DSN string pointing at **SQL Server**. |
 | `SQLSERVER_TEST_SERVER`, `SQLSERVER_TEST_DATABASE`, `SQLSERVER_TEST_USER`, `SQLSERVER_TEST_PASSWORD`, `SQLSERVER_TEST_PORT` | Used to build a DSN when `ODBC_TEST_DSN` is unset; see `tests/helpers/env.rs` (`get_sqlserver_test_dsn`). |
@@ -109,6 +110,7 @@ Coordinator is running and SQL Server is reachable over ODBC.
 Run **both** (prefix match `xa_dtc_sqlserver_`):
 
 ```powershell
+$env:ENABLE_MSDTC_XA_TESTS = "1"
 $env:ENABLE_E2E_TESTS = "1"
 # Either set a full DSN, or rely on SQLSERVER_TEST_* in env / .env:
 # $env:ODBC_TEST_DSN = "Driver={ODBC Driver 18 for SQL Server};Server=...;..."
@@ -134,9 +136,10 @@ integration binary, `tests/regression_test.rs`).
 
 **Troubleshooting**
 
-- The test **returns early** (prints to stderr) if `ENABLE_E2E_TESTS` is not
-  *true* or the SQL Server connectivity probe in `should_run_e2e_tests()` fails
-  — the run still *passes* because of those early `return`s.
+- The test **returns early** (prints to stderr) if `ENABLE_MSDTC_XA_TESTS` is
+  not set, if `ENABLE_E2E_TESTS` is not *true*, or the SQL Server connectivity
+  probe in `should_run_e2e_tests()` fails — the run still *passes* because of
+  those early `return`s.
 - You must pass **`-- --ignored --test-threads=1`** so Cargo actually runs the
   test marked `#[ignore]`.
 - If the binary fails to compile, run from `native` with

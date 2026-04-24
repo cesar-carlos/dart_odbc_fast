@@ -5,11 +5,14 @@
 //!
 //! Usage in any FFI entry point:
 //!
-//! ```ignore
-//! pub extern "C" fn odbc_some_call(arg: *const c_char) -> c_int {
-//!     ffi_guard::call_int(|| {
-//!         // body returns Result<c_int, OdbcError> or c_int
-//!         Ok(0)
+//! ```text
+//! use std::os::raw::{c_char, c_int};
+//! use odbc_engine::ffi::guard::call_int;
+//!
+//! pub extern "C" fn odbc_some_call(_arg: *const c_char) -> c_int {
+//!     call_int(|| {
+//!         // return the status code the C ABI expects
+//!         0
 //!     })
 //! }
 //! ```
@@ -207,7 +210,10 @@ fn log_panic_payload(site: &str, payload: &Box<dyn std::any::Any + Send>) {
 ///
 /// Use when capturing local/non-`UnwindSafe` state is acceptable (typical for FFI bodies).
 ///
-/// ```ignore
+/// ```text
+/// use std::os::raw::c_int;
+/// use odbc_engine::ffi_guard_int;
+///
 /// pub extern "C" fn odbc_foo() -> c_int {
 ///     ffi_guard_int!({
 ///         // body

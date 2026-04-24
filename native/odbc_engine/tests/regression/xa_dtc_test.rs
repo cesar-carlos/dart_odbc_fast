@@ -2,6 +2,8 @@
 //!
 //! Requires:
 //! - Windows host with `sc query MSDTC` → `RUNNING`
+//! - `ENABLE_MSDTC_XA_TESTS=1` (so `--include-ignored` does not run these
+//!   against a DSN when MSDTC enlist is broken or unavailable)
 //! - `ENABLE_E2E_TESTS=1` and a SQL Server DSN (see repository
 //!   `doc/development/msdtc-recovery.md`, *Local runbook*).
 //! - Build / run: from `native`, e.g. `cargo test -p odbc_engine --features
@@ -16,12 +18,18 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, PreparedXa, XaTransac
 
 #[path = "../helpers/mod.rs"]
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{should_run_e2e_tests, should_run_msdtc_xa_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
-#[ignore = "Windows+MSDTC+SQL Server; ENABLE_E2E_TESTS=1 + DSN; see doc/development/msdtc-recovery.md Local runbook"]
+#[ignore = "Windows+MSDTC+SQL Server; ENABLE_MSDTC_XA_TESTS=1 + ENABLE_E2E_TESTS=1 + DSN; see doc/development/msdtc-recovery.md"]
 fn xa_dtc_sqlserver_lifecycle_smoke() {
+    if !should_run_msdtc_xa_tests() {
+        eprintln!(
+            "Skipping: set ENABLE_MSDTC_XA_TESTS=1 to run MSDTC/XA smokes; see doc/development/msdtc-recovery.md"
+        );
+        return;
+    }
     if !should_run_e2e_tests() {
         eprintln!("Skipping: ENABLE_E2E_TESTS not set or DSN unavailable");
         return;
@@ -53,8 +61,14 @@ fn xa_dtc_sqlserver_lifecycle_smoke() {
 /// Phase 2 *commit* after *prepare* (DTC *happy path*); uses a distinct [Xid]
 /// from [xa_dtc_sqlserver_lifecycle_smoke].
 #[test]
-#[ignore = "Windows+MSDTC+SQL Server; ENABLE_E2E_TESTS=1 + DSN; see doc/development/msdtc-recovery.md Local runbook"]
+#[ignore = "Windows+MSDTC+SQL Server; ENABLE_MSDTC_XA_TESTS=1 + ENABLE_E2E_TESTS=1 + DSN; see doc/development/msdtc-recovery.md"]
 fn xa_dtc_sqlserver_prepare_commit_smoke() {
+    if !should_run_msdtc_xa_tests() {
+        eprintln!(
+            "Skipping: set ENABLE_MSDTC_XA_TESTS=1 to run MSDTC/XA smokes; see doc/development/msdtc-recovery.md"
+        );
+        return;
+    }
     if !should_run_e2e_tests() {
         eprintln!("Skipping: ENABLE_E2E_TESTS not set or DSN unavailable");
         return;
