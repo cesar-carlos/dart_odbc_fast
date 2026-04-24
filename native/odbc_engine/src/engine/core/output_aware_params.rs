@@ -8,7 +8,7 @@ use crate::protocol::param_values_to_strings;
 use odbc_api::buffers::Indicator;
 use odbc_api::handles::Statement;
 use odbc_api::ParameterCollection;
-use odbc_api::{sys::ParamType, IntoParameter, Nullable};
+use odbc_api::{sys::ParamType, Nullable};
 use std::mem::size_of;
 
 #[cfg(windows)]
@@ -46,8 +46,23 @@ fn in_text_from_param_value(v: &ParamValue) -> Result<TextBox> {
         .ok_or_else(|| OdbcError::ValidationError("param_values_to_strings empty".to_string()))?;
     Ok(match o {
         None => TextBox::null(),
-        Some(s) => s.as_str().into_parameter(),
+        Some(s) => in_text_box_from_owned_string(s),
     })
+}
+
+fn in_text_box_from_owned_string(s: String) -> TextBox {
+    #[cfg(windows)]
+    {
+        let wide: Vec<u16> = s.encode_utf16().collect();
+        let byte_len = wide.len() * size_of::<u16>();
+        TextBox::from_buffer(wide.into_boxed_slice(), Indicator::Length(byte_len))
+    }
+    #[cfg(not(windows))]
+    {
+        let bytes = s.into_bytes();
+        let byte_len = bytes.len();
+        TextBox::from_buffer(bytes.into_boxed_slice(), Indicator::Length(byte_len))
+    }
 }
 
 /// Empty receive buffer for textual `OUT` (wide or narrow) with a terminating nul.

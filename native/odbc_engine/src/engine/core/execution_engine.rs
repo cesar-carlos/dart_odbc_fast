@@ -442,7 +442,9 @@ impl ExecutionEngine {
                 all_items.push(first_item);
                 all_items.extend(drain);
                 let multi_body = encode_multi(&all_items);
-                Ok(RowBufferEncoder::append_output_footer(multi_body, &out_vals))
+                Ok(RowBufferEncoder::append_output_footer(
+                    multi_body, &out_vals,
+                ))
             }
         })();
 

@@ -163,10 +163,8 @@ fn drain_empty_matches_legacy_encoding() {
     let out = ParamValue::Integer(55);
 
     // Legacy path (unchanged code).
-    let legacy = RowBufferEncoder::append_output_footer(
-        encode_empty_rb(),
-        std::slice::from_ref(&out),
-    );
+    let legacy =
+        RowBufferEncoder::append_output_footer(encode_empty_rb(), std::slice::from_ref(&out));
 
     // Simulate what the engine now does for drain.is_empty() == true.
     let new_path = RowBufferEncoder::append_output_footer(encode_empty_rb(), &[out]);
@@ -258,11 +256,7 @@ fn rowcount_first_rc_rs_rc_out1_roundtrip() {
         MultiResultItem::RowCount(2),
     ]);
     let out1_pos = mult_only.len();
-    assert_eq!(
-        le_u32(&buf, out1_pos),
-        OUT1_MAGIC,
-        "OUT1 must follow MULT"
-    );
+    assert_eq!(le_u32(&buf, out1_pos), OUT1_MAGIC, "OUT1 must follow MULT");
     let count = le_u32(&buf, out1_pos + 4);
     assert_eq!(count, 1, "OUT1 count must be 1");
 }
