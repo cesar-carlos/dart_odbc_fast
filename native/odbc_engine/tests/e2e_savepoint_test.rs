@@ -65,7 +65,8 @@ fn test_savepoint_create_and_rollback() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (1)")?;
+            let _ =
+                execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (1)")?;
         }
 
         let sp = Savepoint::create(txn, "sp1")?;
@@ -73,7 +74,8 @@ fn test_savepoint_create_and_rollback() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (2)")?;
+            let _ =
+                execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (2)")?;
         }
 
         sp.rollback_to()?;
@@ -81,7 +83,8 @@ fn test_savepoint_create_and_rollback() {
             let h = handles.lock().unwrap();
             let conn_arc = h.get_connection(conn_id).unwrap();
             let c = conn_arc.lock().unwrap();
-            let _ = execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (3)")?;
+            let _ =
+                execute_query_with_connection(c.connection(), "INSERT INTO sp_test VALUES (3)")?;
         }
         Ok::<(), odbc_engine::OdbcError>(())
     })

@@ -3,7 +3,7 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, StreamingExecutor};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
@@ -843,10 +843,14 @@ fn test_streaming_spill_to_disk() {
 /// Validates buffer mode and batched mode complete without OOM.
 /// Run with: `cargo test --test e2e_streaming_test test_streaming_50k_rows_memory_validation -- --ignored --nocapture`
 #[test]
-#[ignore = "Long-running: 50k rows; run with --ignored when ENABLE_E2E_TESTS=1"]
+#[ignore = "Long-running: 50k rows; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_streaming_50k_rows_memory_validation() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+        } else {
+            eprintln!("⚠️  Skipping slow streaming validation: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");

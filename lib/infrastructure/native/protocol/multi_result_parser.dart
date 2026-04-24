@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
+    show ParamValue, deserializeParamValue;
 
 const Endian _littleEndian = Endian.little;
 
@@ -242,5 +244,102 @@ class MultiResultParser {
       }
     }
     return null;
+  }
+
+  /// Parses a buffer that was produced by the DRT1 + multi-result engine path:
+  /// a MULT envelope (v2) followed by an optional `OUT1` footer.
+  ///
+  /// This is used when a directed OUT call (`executeQueryDirectedParams`)
+  /// returns additional result sets or row-counts from `SQLMoreResults` in
+  /// addition to the primary result set and scalar `OUT` / `INOUT` values.
+  ///
+  /// Returns a record containing the parsed items and any output parameter
+  /// values. Throws [FormatException] on malformed input.
+  static ({List<MultiResultItem> items, List<ParamValue> outputParamValues})
+      parseMultiWithOutputs(Uint8List data) {
+    if (data.length < _headerV2Len) {
+      throw const FormatException(
+        'Buffer too small for MULT + OUT1 header',
+      );
+    }
+    final firstWord =
+        ByteData.sublistView(data, 0, 4).getUint32(0, _littleEndian);
+    if (firstWord != multiResultMagic) {
+      throw FormatException(
+        'Expected MULT magic 0x${multiResultMagic.toRadixString(16)}, '
+        'got 0x${firstWord.toRadixString(16)}',
+      );
+    }
+    final byteData = ByteData.sublistView(data);
+    final version = byteData.getUint16(4, _littleEndian);
+    if (version != multiResultVersionV2) {
+      throw FormatException(
+        'Unsupported multi-result version: $version '
+        '(expected $multiResultVersionV2)',
+      );
+    }
+    final itemCount = byteData.getUint32(8, _littleEndian);
+
+    // Parse items and track consumed bytes so we can locate OUT1.
+    final items = <MultiResultItem>[];
+    var offset = _headerV2Len;
+    for (var i = 0; i < itemCount; i++) {
+      if (offset + itemHeaderSize > data.length) {
+        throw const FormatException(
+          'Multi-result buffer truncated at item header',
+        );
+      }
+      final tag = data[offset];
+      offset += 1;
+      if (tag != tagResultSet && tag != tagRowCount) {
+        throw FormatException('Unknown multi-result item tag: $tag');
+      }
+      final length = byteData.getUint32(offset, _littleEndian);
+      offset += 4;
+      if (offset + length > data.length) {
+        throw const FormatException(
+          'Multi-result buffer truncated at item payload',
+        );
+      }
+      final payload = data.sublist(offset, offset + length);
+      switch (tag) {
+        case tagResultSet:
+          items.add(
+            MultiResultItemResultSet(BinaryProtocolParser.parse(payload)),
+          );
+        case tagRowCount:
+          if (length != 8) {
+            throw const FormatException(
+              'RowCount item expected 8-byte payload',
+            );
+          }
+          items.add(
+            MultiResultItemRowCount(byteData.getInt64(offset, _littleEndian)),
+          );
+      }
+      offset += length;
+    }
+
+    // Trailing OUT1 footer (optional) — reuse BinaryProtocolParser internals
+    // by calling parseWithOutputs on a synthetic single-result header-less
+    // slice is not possible, but the OUT1 structure is simple enough to parse
+    // inline: magic(4) + count(4) + repeated ParamValue payloads.
+    final outputs = <ParamValue>[];
+    if (offset + 8 <= data.length) {
+      final trailMagic =
+          byteData.getUint32(offset, _littleEndian);
+      if (trailMagic == BinaryProtocolParser.outputFooterMagic) {
+        offset += 4;
+        final n = byteData.getUint32(offset, _littleEndian);
+        offset += 4;
+        for (var i = 0; i < n; i++) {
+          final d = deserializeParamValue(data, offset: offset);
+          outputs.add(d.value);
+          offset += d.consumed;
+        }
+      }
+    }
+
+    return (items: items, outputParamValues: outputs);
   }
 }

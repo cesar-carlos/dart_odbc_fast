@@ -6,7 +6,7 @@
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-04-19 (Unreleased / Sprint 4.3b/c)
+**Last verified against code:** 2026-04-24 (Unreleased; DRT1 RowCount-first fix, Oracle *ref cursor* docs, DRT1 + `MULT` + `OUT1`, columnar v2 decode *hints*, certification table)
 
 ---
 
@@ -259,26 +259,100 @@ surface — TVP and `request.output` are explicitly out of scope today
 `(u8 direction)(ParamValue)`.
 
 **Execution:** the Rust engine can decode DRT1 and, when a slot is not
-`input`, use `odbc_api` with `In` / `Out` / `InOut` style binding (MVP: integer
-`OUT` / `INOUT` and `NULL` as output shell — see
-`output_aware_params.rs`). Legacy v0 (concatenated `ParamValue` only) is
-unchanged for existing callers.
+`input`, use `odbc_api` with `In` / `Out` / `InOut` style binding (integer,
+text, and `NULL` as integer-output shell; see
+`output_aware_params.rs`). Unsupported combinations return `ValidationError`
+messages that start with the stable prefix `DIRECTED_PARAM|` and a
+machine-readable *slug* (e.g. `binary_out_inout_not_implemented: …`
+for `ParamValue::Binary` in `Out` / `InOut`). Legacy v0 (concatenated
+`ParamValue` only) is unchanged for existing callers.
 
 **Dart API:** `IOdbcService.executeQueryDirectedParams` and
-`IOdbcRepository.executeQueryParamBuffer` (raw buffer). The binary result may
-end with an `OUT1` footer; `QueryResult.outputParamValues` is populated
-when the decoder sees it. `paramValuesFromDirected` remains **v0, input only**
-(throws for `output` / `inOut` so callers that want mixed directions use DRT1).
+`IOdbcRepository.executeQueryParamBuffer` (raw buffer). The binary result is
+decoded according to which magic appears first:
+
+- **Single result set** (common case — `SQLMoreResults` yielded no extra items):
+  buffer starts with the **ODBC magic** (`0x4F444243`), optional `OUT1` footer;
+  `QueryResult.outputParamValues` is populated when `OUT1` is present.
+- **Multiple result sets / row-counts** (`SQLMoreResults` produced additional
+  items after the first): buffer starts with the **MULT magic** (`0x544C554D`)
+  followed by `OUT1`. The Dart repository distinguishes two sub-cases:
+  - **ResultSet-first** (procedure starts with a `SELECT`): item[0] is
+    a `ResultSet`; it maps to `QueryResult.columns` / `rows` / `rowCount`,
+    and remaining items appear in `QueryResult.additionalResults`.
+  - **RowCount-first** (DML-first procedure, no initial cursor): item[0] is
+    a `RowCount`; the primary `QueryResult` fields are left empty (`columns =
+    []`, `rows = []`, `rowCount = 0`) and **all** logical items (including
+    item[0]) are surfaced in `QueryResult.additionalResults` so no information
+    is lost. Callers should inspect `additionalResults` when
+    `QueryResult.columns` is empty after a directed call.
+
+  All additional items surface as `DirectedResultItem` or `DirectedRowCountItem`.
+  See `test/e2e/mssql_directed_out_multi_rset_test.dart`
+  (`E2E_MSSQL_DIRECTED_OUT_MULTI=1`) for the SQL Server opt-in E2E and
+  `test/infrastructure/repositories/odbc_repository_directed_rowcount_first_test.dart`
+  for the unit-level contract.
+
+`paramValuesFromDirected` remains **v0, input only** (throws for `output` /
+`inOut` so callers that want mixed directions use DRT1).
 
 [bound_param]: ../../native/odbc_engine/src/protocol/bound_param.rs
 
-| Driver     | Status (current) |
-| ---------- | ---------------- |
-| SQL Server | MVP integer `OUT` / `INOUT` |
-| Other      | best-effort; may error per driver | 
+| Engine / host | `OUT` / `INOUT` (DRT1) — current expectation |
+| ------------- | --------------------------------------------- |
+| **SQL Server** (Windows) | `Integer`, `BigInt`, `String`, non-empty `Decimal` text; `Out`+`Null` still maps to the integer *shell*; wide `VarWChar` for text. **Best-validated** in CI/E2E when DSN is set. |
+| **SQL Server** (non-Windows) | Same wire / bind shape with narrow `VarChar` for text; same limits as the engine. |
+| **PostgreSQL, MySQL/MariaDB, DB2, Oracle, …** | **Best-effort:** ODBC *may* support the same C-bind shapes for scalars and text; E2E is env-gated. Failures are usually driver-specific (`ValidationError` from bind or from the DSN path). **Do not** assume parity with SQL Server without testing your driver. **PostgreSQL *runtime* check** (DRT1 + `OUT1`): `test/e2e/postgres_directed_out_test.dart` with `E2E_PG_DIRECTED_OUT=1` and `ODBC_TEST_DSN` (PG 11+; host + local ODBC, not the Rust-only Docker `test-runner`). |
+| **All** | `Binary` in `Out` / `InOut` is **rejected in-engine** (clear `DIRECTED_PARAM|binary_out_inout_not_implemented:…`). `ParamValue::RefCursorOut` on **non-Oracle** DSNs: `DIRECTED_PARAM|ref_cursor_out_oracle_only:…` (§3.1.1). |
 
-Still **not** covered: string `OUT`, Oracle `REF CURSOR` fan-out, cross-driver
-hardening.
+**Dart** pre-validates the same *slugs* as the engine for impossible shapes
+(see [directed_param.dart](../../lib/infrastructure/native/protocol/directed_param.dart)
+`validateDirectedOutInOut`) before the DRT1 buffer is sent.
+
+**Wire (§3.1.1a):** `ParamValue` tag `6` = `RefCursorOut` (zero-length payload).
+Materialized ref-cursor row sets are in a native `RC1\0` trailer (repeated full
+v1 row-major messages, one *blob* per `RefCursorOut` in bound order). The Dart
+[BinaryProtocolParser](../../lib/infrastructure/native/protocol/binary_protocol.dart)
+fills [QueryResult.refCursorResults](../../lib/domain/entities/query_result.dart) when
+an `RC1\0` block is present. **Engine — `OUT1` (escalares):** the trailer lists
+`OUT` / `INOUT` *scalar* (and text) parameters **only** — no entry for
+`ParamValue::RefCursorOut` (cursors are only in `RC1\0`). **Engine — Oracle:** when
+the active driver plugin is **Oracle** and the request includes
+`ParamValue::RefCursorOut`, the engine strips the corresponding `?` from the
+call text (Oracle ODBC: ref-cursor parameters are not bound; result sets are read
+from the same statement with `SQLMoreResults`). Non-Oracle DSNs return
+`DIRECTED_PARAM|ref_cursor_out_oracle_only:…`. A *defensive* call to
+`bound_to_slots` *with* `RefCursorOut` (without the Oracle *path* filter) still
+fails with `DIRECTED_PARAM|ref_cursor_out_bind_not_enabled:…` (not the *happy* path).
+
+**Not in scope (unless product priorities change):** TVP, exhaustive
+`SqlDataType`-driven *capability* errors for every output SQL type, and
+**field certification** of every ODBC stack (Instant Client *x.y*, thick *vs.*
+thin, etc.) — the engine already implements the Oracle ODBC **omit-`?` +
+`SQLMoreResults`** *pattern* (not a *scalar* `SQLBindParameter` for
+`REF CURSOR`); validate your driver against the table below and
+[REF_CURSOR_ORACLE_ROADMAP.md](REF_CURSOR_ORACLE_ROADMAP.md) *Tarefas em aberto*.
+
+| Certification (fill in for your org) | Driver / version | DSN / host | `CALL` + `OUT SYS_REFCURSOR` smoke | Notes |
+| ------------------------------------ | ---------------- | ---------- | ----------------------------------- | ----- |
+| *Example row* | Oracle Instant Client ODBC 19+ | *local* | `e2e_oracle_ref_cursor_test` + `E2E_ORACLE_REFCURSOR=1` | See crate *test*; not default CI. |
+| | | | | Add rows after you validate. |
+
+### 3.1.1 Oracle `REF CURSOR` and cursor-like `OUT` (engine + wire + client)
+
+[REF_CURSOR_ORACLE_ROADMAP.md](REF_CURSOR_ORACLE_ROADMAP.md) documents the
+**Oracle Database ODBC** behaviour: *omit* the `?` for each `ParamValue::RefCursorOut`
+in the `{ CALL … }` text, *bind* only the remaining parameters, *execute*, then
+read **one result set per ref cursor** from the first `execute` *cursor* (if
+any) and from `SQLMoreResults`, in *procedure* order, materializing into v1
+*blobs* for `RC1\0` after `OUT1`. **This is not** a *scalar* `SQLBindParameter`
+*REF CURSOR* bind as on SQL Server.
+
+**Remaining gaps (maturity, not the core *happy path*):** *driver* certification
+(add rows in the table above), *edge* PL/SQL (*procedures* with intermediate row
+counts / *No_Data* *result sets* — see *Tarefas em aberto* in the roadmap), and
+broadening the opt-in *integration* `e2e_oracle_ref_cursor_test` if regressions
+appear (the test exists; CI *ubuntu* does not run it by default).
 
 ### 3.2 Columnar protocol v2 (decode path)
 
@@ -286,10 +360,14 @@ hardening.
   `with_columnar` on the query pipeline) — v2 header in
   [columnar_encoder.rs][colenc].
 - **Dart:** `BinaryProtocolParser.parse` / `parseWithOutputs` accept **v2**
-  (row-major and columnar) and optional `OUT1` after the main message. Column
-  blocks that use per-column zstd/LZ4 are **rejected** with a clear
-  [FormatException] until a Dart decompressor is added (uncompressed
-  columnar and v1 are supported).
+  (row-major and columnar) and optional `OUT1` after the main message.
+  **Compressed** column blocks call the same decompressors as the engine via
+  the native FFI `odbc_columnar_decompress` (see
+  `lib/.../columnar_decompress_ffi.dart`); if the library is missing *or* the
+  payload is invalid, parsing fails with a [FormatException] whose message
+  includes **hints** (algorithm ids, *build* *path* for `odbc_engine`, pointer
+  to [columnar_protocol_sketch](columnar_protocol_sketch.md)). Uncompressed
+  columnar and v1 are unchanged.
 
 - **Sketch:** [columnar_protocol_sketch.md](columnar_protocol_sketch.md).
 - **Heuristic:** `lib/infrastructure/native/protocol/columnar_v2_flags.dart` —
@@ -313,6 +391,6 @@ hardening.
 
 - `doc/Features/PENDING_IMPLEMENTATIONS.md` — backlog mínimo (PT).
 - `doc/CAPABILITIES_v3.md` — capability × engine matrix.
-- `doc/notes/columnar_protocol_sketch.md` — orphaned v2 design (§3.2).
+- `doc/notes/columnar_protocol_sketch.md` — v2 wire layout and history (§3.2).
 - <https://www.npmjs.com/package/mssql>
 - <https://github.com/tediousjs/node-mssql>

@@ -7,7 +7,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DRT1 / `OUT1` (Dart):** `BinaryProtocolParser` now compares the trailer
+  to the **little-endian u32 of `b"OUT1"`** (same on-wire four bytes as
+  `RowBufferEncoder::append_output_footer` in `native/odbc_engine`). The
+  previous constant (`0x4F555431`) was the u32 of `b"1TUO"`; native results with
+  real `OUT` / `INOUT` values no longer arrive with empty
+  `QueryResult.outputParamValues`.
+- **DRT1 + multi-result (Rust):** the directed OUT engine path
+  (`execute_query_with_bound_params_and_timeout`) no longer silently discards
+  extra result sets from `SQLMoreResults`. When the drain is empty (single result
+  set — the common case) the wire format is **unchanged** (ODBC magic + `OUT1`).
+  When drain has items, the engine emits a **MULT** envelope (same v2 framing as
+  `execute_multi_result`) followed by `OUT1`, so stored procedures that also
+  perform DML or return multiple `SELECT` result sets now deliver all items to
+  the caller.
+- **DRT1 + MULT RowCount-first (Rust):** when a DML-first stored procedure
+  starts with an `INSERT`/`UPDATE`/`DELETE` (no initial cursor), the engine
+  previously discarded the affected-row count (`let _rc = ...`) and emitted a
+  spurious empty `ResultSet` as the first MULT item. The row count is now
+  captured and emitted as `MultiResultItem::RowCount(n)`, so the on-wire item
+  order faithfully mirrors the logical execution order.
+- **DRT1 + MULT RowCount-first (Dart):** `OdbcRepositoryImpl._parseMultiDirectedBuffer`
+  previously always mapped item[0] to `QueryResult.columns/rows/rowCount`,
+  silently discarding it when item[0] was a `RowCount`. Now, when item[0] is a
+  `RowCount`, the primary fields remain empty and **all** items (including
+  item[0]) are surfaced in `QueryResult.additionalResults`, preserving order and
+  preventing data loss.
+- **E2E SQL Server directed OUT test:** `test/e2e/mssql_directed_out_multi_rset_test.dart`
+  was using `#dummy_e2e_multi` (a connection-scoped temp table created in
+  `setUpAll`) inside the stored procedure. Since the procedure executes on a
+  different connection the temp table was invisible, causing the test to fail
+  with an "invalid object name" error. The procedure now uses a `DECLARE @t
+  TABLE` (table variable) which is fully scoped per call and requires no
+  external setup.
+
 ### Added
+
+- **DRT1 + multi-result (Dart parser):** `MultiResultParser` gains
+  `parseMultiWithOutputs` which decodes a MULT v2 envelope + trailing `OUT1` in
+  one call. `OdbcRepositoryImpl._parseBufferToQueryResult` now detects the MULT
+  magic and routes to the new decoder branch; single-RS callers are unaffected.
+- **`QueryResult.additionalResults`:** new optional field (`default []`) exposing
+  tail items from a directed multi-result response as `DirectedResultItem` /
+  `DirectedRowCountItem` (both extend the sealed `DirectedMultiItem`). Existing
+  code that only reads `rows` / `outputParamValues` requires no changes.
+- **Regression tests — D1:** `native/odbc_engine/tests/regression/d1_drt1_multi_result_wire.rs`
+  (9 pure-protocol Rust unit tests) pins the on-wire contract: drain-empty path
+  is byte-for-byte identical to legacy; drain-non-empty ResultSet-first and
+  RowCount-first paths start with MULT and have `OUT1` after the multi frame;
+  RowCount → ResultSet → RowCount → OUT1 round-trip verified.
+- **Regression tests — Dart (parser):** `test/infrastructure/native/protocol/multi_result_parser_multi_out_test.dart`
+  (11 tests) covers `parseMultiWithOutputs` including RowCount-first and
+  RowCount → ResultSet → RowCount → OUT1 round-trips.
+- **Regression tests — Dart (repository):**
+  `test/infrastructure/repositories/odbc_repository_directed_rowcount_first_test.dart`
+  (3 tests) validates the repository mapping for RowCount-first MULT buffers:
+  primary fields empty, all items in `additionalResults`, and ResultSet-first
+  backwards-compatibility unchanged.
+- **E2E opt-in (SQL Server multi-result + OUT):**
+  `test/e2e/mssql_directed_out_multi_rset_test.dart` — set
+  `E2E_MSSQL_DIRECTED_OUT_MULTI=1` + `ODBC_TEST_DSN` (SQL Server DSN,
+  ODBC Driver 17+) to run a proc that returns two `SELECT` result sets and
+  an `INT OUTPUT`; validates `additionalResults` and `outputParamValues`.
+- **Test suite stability:** `RUST_TEST_THREADS=1` set in
+  `.cargo/config.toml` to keep `ffi::tests` stable without needing to pass
+  `-- --test-threads=1` manually. `ENABLE_SLOW_E2E_TESTS=1` now gates
+  long-running stress / benchmark tests (`e2e_bulk_transaction_stress_test`,
+  pool stress, 50 k-row streaming, BCP 100 k, bulk compare benchmark).
+- **`should_run_slow_e2e_tests()` helper** in
+  `native/odbc_engine/tests/helpers/e2e.rs`.
+- **Documentation (pendências / maturação):** [TYPE_MAPPING](doc/notes/TYPE_MAPPING.md)
+  — tabela de certificação Oracle *ref cursor* (preencimento manual), texto
+  alinhado ao *path* *omit-`?`* + `SQLMoreResults`; [columnar_protocol_sketch](doc/notes/columnar_protocol_sketch.md)
+  — secção *Criterion benches* (`columnar_v1_v2_encode`, `columnar_v2_placeholder`);
+  [PENDING](doc/Features/PENDING_IMPLEMENTATIONS.md) / [ROADMAP_PENDENTES](doc/notes/ROADMAP_PENDENTES.md)
+  — *CI* MSDTC *live* como *ad hoc*, *checklist* *release* OCI XA, *scope* TVP /
+  `SqlDataType`; [REF_CURSOR_ORACLE_ROADMAP](doc/notes/REF_CURSOR_ORACLE_ROADMAP.md)
+  — *edge* *backlog*. **Columnar decode DX:** mensagens `FormatException` mais
+  explícitas quando `odbc_columnar_decompress` falha (*build* `odbc_engine`,
+  algoritmos, `library_loader`).
+- **Oracle DRT1 + `RefCursorOut` (motor):** *strip* de `?` e `ParamValue` filtrada
+  (`ref_cursor_oracle`); *prepare* + *execute* + `SQLMoreResults` → `RowBuffer` v1
+  por *cursor* + `RowBufferEncoder::append_ref_cursor_footer` após `OUT1` (lógica
+  *Oracle Database ODBC* — *omissão* de *ref cursor* no call). Erro
+  `DIRECTED_PARAM|ref_cursor_out_oracle_only:…` fora do plugin Oracle. Teste
+  *integration* *opt-in* *ignored* `e2e_oracle_ref_cursor_test` (`E2E_ORACLE_REFCURSOR=1`).
+- **Roadmap / Oracle REF CURSOR (documentation):** [`doc/notes/ROADMAP_PENDENTES.md`](doc/notes/ROADMAP_PENDENTES.md) orders open *epics*; [`doc/notes/REF_CURSOR_ORACLE_ROADMAP.md`](doc/notes/REF_CURSOR_ORACLE_ROADMAP.md) is the *spike* and integration plan for `SYS_REFCURSOR` *bind*+fetch+`RC1` (motor ainda a devolver `ref_cursor_out_bind_not_enabled`); PENDING, TYPE_MAPPING §3.1.1, and `msdtc-recovery` link from the new index. Comment in `output_aware_params.rs` points to the roadmap.
+- **MSDTC DX (Windows / `xa-dtc`):** *Local runbook* in
+  `doc/development/msdtc-recovery.md` (env, `regression_test` + `--ignored`,
+  `ENABLE_E2E_TESTS`); PENDING §1.1 and `docker-test-stack` link to it; code
+  comments in `xa_dtc.rs` / `xa_dtc_test.rs` aligned. Optional workflow
+  [`.github/workflows/windows_xa_dtc_build.yml`](.github/workflows/windows_xa_dtc_build.yml)
+  also runs `cargo test --lib` and compiles (`--no-run`) integration tests
+  (no live MSDTC).
+- **MSDTC E2E (segundo *smoke*):** `regression_test` ganha
+  `xa_dtc_sqlserver_prepare_commit_smoke` (*prepare* → `commit`); o existente
+  mantém *rollback*. *Runbook* e PENDING alinhados; `Xid` distinto.
+- **Directed / OUTPUT observability:** `output_aware_params` `ValidationError`
+  strings for unsupported DRT1 shapes now use the stable `DIRECTED_PARAM|…`
+  prefix and slugs (e.g. `binary_out_inout_not_implemented`);
+  `doc/notes/TYPE_MAPPING.md` §3.1 documents the table by engine and §3.1.1
+  the REF CURSOR *design* only.
+- **Columnar A/B *bench*:** Criterion
+  [columnar_v1_v2_encode](native/odbc_engine/benches/columnar_v1_v2_encode.rs)
+  compares v1 `RowBufferEncoder` vs v2 `ColumnarEncoder` (nocompress + zstd).
+- **Columnar decode DX:** `isColumnarNativeDecompressAvailable` and richer
+  `FormatException` when decompression returns null.
+- **MSDTC *scope*:** [msdtc-recovery.md](doc/development/msdtc-recovery.md) states
+  explicitly that *Reenlist* is not implemented in-crate; PENDING 1.1/§2
+  updated accordingly.
+- **Columnar v2 *golden* (zstd):** committed
+  `test/fixtures/columnar_v2_int32_zstd.golden` (Rust `ColumnarEncoder` with
+  per-column *zstd*); sync test
+  [columnar_v2_zstd_golden_file.rs](native/odbc_engine/tests/columnar_v2_zstd_golden_file.rs);
+  Dart `columnar_v2_zstd_golden_test.dart` parses the file when
+  `odbc_columnar_decompress` is loadable.
+- **Directed params (Dart *slug* match):** `validateDirectedOutInOut` runs on
+  `serializeDirectedParams` with the same `DIRECTED_PARAM|…` *slugs* as
+  `output_aware_params` (fast fail before FFI).
+- **Ref cursor *wire* (v1, Oracle prep):** `ParamValue` tag `6`
+  (`ParamValue::RefCursorOut` / `ParamValueRefCursorOut` on Dart); `RC1\0`
+  *trailer* (materialized v1 *blobs*) + `QueryResult.refCursorResults`
+  decoded on the client; `RowBufferEncoder::append_ref_cursor_footer` on the
+  native *encoder*. O *happy path* Oracle usa o *plugin* + *strip* de `?`
+  + `SQLMoreResults`; uma chamada defensiva a `bound_to_slots` com
+  `RefCursorOut` fora desse *path* continua a devolver
+  `ref_cursor_out_bind_not_enabled`.
+- **MSDTC *ops* doc:** *Application-facing* enlist/unenlist guidance in
+  [msdtc-recovery.md](doc/development/msdtc-recovery.md) (log full message, do
+  not reuse a failed enlisted handle without recycling).
+- **E2E PostgreSQL directed `OUT`:** `test/e2e/postgres_directed_out_test.dart`
+  — `CREATE PROCEDURE` with two `OUT` (integer + text), `CALL` over DRT1;
+  *opt-in* with `E2E_PG_DIRECTED_OUT=1` and `ODBC_TEST_DSN` (host with Dart + PG
+  ODBC; not run by `scripts/docker_e2e`). Notes in
+  [docker-test-stack.md](doc/development/docker-test-stack.md).
+- **E2E SQL Server directed `OUT` (DRT1):** [test/e2e/mssql_directed_out_test.dart](test/e2e/mssql_directed_out_test.dart) —
+  *opt-in* with `E2E_MSSQL_DIRECTED_OUT=1`, `ODBC_TEST_DSN` to a SQL Server DSN, and
+  a database login that may `CREATE`/`DROP` the proc in `dbo` (see
+  [docker-test-stack](doc/development/docker-test-stack.md) §*Optional* / SQL Server
+  *directed* `OUT`).
+
+### Changed
+
+- **odbc_engine (DRT1 + `OUT`):** the directed path uses
+  *preallocate* + `SQLExecDirect` (same *shape* as `odbc_api::Connection::execute`),
+  then `ExecutionEngine::drive_more_results` before reading output bind buffers, so
+  **SQL Server** and similar drivers populate `OUTPUT` after `SQLMoreResults`
+  (aligned with the multi-result and Oracle ref-cursor paths).
 
 - **`SqlDataType` (30-kind roadmap):** `geometry` (SQL Server planar WKT, same
   wire as `geography`); `intervalYearToMonth` (`String`, `[years, months]`, or
@@ -17,18 +165,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Output / INOUT (MVP):** DRT1 request buffer (`serializeDirectedParams`,
   Rust `bound_param`); `IOdbcRepository.executeQueryParamBuffer` and
   `IOdbcService.executeQueryDirectedParams`; `OUT1` result footer; Rust engine
-  output-aware binding (integer `OUT` / `INOUT` on SQL Server first); and
-  `QueryResult.outputParamValues`. The legacy
-  `paramValuesFromDirected` list remains **in-only** (throws for non-input).
-  `BinaryProtocolParser.parseWithOutputs` / `QueryResult` docs in
+  output-aware binding (integer and **string** / `Decimal` `OUT` / `INOUT`
+  with wide or narrow `Var*Char`); and `QueryResult.outputParamValues`. The
+  legacy `paramValuesFromDirected` list remains **in-only** (throws for
+  non-input). `BinaryProtocolParser.parseWithOutputs` / `QueryResult` docs in
   `doc/notes/TYPE_MAPPING.md` §3.1; `example/output_param_directions_demo.dart`
   shows DRT1 + a live directed query when `ODBC_TEST_DSN` is set.
-- **Columnar v2 (Dart decode, uncompressed):** `BinaryProtocolParser` accepts
-  v2 columnar (same magic as v1) when column blocks are not compressed; zstd
-  or LZ4 inside a block throws a clear [FormatException] (compressors not
-  ported). Columnar v2 *anchors* remain: optional Cargo `columnar-v2` feature
-  with `odbc_engine::columnar_v2` constants, Criterion
-  `columnar_v2_placeholder` bench, and `columnar_v2_flags.dart`.
+- **Columnar v2 (Dart + native):** `BinaryProtocolParser` decodes v2; when
+  a column is compressed, it calls the native FFI
+  `odbc_columnar_decompress` / `odbc_columnar_decompress_free` (same
+  `CompressionType` as `odbc_engine`: 1 = zstd, 2 = lz4). Uncompressed
+  column blocks are unchanged. Optional Cargo `columnar-v2` *anchors* remain.
+  `columnar_v2_flags.dart` and `doc/notes/columnar_protocol_sketch.md` updated
+  to match.
+- **MSDTC hardening (docs/CI):** `doc/development/msdtc-recovery.md` (Reenlist
+  / scenarios), optional `windows_xa_dtc_build.yml` (`workflow_dispatch` for
+  `xa-dtc` on Windows), and PENDING/TYPE_MAPPING follow-ups.
 - **Docker test-runner:** IBM Db2 ODBC/CLI from IBM’s public DHE tarball
   (`IBM_ODBC_CLI_VERSION` in `Dockerfile.test-runner`); `IBM DB2 ODBC DRIVER`
   in `/etc/odbcinst.ini`.

@@ -1,6 +1,6 @@
 use crate::protocol::compression::CompressionStrategy;
-use crate::protocol::row_buffer::RowBuffer;
 use crate::protocol::param_value::ParamValue;
+use crate::protocol::row_buffer::RowBuffer;
 use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
@@ -8,6 +8,11 @@ const VERSION: u16 = 1;
 
 /// Appended after the v1 row-major message when a query used `OUT` / `INOUT` parameters.
 pub const OUTPUT_FOOTER_MAGIC: [u8; 4] = *b"OUT1";
+
+/// After `OUT1`, optional materialized Oracle / `SYS_REFCURSOR` result sets: `RC1` + NUL
+/// padding to 4 bytes (same style as `OUT1`), then `u32` count, then repeated
+/// (`u32` len + full v1 `RowBufferEncoder` message per cursor).
+pub const REF_CURSOR_FOOTER_MAGIC: [u8; 4] = [b'R', b'C', b'1', 0];
 
 pub struct RowBufferEncoder;
 
@@ -75,6 +80,20 @@ impl RowBufferEncoder {
         base
     }
 
+    /// Appends one or more full v1 row-major messages (e.g. fetched `SYS_REFCURSOR` sets).
+    pub fn append_ref_cursor_footer(mut base: Vec<u8>, blobs: &[Vec<u8>]) -> Vec<u8> {
+        if blobs.is_empty() {
+            return base;
+        }
+        base.extend_from_slice(&REF_CURSOR_FOOTER_MAGIC);
+        base.extend_from_slice(&(blobs.len() as u32).to_le_bytes());
+        for b in blobs {
+            base.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            base.extend_from_slice(b);
+        }
+        base
+    }
+
     /// Encode then optionally compress when payload exceeds 1MB.
     pub fn encode_with_compression(buffer: &RowBuffer) -> Vec<u8> {
         let raw = Self::encode(buffer);
@@ -87,6 +106,22 @@ impl RowBufferEncoder {
 mod tests {
     use super::*;
     use crate::protocol::types::OdbcType;
+
+    #[test]
+    fn ref_cursor_footer_roundtrip_length() {
+        let rb = RowBuffer::new();
+        let a = RowBufferEncoder::encode(&rb);
+        let a_len = a.len();
+        let b = RowBufferEncoder::encode(&rb);
+        let c = RowBufferEncoder::append_ref_cursor_footer(a, std::slice::from_ref(&b));
+        assert!(c.len() > a_len);
+        let count = u32::from_le_bytes([c[a_len + 4], c[a_len + 5], c[a_len + 6], c[a_len + 7]]);
+        assert_eq!(count, 1u32);
+        let blen =
+            u32::from_le_bytes([c[a_len + 8], c[a_len + 9], c[a_len + 10], c[a_len + 11]]) as usize;
+        assert_eq!(blen, b.len());
+        assert_eq!(&c[a_len + 12..a_len + 12 + blen], &b[..]);
+    }
 
     #[test]
     fn test_encode_empty_buffer() {

@@ -12,6 +12,7 @@
 //! run when `ODBC_TEST_DSN` is set.
 
 pub mod a1_ffi_savepoint_injection;
+pub mod d1_drt1_multi_result_wire;
 pub mod a1_savepoint_injection;
 pub mod a2_array_binding_injection;
 pub mod a3_span_lifecycle;

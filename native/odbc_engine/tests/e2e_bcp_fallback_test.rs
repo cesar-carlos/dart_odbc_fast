@@ -24,7 +24,7 @@ use std::time::Instant;
 
 mod helpers;
 #[cfg(feature = "sqlserver-bcp")]
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests};
+use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, should_run_slow_e2e_tests};
 
 #[cfg(feature = "sqlserver-bcp")]
 fn decode_integer(data: &[u8]) -> i32 {
@@ -170,9 +170,17 @@ fn test_e2e_bcp_fallback_inserts_rows() {
 
 #[cfg(feature = "sqlserver-bcp")]
 #[test]
-#[ignore = "Long-running 100k row test; run with --ignored"]
+#[ignore = "Long-running 100k row test; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 #[serial]
 fn test_e2e_bcp_fallback_100k_rows() {
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping BCP fallback E2E: database not available");
+        } else {
+            eprintln!("⚠️  Skipping slow BCP fallback test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
+        return;
+    }
     run_bcp_fallback_e2e(100_000);
 }
 

@@ -7,7 +7,12 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/query_result.dart'
+    show
+        DirectedMultiItem,
+        DirectedResultItem,
+        DirectedRowCountItem,
+        QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
@@ -21,7 +26,12 @@ import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
-    show MultiResultItem, MultiResultParser;
+    show
+        MultiResultItem,
+        MultiResultItemResultSet,
+        MultiResultItemRowCount,
+        MultiResultParser,
+        multiResultMagic;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart'
     show MultiResultStreamDecoder;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
@@ -771,16 +781,98 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     }
     try {
+      // Detect the MULT envelope emitted by the DRT1 multi-result engine path.
+      // When a directed OUT call returns additional result sets or row-counts
+      // (from SQLMoreResults), the engine wraps everything in a MULT frame and
+      // then appends the OUT1 trailer. The first item maps to the primary
+      // result fields; the remaining items go to additionalResults.
+      if (buf.length >= 4) {
+        final firstWord =
+            ByteData.sublistView(buf, 0, 4).getUint32(0, Endian.little);
+        if (firstWord == multiResultMagic) {
+          return _parseMultiDirectedBuffer(buf);
+        }
+      }
       final p = BinaryProtocolParser.parseWithOutputs(buf);
       return QueryResult(
         columns: p.rowBuffer.columns.map((c) => c.name).toList(),
         rows: p.rowBuffer.rows,
         rowCount: p.rowBuffer.rowCount,
         outputParamValues: p.outputParamValues,
+        refCursorResults: p.refCursorRowBuffers
+            .map(
+              (b) => QueryResult(
+                columns: b.columnNames,
+                rows: b.rows,
+                rowCount: b.rowCount,
+              ),
+            )
+            .toList(growable: false),
       );
     } on Exception catch (_) {
       return null;
     }
+  }
+
+  /// Decodes a directed OUT buffer that begins with a MULT envelope, mapping
+  /// the first item to the primary [QueryResult] fields and the remaining
+  /// items to [QueryResult.additionalResults].
+  QueryResult _parseMultiDirectedBuffer(Uint8List buf) {
+    final parsed = MultiResultParser.parseMultiWithOutputs(buf);
+    final items = parsed.items;
+    final outputParamValues = parsed.outputParamValues;
+
+    // Determine if the first logical item is a ResultSet or a RowCount.
+    // When the initial execute returned no cursor (DML-first procedures) Rust
+    // now emits RowCount as item[0].  In that case the primary QueryResult has
+    // no columns/rows, and ALL items are surfaced in additionalResults so no
+    // information is lost.  When item[0] is a ResultSet, the existing behaviour
+    // is preserved: columns/rows come from the first item and the tail goes to
+    // additionalResults.
+    final firstIsResultSet =
+        items.isNotEmpty && items[0] is MultiResultItemResultSet;
+
+    var columns = const <String>[];
+    var rows = const <List<dynamic>>[];
+    var rowCount = 0;
+    int startTailAt;
+
+    if (firstIsResultSet) {
+      final rb = (items[0] as MultiResultItemResultSet).value;
+      columns = rb.columnNames;
+      rows = rb.rows;
+      rowCount = rb.rowCount;
+      startTailAt = 1;
+    } else {
+      // RowCount-first: keep primary fields empty and expose everything in
+      // additionalResults (including item[0]) so callers can inspect it.
+      startTailAt = 0;
+    }
+
+    final additional = <DirectedMultiItem>[];
+    for (var i = startTailAt; i < items.length; i++) {
+      final item = items[i];
+      if (item is MultiResultItemResultSet) {
+        final rb = item.value;
+        additional.add(
+          DirectedResultItem(
+            columns: rb.columnNames,
+            rows: rb.rows,
+            rowCount: rb.rowCount,
+          ),
+        );
+      } else if (item is MultiResultItemRowCount) {
+        additional.add(DirectedRowCountItem(item.value));
+      }
+    }
+
+    return QueryResult(
+      columns: columns,
+      rows: rows,
+      rowCount: rowCount,
+      outputParamValues: outputParamValues,
+      additionalResults: additional,
+    );
   }
 
   QueryResult _toQueryResult(ParsedRowBuffer buffer) {

@@ -59,7 +59,8 @@ void main() {
         ],
       );
       final out = <int>[
-        ...0x4F555431.toBytes(4),
+        // Same as [BinaryProtocolParser.outputFooterMagic] / `b"OUT1"` (LE u32)
+        ...0x3154554F.toBytes(4),
         ...1.toBytes(4),
         ...const ParamValueInt32(99).serialize(),
       ];
@@ -73,6 +74,36 @@ void main() {
         99,
       );
       expect(msg.rowBuffer.rowCount, 1);
+    });
+
+    test('RC1 trailer parses one embedded v1 result', () {
+      final main = _createTestBuffer(
+        columns: const [
+          (name: 'm', type: 2),
+        ],
+        rows: const [
+          [0],
+        ],
+      );
+      final inner = _createTestBuffer(
+        columns: const [
+          (name: 'c', type: 2),
+        ],
+        rows: const [
+          [7],
+        ],
+      );
+      final b = <int>[
+        ...main,
+        ...0x00314352.toBytes(4),
+        ...1.toBytes(4),
+        ...inner.length.toBytes(4),
+        ...inner,
+      ];
+      final p = BinaryProtocolParser.parseWithOutputs(Uint8List.fromList(b));
+      expect(p.refCursorRowBuffers.length, 1);
+      expect(p.refCursorRowBuffers[0].rowCount, 1);
+      expect(p.refCursorRowBuffers[0].rows[0][0], 7);
     });
 
     test('columnar v2 single column int round-trips', () {

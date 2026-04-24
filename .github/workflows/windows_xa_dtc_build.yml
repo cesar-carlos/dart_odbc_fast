@@ -1,0 +1,46 @@
+# Optional: build the native library on Windows with `xa-dtc` to ensure the
+# MSDTC + COM code path compiles. Does not start MSDTC or run DTC E2E.
+# Trigger manually: Actions → "Windows xa-dtc build" → Run workflow.
+name: Windows xa-dtc build
+
+"on":
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+
+      - name: Clippy (xa-dtc)
+        run: |
+          cd native/odbc_engine
+          cargo clippy --all-targets --features xa-dtc -- -D warnings
+
+      - name: Build (xa-dtc, release)
+        run: |
+          cd native/odbc_engine
+          cargo build --release --features xa-dtc
+
+      - name: Test (lib, xa-dtc)
+        run: |
+          cd native/odbc_engine
+          cargo test --lib --features xa-dtc
+
+      - name: Compile integration tests (no run)
+        run: |
+          cd native/odbc_engine
+          cargo test --no-run --features xa-dtc --tests

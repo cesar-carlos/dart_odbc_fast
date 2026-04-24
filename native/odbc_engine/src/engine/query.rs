@@ -58,15 +58,17 @@ fn dispatch_param_buffer(
             PIPELINE.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
         }
         ParamList::Directed(b) => {
-            if b.iter()
-                .all(|x| x.direction == ParamDirection::Input)
-            {
+            if b.iter().all(|x| x.direction == ParamDirection::Input) {
                 let p: Vec<ParamValue> = b.iter().map(|x| x.value.clone()).collect();
-                PIPELINE
-                    .execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
+                PIPELINE.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
             } else {
-                PIPELINE
-                    .execute_with_bound_params_and_timeout(conn, sql, &b, timeout_sec, fetch_size)
+                PIPELINE.execute_with_bound_params_and_timeout(
+                    conn,
+                    sql,
+                    &b,
+                    timeout_sec,
+                    fetch_size,
+                )
             }
         }
     }

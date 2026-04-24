@@ -6,6 +6,9 @@ const TAG_INTEGER: u8 = 2;
 const TAG_BIGINT: u8 = 3;
 const TAG_DECIMAL: u8 = 4;
 const TAG_BINARY: u8 = 5;
+/// Placeholder for Oracle `SYS_REFCURSOR` / similar `OUT` parameters (wire
+/// tag only; engine bind is engine-specific — see `TYPE_MAPPING` §3.1.1).
+const TAG_REF_CURSOR_OUT: u8 = 6;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamValue {
@@ -15,6 +18,8 @@ pub enum ParamValue {
     Decimal(String),
     Binary(Vec<u8>),
     Null,
+    /// Output-only marker: materialized rows may follow in an `RC1\0` trailer.
+    RefCursorOut,
 }
 
 impl ParamValue {
@@ -51,6 +56,10 @@ impl ParamValue {
                 out.push(TAG_BINARY);
                 out.extend_from_slice(&(b.len() as u32).to_le_bytes());
                 out.extend_from_slice(b);
+            }
+            ParamValue::RefCursorOut => {
+                out.push(TAG_REF_CURSOR_OUT);
+                out.extend_from_slice(&0u32.to_le_bytes());
             }
         }
         out
@@ -110,6 +119,14 @@ impl ParamValue {
                 ParamValue::Decimal(s.to_string())
             }
             TAG_BINARY => ParamValue::Binary(payload.to_vec()),
+            TAG_REF_CURSOR_OUT => {
+                if len != 0 {
+                    return Err(OdbcError::ValidationError(
+                        "ParamValue::RefCursorOut expected 0-byte payload".to_string(),
+                    ));
+                }
+                ParamValue::RefCursorOut
+            }
             _ => {
                 return Err(OdbcError::ValidationError(format!(
                     "Unknown ParamValue tag: {}",
@@ -155,6 +172,11 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<Strin
                     b.iter().map(|x| format!("{:02x}", x)).collect::<String>(),
                 ));
             }
+            ParamValue::RefCursorOut => {
+                return Err(OdbcError::ValidationError(
+                    "ParamValue::RefCursorOut is not convertible to string parameters".to_string(),
+                ));
+            }
         }
     }
     Ok(out)
@@ -171,6 +193,7 @@ pub fn max_param_string_len(params: &[ParamValue]) -> usize {
             ParamValue::String(s) => s.len(),
             ParamValue::Decimal(s) => s.len(),
             ParamValue::Binary(b) => b.len() * 2,
+            ParamValue::RefCursorOut => 0,
             _ => 0,
         };
         max_len = max_len.max(len);
@@ -235,6 +258,16 @@ mod tests {
     fn test_param_value_binary_roundtrip() {
         let p = ParamValue::Binary(vec![1, 2, 3, 0xff]);
         let enc = p.serialize();
+        let (dec, n) = ParamValue::deserialize(&enc).unwrap();
+        assert_eq!(dec, p);
+        assert_eq!(n, enc.len());
+    }
+
+    #[test]
+    fn test_param_value_ref_cursor_out_roundtrip() {
+        let p = ParamValue::RefCursorOut;
+        let enc = p.serialize();
+        assert_eq!(enc, vec![6, 0, 0, 0, 0]);
         let (dec, n) = ParamValue::deserialize(&enc).unwrap();
         assert_eq!(dec, p);
         assert_eq!(n, enc.len());

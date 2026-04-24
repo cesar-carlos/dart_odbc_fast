@@ -78,7 +78,9 @@ pub fn enlist_connection_in_dtc(
     transaction: &ITransaction,
 ) -> Result<()> {
     let hdbc = connection_hdbc(conn);
-    let value = (transaction as *const ITransaction).cast::<c_void>().cast_mut();
+    let value = (transaction as *const ITransaction)
+        .cast::<c_void>()
+        .cast_mut();
     let r = unsafe {
         SQLSetConnectAttr(
             hdbc,
@@ -334,8 +336,8 @@ impl Drop for DtcXaBranch {
 
 #[cfg(test)]
 mod tests {
-    // The COM-side behaviour requires a live MSDTC service and is
-    // covered by the (unwritten) Phase 2 integration tests. Here we
+    // The COM-side behaviour requires a live MSDTC service; see
+    // `tests/regression/xa_dtc_test.rs` (ignored, env-gated). Here we
     // exercise the always-on probes: feature gating, type reachability,
     // and the const error wording.
 
@@ -348,7 +350,7 @@ mod tests {
     }
 
     // We can't usefully test `begin_dtc_branch()` without MSDTC.
-    // The Phase 2 integration would live under `tests/regression/` and
-    // run with `cargo test --features xa-dtc -- --ignored
-    // --test-threads=1` against a Windows host with MSDTC enabled.
+    // The Phase 2 smoke is `regression::xa_dtc_test::xa_dtc_sqlserver_lifecycle_smoke`
+    // in `tests/regression/xa_dtc_test.rs`; see the repo
+    // `doc/development/msdtc-recovery.md` section *Local runbook*.
 }

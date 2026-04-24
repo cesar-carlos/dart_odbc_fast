@@ -1,0 +1,6 @@
+[env]
+# The FFI/unit test suite shares mutable global process state (`GLOBAL_STATE`,
+# last-error buffers, pools, async slots). Running the Rust test harness with a
+# single worker makes `cargo test` stable by default without requiring each
+# invocation to remember `-- --test-threads=1`.
+RUST_TEST_THREADS = "1"

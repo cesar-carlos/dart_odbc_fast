@@ -1,14 +1,37 @@
 # Columnar protocol v2 — design sketch
 
-> **Status:** **Emitter/parser not in production** — the row-major
-> `binary_protocol.dart` (v1) is still the on-the-wire return format. Anchors
-> exist: Rust `--features columnar-v2` (`odbc_engine::columnar_v2` constants;
-> Criterion `columnar_v2_placeholder` bench) and Dart `columnar_v2_flags.dart`
-> (`isLikelyColumnarV2Header`). The historical orphan Dart module was removed
-> in v3.1.0; this document remains the spec.
+> **Status (2026-04):** **Default wire format is still v1 (row-major).**
+> The Rust engine can emit **columnar v2** when the execution pipeline is built
+> with `ExecutionEngine::with_columnar` / `use_columnar: true` — see
+> `native/odbc_engine/src/engine/core/execution_engine.rs` and
+> `native/odbc_engine/src/protocol/columnar_encoder.rs` (`ColumnarEncoder`).
+> The Dart side decodes v2 in `binary_protocol.dart` (`_parseColumnarV2`):
+> **uncompressed** column blocks are fully supported. **Per-column
+> compression** (zstd/LZ4) uses the same on-disk format as
+> `columnar_encoder.rs` + `protocol/compression.rs`; the Dart path resolves
+> compressed column payloads via the native engine’s `odbc_columnar_decompress`
+> FFI (see PENDING §1.4, `doc/Features/PENDING_IMPLEMENTATIONS.md`).
+> Small anchors also live under the Cargo feature `columnar-v2` (`odbc_engine::columnar_v2` magic/version constants; `columnar_v2_placeholder` bench) and
+> `lib/.../columnar_v2_flags.dart` (`isLikelyColumnarV2Header`). The historical
+> standalone Dart “orphan” parser was removed in v3.1.0; the **layout** in
+> this file remains the canonical description.
 >
-> Revisit when a benchmark shows v1 is the bottleneck (see
-> *If this comes back* below).
+> Revisit a **default** switch to v2 when a benchmark shows v1 is the
+> bottleneck (see *If this comes back* below).
+
+## Criterion benches (local)
+
+From `native/odbc_engine` (or `-p odbc_engine` at the repo root):
+
+- **v1 row-major vs v2 columnar encoding** (with optional per-column zstd in the
+  v2 path): `cargo bench --bench columnar_v1_v2_encode`
+- **Placeholder / v2 wire constants** (smoke for the `columnar-v2` feature):
+  `cargo bench --bench columnar_v2_placeholder`
+
+Interpretation: higher throughput in the `v1` vs `v2` group is *encoder-side*
+only; end-to-end gains depend on the driver and payload. Use the same
+`CompressionType` ids (1 = zstd, 2 = lz4) as Dart
+`columnarDecompressWithNative` / PENDING §1.4.
 
 ## What it does
 
@@ -31,32 +54,33 @@ Per column then follows:
 - `u8` compressed flag; if `1`, an extra `u8` compression algorithm id
 - `u32` data size; then that many bytes of (possibly compressed) column data
 
-`ColumnarProtocolParser.parse(data)` produces a `ParsedColumnarBuffer`, and
-`decodeRows(buffer)` flips it back into the row-major shape the rest of the
-library uses, decompressing per column when needed (decompression itself was
-never wired — `_decompress` always throws `UnimplementedError`).
+Production `BinaryProtocolParser` in `lib/.../binary_protocol.dart` performs
+this decode into the same `ParsedRowBuffer` / row lists as v1. The historical
+`ColumnarProtocolParser` sketch below (§Original code) is **not** imported;
+keep it for reference only.
 
-## Why it was parked
+## Why v1 is still the default
 
-1. The row-major v1 protocol covers all current consumers comfortably.
-2. Compression on the Dart side requires a binding to a native compressor
-   (zstd/lz4) that we do not want in the default footprint.
-3. The 19-variant `OdbcType` work in v3.0 was easier to land on the row-major
-   format first; columnar v2 would need to mirror the same expansion.
-4. The Rust engine never grew an emitter for this format — no end-to-end test
-   ever ran against it.
+1. Most workloads are fine with the row-major v1 path.
+2. **Compression** is optional: engines can use columnar without compression, or
+   the Dart side decompresses through the same algorithms as
+   `native/odbc_engine/src/protocol/compression.rs` (zstd + lz4).
+3. A full 19+ `OdbcType` pass over columnar raw blobs must stay observationally
+   equivalent to `binary_protocol.dart::_convertData` for every variant you enable.
+4. **Emitting** v2 in production requires opting in in the engine; wide end-to-end
+   benchmarks against real drivers are still thin — grow them before flipping defaults.
 
-## If this comes back
+## If the default were switched to v2
 
-- Add the emitter on the Rust side first, behind a `columnar-v2` cargo
-  feature.
-- Decide on a compression set (probably zstd only) and add the Dart binding
-  via Native Assets the same way `odbc_engine.dll` is shipped.
+- Harden the emitter path in CI (opt-in: `--features` / pool tests with DSN).
+- Keep compression aligned with a single set of algorithm IDs (`enum`
+  `CompressionType` in `native/odbc_engine/src/protocol/columnar.rs`) in both
+  Rust and Dart.
 - Mirror the 19-variant `OdbcType` decode rules from
-  `binary_protocol.dart::_convertData` so the two formats stay observationally
-  equivalent at the call site.
-- Add a benchmark next to `bench_baselines/` that justifies the format
-  switch on a representative wide query.
+  `binary_protocol.dart::_convertData` for every type enabled in the columnar
+  encoder.
+- Add a benchmark (see `benches/columnar_v2_placeholder` + PENDING §1.4) on a
+  representative wide query.
 
 ---
 

@@ -42,7 +42,7 @@ or directly through the per-plugin module.
 | `TransactionAccessMode.readOnly` (Sprint 4.1) | no-op¶ | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY` | no-op¶ | no-op¶ |
 | `LockTimeout` (Sprint 4.2) | `SET LOCK_TIMEOUT <ms>` | `SET LOCAL lock_timeout = '<ms>ms'` | `SET SESSION innodb_lock_wait_timeout = <s>`# | (per-statement only) | `SET CURRENT LOCK TIMEOUT <s>`# | `PRAGMA busy_timeout = <ms>` | (statement timeout, not lock) |
 | `runInTransaction<T>` (Sprint 4.4) | universal — pure Service-layer wrapper around the matrix above; works on every engine | — | — | — | — | — | — |
-| **XA / 2PC** (Sprint 4.3) | ⚠️ scaffolding** | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` | ⚠️ scaffolding†† | ✅ same SQL grammar as MySQL | ❌ no 2PC | ❌ no 2PC |
+| **XA / 2PC** (Sprint 4.3) | ✅ MSDTC + XA branch (Windows, `--features xa-dtc`)** | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` | ⚠️ scaffolding†† | ✅ same SQL grammar as MySQL | ❌ no 2PC | ❌ no 2PC |
 
 † Oracle: only `READ COMMITTED` and `SERIALIZABLE` are valid per
 `SET TRANSACTION ISOLATION LEVEL`; the other two levels are rejected
@@ -56,14 +56,15 @@ abstraction unconditionally.
 \# MySQL/MariaDB and DB2 express waits in *seconds*; sub-second
 millisecond values **round UP to 1 second** so the caller's bound is
 never silently relaxed.
-\*\* SQL Server XA requires MSDTC enlistment via Windows COM
-(`ITransaction*` + `SQL_ATTR_ENLIST_IN_DTC`). Phase 1 scaffolding
-ships behind `--features xa-dtc`; Phase 2 wiring into the
-cross-vendor `apply_xa_*` matrix follow-ups — see
-[`PENDING_IMPLEMENTATIONS.md` §1.1](../Features/PENDING_IMPLEMENTATIONS.md).
+\*\* SQL Server XA uses MSDTC enlistment via Windows COM (`ITransaction*`
++ `SQL_ATTR_ENLIST_IN_DTC`). With `--features xa-dtc`, the engine runs
+the DTC branch and participates in the cross-vendor `apply_xa_*` matrix
+on **Windows** only; there is no Linux/MSDTC path. Optional **hardening**
+(recovery edge cases, paid Windows CI, `IResourceManager::Reenlist` tuning)
+remains in [`PENDING_IMPLEMENTATIONS.md` §1.1](Features/PENDING_IMPLEMENTATIONS.md).
 †† Optional OCI XA *shim* (`--features xa-oci`) is **not** the production
 path (Oracle uses `DBMS_XA`); the deferred OCI work is summarised in
-[`PENDING_IMPLEMENTATIONS.md` §1.2](../Features/PENDING_IMPLEMENTATIONS.md).
+[`PENDING_IMPLEMENTATIONS.md` §1.2](Features/PENDING_IMPLEMENTATIONS.md).
 
 ## OdbcType variants (v3.0 additions)
 
@@ -148,8 +149,15 @@ final stmts = features.getSessionInitSql(
   `intervalYearToMonth`, and `json` / `json_validated`); see
   `lib/infrastructure/native/protocol/param_value.dart` and
   `doc/notes/TYPE_MAPPING.md` §1.3.
-- **Directional API:** `ParamDirection`, `DirectedParam` — engine bind for
-  `OUT` / `INOUT` not yet implemented (`paramValuesFromDirected` is
-  input-only for now; see `TYPE_MAPPING` §3.1).
+- **Directional API:** `ParamDirection`, `DirectedParam` — DRT1 / `OUT1` and
+  engine bind for **scalar** `OUT` / `INOUT` (see `TYPE_MAPPING` §3.1);
+  `paramValuesFromDirected` remains input-only. **Multi-result + OUT1:** when
+  `SQLMoreResults` yields extra items, the engine emits a **MULT** envelope
+  followed by `OUT1`; `QueryResult.additionalResults` exposes the tail items
+  (`DirectedResultItem` / `DirectedRowCountItem`). **Ref-cursor** *wire* (tag
+  6, `RC1\0` trailer) is decoded into `QueryResult.refCursorResults`. **Oracle**
+  — with the active Oracle plugin, the engine materializes cursors (strip `?` +
+  `more_results`; see `TYPE_MAPPING` §3.1.1, `ref_cursor_oracle`); other drivers
+  return `ref_cursor_out_oracle_only` when `RefCursorOut` is used.
 - **Columnar v2 (results):** opt-in Rust `columnar-v2` *feature* + Dart
   `columnarV2Flags` — production results remain row-major v1.

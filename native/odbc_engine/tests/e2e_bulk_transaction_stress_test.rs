@@ -2,7 +2,9 @@
 //! (commit and rollback). Uses a dedicated table to avoid clashes with other bulk tests.
 
 mod helpers;
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{
+    get_connection_and_db_type, should_run_e2e_tests, should_run_slow_e2e_tests, DatabaseType,
+};
 use odbc_api::Connection;
 use odbc_engine::{
     engine::{IsolationLevel, OdbcConnection, OdbcEnvironment},
@@ -143,11 +145,15 @@ fn execute_sql_on_conn(
 }
 
 #[test]
-#[ignore]
+#[ignore = "Long-running transaction stress; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 #[serial]
 fn test_e2e_bulk_stress_transaction_commit() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: database not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping E2E test: database not available");
+        } else {
+            eprintln!("⚠️  Skipping slow E2E stress test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
 
@@ -239,11 +245,15 @@ fn test_e2e_bulk_stress_transaction_commit() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "Long-running transaction stress; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 #[serial]
 fn test_e2e_bulk_stress_transaction_rollback() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: database not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping E2E test: database not available");
+        } else {
+            eprintln!("⚠️  Skipping slow E2E stress test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
 

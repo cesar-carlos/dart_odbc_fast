@@ -7,6 +7,7 @@ const int _tagInteger = 2;
 const int _tagBigInt = 3;
 const int _tagDecimal = 4;
 const int _tagBinary = 5;
+const int _tagRefCursorOut = 6;
 const Endian _littleEndian = Endian.little;
 const int _defaultDecimalScale = 6;
 const int _minDateTimeYear = 1;
@@ -489,6 +490,18 @@ class ParamValueBinary extends ParamValue {
   List<int> serialize() => [_tagBinary, ..._u32Le(value.length), ...value];
 }
 
+/// Placeholder for Oracle `SYS_REFCURSOR` (and similar) `OUT` parameters on
+/// the DRT1 wire. Payload length is always zero; materialized row sets use
+/// the native `RC1\0` trailer. Engine bind is not yet available for all
+/// drivers (see `TYPE_MAPPING` §3.1.1).
+class ParamValueRefCursorOut extends ParamValue {
+  /// Creates a [ParamValueRefCursorOut] instance.
+  const ParamValueRefCursorOut();
+
+  @override
+  List<int> serialize() => [_tagRefCursorOut, ..._u32Le(0)];
+}
+
 /// Serializes a list of parameter values to binary format.
 ///
 /// The [params] list should contain [ParamValue] instances in the order
@@ -546,6 +559,13 @@ Uint8List serializeParams(List<ParamValue> params) {
       v = ParamValueDecimal(utf8.decode(payload, allowMalformed: true));
     case _tagBinary:
       v = ParamValueBinary(payload);
+    case _tagRefCursorOut:
+      if (len != 0) {
+        throw const FormatException(
+          'ParamValue::RefCursorOut expected 0 length',
+        );
+      }
+      v = const ParamValueRefCursorOut();
     default:
       throw FormatException('Unknown ParamValue tag: $tag');
   }

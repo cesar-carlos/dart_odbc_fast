@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
@@ -70,6 +71,7 @@ class ParsedQueryMessage {
   const ParsedQueryMessage({
     required this.rowBuffer,
     this.outputParamValues = const <ParamValue>[],
+    this.refCursorRowBuffers = const <ParsedRowBuffer>[],
   });
 
   /// Row set (v1 row-major or v2 columnar, decoded to the same shape as v1).
@@ -77,6 +79,11 @@ class ParsedQueryMessage {
 
   /// `OUT` / `INOUT` values from an `OUT1` trailer; empty if none.
   final List<ParamValue> outputParamValues;
+
+  /// Materialized `SYS_REFCURSOR`-style result sets from an `RC1\0` trailer
+  /// (full v1 messages); empty if none. See
+  /// `BinaryProtocolParser.refCursorFooterMagic`.
+  final List<ParsedRowBuffer> refCursorRowBuffers;
 }
 
 /// Parser for binary protocol query results.
@@ -89,7 +96,12 @@ class BinaryProtocolParser {
 
   /// Trailer magic for [ParamValue] output slots (`b"OUT1"`), from the Rust
   /// engine when the call used DRT1 `OUT` / `INOUT` parameters.
-  static const int outputFooterMagic = 0x4F555431;
+  /// LE u32 of the four on-wire bytes `O U T 1` (not `0x4F555431` = `1TUO`).
+  static const int outputFooterMagic = 0x3154554F;
+
+  /// Trailer for materialized ref-cursor result sets (`b"RC1\0"`), from
+  /// `RowBufferEncoder::append_ref_cursor_footer` in the native encoder.
+  static const int refCursorFooterMagic = 0x00314352;
 
   /// Row-major wire format (matches [native/.../encoder.rs] v1).
   static const int protocolVersionRowMajor = 1;
@@ -122,10 +134,8 @@ class BinaryProtocolParser {
 
   /// Parses a full buffer into rows/columns and optional `OUT1` outputs.
   ///
-  /// Supports v1 row-major, v2 columnar (uncompressed column blocks; zstd
-  /// inside a block is not supported on this path — use row-major or
-  /// disable compression in the engine), and an `OUT1` trailer after the
-  /// main message.
+  /// Supports v1 row-major, v2 columnar, optional `OUT1` trailer, optional
+  /// `RC1\0` ref-cursor trailer (each sub-message is a full v1 buffer).
   static ParsedQueryMessage parseWithOutputs(Uint8List data) {
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
@@ -172,17 +182,37 @@ class BinaryProtocolParser {
       throw FormatException('Unsupported protocol version: $version');
     }
 
+    var off = mainEnd;
     final outputs = <ParamValue>[];
-    if (data.length > mainEnd) {
-      _tryParseOut1Footer(
-        data: data,
-        start: mainEnd,
-        outputs: outputs,
-      );
+    off = _parseOut1IfPresent(
+      data: data,
+      start: off,
+      outputs: outputs,
+    );
+    final refCursors = <ParsedRowBuffer>[];
+    off = _parseRc1IfPresent(
+      data: data,
+      start: off,
+      out: refCursors,
+    );
+    if (off < data.length) {
+      if (data.length - off >= 4) {
+        final peek = ByteData.sublistView(
+          data,
+          off,
+          off + 4,
+        ).getUint32(0, _littleEndian);
+        if (peek == outputFooterMagic || peek == refCursorFooterMagic) {
+          throw const FormatException(
+            'Buffer too small for complete OUT1 or RC1 trailer',
+          );
+        }
+      }
     }
     return ParsedQueryMessage(
       rowBuffer: buffer,
       outputParamValues: outputs,
+      refCursorRowBuffers: refCursors,
     );
   }
 
@@ -310,27 +340,67 @@ class BinaryProtocolParser {
       }
       final isCompressed = data[off++];
 
+      final Uint8List raw;
       if (isCompressed != 0) {
-        throw const FormatException(
-          'Columnar v2: compressed column data is not supported in this parser '
-          '(use row-major, or set engine columnar without compression, or add '
-          'a decompression port)',
-        );
+        if (off + 1 + 4 > end) {
+          throw const FormatException(
+            'Columnar v2: compressed header truncated',
+          );
+        }
+        final algorithm = data[off++];
+        if (off + 4 > end) {
+          throw const FormatException(
+            'Columnar v2: compressed size truncated',
+          );
+        }
+        final compLen = ByteData.sublistView(
+          data,
+          off,
+          off + 4,
+        ).getUint32(0, _littleEndian);
+        off += 4;
+        if (off + compLen > end) {
+          throw const FormatException(
+            'Columnar v2: compressed data truncated',
+          );
+        }
+        final comp = Uint8List.sublistView(data, off, off + compLen);
+        off += compLen;
+        final decomp = columnarDecompressWithNative(comp, algorithm);
+        if (decomp == null) {
+          final haveApi = isColumnarNativeDecompressAvailable;
+          final hint = haveApi
+              ? 'odbc_columnar_decompress rejected the payload (wrong '
+                  'algorithm id, corrupt data, or size mismatch).'
+              : 'Native decompress symbols were not loaded. Build or deploy '
+                  'odbc_engine with odbc_columnar_decompress (Windows: '
+                  'odbc_engine.dll; Linux: libodbc_engine.so) — e.g. '
+                  '`cd native/odbc_engine && cargo build --release`, then '
+                  'run from package root or set PATH. Algorithm ids: '
+                  '1=zstd, 2=lz4. See doc/notes/columnar_protocol_sketch.md '
+                  'and library_loader.dart (loadOdbcLibrary).';
+          final head = 'Columnar v2: native decompress failed '
+              '(algorithm=$algorithm, compBytes=$compLen, '
+              'odbcDecompressFfi=$haveApi). ';
+          throw FormatException('$head$hint');
+        }
+        raw = decomp;
+      } else {
+        if (off + 4 > end) {
+          throw const FormatException('Columnar v2: raw size truncated');
+        }
+        final rawLen = ByteData.sublistView(
+          data,
+          off,
+          off + 4,
+        ).getUint32(0, _littleEndian);
+        off += 4;
+        if (off + rawLen > end) {
+          throw const FormatException('Columnar v2: raw data truncated');
+        }
+        raw = Uint8List.sublistView(data, off, off + rawLen);
+        off += rawLen;
       }
-      if (off + 4 > end) {
-        throw const FormatException('Columnar v2: raw size truncated');
-      }
-      final rawLen = ByteData.sublistView(
-        data,
-        off,
-        off + 4,
-      ).getUint32(0, _littleEndian);
-      off += 4;
-      if (off + rawLen > end) {
-        throw const FormatException('Columnar v2: raw data truncated');
-      }
-      final raw = Uint8List.sublistView(data, off, off + rawLen);
-      off += rawLen;
       byCol.add(
         _parseColumnarRaw(
           odbcType: odbcType,
@@ -431,13 +501,14 @@ class BinaryProtocolParser {
     return out;
   }
 
-  static void _tryParseOut1Footer({
+  /// Returns the next offset (unchanged if no `OUT1` at [start]).
+  static int _parseOut1IfPresent({
     required Uint8List data,
     required int start,
     required List<ParamValue> outputs,
   }) {
     if (data.length < start + 8) {
-      return;
+      return start;
     }
     final m = ByteData.sublistView(
       data,
@@ -445,7 +516,7 @@ class BinaryProtocolParser {
       start + 4,
     ).getUint32(0, _littleEndian);
     if (m != outputFooterMagic) {
-      return;
+      return start;
     }
     var p = start + 4;
     final n = ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
@@ -455,6 +526,45 @@ class BinaryProtocolParser {
       outputs.add(d.value);
       p += d.consumed;
     }
+    return p;
+  }
+
+  /// Returns the next offset (unchanged if no `RC1\0` at [start]).
+  static int _parseRc1IfPresent({
+    required Uint8List data,
+    required int start,
+    required List<ParsedRowBuffer> out,
+  }) {
+    if (data.length < start + 8) {
+      return start;
+    }
+    final m = ByteData.sublistView(
+      data,
+      start,
+      start + 4,
+    ).getUint32(0, _littleEndian);
+    if (m != refCursorFooterMagic) {
+      return start;
+    }
+    var p = start + 4;
+    final nCursors =
+        ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
+    p += 4;
+    for (var i = 0; i < nCursors; i++) {
+      if (p + 4 > data.length) {
+        throw const FormatException('RC1: truncated length prefix');
+      }
+      final bl =
+          ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
+      p += 4;
+      if (p + bl > data.length) {
+        throw const FormatException('RC1: truncated embedded message');
+      }
+      final inner = Uint8List.sublistView(data, p, p + bl);
+      p += bl;
+      out.add(_parseRowMajorV1(inner));
+    }
+    return p;
   }
 
   /// Converts binary data to a Dart value based on the protocol

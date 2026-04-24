@@ -293,65 +293,157 @@ impl ExecutionEngine {
         self.logger.log_query(Level::Info, sql, &metadata);
 
         let result: Result<Vec<u8>> = (|| {
+            use super::ref_cursor_oracle::bound_has_ref_cursor;
+
+            if bound_has_ref_cursor(bound) {
+                if !self.is_oracle_plugin_active() {
+                    return Err(OdbcError::ValidationError(
+                        "DIRECTED_PARAM|ref_cursor_out_oracle_only: ParamValue::RefCursorOut is \
+                         only supported with the Oracle ODBC driver; see \
+                         doc/notes/REF_CURSOR_ORACLE_ROADMAP.md"
+                            .to_string(),
+                    ));
+                }
+                return self.execute_oracle_ref_cursor_path(conn, sql, bound, timeout_sec);
+            }
+
             let mut odbc_params = bound_to_slots(bound)?;
-            let cursor = conn
-                .execute(sql, &mut odbc_params, timeout_sec)
-                .map_err(OdbcError::from)?;
+            // SQL Server (and other drivers) may only populate `OUTPUT` bind buffers after every
+            // sp batch result set has been advanced with `SQLMoreResults`, mirroring
+            // `execute_multi_result_inner` and `execute_oracle_ref_cursor_path` (which both call
+            // `more_results` before reading `out_vals`). We also:
+            // - Use a connection `Preallocated` + `Preallocated::execute` (same as
+            //   `Connection::execute` / `SQLExecDirect`) for T-SQL/ODBC `{CALL ?}`; `SQLPrepare` on
+            //   some drivers mishandles the ODBC procedure escape or multi-statement batches.
+            // - Use `Cursor::into_stmt()` when dropping the first cursor so we do *not* call
+            //   `SQLCloseCursor` in a way that discards the pending `SQLMoreResults` chain.
+            let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
+            if let Some(s) = timeout_sec {
+                prealloc.set_query_timeout_sec(s).map_err(OdbcError::from)?;
+            }
             let mut row_buffer = RowBuffer::new();
+            // Keep the cursor binding adjacent to the `if let` that consumes it. Any `let` in
+            // between (e.g. `row_buffer`) can extend the borrow in NLL to the end of the outer
+            // closure, blocking `row_count` / `more_results` on the same `Preallocated` handle.
+            let had_initial_cursor = {
+                let initial_cursor = prealloc
+                    .execute(sql, &mut odbc_params)
+                    .map_err(OdbcError::from)?;
+                if let Some(mut cursor) = initial_cursor {
+                    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+                    let cols_u16: u16 = cols_i16.try_into().map_err(|_| {
+                        OdbcError::InternalError("Invalid column count".to_string())
+                    })?;
+                    let cols_usize: usize = cols_u16.into();
 
-            if let Some(mut cursor) = cursor {
-                let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-                let cols_u16: u16 = cols_i16
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-                let cols_usize: usize = cols_u16.into();
+                    let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
 
-                let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-                for col_idx in 1..=cols_u16 {
-                    let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                    let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                    let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                    let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                        if let Some(ref plugin) = *active {
-                            plugin.map_type(sql_type_code)
+                    for col_idx in 1..=cols_u16 {
+                        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+                        let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+                        let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+                        let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                            if let Some(ref plugin) = *active {
+                                plugin.map_type(sql_type_code)
+                            } else {
+                                OdbcType::from_odbc_sql_type(sql_type_code)
+                            }
                         } else {
                             OdbcType::from_odbc_sql_type(sql_type_code)
-                        }
-                    } else {
-                        OdbcType::from_odbc_sql_type(sql_type_code)
-                    };
-                    row_buffer.add_column(col_name.to_string(), odbc_type);
-                    column_types.push(odbc_type);
-                }
-
-                while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                    let mut row_data = Vec::new();
-
-                    for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                        let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                            OdbcError::InternalError("Invalid column number".to_string())
-                        })?;
-
-                        let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                        row_data.push(cell_data);
+                        };
+                        row_buffer.add_column(col_name.to_string(), odbc_type);
+                        column_types.push(odbc_type);
                     }
 
-                    row_buffer.add_row(row_data);
+                    while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+                        let mut row_data = Vec::new();
+
+                        for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                            let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
+                                OdbcError::InternalError("Invalid column number".to_string())
+                            })?;
+
+                            let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+
+                            row_data.push(cell_data);
+                        }
+
+                        row_buffer.add_row(row_data);
+                    }
+                    let _stmt_ref = cursor.into_stmt();
+                    true
+                } else {
+                    false
                 }
-            }
+            };
+
+            // When the execute returned no cursor, capture the affected-row count so
+            // we can materialise it as a `RowCount` item when the drain is non-empty.
+            // Previously the value was discarded (`let _rc = ...`), which caused the
+            // multi-result path to emit a spurious empty `ResultSet` as the first MULT
+            // item instead of the real row-count.
+            let initial_rc: Option<i64> = if !had_initial_cursor {
+                Some(
+                    prealloc
+                        .row_count()
+                        .map_err(OdbcError::from)?
+                        .map(|n| n as i64)
+                        .unwrap_or(0),
+                )
+            } else {
+                None
+            };
+
+            // Drain remaining batches so drivers that defer `OUTPUT` values until
+            // `SQLMoreResults` is exhausted (notably SQL Server) expose bound OUT buffers.
+            //
+            // When the drain is empty (typical single-RS procedure) the wire format is
+            // unchanged: `[single ODBC/columnar payload][optional OUT1]`.
+            //
+            // When additional result sets or row-counts are present (e.g. a stored
+            // procedure that executes DML *and* returns SELECT result sets before its
+            // `OUTPUT` parameters are populated), we emit a `MULT` envelope containing
+            // every item (first + drain) followed by the `OUT1` trailer. The Dart
+            // `_parseBufferToQueryResult` detects the leading `MULT` magic and routes
+            // accordingly so existing callers that only use the first result set keep
+            // working without change.
+            let mut drain: Vec<MultiResultItem> = Vec::new();
+            self.drive_more_results(&mut prealloc, &mut drain)?;
 
             coalesce_for_json_rows(&mut row_buffer);
 
             let out_vals = odbc_params.output_footer_values();
-            let body = if self.use_columnar {
-                let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-                ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+
+            if drain.is_empty() {
+                // Fast path: single result set — preserve the original wire format.
+                let body = if self.use_columnar {
+                    let columnar_buffer = row_buffer_to_columnar(&row_buffer);
+                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+                } else {
+                    RowBufferEncoder::encode(&row_buffer)
+                };
+                Ok(RowBufferEncoder::append_output_footer(body, &out_vals))
             } else {
-                RowBufferEncoder::encode(&row_buffer)
-            };
-            Ok(RowBufferEncoder::append_output_footer(body, &out_vals))
+                // Multi-result path: wrap every item in a MULT envelope, then append OUT1.
+                // The first logical item is a RowCount when the initial execute returned no
+                // cursor, or a ResultSet when it did.
+                let first_item = if let Some(rc) = initial_rc {
+                    MultiResultItem::RowCount(rc)
+                } else {
+                    let first_body = if self.use_columnar {
+                        let columnar_buffer = row_buffer_to_columnar(&row_buffer);
+                        ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+                    } else {
+                        RowBufferEncoder::encode(&row_buffer)
+                    };
+                    MultiResultItem::ResultSet(first_body)
+                };
+                let mut all_items = Vec::with_capacity(1 + drain.len());
+                all_items.push(first_item);
+                all_items.extend(drain);
+                let multi_body = encode_multi(&all_items);
+                Ok(RowBufferEncoder::append_output_footer(multi_body, &out_vals))
+            }
         })();
 
         self.metrics.record_query(start_time.elapsed());
@@ -719,6 +811,170 @@ impl ExecutionEngine {
                 all_items.push(MultiResultItem::RowCount(rc as i64));
             }
         }
+    }
+
+    fn is_oracle_plugin_active(&self) -> bool {
+        self.active_plugin
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|p| p.name() == "oracle"))
+            .unwrap_or(false)
+    }
+
+    /// Oracle ODBC: ref-cursor `?` are stripped, remaining binds executed;
+    /// each `SYS_REFCURSOR` is a separate result set (first from `execute`,
+    /// rest from `SQLMoreResults`). The primary row payload is left empty; all
+    /// cursors are encoded as v1 and appended in `RC1\0` order.
+    fn execute_oracle_ref_cursor_path(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        bound: &[BoundParam],
+        timeout_sec: Option<usize>,
+    ) -> Result<Vec<u8>> {
+        use super::output_aware_params::bound_to_slots;
+        use super::ref_cursor_oracle::{
+            filter_non_ref_cursor_params, strip_ref_cursor_placeholders,
+        };
+
+        let ref_count = bound
+            .iter()
+            .filter(|b| matches!(b.value, ParamValue::RefCursorOut))
+            .count();
+        let stripped = strip_ref_cursor_placeholders(sql, bound)?;
+        let filtered = filter_non_ref_cursor_params(bound);
+        let mut odbc_params = bound_to_slots(&filtered)?;
+
+        let mut prep = conn.prepare(&stripped).map_err(OdbcError::from)?;
+        if let Some(s) = timeout_sec {
+            prep.set_query_timeout_sec(s).map_err(OdbcError::from)?;
+        }
+        let mut ref_blobs: Vec<Vec<u8>> = Vec::new();
+        {
+            // Consume the initial cursor (if any) before any other use of
+            // `prep`, because `Option<CursorImpl<StatementRef>>` borrows
+            // the underlying statement.
+            let first = prep.execute(&mut odbc_params).map_err(OdbcError::from)?;
+            if let Some(mut c) = first {
+                ref_blobs.push(self.encode_cursor_v1(&mut c)?);
+                let _ = c.into_stmt();
+            }
+        }
+        self.drive_more_ref_cursor_blobs(&mut prep, &mut ref_blobs)?;
+
+        if ref_blobs.len() != ref_count {
+            return Err(OdbcError::ValidationError(format!(
+                "DIRECTED_PARAM|ref_cursor_oracle_resultset_count: expected {ref_count} \
+                 SYS_REFCURSOR result set(s) from the Oracle driver, found {}",
+                ref_blobs.len()
+            )));
+        }
+
+        let out_vals = odbc_params.output_footer_values();
+        let mut main_buffer = RowBuffer::new();
+        coalesce_for_json_rows(&mut main_buffer);
+        let main_body = if self.use_columnar {
+            let columnar_buffer = row_buffer_to_columnar(&main_buffer);
+            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
+        } else {
+            RowBufferEncoder::encode(&main_buffer)
+        };
+        let body = RowBufferEncoder::append_output_footer(main_body, &out_vals);
+        Ok(RowBufferEncoder::append_ref_cursor_footer(body, &ref_blobs))
+    }
+
+    /// Like [`Self::drive_more_results`], but only collects cursor result
+    /// sets, encoded as v1 (for the `RC1\0` trailer), skipping row-count-only
+    /// steps while still advancing.
+    fn drive_more_ref_cursor_blobs<S>(&self, stmt: &mut S, out: &mut Vec<Vec<u8>>) -> Result<()>
+    where
+        S: AsStatementRef,
+    {
+        loop {
+            let advance = unsafe { stmt.as_stmt_ref().more_results() };
+            match advance {
+                SqlResult::NoData => return Ok(()),
+                SqlResult::Success(()) | SqlResult::SuccessWithInfo(()) => {}
+                SqlResult::Error { .. } => {
+                    let err = advance
+                        .into_result(&stmt.as_stmt_ref())
+                        .err()
+                        .map(OdbcError::from)
+                        .unwrap_or_else(|| {
+                            OdbcError::OdbcApi("SQLMoreResults failed (ref cursor)".to_string())
+                        });
+                    if is_no_more_results(&err) {
+                        return Ok(());
+                    }
+                    return Err(err);
+                }
+                SqlResult::NeedData => {
+                    return Err(OdbcError::OdbcApi(
+                        "Unexpected SQLMoreResults state: NeedData (ref cursor)".to_string(),
+                    ));
+                }
+                SqlResult::StillExecuting => {
+                    return Err(OdbcError::OdbcApi(
+                        "Unexpected SQLMoreResults state: StillExecuting (ref cursor)".to_string(),
+                    ));
+                }
+            }
+            let cols = stmt
+                .as_stmt_ref()
+                .num_result_cols()
+                .into_result(&stmt.as_stmt_ref())
+                .map_err(OdbcError::from)?;
+            if cols > 0 {
+                let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
+                out.push(self.encode_cursor_v1(&mut cursor)?);
+                let _ = cursor.into_stmt();
+            } else {
+                let _ = stmt
+                    .as_stmt_ref()
+                    .row_count()
+                    .into_result(&stmt.as_stmt_ref())
+                    .map_err(OdbcError::from)?;
+            }
+        }
+    }
+
+    /// Same as [`Self::encode_cursor`], but always row-major v1 (required
+    /// for `RC1\0` embedded messages on the wire).
+    fn encode_cursor_v1<C: Cursor + ResultSetMetadata>(&self, cursor: &mut C) -> Result<Vec<u8>> {
+        let mut row_buffer = RowBuffer::new();
+        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+        let cols_u16: u16 = cols_i16
+            .try_into()
+            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_u16 as usize);
+        for col_idx in 1..=cols_u16 {
+            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+            let odbc_type = if let Ok(active) = self.active_plugin.lock() {
+                if let Some(ref plugin) = *active {
+                    plugin.map_type(sql_type_code)
+                } else {
+                    OdbcType::from_odbc_sql_type(sql_type_code)
+                }
+            } else {
+                OdbcType::from_odbc_sql_type(sql_type_code)
+            };
+            row_buffer.add_column(col_name.to_string(), odbc_type);
+            column_types.push(odbc_type);
+        }
+        while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
+            let mut row_data = Vec::new();
+            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                let col_number: u16 = (col_idx + 1)
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
+                row_data.push(read_cell_bytes(&mut row, col_number, odbc_type)?);
+            }
+            row_buffer.add_row(row_data);
+        }
+        coalesce_for_json_rows(&mut row_buffer);
+        Ok(RowBufferEncoder::encode(&row_buffer))
     }
 
     /// Read every row from `cursor`, encode it as a row-buffer (or columnar

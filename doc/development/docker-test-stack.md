@@ -46,6 +46,14 @@ ODBC drivers **not** baked in by default (or optional at build time):
 
 See `Dockerfile.test-runner` for Oracle opt-in and Db2/IBM URL pinning.
 
+## E2E env, slow DSN, and pool timeouts
+
+Rust E2E tests in `native/odbc_engine/tests` often gate on
+`ENABLE_E2E_TESTS=1` (and a valid DSN). `e2e_pool_test` uses
+`ConnectionPool::new_with_options` with a **5s** `connection_timeout` so a
+bad or slow DSN fails fast instead of R2D2’s default 30s acquire, which
+looked like a hang. Keep this in mind when adding new pool E2E cases.
+
 ## Quick start
 
 ### 1. Bring up the DB stack
@@ -168,12 +176,39 @@ pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_
   cannot exercise the Phase 2 wiring — those tests must run on a
   Windows host with `sc query MSDTC` reporting `RUNNING`. Docker only
   helps to provide the SQL Server endpoint (the `mssql` service above
-  works with MSDTC enrolment from a Windows client).
+  works with MSDTC enrolment from a Windows client). Step-by-step `cargo
+  test`, `ENABLE_E2E_TESTS`, and DSN variables are in
+  [`msdtc-recovery.md`](msdtc-recovery.md) (section *Local runbook*).
 - **OCI XA** needs Oracle Instant Client + the OCI XA shared library.
   Easiest path inside Docker: extend `Dockerfile.test-runner` with a
   `COPY instantclient_*.zip /opt/` step (the Oracle Free download EULA
   forbids redistribution so the file has to come from your local
   download). Then set the `XA_OPEN` entry on the `oracle` container.
+
+## Optional: *golden* columnar, compressed v2, PostgreSQL `OUT`
+
+- **Columnar *zstd* *golden* (Dart):** `test/fixtures/columnar_v2_int32_zstd.golden` —
+  the Dart test *parses* it only when `odbc_columnar_decompress` resolves from a
+  local `odbc_engine` build (or Native Assets on supported platforms). Linux CI
+  without a built `.so` still relies on the Rust *sync* test in
+  `native/odbc_engine/tests/columnar_v2_zstd_golden_file.rs`.
+- **PostgreSQL directed `OUT` (Dart E2E):** set `E2E_PG_DIRECTED_OUT=1` and a
+  suitable `ODBC_TEST_DSN` (see `test/e2e/postgres_directed_out_test.dart`),
+  then run `dart test` **on a host** with Dart and a PostgreSQL ODBC driver.
+  The `test/e2e` file is *not* executed by
+  `scripts/docker_e2e` / `docker_e2e.sh` (those only run `cargo test` inside
+  the Linux `test-runner` image, which has no Dart SDK in the current
+  Dockerfile). The Docker DB stack is still a convenient `postgres` target for
+  a host-side DSN if you point `Server` at `localhost:5432`. Not part of the
+  default `ubuntu-latest` matrix because drivers and DSNs differ.
+- **SQL Server directed `OUT` (Dart E2E, DRT1):** set `E2E_MSSQL_DIRECTED_OUT=1`
+  and a SQL Server `ODBC_TEST_DSN` (see `test/e2e/mssql_directed_out_test.dart`);
+  run on a **Windows** host with a SQL Server ODBC driver (e.g. *ODBC Driver 18*
+  for SQL Server) — same *host* model as the PG `OUT` test above, not
+  `scripts/docker_e2e` (Rust-only in `test-runner`). The procedure uses
+  one `int OUTPUT` and `{CALL ... ?}`; `SET NOCOUNT ON` is inside the proc to
+  keep result-set behaviour predictable. A host DSN for the `mssql` service is
+  the usual `Server=localhost,1433;…` from the `docker_db_up` cheatsheet.
 
 ## CI / GitHub Actions
 
@@ -192,6 +227,7 @@ typically lives behind a manual workflow trigger.
 | `[unixODBC][Driver Manager]Can't open lib …`                   | The driver alias in the connection string does not match `odbcinst.ini`. Check `odbcinst -q -d` inside the container. |
 | Test passes from container but fails from host                 | The host has a different ODBC driver version. Switch to the runner-image path or upgrade your host driver. |
 | `docker_db_up` exits with `Timed out waiting for: oracle`      | Increase the timeout: `pwsh scripts/docker_db_up.ps1 -TimeoutSeconds 600`.                |
+| `test-runner` image build fails (Db2, `libdb2o.so.1` missing) | The `Dockerfile.test-runner` `COPY`/IBM client layer may need a valid tarball/URL, or use an image you already built; the Dart E2E above do **not** need this image. |
 
 ## Related files
 

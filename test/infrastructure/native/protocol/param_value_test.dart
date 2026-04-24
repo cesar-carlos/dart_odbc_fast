@@ -1418,6 +1418,14 @@ void main() {
       expect(buf[second], equals(2));
     });
 
+    test('ParamValueRefCursorOut round-trips (tag 6, zero len)', () {
+      const p = ParamValueRefCursorOut();
+      final a = p.serialize();
+      final r = deserializeParamValue(Uint8List.fromList(a));
+      expect(r.value, isA<ParamValueRefCursorOut>());
+      expect(r.consumed, a.length);
+    });
+
     test('deserializeParamValue round-trips int32 and list', () {
       final a = const ParamValueInt32(-3).serialize();
       final p = deserializeParamValue(Uint8List.fromList(a));

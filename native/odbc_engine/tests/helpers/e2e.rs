@@ -188,6 +188,23 @@ pub fn sql_drop_table_if_exists(table_name: &str, db_type: DatabaseType) -> Stri
     }
 }
 
+fn parse_env_bool(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "y" => Some(true),
+        "0" | "false" | "no" | "n" => Some(false),
+        _ => None,
+    }
+}
+
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key).ok().as_deref().and_then(parse_env_bool) == Some(true)
+}
+
 /// Checks whether E2E tests should run.
 /// Runs only when ENABLE_E2E_TESTS is explicitly enabled.
 #[allow(dead_code)] // Test helper API; used by e2e tests when ENABLE_E2E_TESTS is set
@@ -195,28 +212,23 @@ pub fn should_run_e2e_tests() -> bool {
     // Load variables from .env.
     load_dotenv();
 
-    fn parse_env_bool(raw: &str) -> Option<bool> {
-        let normalized = raw.trim().to_lowercase();
-        if normalized.is_empty() {
-            return None;
-        }
-
-        match normalized.as_str() {
-            "1" | "true" | "yes" | "y" => Some(true),
-            "0" | "false" | "no" | "n" => Some(false),
-            _ => None,
-        }
-    }
-
-    let enabled = std::env::var("ENABLE_E2E_TESTS")
-        .ok()
-        .as_deref()
-        .and_then(parse_env_bool)
-        == Some(true);
-
-    if !enabled {
+    if !env_flag_enabled("ENABLE_E2E_TESTS") {
         return false;
     }
 
     can_connect_to_sqlserver()
+}
+
+/// Slow / stress / benchmark E2E tests require an extra explicit opt-in on top
+/// of the normal E2E gate so `--include-ignored` does not unexpectedly run
+/// multi-minute workloads during routine coverage or smoke runs.
+#[allow(dead_code)]
+pub fn should_run_slow_e2e_tests() -> bool {
+    load_dotenv();
+
+    if !should_run_e2e_tests() {
+        return false;
+    }
+
+    env_flag_enabled("ENABLE_SLOW_E2E_TESTS")
 }

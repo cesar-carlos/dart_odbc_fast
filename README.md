@@ -86,16 +86,26 @@ Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
   [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
   27-kind matrix with validation and wire-encoding details.
 
-### Directed parameters, `OUT1`, and columnar v2 (MVP)
+### Directed parameters, `OUT1`, `MULT`, and columnar v2
 
 - **DRT1** request buffer + **`IOdbcService.executeQueryDirectedParams`**
-  for mixed `IN` / `OUT` / `INOUT` (engine MVP: integer scalars on SQL
-  Server; see [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1). Results can
-  carry **`QueryResult.outputParamValues`** when the engine appends an `OUT1`
-  footer. Legacy `executeQueryParams` / v0 param wire is unchanged.
+  for mixed `IN` / `OUT` / `INOUT` (see
+  [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1). Results can carry
+  **`QueryResult.outputParamValues`** when the engine appends an `OUT1`
+  footer. When `SQLMoreResults` yields additional items, the engine emits a
+  **`MULT`** envelope followed by `OUT1`; the first result set still maps to
+  `QueryResult.columns` / `rows` / `rowCount`, and the tail items surface in
+  **`QueryResult.additionalResults`** (`DirectedResultItem` /
+  `DirectedRowCountItem`). Legacy `executeQueryParams` / v0 param wire is
+  unchanged.
+- **Oracle `REF CURSOR` path:** `ParamValueRefCursorOut` uses the Oracle
+  plugin path (`strip ?` + `SQLMoreResults`) and materializes cursor result
+  sets into **`QueryResult.refCursorResults`** via the `RC1\0` trailer.
 - **Columnar v2 results:** the engine can emit a v2 columnar payload; the
-  Dart `BinaryProtocolParser` decodes **uncompressed** column blocks (zstd/LZ4
-  per block is not decoded yet). [columnar sketch](doc/notes/columnar_protocol_sketch.md) remains the long-form spec.
+  Dart `BinaryProtocolParser` decodes both **uncompressed** and
+  **compressed** column blocks (zstd / LZ4) through the native
+  `odbc_columnar_decompress` FFI path. [columnar sketch](doc/notes/columnar_protocol_sketch.md)
+  remains the long-form spec.
 
   Example: [`example/output_param_directions_demo.dart`](example/output_param_directions_demo.dart).
 
@@ -180,9 +190,11 @@ the typed variant. Unknown discriminants degrade to `OdbcType.varchar`
 for forward compatibility.
 
 **Planned (not yet implemented)**:
-- Explicit SQL typing API (`SqlDataType`)
-- Output parameters (SQL Server, Oracle) — Oracle uses `RETURNING ... INTO`
-  via `OdbcDriverFeatures.appendReturningClause` today
+- Full `SqlDataType` × direction certification matrix beyond the current
+  `ParamValue` / DRT1 surface (see
+  [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md))
+- TVP / broadening of driver-specific output capability coverage, if product
+  priorities change
 
 See [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for detailed
 reference and [`doc/CAPABILITIES_v3.md`](doc/CAPABILITIES_v3.md) for the

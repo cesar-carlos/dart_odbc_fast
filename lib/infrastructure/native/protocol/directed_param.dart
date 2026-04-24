@@ -24,6 +24,60 @@ class DirectedParam {
 /// Little-endian DRT1 magic (Rust: `odbc_engine` crate `bound_param` module).
 const List<int> drt1MagicBytes = [0x44, 0x52, 0x54, 0x31];
 
+/// Stable error prefix, aligned with `output_aware_params` / native
+/// `ValidationError` (TYPE_MAPPING §3.1).
+const String kDirectedParamErrorPrefix = 'DIRECTED_PARAM|';
+
+/// Client-side checks for DRT1 `OUT` / `INOUT` that the native engine will
+/// reject; fails fast with the same *slugs* as `output_aware_params.rs`.
+void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
+  if (direction == ParamDirection.input) {
+    return;
+  }
+  if (pv is ParamValueRefCursorOut) {
+    if (direction != ParamDirection.output) {
+      throw ArgumentError.value(
+        pv,
+        'value',
+        '${kDirectedParamErrorPrefix}ref_cursor_out_invalid_direction: '
+        'ParamValueRefCursorOut is only valid for ParamDirection.output',
+      );
+    }
+    return;
+  }
+  if (pv is ParamValueBinary) {
+    throw ArgumentError.value(
+      pv,
+      'value',
+      '${kDirectedParamErrorPrefix}binary_out_inout_not_implemented: '
+      'OUT/INOUT for binary columns is not implemented; use Integer, '
+      'BigInt, String, or Decimal (see TYPE_MAPPING §3.1)',
+    );
+  }
+  if (pv is ParamValueNull) {
+    if (direction == ParamDirection.inOut) {
+      throw ArgumentError.value(
+        pv,
+        'value',
+        '${kDirectedParamErrorPrefix}inout_null: INOUT with ParamValueNull '
+        'is not supported; pass Integer, BigInt, String, or non-empty '
+        'Decimal',
+      );
+    }
+    return;
+  }
+  if (pv is ParamValueDecimal) {
+    if (pv.value.isEmpty) {
+      throw ArgumentError.value(
+        pv,
+        'value',
+        '${kDirectedParamErrorPrefix}decimal_inout_out_requires_non_empty: '
+        'use a non-empty ParamValue::Decimal for OUT/INOUT or use String',
+      );
+    }
+  }
+}
+
 List<int> _u32Le(int v) {
   final buffer = Uint8List(4);
   ByteData.view(buffer.buffer).setUint32(0, v, Endian.little);
@@ -44,6 +98,7 @@ Uint8List serializeDirectedParams(List<DirectedParam> params) {
     final pv = d.type == null
         ? toParamValue(d.value)
         : toParamValue(typedParam(d.type!, d.value));
+    validateDirectedOutInOut(d.direction, pv);
     out.add(pv.serialize());
   }
   return out.toBytes();

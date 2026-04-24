@@ -111,15 +111,8 @@ impl QueryPipeline {
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         self.parse_sql(sql)?;
-        self
-            .execution_engine
-            .execute_query_with_bound_params_and_timeout(
-                conn,
-                sql,
-                bound,
-                timeout_sec,
-                fetch_size,
-            )
+        self.execution_engine
+            .execute_query_with_bound_params_and_timeout(conn, sql, bound, timeout_sec, fetch_size)
     }
 
     pub fn execute_multi(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {

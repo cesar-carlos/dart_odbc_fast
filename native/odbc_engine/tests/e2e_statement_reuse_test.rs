@@ -11,7 +11,7 @@ use odbc_engine::engine::{execute_query_with_cached_connection, OdbcConnection, 
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
@@ -72,10 +72,14 @@ fn test_statement_reuse_infrastructure() {
 /// When LRU cache is implemented, feature-on build should show ~10%+ improvement.
 /// Currently both builds perform similarly (passthrough mode).
 #[test]
-#[ignore = "E2E benchmark; run with --ignored when ENABLE_E2E_TESTS=1"]
+#[ignore = "E2E benchmark; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_statement_reuse_repetitive_benchmark() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E benchmark: SQL Server not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping E2E benchmark: SQL Server not available");
+        } else {
+            eprintln!("⚠️  Skipping slow E2E benchmark: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
 

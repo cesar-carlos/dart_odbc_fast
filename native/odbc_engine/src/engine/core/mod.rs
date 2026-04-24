@@ -4,14 +4,15 @@ pub mod bulk_copy;
 pub mod connection_manager;
 pub mod disk_spill;
 pub mod driver_capabilities;
-mod output_aware_params;
 pub mod execution_engine;
 pub mod memory_engine;
 pub mod metadata_cache;
+mod output_aware_params;
 pub mod parallel_insert;
 pub mod pipeline;
 pub mod prepared_cache;
 pub mod protocol_engine;
+mod ref_cursor_oracle;
 pub mod security_layer;
 #[cfg(all(feature = "sqlserver-bcp", windows))]
 pub mod sqlserver_bcp;

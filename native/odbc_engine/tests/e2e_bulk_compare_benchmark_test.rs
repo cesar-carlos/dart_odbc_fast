@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod helpers;
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests};
+use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, should_run_slow_e2e_tests};
 
 fn decode_integer(data: &[u8]) -> i32 {
     if data.len() >= 4 {
@@ -125,11 +125,15 @@ fn env_rows(key: &str, default_value: usize) -> usize {
 }
 
 #[test]
-#[ignore]
+#[ignore = "Bulk benchmark; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 #[serial]
 fn test_e2e_bulk_compare_array_vs_parallel() {
-    if !should_run_e2e_tests() {
-        eprintln!("Skipping benchmark: E2E database not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("Skipping benchmark: E2E database not available");
+        } else {
+            eprintln!("Skipping slow benchmark: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
 

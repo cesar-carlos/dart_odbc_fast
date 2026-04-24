@@ -153,5 +153,9 @@ name = "columnar_v2_placeholder"
 harness = false
 required-features = ["columnar-v2"]
 
+[[bench]]
+name = "columnar_v1_v2_encode"
+harness = false
+
 [build-dependencies]
 cbindgen = "0.29.2"

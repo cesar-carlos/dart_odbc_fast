@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 /// When the DSN is wrong or the server is cold, r2d2's default 30s acquire
@@ -388,11 +388,10 @@ fn test_pool_concurrent_access() {
 
     println!("Testing pool concurrent access...");
 
-    let pool =
-        Arc::new(
-            ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
-                .expect("Failed to create connection pool"),
-        );
+    let pool = Arc::new(
+        ConnectionPool::new_with_options(&conn_str, 5, e2e_pool_options())
+            .expect("Failed to create connection pool"),
+    );
 
     let mut handles = Vec::new();
 
@@ -496,10 +495,14 @@ fn test_pool_eviction_max_lifetime() {
 /// Stress test: many concurrent checkout/release cycles (Fase 5).
 /// Validates no connection leak under load.
 #[test]
-#[ignore = "Long-running stress; run with --ignored when ENABLE_E2E_TESTS=1"]
+#[ignore = "Long-running stress; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_checkout_release() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
+        } else {
+            eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -600,9 +603,14 @@ fn test_pool_transaction_reset_state() {
 /// Stress test: high contention with small pool size.
 /// Validates that many threads competing for few connections complete without deadlock.
 #[test]
+#[ignore = "Stress test; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_high_contention() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        } else {
+            eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -721,9 +729,14 @@ fn test_pool_timeout_when_exhausted() {
 /// Stress test: rapid checkout/release cycles without holding connections.
 /// Validates pool stability under rapid churn.
 #[test]
+#[ignore = "Stress test; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_rapid_churn() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+    if !should_run_slow_e2e_tests() {
+        if !should_run_e2e_tests() {
+            eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        } else {
+            eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");
+        }
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");

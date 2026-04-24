@@ -2,6 +2,7 @@
 // This is expected and safe for extern "C" FFI boundaries
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+pub mod columnar_decompress;
 pub mod guard;
 
 use crate::async_bridge;
@@ -25,12 +26,11 @@ use crate::handles::SharedHandleManager;
 use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
-use crate::protocol::{
-    bound_param::ParamList,
-    bulk_insert::is_null, deserialize_param_buffer, parse_bulk_insert_payload,
-    BulkColumnData, BulkInsertPayload, ParamValue,
-};
 use crate::protocol::bound_param::ParamDirection;
+use crate::protocol::{
+    bound_param::ParamList, bulk_insert::is_null, deserialize_param_buffer,
+    parse_bulk_insert_payload, BulkColumnData, BulkInsertPayload, ParamValue,
+};
 use crate::security::AuditLogger;
 use log::LevelFilter;
 use rayon::prelude::*;
