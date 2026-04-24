@@ -846,17 +846,33 @@ dart_odbc_fast/
 
 ## Documentation
 
-- [doc/BUILD.md](doc/BUILD.md)
+### Reference (current)
+
+- [doc/API_SURFACE.md](doc/API_SURFACE.md) — complete FFI surface (92 functions), public Rust API, Dart bindings
+- [doc/CAPABILITIES_v3.md](doc/CAPABILITIES_v3.md) — driver capability traits × engine matrix
+- [doc/BUILD.md](doc/BUILD.md) — build, library resolution, scripts
+- [doc/TESTING.md](doc/TESTING.md) — test policy, CI scope, environment variables
+- [doc/PERFORMANCE.md](doc/PERFORMANCE.md) — architectural performance notes and bench guide
+- [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) — canonical Dart/native type mapping contract
+- [doc/Features/PENDING_IMPLEMENTATIONS.md](doc/Features/PENDING_IMPLEMENTATIONS.md) — open work and non-goals
+
+### Development
+
+- [doc/development/docker-test-stack.md](doc/development/docker-test-stack.md) — Docker E2E test stack
+- [doc/development/msdtc-recovery.md](doc/development/msdtc-recovery.md) — MSDTC / XA recovery scope
+
+### Release and versioning
+
 - [doc/version/RELEASE_AUTOMATION.md](doc/version/RELEASE_AUTOMATION.md)
 - [doc/version/VERSIONING_STRATEGY.md](doc/version/VERSIONING_STRATEGY.md)
 - [doc/version/VERSIONING_QUICK_REFERENCE.md](doc/version/VERSIONING_QUICK_REFERENCE.md)
 - [doc/version/CHANGELOG_TEMPLATE.md](doc/version/CHANGELOG_TEMPLATE.md)
-- [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md)
-- [doc/Features/PENDING_IMPLEMENTATIONS.md](doc/Features/PENDING_IMPLEMENTATIONS.md) — backlog mínimo (PT)
-- [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 (formato; decode Dart só para blocos sem compressão por coluna)
 
-`doc/notes/` holds technical notes (e.g. type mapping, columnar sketch) — some
-topics are still in progress; see `PENDING_IMPLEMENTATIONS` for a short list.
+### Notes and implementation detail
+
+- [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 wire layout
+- [doc/notes/REF_CURSOR_ORACLE_ROADMAP.md](doc/notes/REF_CURSOR_ORACLE_ROADMAP.md) — Oracle ref cursor contract
+- [doc/notes/ROADMAP_PENDENTES.md](doc/notes/ROADMAP_PENDENTES.md) — ordered epic backlog (PT)
 
 ## CI/CD
 

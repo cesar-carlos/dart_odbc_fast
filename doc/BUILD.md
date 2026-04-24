@@ -39,12 +39,13 @@ Expected output:
 
 `library_loader.dart` attempts to load in this order:
 
-1. `native/target/release/<lib>` (workspace target)
-2. `native/odbc_engine/target/release/<lib>` (member-local target)
-3. `package:odbc_fast/<lib>` (Native Assets)
-4. PATH/LD_LIBRARY_PATH
+1. `<cwd>/native/target/release/<lib>` (workspace target relative to working dir)
+2. `<cwd>/native/odbc_engine/target/release/<lib>` (member-local target)
+3. Same two paths repeated relative to the **package root** (found by walking up to the directory containing `pubspec.yaml`).
+4. `package:odbc_fast/<lib>` (Native Assets — production download)
+5. System PATH / LD_LIBRARY_PATH
 
-Tip: always using `cd native && cargo build --release` avoids manual DLL/.so copy steps.
+Tip: `cd native && cargo build --release` writes to `native/target/release/`, which step 1 picks up automatically — no manual copy needed.
 
 ## Manual Copy (only when needed)
 
@@ -114,7 +115,7 @@ dart test test/integration/
 
 CI scope (`.github/workflows/ci.yml`):
 
-1. Runs quality gate (`cargo fmt`, `cargo clippy`, Rust build, and `dart analyze`)
+1. Runs quality gate (`cargo fmt`, `cargo clippy --workspace --all-targets`, Rust build, and `dart analyze`)
 2. Runs only unit test scope (`test/application`, `test/domain`, `test/infrastructure`, and `test/helpers/database_detection_test.dart`)
 3. Does not run `test/integration`, `test/e2e`, `test/stress`, or `test/my_test`
 
@@ -130,6 +131,10 @@ In PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Accepted values: `1`, `t
 
 ## Related Documentation
 
+- FFI surface and public API: [API_SURFACE.md](API_SURFACE.md)
+- Driver capabilities and engine matrix: [CAPABILITIES_v3.md](CAPABILITIES_v3.md)
+- Test policy, CI scope, coverage: [TESTING.md](TESTING.md)
+- Docker E2E stack: [development/docker-test-stack.md](development/docker-test-stack.md)
 - Release/tag/workflow issues: [RELEASE_AUTOMATION.md](version/RELEASE_AUTOMATION.md)
 - Versioning policy: [VERSIONING_STRATEGY.md](version/VERSIONING_STRATEGY.md)
 - Quick version bump decisions: [VERSIONING_QUICK_REFERENCE.md](version/VERSIONING_QUICK_REFERENCE.md)

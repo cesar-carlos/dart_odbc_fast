@@ -13,6 +13,7 @@ This folder holds **feature-oriented documentation**: short indexes and summarie
 - [`CHANGELOG.md`](../../CHANGELOG.md) — entregas e histórico.
 - [`doc/notes/TYPE_MAPPING.md`](../notes/TYPE_MAPPING.md) — contrato de tipos e roadmap §3.
 - [`doc/CAPABILITIES_v3.md`](../CAPABILITIES_v3.md) — visão consolidada do que já está entregue, incluindo DRT1 / `OUT1`, `MULT` + `OUT1`, `QueryResult.additionalResults` e `QueryResult.refCursorResults`.
+- [`doc/API_SURFACE.md`](../API_SURFACE.md) — superfície FFI completa (v3.5.x).
 - Repository overview: [`README.md`](../../README.md).
 
 Quando um item listado em `PENDING_IMPLEMENTATIONS.md` fechar, actualizar o `CHANGELOG.md`, alinhar `doc/CAPABILITIES_v3.md` / `doc/notes/TYPE_MAPPING.md`, e remover ou encurtar a secção correspondente aqui.

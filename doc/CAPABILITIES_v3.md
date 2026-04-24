@@ -1,7 +1,9 @@
-# Driver Capabilities Matrix — v3.0.0
+# Driver Capabilities Matrix
 
-The v3.0 release groups every driver-specific behaviour into seven opt-in
-**capability traits**. Each plugin implements only what makes sense for its
+> **Last updated for:** v3.5.3 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
+
+Driver-specific behaviour is grouped into seven opt-in
+**capability traits** (introduced in v3.0.0, extended through v3.5.x). Each plugin implements only what makes sense for its
 engine; the runtime resolves the trait via [`PluginRegistry`](../native/odbc_engine/src/plugins/registry.rs)
 or directly through the per-plugin module.
 
@@ -33,7 +35,7 @@ or directly through the per-plugin module.
 \* BCP via `sqlncli11.dll`/`msodbcsql17/18.dll` (Windows-only feature `sqlserver-bcp`, gated by env `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1`). Currently supports `I32` and `I64` types; extending to Text/Binary/Timestamp/Decimal is tracked for v3.1.
 \** Native streaming paths (`COPY FROM STDIN BINARY`, `LOAD DATA LOCAL INFILE`, Snowflake `PUT/COPY INTO`) are tracked for v3.1. v3.0 uses optimised array-binding INSERT under `BulkLoader`.
 
-## Transaction control matrix (Sprint 4 — Unreleased)
+## Transaction control matrix (released in v3.4.0)
 
 | Capability \ Engine                | SQL Server   | PostgreSQL   | MySQL / MariaDB | Oracle        | DB2          | SQLite       | Snowflake    |
 | ---------------------------------- | ------------ | ------------ | --------------- | ------------- | ------------ | ------------ | ------------ |
@@ -143,12 +145,10 @@ final stmts = features.getSessionInitSql(
 | `IBM Db2` | `db2` |
 | `Snowflake` | `snowflake` |
 
-## Dart — `SqlDataType` (30 kinds) and directional parameters
+## Dart — `SqlDataType` kinds and directional parameters
 
-- **30** explicit `SqlDataType` *kind* strings (including `geometry`,
-  `intervalYearToMonth`, and `json` / `json_validated`); see
-  `lib/infrastructure/native/protocol/param_value.dart` and
-  `doc/notes/TYPE_MAPPING.md` §1.3.
+- **27** `SqlDataType` *kind* strings shipped in `lib/infrastructure/native/protocol/param_value.dart` (30 was the design target; 27 are implemented as of v3.5.3 — including `geometry`, `intervalYearToMonth`, and `json` / `json_validated`). See
+  `doc/notes/TYPE_MAPPING.md` §1.3 for the full table.
 - **Directional API:** `ParamDirection`, `DirectedParam` — DRT1 / `OUT1` and
   engine bind for **scalar** `OUT` / `INOUT` (see `TYPE_MAPPING` §3.1);
   `paramValuesFromDirected` remains input-only. **Multi-result + OUT1:** when
