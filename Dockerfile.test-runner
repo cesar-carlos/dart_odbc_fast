@@ -86,7 +86,10 @@ RUN set -eux; \
     tar -xzf /tmp/linuxx64_odbc_cli.tar.gz -C /opt/ibm; \
     rm /tmp/linuxx64_odbc_cli.tar.gz; \
     test -d "${IBM_DB_HOME}/lib"; \
-    test -e "${IBM_DB_HOME}/lib/libdb2o.so.1" || (ls -la "${IBM_DB_HOME}/lib"/libdb2o.so*; exit 1); \
+    if [ ! -e "${IBM_DB_HOME}/lib/libdb2o.so.1" ]; then \
+        test -e "${IBM_DB_HOME}/lib/libdb2.so.1" || (ls -la "${IBM_DB_HOME}/lib"/libdb2*; exit 1); \
+        ln -s "${IBM_DB_HOME}/lib/libdb2.so.1" "${IBM_DB_HOME}/lib/libdb2o.so.1"; \
+    fi; \
     echo "/opt/ibm/clidriver/lib" > /etc/ld.so.conf.d/ibm-clidriver.conf; \
     ldconfig
 

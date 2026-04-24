@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.4] - 2026-04-24
+
+### Added
+
+- **Dart API surface:** public exports now include driver capabilities,
+  driver feature helpers, and pool option types from `package:odbc_fast/odbc_fast.dart`.
+- **High-level native controls:** repository/service layers now expose advanced
+  pool creation with `PoolOptions`, `poolSetSize`, live `DbmsInfo`
+  introspection, `setLogLevel`, and `clearAllStatements`.
+
+### Fixed
+
+- **Rust FFI safety:** telemetry, columnar decompression, async requests,
+  streaming, pool, transaction, and query entry points are hardened so panics do
+  not cross FFI boundaries and disconnected resources are cleaned up more
+  consistently.
+- **Protocol robustness:** row, multi-result, parameter, columnar, and
+  decompression paths now reject malformed or oversized payloads with explicit
+  errors instead of relying on truncating casts or unbounded decode paths.
+- **ODBC execution correctness:** batch execution reuses prepared statements for
+  parameterized batches, preserves SQL Server `FOR JSON` row shapes, and avoids
+  silent re-execution after pending result expiry.
+- **XA state handling:** runtime `unwrap()` paths in XA state transitions were
+  replaced with error propagation.
+- **E2E Docker stack:** the test-runner image now supports IBM Db2 CLI packages
+  that ship `libdb2.so.1` without `libdb2o.so.1` by creating a compatibility
+  alias during image build.
+
+### Changed
+
+- **Performance:** streaming, row encoding, columnar conversion, compression,
+  metrics, async runtime usage, and parallel bulk insert hot paths reduce
+  avoidable allocation, copying, and lock contention.
+- **Tests:** added focused Rust regression coverage for FFI/protocol safety and
+  Dart tests covering the newly public API exports and service/repository
+  delegation paths.
+
 ## [3.5.3] - 2026-04-24
 
 ### Fixed
@@ -1788,7 +1825,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.3...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.4...HEAD
+[3.5.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.3...v3.5.4
 [3.5.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...v3.5.3
 [3.5.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.1...v3.5.2
 [3.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.0...v3.5.1
