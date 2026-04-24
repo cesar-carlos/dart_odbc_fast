@@ -74,11 +74,12 @@ name: odbc_fast
 # based fake; demo extended with a section showing the helper
 # (commit + rollback paths). No FFI / engine changes.
 #
-# 3.4.3 — pub.dev: move `docs/Features` → `doc/Features` (Pub layout); publish
-# workflow uses `dart pub publish --ignore-warnings` for the non-incremental
-# version hint vs last pub.dev (1.2.1).
+# 3.5.0 — DRT1 `MULT` + `OUT1` hardening:
+# - Preserve RowCount-first semantics end-to-end (Rust encoder + Dart mapping),
+# - fix SQL Server directed OUT multi-result E2E setup across connections,
+# - add regressions and documentation alignment for release readiness.
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.4.3
+version: 3.5.0
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast
