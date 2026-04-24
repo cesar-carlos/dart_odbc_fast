@@ -11,6 +11,8 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
@@ -240,8 +242,9 @@ abstract class IOdbcService {
 
   Future<Result<int>> poolCreate(
     String connectionString,
-    int maxSize,
-  );
+    int maxSize, {
+    PoolOptions? options,
+  });
 
   Future<Result<Connection>> poolGetConnection(int poolId);
 
@@ -252,6 +255,8 @@ abstract class IOdbcService {
   Future<Result<PoolState>> poolGetState(int poolId);
 
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
+
+  Future<Result<void>> poolSetSize(int poolId, int newMaxSize);
 
   Future<Result<void>> poolClose(int poolId);
 
@@ -278,6 +283,8 @@ abstract class IOdbcService {
 
   Future<Result<void>> clearStatementCache();
 
+  Future<Result<void>> clearAllStatements();
+
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
 
   Future<Result<Map<String, String>>> getVersion();
@@ -287,6 +294,10 @@ abstract class IOdbcService {
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   );
+
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId);
+
+  Future<Result<void>> setLogLevel(int level);
 
   Future<Result<void>> setAuditEnabled({required bool enabled});
 
@@ -818,9 +829,14 @@ class OdbcService implements IOdbcService {
   @override
   Future<Result<int>> poolCreate(
     String connectionString,
-    int maxSize,
-  ) async {
-    return _repository.poolCreate(connectionString, maxSize);
+    int maxSize, {
+    PoolOptions? options,
+  }) async {
+    return _repository.poolCreate(
+      connectionString,
+      maxSize,
+      options: options,
+    );
   }
 
   @override
@@ -848,6 +864,11 @@ class OdbcService implements IOdbcService {
   @override
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) async {
     return _repository.poolGetStateDetailed(poolId);
+  }
+
+  @override
+  Future<Result<void>> poolSetSize(int poolId, int newMaxSize) async {
+    return _repository.poolSetSize(poolId, newMaxSize);
   }
 
   @override
@@ -907,6 +928,11 @@ class OdbcService implements IOdbcService {
   }
 
   @override
+  Future<Result<void>> clearAllStatements() async {
+    return _repository.clearAllStatements();
+  }
+
+  @override
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async {
     return _repository.getPreparedStatementsMetrics();
@@ -927,6 +953,16 @@ class OdbcService implements IOdbcService {
     String connectionString,
   ) async {
     return _repository.getDriverCapabilities(connectionString);
+  }
+
+  @override
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
+    return _repository.getConnectionDbmsInfo(connectionId);
+  }
+
+  @override
+  Future<Result<void>> setLogLevel(int level) async {
+    return _repository.setLogLevel(level);
   }
 
   @override

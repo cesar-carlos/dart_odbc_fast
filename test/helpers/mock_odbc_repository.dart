@@ -16,6 +16,8 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -41,6 +43,10 @@ class MockOdbcRepository implements IOdbcRepository {
   bool rollbackTransactionCalled = false;
   bool xaStartCalled = false;
   bool clearStatementCacheCalled = false;
+  bool clearAllStatementsCalled = false;
+  bool setLogLevelCalled = false;
+  bool getConnectionDbmsInfoCalled = false;
+  bool poolSetSizeCalled = false;
   bool metadataCacheEnableCalled = false;
   bool metadataCacheStatsCalled = false;
   bool clearMetadataCacheCalled = false;
@@ -534,8 +540,9 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Future<Result<int>> poolCreate(
     String connectionString,
-    int maxSize,
-  ) async {
+    int maxSize, {
+    PoolOptions? options,
+  }) async {
     return const Success(1);
   }
 
@@ -574,6 +581,12 @@ class MockOdbcRepository implements IOdbcRepository {
       'active_connections': 1,
       'max_size': 4,
     });
+  }
+
+  @override
+  Future<Result<Unit>> poolSetSize(int poolId, int newMaxSize) async {
+    poolSetSizeCalled = true;
+    return const Success(unit);
   }
 
   @override
@@ -629,6 +642,12 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<Unit>> clearAllStatements() async {
+    clearAllStatementsCalled = true;
+    return const Success(unit);
+  }
+
+  @override
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async {
     return const Success(
@@ -675,6 +694,33 @@ class MockOdbcRepository implements IOdbcRepository {
       'supports_streaming': true,
       'max_row_array_size': 1000,
     });
+  }
+
+  @override
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
+    getConnectionDbmsInfoCalled = true;
+    return Success(
+      DbmsInfo.fromJson(const {
+        'dbms_name': 'MockDB',
+        'engine': DatabaseEngineIds.sqlite,
+        'current_catalog': 'main',
+        'capabilities': {
+          'driver_name': 'mock',
+          'driver_version': '1.0',
+          'supports_prepared_statements': true,
+          'supports_batch_operations': true,
+          'supports_streaming': true,
+          'max_row_array_size': 1000,
+          'engine': DatabaseEngineIds.sqlite,
+        },
+      }),
+    );
+  }
+
+  @override
+  Future<Result<Unit>> setLogLevel(int level) async {
+    setLogLevelCalled = true;
+    return const Success(unit);
   }
 
   @override

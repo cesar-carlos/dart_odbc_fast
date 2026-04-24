@@ -45,6 +45,10 @@ void _handleRequest(
         final ok = conn.initialize();
         sendPort.send(InitializeResponse(request.requestId, success: ok));
 
+      case SetLogLevelRequest():
+        conn.setLogLevel(request.level);
+        sendPort.send(BoolResponse(request.requestId, value: true));
+
       case ValidateConnectionStringRequest():
         final validationError = conn.validateConnectionString(
           request.connectionString,
@@ -60,6 +64,21 @@ void _handleRequest(
       case GetDriverCapabilitiesRequest():
         final payload =
             conn.getDriverCapabilitiesJson(request.connectionString);
+        if (payload != null) {
+          sendPort.send(
+            AuditPayloadResponse(request.requestId, payload: payload),
+          );
+        } else {
+          sendPort.send(
+            AuditPayloadResponse(
+              request.requestId,
+              error: conn.getError(),
+            ),
+          );
+        }
+
+      case GetConnectionDbmsInfoRequest():
+        final payload = conn.getConnectionDbmsInfoJson(request.connectionId);
         if (payload != null) {
           sendPort.send(
             AuditPayloadResponse(request.requestId, payload: payload),
@@ -297,10 +316,13 @@ void _handleRequest(
         sendPort.send(BoolResponse(request.requestId, value: ok));
 
       case PoolCreateRequest():
-        final poolId = conn.poolCreate(
-          request.connectionString,
-          request.maxSize,
-        );
+        final poolId = request.optionsJson == null
+            ? conn.poolCreate(request.connectionString, request.maxSize)
+            : conn.poolCreateWithOptions(
+                request.connectionString,
+                request.maxSize,
+                optionsJson: request.optionsJson,
+              );
         sendPort.send(IntResponse(request.requestId, poolId));
 
       case PoolGetConnectionRequest():
@@ -684,6 +706,7 @@ void _sendErrorResponse(
     case PoolHealthCheckRequest():
     case PoolSetSizeRequest():
     case PoolCloseRequest():
+    case SetLogLevelRequest():
     case CommitTransactionRequest():
     case RollbackTransactionRequest():
     case SavepointCreateRequest():
@@ -739,6 +762,7 @@ void _sendErrorResponse(
     case PoolGetStateRequest():
       sendPort.send(PoolStateResponse(id, error: error));
     case GetDriverCapabilitiesRequest():
+    case GetConnectionDbmsInfoRequest():
     case PoolGetStateJsonRequest():
       sendPort.send(AuditPayloadResponse(id, error: error));
     case GetVersionRequest():

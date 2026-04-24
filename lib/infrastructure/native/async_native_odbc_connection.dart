@@ -8,6 +8,7 @@ import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_isolate.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
@@ -343,6 +344,24 @@ class AsyncNativeOdbcConnection {
       return null;
     }
     return r.payload;
+  }
+
+  /// Returns live DBMS introspection payload as JSON, or null on failure.
+  Future<String?> getConnectionDbmsInfoJson(int connectionId) async {
+    final r = await _sendRequest<AuditPayloadResponse>(
+      GetConnectionDbmsInfoRequest(_nextRequestId(), connectionId),
+    );
+    if (r.error != null) {
+      return null;
+    }
+    return r.payload;
+  }
+
+  /// Sets native engine log verbosity in the worker.
+  Future<void> setLogLevel(int level) async {
+    await _sendRequest<BoolResponse>(
+      SetLogLevelRequest(_nextRequestId(), level),
+    );
   }
 
   /// Returns the last structured error (message, SQLSTATE, native code), or
@@ -901,9 +920,18 @@ class AsyncNativeOdbcConnection {
   }
 
   /// Creates a connection pool in the worker. Returns pool ID on success.
-  Future<int> poolCreate(String connectionString, int maxSize) async {
+  Future<int> poolCreate(
+    String connectionString,
+    int maxSize, {
+    PoolOptions? options,
+  }) async {
     final r = await _sendRequest<IntResponse>(
-      PoolCreateRequest(_nextRequestId(), connectionString, maxSize),
+      PoolCreateRequest(
+        _nextRequestId(),
+        connectionString,
+        maxSize,
+        optionsJson: options?.toJson(),
+      ),
     );
     return r.value;
   }

@@ -6,7 +6,6 @@
 // session initialization.
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'package:odbc_fast/infrastructure/native/driver_capabilities_v3.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 void main() {

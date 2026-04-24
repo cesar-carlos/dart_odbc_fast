@@ -9,7 +9,6 @@
 //     `odbc_pool_create_with_options` entry point.
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 void main() {

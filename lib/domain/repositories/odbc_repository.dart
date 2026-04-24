@@ -11,6 +11,8 @@ import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -351,7 +353,11 @@ abstract class IOdbcRepository {
   /// The [maxSize] specifies the maximum number of connections in the pool.
   ///
   /// Returns a pool ID on success, which must be used for pool operations.
-  Future<Result<int>> poolCreate(String connectionString, int maxSize);
+  Future<Result<int>> poolCreate(
+    String connectionString,
+    int maxSize, {
+    PoolOptions? options,
+  });
 
   /// Gets a connection from the pool.
   ///
@@ -378,6 +384,11 @@ abstract class IOdbcRepository {
 
   /// Gets detailed pool telemetry payload.
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
+
+  /// Resizes an existing pool.
+  ///
+  /// All pooled connections must be released before resizing.
+  Future<Result<Unit>> poolSetSize(int poolId, int newMaxSize);
 
   /// Closes the connection pool and releases all connections.
   ///
@@ -432,6 +443,9 @@ abstract class IOdbcRepository {
   /// or when switching database contexts.
   Future<Result<Unit>> clearStatementCache();
 
+  /// Clears all currently registered native statement handles.
+  Future<Result<Unit>> clearAllStatements();
+
   /// Gets metrics for prepared statement cache and execution.
   ///
   /// Returns [PreparedStatementMetrics] containing cache hit rate,
@@ -450,6 +464,12 @@ abstract class IOdbcRepository {
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   );
+
+  /// Returns live DBMS information for an open connection.
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId);
+
+  /// Sets native engine log verbosity (0=off, 5=trace).
+  Future<Result<Unit>> setLogLevel(int level);
 
   /// Enables/disables native audit collection.
   Future<Result<Unit>> setAuditEnabled({required bool enabled});

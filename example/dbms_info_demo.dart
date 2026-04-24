@@ -7,7 +7,6 @@
 // distinguishes MariaDB from MySQL, ASE from ASA, etc.
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 import 'common.dart';

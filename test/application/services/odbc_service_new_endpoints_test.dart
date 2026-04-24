@@ -7,6 +7,7 @@ library;
 
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:test/test.dart';
 
@@ -73,6 +74,35 @@ void main() {
       });
     });
 
+    group('getConnectionDbmsInfo', () {
+      test('returns live DBMS info and delegates to repository', () async {
+        await service.initialize();
+        final connResult = await service.connect('DSN=test');
+        final result = await service.getConnectionDbmsInfo(
+          connResult.getOrNull()!.id,
+        );
+        expect(result.isSuccess(), isTrue);
+        expect(result.getOrNull()!.dbmsName, equals('MockDB'));
+        expect(mockRepo.getConnectionDbmsInfoCalled, isTrue);
+      });
+    });
+
+    group('Operational controls', () {
+      test('setLogLevel delegates to repository', () async {
+        await service.initialize();
+        final result = await service.setLogLevel(3);
+        expect(result.isSuccess(), isTrue);
+        expect(mockRepo.setLogLevelCalled, isTrue);
+      });
+
+      test('clearAllStatements delegates to repository', () async {
+        await service.initialize();
+        final result = await service.clearAllStatements();
+        expect(result.isSuccess(), isTrue);
+        expect(mockRepo.clearAllStatementsCalled, isTrue);
+      });
+    });
+
     group('Audit API', () {
       test('setAuditEnabled delegates to repository', () async {
         await service.initialize();
@@ -115,6 +145,28 @@ void main() {
         expect(state['total_connections'], equals(1));
         expect(state['max_size'], equals(4));
         expect(mockRepo.poolGetStateDetailedCalled, isTrue);
+      });
+    });
+
+    group('Pool management gaps', () {
+      test('poolCreate accepts PoolOptions and remains compatible', () async {
+        await service.initialize();
+        final result = await service.poolCreate(
+          'DSN=MyDb',
+          4,
+          options: const PoolOptions(
+            connectionTimeout: Duration(seconds: 5),
+          ),
+        );
+        expect(result.isSuccess(), isTrue);
+        expect(result.getOrNull(), equals(1));
+      });
+
+      test('poolSetSize delegates to repository', () async {
+        await service.initialize();
+        final result = await service.poolSetSize(1, 8);
+        expect(result.isSuccess(), isTrue);
+        expect(mockRepo.poolSetSizeCalled, isTrue);
       });
     });
 

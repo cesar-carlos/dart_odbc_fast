@@ -5,8 +5,10 @@ import 'dart:typed_data';
 /// All values must be sendable across isolate boundaries.
 enum RequestType {
   initialize,
+  setLogLevel,
   validateConnectionString,
   getDriverCapabilities,
+  getConnectionDbmsInfo,
   connect,
   disconnect,
   executeQueryParams,
@@ -82,6 +84,13 @@ class InitializeRequest extends WorkerRequest {
       : super(requestId, RequestType.initialize);
 }
 
+/// Set native engine log verbosity.
+class SetLogLevelRequest extends WorkerRequest {
+  const SetLogLevelRequest(int requestId, this.level)
+      : super(requestId, RequestType.setLogLevel);
+  final int level;
+}
+
 /// Validate connection string without connecting.
 class ValidateConnectionStringRequest extends WorkerRequest {
   const ValidateConnectionStringRequest(int requestId, this.connectionString)
@@ -94,6 +103,13 @@ class GetDriverCapabilitiesRequest extends WorkerRequest {
   const GetDriverCapabilitiesRequest(int requestId, this.connectionString)
       : super(requestId, RequestType.getDriverCapabilities);
   final String connectionString;
+}
+
+/// Get live DBMS information JSON payload for an open native connection.
+class GetConnectionDbmsInfoRequest extends WorkerRequest {
+  const GetConnectionDbmsInfoRequest(int requestId, this.connectionId)
+      : super(requestId, RequestType.getConnectionDbmsInfo);
+  final int connectionId;
 }
 
 /// Establish database connection.
@@ -375,10 +391,12 @@ class PoolCreateRequest extends WorkerRequest {
   const PoolCreateRequest(
     int requestId,
     this.connectionString,
-    this.maxSize,
-  ) : super(requestId, RequestType.poolCreate);
+    this.maxSize, {
+    this.optionsJson,
+  }) : super(requestId, RequestType.poolCreate);
   final String connectionString;
   final int maxSize;
+  final String? optionsJson;
 }
 
 /// Get connection from pool.

@@ -21,8 +21,10 @@ import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
@@ -2117,8 +2119,9 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   @override
   Future<Result<int>> poolCreate(
     String connectionString,
-    int maxSize,
-  ) async {
+    int maxSize, {
+    PoolOptions? options,
+  }) async {
     if (connectionString.trim().isEmpty) {
       return const Failure<int, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
@@ -2140,10 +2143,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
     try {
       final poolId = _isAsync
-          ? await (_native as AsyncNativeOdbcConnection)
-              .poolCreate(connectionString, maxSize)
+          ? await (_native as AsyncNativeOdbcConnection).poolCreate(
+              connectionString,
+              maxSize,
+              options: options,
+            )
           : (_native as NativeOdbcConnection)
-              .poolCreate(connectionString, maxSize);
+              .poolCreate(connectionString, maxSize, options: options);
 
       if (poolId == 0) {
         return await _convertNativeErrorToFailure<int>(
@@ -2163,6 +2169,42 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       return Success(poolId);
     } on Exception catch (e) {
       return Failure<int, OdbcError>(ConnectionError(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<Unit>> poolSetSize(int poolId, int newMaxSize) async {
+    if (poolId <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Invalid pool ID'),
+      );
+    }
+    if (newMaxSize <= 0) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Pool maxSize must be greater than zero'),
+      );
+    }
+    try {
+      final ok = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).poolSetSize(
+              poolId,
+              newMaxSize,
+            )
+          : (_native as NativeOdbcConnection).poolSetSize(poolId, newMaxSize);
+      if (ok) return const Success(unit);
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) =>
+            ConnectionError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to resize pool',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        ConnectionError(message: e.toString()),
+      );
     }
   }
 
@@ -2550,6 +2592,31 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   }
 
   @override
+  Future<Result<Unit>> clearAllStatements() async {
+    try {
+      final code = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection).clearAllStatements()
+          : (_native as NativeOdbcConnection).clearAllStatements();
+
+      if (code == 0) {
+        return const Success(unit);
+      }
+      return await _convertNativeErrorToFailure<Unit>(
+        errorFactory: ({required message, sqlState, nativeCode}) => QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+        fallbackMessage: 'Failed to clear all statements',
+      );
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async {
     try {
@@ -2680,6 +2747,73 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
     } on Exception catch (e) {
       return Failure<Map<String, Object?>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
+    final nativeId = _connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<DbmsInfo, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    try {
+      final payload = _isAsync
+          ? await (_native as AsyncNativeOdbcConnection)
+              .getConnectionDbmsInfoJson(nativeId)
+          : (_native as NativeOdbcConnection)
+              .getConnectionDbmsInfoJson(nativeId);
+
+      if (payload == null || payload.isEmpty) {
+        return await _convertNativeErrorToFailure<DbmsInfo>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              UnsupportedFeatureError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Connection DBMS info API is unavailable',
+        );
+      }
+
+      final decoded = _decodeJsonMap(payload);
+      if (decoded == null) {
+        return const Failure<DbmsInfo, OdbcError>(
+          QueryError(message: 'Invalid connection DBMS info payload format'),
+        );
+      }
+      return Success(DbmsInfo.fromJson(decoded));
+    } on FormatException catch (e) {
+      return Failure<DbmsInfo, OdbcError>(
+        QueryError(message: 'Invalid connection DBMS info JSON: ${e.message}'),
+      );
+    } on Exception catch (e) {
+      return Failure<DbmsInfo, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  @override
+  Future<Result<Unit>> setLogLevel(int level) async {
+    if (level < 0 || level > 5) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Log level must be between 0 and 5'),
+      );
+    }
+    try {
+      if (_isAsync) {
+        await (_native as AsyncNativeOdbcConnection).setLogLevel(level);
+      } else {
+        (_native as NativeOdbcConnection).setLogLevel(level);
+      }
+      return const Success(unit);
+    } on Exception catch (e) {
+      return Failure<Unit, OdbcError>(
         QueryError(message: e.toString()),
       );
     }

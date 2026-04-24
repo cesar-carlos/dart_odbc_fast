@@ -29,6 +29,19 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
       '{invalid_json';
 
   @override
+  Future<String?> getConnectionDbmsInfoJson(int connectionId) async =>
+      '{invalid_json';
+
+  @override
+  Future<void> setLogLevel(int level) async {}
+
+  @override
+  Future<int> clearAllStatements() async => 0;
+
+  @override
+  Future<bool> poolSetSize(int poolId, int newMaxSize) async => true;
+
+  @override
   Future<String?> getAuditStatusJson() async => '[]';
 
   @override
@@ -82,6 +95,37 @@ void main() {
           expect((e as QueryError).message, contains('Invalid'));
         },
       );
+    });
+
+    test('getConnectionDbmsInfo returns QueryError for invalid JSON', () async {
+      final result = await repository.getConnectionDbmsInfo(connectionId);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<QueryError>());
+          expect((e as QueryError).message, contains('Invalid'));
+        },
+      );
+    });
+
+    test('setLogLevel validates range', () async {
+      final result = await repository.setLogLevel(9);
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) => expect(e, isA<ValidationError>()),
+      );
+    });
+
+    test('clearAllStatements succeeds when native returns zero', () async {
+      final result = await repository.clearAllStatements();
+      expect(result.isSuccess(), isTrue);
+    });
+
+    test('poolSetSize succeeds when native returns true', () async {
+      final result = await repository.poolSetSize(1, 4);
+      expect(result.isSuccess(), isTrue);
     });
 
     test('getAuditStatus returns QueryError for invalid payload format',

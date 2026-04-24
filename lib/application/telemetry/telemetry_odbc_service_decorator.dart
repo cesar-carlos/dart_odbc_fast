@@ -11,6 +11,8 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
@@ -428,11 +430,16 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   @override
   Future<Result<int>> poolCreate(
     String connectionString,
-    int maxSize,
-  ) async {
+    int maxSize, {
+    PoolOptions? options,
+  }) async {
     return _telemetry.inOperation(
       'ODBC.poolCreate',
-      () => _service.poolCreate(connectionString, maxSize),
+      () => _service.poolCreate(
+        connectionString,
+        maxSize,
+        options: options,
+      ),
     );
   }
 
@@ -473,6 +480,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.poolGetStateDetailed',
       () => _service.poolGetStateDetailed(poolId),
+    );
+  }
+
+  @override
+  Future<Result<void>> poolSetSize(int poolId, int newMaxSize) async {
+    return _telemetry.inOperation(
+      'ODBC.poolSetSize',
+      () => _service.poolSetSize(poolId, newMaxSize),
     );
   }
 
@@ -548,6 +563,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  Future<Result<void>> clearAllStatements() async {
+    return _telemetry.inOperation(
+      'ODBC.clearAllStatements',
+      _service.clearAllStatements,
+    );
+  }
+
+  @override
   Future<Result<PreparedStatementMetrics>>
       getPreparedStatementsMetrics() async {
     return _telemetry.inOperation(
@@ -579,6 +602,22 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.getDriverCapabilities',
       () => _service.getDriverCapabilities(connectionString),
+    );
+  }
+
+  @override
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
+    return _telemetry.inOperation(
+      'ODBC.getConnectionDbmsInfo',
+      () => _service.getConnectionDbmsInfo(connectionId),
+    );
+  }
+
+  @override
+  Future<Result<void>> setLogLevel(int level) async {
+    return _telemetry.inOperation(
+      'ODBC.setLogLevel',
+      () => _service.setLogLevel(level),
     );
   }
 

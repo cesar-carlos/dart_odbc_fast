@@ -7,8 +7,20 @@ import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     as bindings;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
-import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast.dart'
+    hide
+        DatabaseEngineIds,
+        DatabaseType,
+        DbmsInfo,
+        DmlVerb,
+        DriverCapabilities,
+        OdbcDriverCapabilities,
+        OdbcDriverFeatures,
+        OdbcPoolFactory,
+        PoolOptions,
+        SessionOptions;
 
 /// Native ODBC connection implementation using FFI bindings.
 ///
@@ -107,6 +119,9 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Returns driver capabilities payload as JSON, or null on failure.
   String? getDriverCapabilitiesJson(String connectionString) =>
       _native.getDriverCapabilitiesJson(connectionString);
+
+  /// Sets native engine log verbosity (0=off, 5=trace).
+  void setLogLevel(int level) => _native.setLogLevel(level);
 
   /// Whether the loaded native library exposes live DBMS introspection
   /// (v2.1 `odbc_get_connection_dbms_info`).
@@ -670,8 +685,32 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [maxSize] specifies the maximum number of connections in the pool.
   ///
   /// Returns a pool ID on success, 0 on failure.
-  int poolCreate(String connectionString, int maxSize) =>
-      _native.poolCreate(connectionString, maxSize);
+  int poolCreate(
+    String connectionString,
+    int maxSize, {
+    PoolOptions? options,
+  }) {
+    if (options == null || !options.hasAnyOption) {
+      return _native.poolCreate(connectionString, maxSize);
+    }
+    return _native.poolCreateWithOptions(
+      connectionString,
+      maxSize,
+      optionsJson: options.toJson(),
+    );
+  }
+
+  /// Creates a pool from a pre-encoded native options JSON payload.
+  int poolCreateWithOptions(
+    String connectionString,
+    int maxSize, {
+    String? optionsJson,
+  }) =>
+      _native.poolCreateWithOptions(
+        connectionString,
+        maxSize,
+        optionsJson: optionsJson,
+      );
 
   /// Creates a new connection pool and returns a [ConnectionPool] wrapper.
   ///
@@ -679,8 +718,12 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// The [maxSize] specifies the maximum number of connections in the pool.
   ///
   /// Returns a [ConnectionPool] on success, null on failure.
-  ConnectionPool? createConnectionPool(String connectionString, int maxSize) {
-    final poolId = poolCreate(connectionString, maxSize);
+  ConnectionPool? createConnectionPool(
+    String connectionString,
+    int maxSize, {
+    PoolOptions? options,
+  }) {
+    final poolId = poolCreate(connectionString, maxSize, options: options);
     if (poolId == 0) return null;
     return ConnectionPool(this, poolId);
   }
