@@ -9,10 +9,13 @@
 //!
 //! Exposed via `odbc_get_metrics` (40 bytes) and `odbc_get_cache_metrics` (64 bytes).
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::engine::PreparedStatementCache;
+
+const MAX_LATENCY_SAMPLES: usize = 1000;
 
 #[derive(Debug, Clone)]
 pub struct QueryMetrics {
@@ -20,7 +23,8 @@ pub struct QueryMetrics {
     pub total_latency: Duration,
     pub min_latency: Duration,
     pub max_latency: Duration,
-    pub latency_samples: Vec<Duration>,
+    pub latency_samples: VecDeque<Duration>,
+    sorted_latency_samples: Vec<Duration>,
 }
 
 impl Default for QueryMetrics {
@@ -36,7 +40,8 @@ impl QueryMetrics {
             total_latency: Duration::ZERO,
             min_latency: Duration::MAX,
             max_latency: Duration::ZERO,
-            latency_samples: Vec::new(),
+            latency_samples: VecDeque::with_capacity(MAX_LATENCY_SAMPLES),
+            sorted_latency_samples: Vec::with_capacity(MAX_LATENCY_SAMPLES),
         }
     }
 
@@ -51,9 +56,26 @@ impl QueryMetrics {
             self.max_latency = latency;
         }
 
-        self.latency_samples.push(latency);
-        if self.latency_samples.len() > 1000 {
-            self.latency_samples.remove(0);
+        self.insert_latency_sample(latency);
+        if self.latency_samples.len() > MAX_LATENCY_SAMPLES {
+            if let Some(evicted) = self.latency_samples.pop_front() {
+                self.remove_sorted_latency_sample(evicted);
+            }
+        }
+    }
+
+    fn insert_latency_sample(&mut self, latency: Duration) {
+        self.latency_samples.push_back(latency);
+        let index = self
+            .sorted_latency_samples
+            .binary_search(&latency)
+            .unwrap_or_else(|index| index);
+        self.sorted_latency_samples.insert(index, latency);
+    }
+
+    fn remove_sorted_latency_sample(&mut self, latency: Duration) {
+        if let Ok(index) = self.sorted_latency_samples.binary_search(&latency) {
+            self.sorted_latency_samples.remove(index);
         }
     }
 
@@ -65,15 +87,12 @@ impl QueryMetrics {
     }
 
     pub fn percentile(&self, p: f64) -> Duration {
-        if self.latency_samples.is_empty() {
+        if self.sorted_latency_samples.is_empty() {
             return Duration::ZERO;
         }
 
-        let mut sorted = self.latency_samples.clone();
-        sorted.sort();
-
-        let index = ((sorted.len() - 1) as f64 * p / 100.0) as usize;
-        sorted[index]
+        let index = ((self.sorted_latency_samples.len() - 1) as f64 * p / 100.0) as usize;
+        self.sorted_latency_samples[index]
     }
 
     pub fn p50(&self) -> Duration {
@@ -317,6 +336,35 @@ mod tests {
         }
         assert_eq!(metrics.latency_samples.len(), 1000);
         assert_eq!(metrics.query_count, 1500);
+    }
+
+    #[test]
+    fn test_query_metrics_sample_window_evicts_oldest() {
+        let mut metrics = QueryMetrics::new();
+        for i in 0..=MAX_LATENCY_SAMPLES {
+            metrics.record_query(Duration::from_millis(i as u64));
+        }
+
+        assert_eq!(metrics.latency_samples.len(), MAX_LATENCY_SAMPLES);
+        assert_eq!(
+            metrics.latency_samples.front(),
+            Some(&Duration::from_millis(1))
+        );
+        assert_eq!(
+            metrics.latency_samples.back(),
+            Some(&Duration::from_millis(MAX_LATENCY_SAMPLES as u64))
+        );
+    }
+
+    #[test]
+    fn test_query_metrics_percentile_uses_window() {
+        let mut metrics = QueryMetrics::new();
+        for i in 0..1500 {
+            metrics.record_query(Duration::from_millis(i));
+        }
+
+        assert_eq!(metrics.percentile(0.0), Duration::from_millis(500));
+        assert_eq!(metrics.percentile(100.0), Duration::from_millis(1499));
     }
 
     #[test]

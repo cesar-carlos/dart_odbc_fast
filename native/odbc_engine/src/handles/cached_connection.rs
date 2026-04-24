@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::ops::Deref;
 
-use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::cell_reader::CellReader;
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 
 /// Default cache size when statement-handle-reuse is enabled.
@@ -121,6 +121,12 @@ impl CachedConnection {
         let capacity = self.stmt_cache.cap().get();
         let should_count_eviction = self.stmt_cache.len() >= capacity;
 
+        // SAFETY: `CachedConnection` owns the `Connection<'static>` and the
+        // cache is cleared before `connection_mut` exposes mutable access or
+        // before the connection is dropped. Cached statements therefore never
+        // outlive or alias a mutated connection handle while this feature is
+        // enabled. Keep this feature experimental until `odbc-api` exposes a
+        // cache-friendly prepared statement lifetime.
         let static_stmt: StaticPrepared = unsafe { std::mem::transmute(prepared) };
 
         let mut cached = CachedPrepared { stmt: static_stmt };
@@ -207,15 +213,16 @@ where
             column_types.push(odbc_type);
         }
 
+        let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::new();
+            let mut row_data = Vec::with_capacity(column_types.len());
 
             for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                 let col_number: u16 = (col_idx + 1)
                     .try_into()
                     .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
 
-                let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                 row_data.push(cell_data);
             }

@@ -2,7 +2,138 @@ use crate::error::{OdbcError, Result};
 use crate::protocol::OdbcType;
 use odbc_api::CursorRow;
 
-pub(crate) fn text_bytes_to_i32_le_bytes(bytes: &[u8]) -> Vec<u8> {
+#[derive(Default)]
+pub struct CellReader {
+    wide_buf: Vec<u16>,
+    binary_buf: Vec<u8>,
+}
+
+impl CellReader {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn read_cell_bytes(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+        odbc_type: OdbcType,
+    ) -> Result<Option<Vec<u8>>> {
+        match odbc_type {
+            OdbcType::Binary => self.read_binary(row, column_number),
+            OdbcType::Integer => self.read_i32_as_le_bytes(row, column_number),
+            OdbcType::BigInt => self.read_i64_as_le_bytes(row, column_number),
+            _ => self.read_text(row, column_number),
+        }
+    }
+
+    /// Read a text cell as UTF-8 bytes, regardless of the column's underlying
+    /// SQL type or the driver's locale.
+    ///
+    /// ## Why we go through `get_wide_text`
+    ///
+    /// `odbc_api::CursorRow::get_text` issues `SQLGetData(SQL_C_CHAR)`, which
+    /// asks the ODBC driver to deliver the value transcoded to the **client's
+    /// ANSI code page**. For a US/Western Windows host this is CP1252; for a
+    /// Linux box it depends on `LANG`. Any character that does not fit the
+    /// destination code page is silently replaced by `?` (or, with some
+    /// drivers, by a Latin-1-looking byte sequence — the `"¹ÜÀíÔ±"` mojibake
+    /// reported in [issue #1](
+    /// https://github.com/cesar-carlos/dart_odbc_fast/issues/1)).
+    ///
+    /// `get_wide_text` issues `SQLGetData(SQL_C_WCHAR)` instead, which is
+    /// guaranteed by the spec to deliver UTF-16 LE — the same encoding SQL
+    /// Server uses internally for `NVARCHAR`. We then transcode the UTF-16
+    /// code units to UTF-8 ourselves, with `String::from_utf16_lossy`
+    /// substituting U+FFFD for any unpaired surrogate (which the driver
+    /// should never emit, but we tolerate defensively).
+    ///
+    /// This means **every** text-shaped column (`VARCHAR`, `NVARCHAR`,
+    /// `CHAR`, `NCHAR`, `TEXT`, `NTEXT`, `WLONGVARCHAR`, dates and numerics
+    /// returned as text, etc.) round-trips Unicode correctly without
+    /// requiring connection-string tweaks like `CodePage=936` or driver-
+    /// specific options. The cost is a single per-cell UTF-16 → UTF-8 pass;
+    /// negligible compared with the ODBC fetch itself.
+    fn read_text(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<Vec<u8>>> {
+        self.read_wide_text(row, column_number)
+            .map(|value| value.map(wide_text_to_utf8_bytes))
+    }
+
+    fn read_binary(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<Vec<u8>>> {
+        self.binary_buf.clear();
+        let has_value = row
+            .get_binary(column_number, &mut self.binary_buf)
+            .map_err(OdbcError::from)?;
+
+        if has_value {
+            Ok(Some(std::mem::take(&mut self.binary_buf)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn read_i32_as_le_bytes(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<Vec<u8>>> {
+        let wide_text = self.read_wide_text(row, column_number)?;
+        let Some(wide_text) = wide_text else {
+            return Ok(None);
+        };
+
+        let s = String::from_utf16_lossy(wide_text);
+        if let Ok(value) = s.trim().parse::<i32>() {
+            return Ok(Some(value.to_le_bytes().to_vec()));
+        }
+        Ok(Some(s.into_bytes()))
+    }
+
+    fn read_i64_as_le_bytes(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<Vec<u8>>> {
+        let wide_text = self.read_wide_text(row, column_number)?;
+        let Some(wide_text) = wide_text else {
+            return Ok(None);
+        };
+
+        let s = String::from_utf16_lossy(wide_text);
+        if let Ok(value) = s.trim().parse::<i64>() {
+            return Ok(Some(value.to_le_bytes().to_vec()));
+        }
+        Ok(Some(s.into_bytes()))
+    }
+
+    fn read_wide_text(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<&[u16]>> {
+        self.wide_buf.clear();
+        let has_value = row
+            .get_wide_text(column_number, &mut self.wide_buf)
+            .map_err(OdbcError::from)?;
+
+        if has_value {
+            Ok(Some(&self.wide_buf))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(test)]
+fn text_bytes_to_i32_le_bytes(bytes: &[u8]) -> Vec<u8> {
     let s = std::str::from_utf8(bytes).unwrap_or("").trim();
     if let Ok(value) = s.parse::<i32>() {
         return value.to_le_bytes().to_vec();
@@ -10,7 +141,8 @@ pub(crate) fn text_bytes_to_i32_le_bytes(bytes: &[u8]) -> Vec<u8> {
     bytes.to_vec()
 }
 
-pub(crate) fn text_bytes_to_i64_le_bytes(bytes: &[u8]) -> Vec<u8> {
+#[cfg(test)]
+fn text_bytes_to_i64_le_bytes(bytes: &[u8]) -> Vec<u8> {
     let s = std::str::from_utf8(bytes).unwrap_or("").trim();
     if let Ok(value) = s.parse::<i64>() {
         return value.to_le_bytes().to_vec();
@@ -23,86 +155,15 @@ pub fn read_cell_bytes(
     column_number: u16,
     odbc_type: OdbcType,
 ) -> Result<Option<Vec<u8>>> {
-    match odbc_type {
-        OdbcType::Binary => read_binary(row, column_number),
-        OdbcType::Integer => read_i32_as_le_bytes(row, column_number),
-        OdbcType::BigInt => read_i64_as_le_bytes(row, column_number),
-        _ => read_text(row, column_number),
-    }
+    CellReader::new().read_cell_bytes(row, column_number, odbc_type)
 }
 
-/// Read a text cell as UTF-8 bytes, regardless of the column's underlying
-/// SQL type or the driver's locale.
-///
-/// ## Why we go through `get_wide_text`
-///
-/// `odbc_api::CursorRow::get_text` issues `SQLGetData(SQL_C_CHAR)`, which
-/// asks the ODBC driver to deliver the value transcoded to the **client's
-/// ANSI code page**. For a US/Western Windows host this is CP1252; for a
-/// Linux box it depends on `LANG`. Any character that does not fit the
-/// destination code page is silently replaced by `?` (or, with some
-/// drivers, by a Latin-1-looking byte sequence — the `"¹ÜÀíÔ±"` mojibake
-/// reported in [issue #1](
-/// https://github.com/cesar-carlos/dart_odbc_fast/issues/1)).
-///
-/// `get_wide_text` issues `SQLGetData(SQL_C_WCHAR)` instead, which is
-/// guaranteed by the spec to deliver UTF-16 LE — the same encoding SQL
-/// Server uses internally for `NVARCHAR`. We then transcode the UTF-16
-/// code units to UTF-8 ourselves, with `String::from_utf16_lossy`
-/// substituting U+FFFD for any unpaired surrogate (which the driver
-/// should never emit, but we tolerate defensively).
-///
-/// This means **every** text-shaped column (`VARCHAR`, `NVARCHAR`,
-/// `CHAR`, `NCHAR`, `TEXT`, `NTEXT`, `WLONGVARCHAR`, dates and numerics
-/// returned as text, etc.) round-trips Unicode correctly without
-/// requiring connection-string tweaks like `CodePage=936` or driver-
-/// specific options. The cost is a single per-cell UTF-16 → UTF-8 pass;
-/// negligible compared with the ODBC fetch itself.
-fn read_text(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
-    let mut wide_buf: Vec<u16> = Vec::new();
-    let has_value = row
-        .get_wide_text(column_number, &mut wide_buf)
-        .map_err(OdbcError::from)?;
-
-    if !has_value {
-        return Ok(None);
-    }
-
+fn wide_text_to_utf8_bytes(wide_buf: &[u16]) -> Vec<u8> {
     // `from_utf16_lossy` replaces any unpaired surrogate with U+FFFD.
     // SQL Server / SQL_C_WCHAR never emit those in practice, but if a
     // misbehaving driver did we'd rather see the replacement character
     // than panic or truncate.
-    let utf8 = String::from_utf16_lossy(&wide_buf);
-    Ok(Some(utf8.into_bytes()))
-}
-
-fn read_binary(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
-    let mut buf: Vec<u8> = Vec::new();
-    let has_value = row
-        .get_binary(column_number, &mut buf)
-        .map_err(OdbcError::from)?;
-
-    if has_value {
-        Ok(Some(buf))
-    } else {
-        Ok(None)
-    }
-}
-
-fn read_i32_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
-    let text_bytes = read_text(row, column_number)?;
-    let Some(text_bytes) = text_bytes else {
-        return Ok(None);
-    };
-    Ok(Some(text_bytes_to_i32_le_bytes(&text_bytes)))
-}
-
-fn read_i64_as_le_bytes(row: &mut CursorRow<'_>, column_number: u16) -> Result<Option<Vec<u8>>> {
-    let text_bytes = read_text(row, column_number)?;
-    let Some(text_bytes) = text_bytes else {
-        return Ok(None);
-    };
-    Ok(Some(text_bytes_to_i64_le_bytes(&text_bytes)))
+    String::from_utf16_lossy(wide_buf).into_bytes()
 }
 
 #[cfg(test)]

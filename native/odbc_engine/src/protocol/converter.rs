@@ -19,12 +19,11 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> RowBufferV2 {
 
         let data = match col_meta.odbc_type {
             OdbcType::Integer => {
-                let mut int_data = Vec::new();
+                let mut int_data = Vec::with_capacity(buffer.row_count());
                 for row in &buffer.rows {
                     if let Some(bytes) = row.get(col_idx).and_then(|o| o.as_ref()) {
-                        if bytes.len() == 4 {
-                            let value =
-                                i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        if let Ok(bytes) = bytes.as_slice().try_into() {
+                            let value = i32::from_le_bytes(bytes);
                             int_data.push(Some(value));
                         } else {
                             int_data.push(None);
@@ -36,14 +35,11 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> RowBufferV2 {
                 ColumnData::Integer(int_data)
             }
             OdbcType::BigInt => {
-                let mut bigint_data = Vec::new();
+                let mut bigint_data = Vec::with_capacity(buffer.row_count());
                 for row in &buffer.rows {
                     if let Some(bytes) = row.get(col_idx).and_then(|o| o.as_ref()) {
-                        if bytes.len() == 8 {
-                            let value = i64::from_le_bytes([
-                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
-                                bytes[6], bytes[7],
-                            ]);
+                        if let Ok(bytes) = bytes.as_slice().try_into() {
+                            let value = i64::from_le_bytes(bytes);
                             bigint_data.push(Some(value));
                         } else {
                             bigint_data.push(None);
@@ -55,7 +51,7 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> RowBufferV2 {
                 ColumnData::BigInt(bigint_data)
             }
             _ => {
-                let mut varchar_data = Vec::new();
+                let mut varchar_data = Vec::with_capacity(buffer.row_count());
                 for row in &buffer.rows {
                     if let Some(cell) = row.get(col_idx) {
                         varchar_data.push(cell.clone());

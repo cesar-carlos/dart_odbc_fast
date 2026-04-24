@@ -10,8 +10,12 @@ pub use console::export_trace;
 pub use exporters::OtlpExporter;
 pub use exporters::{ConsoleExporter, TelemetryExporter};
 
+use crate::ffi::guard;
 use std::ffi::CString;
 use std::sync::Mutex;
+
+const ERROR_BUFFER_TOO_SMALL: i32 = 5;
+const MAX_TRACE_JSON_LEN: usize = 16 * 1024 * 1024;
 
 /// Global telemetry state
 static TELEMETRY_STATE: Mutex<Option<TelemetryState>> = Mutex::new(None);
@@ -65,41 +69,43 @@ pub unsafe extern "C" fn otel_init(
     _resource_attributes: *const u8,
     _resource: *const u8,
 ) -> i32 {
-    // Determine exporter type based on endpoint
-    let exporter: Box<dyn TelemetryExporter + Send> = if api_endpoint.is_null() {
-        Box::new(ConsoleExporter)
-    } else {
-        let endpoint_str = unsafe {
-            std::ffi::CStr::from_ptr(api_endpoint)
-                .to_string_lossy()
-                .into_owned()
-        };
-
-        if endpoint_str.is_empty() || !endpoint_str.starts_with("http") {
+    guard::call_int_assert_unwind_safe(|| {
+        // Determine exporter type based on endpoint
+        let exporter: Box<dyn TelemetryExporter + Send> = if api_endpoint.is_null() {
             Box::new(ConsoleExporter)
         } else {
-            #[cfg(feature = "observability")]
-            {
-                log::info!("Initializing OTLP exporter with endpoint: {}", endpoint_str);
-                Box::new(OtlpExporter::new(&endpoint_str))
-            }
-            #[cfg(not(feature = "observability"))]
-            {
-                log::info!(
-                    "OTLP requested but observability feature disabled; using ConsoleExporter"
-                );
+            let endpoint_str = unsafe {
+                std::ffi::CStr::from_ptr(api_endpoint)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+
+            if endpoint_str.is_empty() || !endpoint_str.starts_with("http") {
                 Box::new(ConsoleExporter)
+            } else {
+                #[cfg(feature = "observability")]
+                {
+                    log::info!("Initializing OTLP exporter with endpoint: {}", endpoint_str);
+                    Box::new(OtlpExporter::new(&endpoint_str))
+                }
+                #[cfg(not(feature = "observability"))]
+                {
+                    log::info!(
+                        "OTLP requested but observability feature disabled; using ConsoleExporter"
+                    );
+                    Box::new(ConsoleExporter)
+                }
             }
-        }
-    };
+        };
 
-    let mut state = match lock_telemetry_state() {
-        Ok(state) => state,
-        Err(code) => return code,
-    };
-    *state = Some(TelemetryState::new(exporter));
+        let mut state = match lock_telemetry_state() {
+            Ok(state) => state,
+            Err(code) => return code,
+        };
+        *state = Some(TelemetryState::new(exporter));
 
-    0
+        0
+    })
 }
 
 /// Export a trace using the configured exporter.
@@ -115,43 +121,42 @@ pub unsafe extern "C" fn otel_init(
 /// Caller must ensure `trace_json` points to valid memory for `trace_len` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn otel_export_trace(trace_json: *const u8, trace_len: usize) -> i32 {
-    if trace_json.is_null() {
-        return 1;
-    }
+    guard::call_int_assert_unwind_safe(|| {
+        if trace_json.is_null() {
+            return 1;
+        }
+        if trace_len > MAX_TRACE_JSON_LEN {
+            return guard::FfiError::ResourceLimit.as_i32();
+        }
 
-    let mut state = match lock_telemetry_state() {
-        Ok(state) => state,
-        Err(code) => return code,
-    };
-    let telemetry_state = match state.as_ref() {
-        Some(s) => s,
-        None => return 2,
-    };
+        let mut state = match lock_telemetry_state() {
+            Ok(state) => state,
+            Err(code) => return code,
+        };
 
-    // Convert bytes to string
-    let slice = unsafe { std::slice::from_raw_parts(trace_json, trace_len) };
-    let json_str = match std::str::from_utf8(slice) {
-        Ok(s) => s,
-        Err(_) => {
-            if let Some(s) = state.as_mut() {
-                s.set_error("Invalid UTF-8 in trace JSON".to_string());
+        // Convert bytes to string
+        let slice = unsafe { std::slice::from_raw_parts(trace_json, trace_len) };
+        let json_str = match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => {
+                if let Some(s) = state.as_mut() {
+                    s.set_error("Invalid UTF-8 in trace JSON".to_string());
+                }
+                return 3;
             }
-            return 3;
-        }
-    };
+        };
 
-    // Export using configured exporter
-    let result = if let Some(exporter) = &telemetry_state.exporter {
-        exporter.export(json_str)
-    } else {
-        0
-    };
-    if result != 0 {
-        if let Some(s) = state.as_mut() {
-            s.set_error(format!("Export failed with code {}", result));
+        let result = match state.as_ref().and_then(|s| s.exporter.as_ref()) {
+            Some(exporter) => exporter.export(json_str),
+            None => return 2,
+        };
+        if result != 0 {
+            if let Some(s) = state.as_mut() {
+                s.set_error(format!("Export failed with code {}", result));
+            }
         }
-    }
-    result
+        result
+    })
 }
 
 /// Export a trace to a string buffer.
@@ -164,19 +169,22 @@ pub unsafe extern "C" fn otel_export_trace(trace_json: *const u8, trace_len: usi
 /// i32: 0 on success, non-zero on failure
 #[no_mangle]
 pub extern "C" fn otel_export_trace_to_string(trace_out: *mut u8, _trace_len: usize) -> i32 {
-    if trace_out.is_null() {
-        return 1;
-    }
+    guard::call_int_assert_unwind_safe(|| {
+        if trace_out.is_null() {
+            return 1;
+        }
 
-    // For console exporter, this is a no-op
-    0
+        // For console exporter, this is a no-op
+        0
+    })
 }
 
 /// Get the last error message.
 ///
 /// # Arguments
 /// - `error_buffer`: Pointer to buffer for error message
-/// - `error_len`: Pointer to length of error message
+/// - `error_len`: In/out pointer. On input, contains `error_buffer` capacity
+///   in bytes. On output, contains bytes required/written excluding null.
 ///
 /// # Returns
 /// i32: 0 on success, non-zero on failure
@@ -185,52 +193,63 @@ pub extern "C" fn otel_export_trace_to_string(trace_out: *mut u8, _trace_len: us
 /// Caller must ensure `error_buffer` and `error_len` point to valid writable memory.
 #[no_mangle]
 pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *mut usize) -> i32 {
-    if error_buffer.is_null() || error_len.is_null() {
-        return 1;
-    }
+    guard::call_int_assert_unwind_safe(|| {
+        if error_buffer.is_null() || error_len.is_null() {
+            return 1;
+        }
 
-    let state = match lock_telemetry_state() {
-        Ok(state) => state,
-        Err(code) => return code,
-    };
-    let error_message = match state.as_ref().and_then(|s| s.get_last_error()) {
-        Some(msg) => msg,
-        None => "No error".to_string(),
-    };
+        let buffer_cap = unsafe { *error_len };
+        let state = match lock_telemetry_state() {
+            Ok(state) => state,
+            Err(code) => return code,
+        };
+        let error_message = match state.as_ref().and_then(|s| s.get_last_error()) {
+            Some(msg) => msg,
+            None => "No error".to_string(),
+        };
 
-    let c_msg = match CString::new(error_message) {
-        Ok(msg) => msg,
-        Err(_) => return 2,
-    };
+        let c_msg = match CString::new(error_message) {
+            Ok(msg) => msg,
+            Err(_) => return 2,
+        };
 
-    let bytes = c_msg.as_bytes_with_nul();
-    let len = bytes.len();
+        let bytes = c_msg.as_bytes_with_nul();
+        let required_len = bytes.len() - 1;
+        unsafe {
+            *error_len = required_len;
+        }
+        if buffer_cap < bytes.len() {
+            return ERROR_BUFFER_TOO_SMALL;
+        }
 
-    unsafe {
-        // Copy error message to buffer
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), error_buffer, len);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), error_buffer, bytes.len());
+        }
 
-        // Set length
-        *error_len = len - 1; // Exclude null terminator
-    }
-
-    0
+        0
+    })
 }
 
 /// Cleanup allocated strings.
 #[no_mangle]
 pub extern "C" fn otel_cleanup_strings() {
-    // No-op for both exporters
+    let _ = guard::call_int_assert_unwind_safe(|| {
+        // No-op for both exporters
+        0
+    });
 }
 
 /// Shutdown OpenTelemetry and release resources.
 #[no_mangle]
 pub extern "C" fn otel_shutdown() {
-    let mut state = match lock_telemetry_state() {
-        Ok(state) => state,
-        Err(_) => return,
-    };
-    *state = None;
+    let _ = guard::call_int_assert_unwind_safe(|| {
+        let mut state = match lock_telemetry_state() {
+            Ok(state) => state,
+            Err(code) => return code,
+        };
+        *state = None;
+        0
+    });
 }
 
 #[cfg(test)]
@@ -287,7 +306,7 @@ mod tests {
 
         // Get last error should be "No error"
         let mut buffer = [0u8; 256];
-        let mut len = 0usize;
+        let mut len = buffer.len();
         let error_result = unsafe { otel_get_last_error(buffer.as_mut_ptr(), &mut len) };
         assert_eq!(error_result, 0);
 
@@ -295,6 +314,33 @@ mod tests {
         assert_eq!(error_msg, "No error");
 
         // Clean up
+        otel_shutdown();
+    }
+
+    #[test]
+    fn test_otel_get_last_error_reports_required_len_for_small_buffer() {
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
+
+        let mut buffer = [0xAAu8; 2];
+        let mut len = buffer.len();
+        let error_result = unsafe { otel_get_last_error(buffer.as_mut_ptr(), &mut len) };
+
+        assert_eq!(error_result, ERROR_BUFFER_TOO_SMALL);
+        assert_eq!(len, "No error".len());
+        assert_eq!(buffer, [0xAAu8; 2]);
+
+        otel_shutdown();
+    }
+
+    #[test]
+    fn test_otel_export_trace_rejects_oversized_payload() {
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
+
+        let byte = b"{}";
+        let result = unsafe { otel_export_trace(byte.as_ptr(), MAX_TRACE_JSON_LEN + 1) };
+
+        assert_eq!(result, guard::FfiError::ResourceLimit.as_i32());
+
         otel_shutdown();
     }
 }

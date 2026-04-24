@@ -2,7 +2,7 @@
 //! without the magic are plain concatenated [ParamValue] values (all input).
 
 use crate::error::{OdbcError, Result};
-use crate::protocol::param_value::ParamValue;
+use crate::protocol::param_value::{ParamValue, MAX_PARAM_COUNT};
 
 const DRT1: [u8; 4] = *b"DRT1";
 
@@ -53,6 +53,18 @@ pub fn deserialize_param_buffer(data: &[u8]) -> Result<ParamList> {
     }
     if is_directed_param_buffer(data) {
         let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        if count > MAX_PARAM_COUNT {
+            return Err(OdbcError::ValidationError(format!(
+                "DRT1 parameter count {} exceeds limit {}",
+                count, MAX_PARAM_COUNT
+            )));
+        }
+        let remaining = data.len().saturating_sub(8);
+        if count > remaining {
+            return Err(OdbcError::ValidationError(
+                "DRT1 parameter count exceeds available payload".to_string(),
+            ));
+        }
         let mut out = Vec::with_capacity(count);
         let mut offset = 8usize;
         for _ in 0..count {
@@ -141,5 +153,15 @@ mod tests {
             }
             _ => panic!(""),
         }
+    }
+
+    #[test]
+    fn drt1_rejects_huge_count_before_allocation() {
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let result = deserialize_param_buffer(&buf);
+
+        assert!(result.unwrap_err().to_string().contains("parameter count"));
     }
 }

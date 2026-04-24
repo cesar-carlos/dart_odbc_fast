@@ -9,6 +9,8 @@ const TAG_BINARY: u8 = 5;
 /// Placeholder for Oracle `SYS_REFCURSOR` / similar `OUT` parameters (wire
 /// tag only; engine bind is engine-specific — see `TYPE_MAPPING` §3.1.1).
 const TAG_REF_CURSOR_OUT: u8 = 6;
+pub const MAX_PARAM_COUNT: usize = 4096;
+pub const MAX_PARAM_VALUE_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamValue {
@@ -24,6 +26,11 @@ pub enum ParamValue {
 
 impl ParamValue {
     pub fn serialize(&self) -> Vec<u8> {
+        self.try_serialize()
+            .expect("ParamValue exceeds binary protocol limits")
+    }
+
+    pub fn try_serialize(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         match self {
             ParamValue::Null => {
@@ -33,7 +40,8 @@ impl ParamValue {
             ParamValue::String(s) => {
                 out.push(TAG_STRING);
                 let b = s.as_bytes();
-                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                let len = checked_payload_len(b.len(), "ParamValue::String")?;
+                out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(b);
             }
             ParamValue::Integer(n) => {
@@ -49,12 +57,14 @@ impl ParamValue {
             ParamValue::Decimal(s) => {
                 out.push(TAG_DECIMAL);
                 let b = s.as_bytes();
-                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                let len = checked_payload_len(b.len(), "ParamValue::Decimal")?;
+                out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(b);
             }
             ParamValue::Binary(b) => {
                 out.push(TAG_BINARY);
-                out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                let len = checked_payload_len(b.len(), "ParamValue::Binary")?;
+                out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(b);
             }
             ParamValue::RefCursorOut => {
@@ -62,7 +72,7 @@ impl ParamValue {
                 out.extend_from_slice(&0u32.to_le_bytes());
             }
         }
-        out
+        Ok(out)
     }
 
     pub fn deserialize(data: &[u8]) -> Result<(Self, usize)> {
@@ -73,7 +83,15 @@ impl ParamValue {
         }
         let tag = data[0];
         let len = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
-        let consumed = 5usize.saturating_add(len);
+        if len > MAX_PARAM_VALUE_PAYLOAD_LEN {
+            return Err(OdbcError::ValidationError(format!(
+                "ParamValue payload length {} exceeds limit {}",
+                len, MAX_PARAM_VALUE_PAYLOAD_LEN
+            )));
+        }
+        let consumed = 5usize
+            .checked_add(len)
+            .ok_or_else(|| OdbcError::ValidationError("ParamValue length overflow".to_string()))?;
 
         if data.len() < consumed {
             return Err(OdbcError::ValidationError(
@@ -143,6 +161,12 @@ pub fn deserialize_params(data: &[u8]) -> Result<Vec<ParamValue>> {
     let mut out = Vec::new();
     let mut offset = 0;
     while offset < data.len() {
+        if out.len() >= MAX_PARAM_COUNT {
+            return Err(OdbcError::ValidationError(format!(
+                "Parameter count exceeds limit {}",
+                MAX_PARAM_COUNT
+            )));
+        }
         let (p, n) = ParamValue::deserialize(&data[offset..])?;
         out.push(p);
         offset += n;
@@ -151,11 +175,22 @@ pub fn deserialize_params(data: &[u8]) -> Result<Vec<ParamValue>> {
 }
 
 pub fn serialize_params(params: &[ParamValue]) -> Vec<u8> {
+    try_serialize_params(params).expect("parameter list exceeds binary protocol limits")
+}
+
+pub fn try_serialize_params(params: &[ParamValue]) -> Result<Vec<u8>> {
+    if params.len() > MAX_PARAM_COUNT {
+        return Err(OdbcError::ValidationError(format!(
+            "Parameter count {} exceeds limit {}",
+            params.len(),
+            MAX_PARAM_COUNT
+        )));
+    }
     let mut out = Vec::new();
     for p in params {
-        out.extend(p.serialize());
+        out.extend(p.try_serialize()?);
     }
-    out
+    Ok(out)
 }
 
 pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<String>>> {
@@ -203,6 +238,18 @@ pub fn max_param_string_len(params: &[ParamValue]) -> usize {
 
 pub fn param_count_exceeds_limit(params: &[ParamValue], limit: usize) -> bool {
     params.len() > limit
+}
+
+fn checked_payload_len(value: usize, field: &'static str) -> Result<u32> {
+    if value > MAX_PARAM_VALUE_PAYLOAD_LEN {
+        return Err(OdbcError::ValidationError(format!(
+            "{} length {} exceeds limit {}",
+            field, value, MAX_PARAM_VALUE_PAYLOAD_LEN
+        )));
+    }
+    value
+        .try_into()
+        .map_err(|_| OdbcError::ValidationError(format!("{} length {} exceeds u32", field, value)))
 }
 
 #[cfg(test)]
@@ -471,5 +518,23 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unknown ParamValue tag"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_huge_payload_length_before_slice() {
+        let data = vec![TAG_STRING, 0xff, 0xff, 0xff, 0xff];
+
+        let result = ParamValue::deserialize(&data);
+
+        assert!(result.unwrap_err().to_string().contains("payload length"));
+    }
+
+    #[test]
+    fn test_serialize_params_rejects_too_many_params() {
+        let params = vec![ParamValue::Null; MAX_PARAM_COUNT + 1];
+
+        let result = try_serialize_params(&params);
+
+        assert!(result.unwrap_err().to_string().contains("Parameter count"));
     }
 }

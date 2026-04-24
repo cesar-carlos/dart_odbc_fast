@@ -19,6 +19,7 @@
 //! at the FFI layer.
 
 use crate::error::{OdbcError, Result};
+use crate::protocol::encoder::{OUTPUT_FOOTER_MAGIC, REF_CURSOR_FOOTER_MAGIC};
 
 const TAG_RESULT_SET: u8 = 0;
 const TAG_ROW_COUNT: u8 = 1;
@@ -30,6 +31,9 @@ pub const MULTI_RESULT_MAGIC: u32 = 0x544C554D;
 pub const MULTI_RESULT_VERSION: u16 = 2;
 
 const HEADER_V2_LEN: usize = 4 /*magic*/ + 2 /*version*/ + 2 /*reserved*/ + 4 /*count*/;
+const MIN_ITEM_LEN: usize = 1 /*tag*/ + 4 /*len*/;
+const MAX_MULTI_RESULT_ITEMS: usize = 16_384;
+const MAX_MULTI_RESULT_PAYLOAD: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MultiResultItem {
@@ -113,7 +117,7 @@ fn decode_multi_v2(data: &[u8]) -> Result<Vec<MultiResultItem>> {
         )));
     }
     let count = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
-    decode_items(data, HEADER_V2_LEN, count)
+    decode_items(data, HEADER_V2_LEN, count, true)
 }
 
 fn decode_multi_v1(data: &[u8]) -> Result<Vec<MultiResultItem>> {
@@ -123,10 +127,16 @@ fn decode_multi_v1(data: &[u8]) -> Result<Vec<MultiResultItem>> {
         ));
     }
     let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    decode_items(data, 4, count)
+    decode_items(data, 4, count, false)
 }
 
-fn decode_items(data: &[u8], mut offset: usize, count: usize) -> Result<Vec<MultiResultItem>> {
+fn decode_items(
+    data: &[u8],
+    mut offset: usize,
+    count: usize,
+    reject_trailing: bool,
+) -> Result<Vec<MultiResultItem>> {
+    validate_item_count(data, offset, count)?;
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
         if offset >= data.len() {
@@ -147,14 +157,23 @@ fn decode_items(data: &[u8], mut offset: usize, count: usize) -> Result<Vec<Mult
             data[offset + 2],
             data[offset + 3],
         ]) as usize;
+        if len > MAX_MULTI_RESULT_PAYLOAD {
+            return Err(OdbcError::ValidationError(format!(
+                "Multi-result item payload {} exceeds limit {}",
+                len, MAX_MULTI_RESULT_PAYLOAD
+            )));
+        }
         offset += 4;
-        if offset + len > data.len() {
+        let end = offset.checked_add(len).ok_or_else(|| {
+            OdbcError::ValidationError("Multi-result payload offset overflow".to_string())
+        })?;
+        if end > data.len() {
             return Err(OdbcError::ValidationError(
                 "Multi-result buffer truncated at item payload".to_string(),
             ));
         }
-        let payload = &data[offset..offset + len];
-        offset += len;
+        let payload = &data[offset..end];
+        offset = end;
         match tag {
             TAG_RESULT_SET => out.push(MultiResultItem::ResultSet(payload.to_vec())),
             TAG_ROW_COUNT => {
@@ -177,7 +196,35 @@ fn decode_items(data: &[u8], mut offset: usize, count: usize) -> Result<Vec<Mult
             }
         }
     }
+    if reject_trailing && offset != data.len() && !is_known_footer(&data[offset..]) {
+        return Err(OdbcError::ValidationError(
+            "Multi-result v2 buffer has trailing bytes".to_string(),
+        ));
+    }
     Ok(out)
+}
+
+fn is_known_footer(data: &[u8]) -> bool {
+    data.starts_with(&OUTPUT_FOOTER_MAGIC) || data.starts_with(&REF_CURSOR_FOOTER_MAGIC)
+}
+
+fn validate_item_count(data: &[u8], offset: usize, count: usize) -> Result<()> {
+    if count > MAX_MULTI_RESULT_ITEMS {
+        return Err(OdbcError::ValidationError(format!(
+            "Multi-result item count {} exceeds limit {}",
+            count, MAX_MULTI_RESULT_ITEMS
+        )));
+    }
+    let remaining = data.len().saturating_sub(offset);
+    let min_required = count
+        .checked_mul(MIN_ITEM_LEN)
+        .ok_or_else(|| OdbcError::ValidationError("Multi-result count overflow".to_string()))?;
+    if min_required > remaining {
+        return Err(OdbcError::ValidationError(
+            "Multi-result count exceeds available payload".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -269,5 +316,28 @@ mod tests {
             decode_multi(&bytes),
             Err(OdbcError::ValidationError(_))
         ));
+    }
+
+    #[test]
+    fn decode_multi_rejects_huge_count_before_allocation() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let result = decode_multi(&bytes);
+
+        assert!(result.unwrap_err().to_string().contains("item count"));
+    }
+
+    #[test]
+    fn decode_multi_v2_rejects_trailing_bytes() {
+        let mut bytes = encode_multi(&[]);
+        bytes.push(1);
+
+        let result = decode_multi(&bytes);
+
+        assert!(result.unwrap_err().to_string().contains("trailing bytes"));
     }
 }

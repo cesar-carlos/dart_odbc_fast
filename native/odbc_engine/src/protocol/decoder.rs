@@ -4,6 +4,11 @@ use crate::protocol::types::OdbcType;
 const MAGIC: u32 = 0x4F444243;
 const VERSION: u16 = 1;
 const HEADER_SIZE: usize = 16; // magic(4) + version(2) + col_count(2) + row_count(4) + payload_size(4)
+const MAX_DECODED_COLUMNS: usize = 4096;
+const MAX_DECODED_ROWS: usize = 1_000_000;
+const MAX_DECODED_CELLS: usize = 5_000_000;
+const MAX_DECODED_PAYLOAD_SIZE: usize = 256 * 1024 * 1024;
+const MAX_DECODED_CELL_SIZE: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnInfo {
@@ -71,14 +76,15 @@ impl BinaryProtocolDecoder {
         ]) as usize;
         offset += 4;
 
-        // Read payload size (for validation, but we'll parse based on actual structure)
-        let _payload_size = u32::from_le_bytes([
+        let payload_size = u32::from_le_bytes([
             buffer[offset],
             buffer[offset + 1],
             buffer[offset + 2],
             buffer[offset + 3],
-        ]);
+        ]) as usize;
         offset += 4;
+
+        validate_shape(column_count, row_count, payload_size)?;
 
         // Parse column metadata
         let mut columns = Vec::with_capacity(column_count);
@@ -144,21 +150,46 @@ impl BinaryProtocolDecoder {
                         buffer[offset + 2],
                         buffer[offset + 3],
                     ]) as usize;
+                    if data_len > MAX_DECODED_CELL_SIZE {
+                        return Err(OdbcError::ValidationError(format!(
+                            "Cell data length {} exceeds limit {}",
+                            data_len, MAX_DECODED_CELL_SIZE
+                        )));
+                    }
                     offset += 4;
 
                     // Read data
-                    if offset + data_len > buffer.len() {
+                    let end = offset.checked_add(data_len).ok_or_else(|| {
+                        OdbcError::ValidationError("Cell data offset overflow".to_string())
+                    })?;
+                    if end > buffer.len() {
                         return Err(OdbcError::ValidationError(
                             "Buffer too small for cell data".to_string(),
                         ));
                     }
-                    let data = buffer[offset..offset + data_len].to_vec();
-                    offset += data_len;
+                    let data = buffer[offset..end].to_vec();
+                    offset = end;
 
                     row.push(Some(data));
                 }
             }
             rows.push(row);
+        }
+
+        let expected_len = HEADER_SIZE
+            .checked_add(payload_size)
+            .ok_or_else(|| OdbcError::ValidationError("Payload size overflow".to_string()))?;
+        if expected_len != buffer.len() {
+            return Err(OdbcError::ValidationError(format!(
+                "Payload size mismatch: header declares {}, buffer has {} payload bytes",
+                payload_size,
+                buffer.len().saturating_sub(HEADER_SIZE)
+            )));
+        }
+        if offset != buffer.len() {
+            return Err(OdbcError::ValidationError(
+                "Buffer has trailing bytes".to_string(),
+            ));
         }
 
         Ok(DecodedResult {
@@ -168,6 +199,37 @@ impl BinaryProtocolDecoder {
             column_count,
         })
     }
+}
+
+fn validate_shape(column_count: usize, row_count: usize, payload_size: usize) -> Result<()> {
+    if column_count > MAX_DECODED_COLUMNS {
+        return Err(OdbcError::ValidationError(format!(
+            "Column count {} exceeds limit {}",
+            column_count, MAX_DECODED_COLUMNS
+        )));
+    }
+    if row_count > MAX_DECODED_ROWS {
+        return Err(OdbcError::ValidationError(format!(
+            "Row count {} exceeds limit {}",
+            row_count, MAX_DECODED_ROWS
+        )));
+    }
+    let cell_count = column_count
+        .checked_mul(row_count)
+        .ok_or_else(|| OdbcError::ValidationError("Cell count overflow".to_string()))?;
+    if cell_count > MAX_DECODED_CELLS {
+        return Err(OdbcError::ValidationError(format!(
+            "Cell count {} exceeds limit {}",
+            cell_count, MAX_DECODED_CELLS
+        )));
+    }
+    if payload_size > MAX_DECODED_PAYLOAD_SIZE {
+        return Err(OdbcError::ValidationError(format!(
+            "Payload size {} exceeds limit {}",
+            payload_size, MAX_DECODED_PAYLOAD_SIZE
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -296,6 +358,32 @@ mod tests {
         let result = BinaryProtocolDecoder::parse(&buffer);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Invalid version"));
+    }
+
+    #[test]
+    fn test_decode_rejects_payload_size_mismatch() {
+        let mut buffer = RowBufferEncoder::encode(&RowBuffer::new());
+        buffer.extend_from_slice(&[1, 2, 3]);
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Payload size mismatch"));
+    }
+
+    #[test]
+    fn test_decode_rejects_huge_row_count_before_allocation() {
+        let mut buffer = vec![0u8; HEADER_SIZE];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let result = BinaryProtocolDecoder::parse(&buffer);
+
+        assert!(result.unwrap_err().to_string().contains("Row count"));
     }
 
     #[test]

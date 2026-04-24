@@ -1,5 +1,5 @@
 use super::prepared_cache::PreparedStatementCache;
-use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::cell_reader::CellReader;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::CachedConnection;
@@ -167,15 +167,16 @@ impl ExecutionEngine {
                 column_types.push(odbc_type);
             }
 
+            let mut cell_reader = CellReader::new();
             while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
+                let mut row_data = Vec::with_capacity(column_types.len());
 
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                     let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column number".to_string())
                     })?;
 
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                     row_data.push(cell_data);
                 }
@@ -355,15 +356,17 @@ impl ExecutionEngine {
                         column_types.push(odbc_type);
                     }
 
+                    let mut cell_reader = CellReader::new();
                     while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                        let mut row_data = Vec::new();
+                        let mut row_data = Vec::with_capacity(column_types.len());
 
                         for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                             let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                                 OdbcError::InternalError("Invalid column number".to_string())
                             })?;
 
-                            let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                            let cell_data =
+                                cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                             row_data.push(cell_data);
                         }
@@ -543,15 +546,16 @@ impl ExecutionEngine {
                 column_types.push(odbc_type);
             }
 
+            let mut cell_reader = CellReader::new();
             while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
+                let mut row_data = Vec::with_capacity(column_types.len());
 
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                     let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column number".to_string())
                     })?;
 
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                     row_data.push(cell_data);
                 }
@@ -965,13 +969,14 @@ impl ExecutionEngine {
             row_buffer.add_column(col_name.to_string(), odbc_type);
             column_types.push(odbc_type);
         }
+        let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::new();
+            let mut row_data = Vec::with_capacity(column_types.len());
             for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                 let col_number: u16 = (col_idx + 1)
                     .try_into()
                     .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-                row_data.push(read_cell_bytes(&mut row, col_number, odbc_type)?);
+                row_data.push(cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?);
             }
             row_buffer.add_row(row_data);
         }
@@ -1013,13 +1018,14 @@ impl ExecutionEngine {
             column_types.push(odbc_type);
         }
 
+        let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::new();
+            let mut row_data = Vec::with_capacity(column_types.len());
             for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                 let col_number: u16 = (col_idx + 1)
                     .try_into()
                     .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-                let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
                 row_data.push(cell_data);
             }
             row_buffer.add_row(row_data);

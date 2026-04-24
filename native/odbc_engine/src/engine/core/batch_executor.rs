@@ -1,5 +1,6 @@
 use super::pipeline::QueryPipeline;
-use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::cell_reader::CellReader;
+use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{param_values_to_strings, OdbcType, ParamValue, RowBuffer, RowBufferEncoder};
 use odbc_api::{Connection, Cursor, IntoParameter, ResultSetMetadata};
@@ -47,6 +48,10 @@ impl BatchExecutor {
         self.batch_size
     }
 
+    fn effective_batch_size(&self) -> usize {
+        self.batch_size.max(1)
+    }
+
     pub fn execute_batch(
         &self,
         conn: &Connection<'static>,
@@ -55,8 +60,14 @@ impl BatchExecutor {
         let mut results = Vec::new();
 
         for query in queries {
-            let result = self.pipeline.execute_direct(conn, &query.sql)?;
-            results.push(result);
+            if query.params.is_empty() {
+                let result = self.pipeline.execute_direct(conn, &query.sql)?;
+                results.push(result);
+            } else {
+                let mut result =
+                    self.execute_batch_optimized(conn, &query.sql, vec![query.params])?;
+                results.append(&mut result);
+            }
         }
 
         Ok(results)
@@ -69,22 +80,19 @@ impl BatchExecutor {
         param_sets: Vec<Vec<BatchParam>>,
     ) -> Result<Vec<Vec<u8>>> {
         let mut results = Vec::new();
+        if param_sets.is_empty() {
+            return Ok(results);
+        }
 
-        for params_chunk in param_sets.chunks(self.batch_size) {
+        let batch_size = self.effective_batch_size();
+        let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+
+        for params_chunk in param_sets.chunks(batch_size) {
             for param_set in params_chunk {
-                let param_values: Vec<ParamValue> = param_set
-                    .iter()
-                    .map(|p| match p {
-                        BatchParam::String(s) => ParamValue::String(s.clone()),
-                        BatchParam::Integer(n) => ParamValue::Integer(*n),
-                        BatchParam::BigInt(n) => ParamValue::BigInt(*n),
-                        BatchParam::Null => ParamValue::Null,
-                    })
-                    .collect();
+                let param_values: Vec<ParamValue> =
+                    param_set.iter().map(batch_param_to_param_value).collect();
 
                 let optional_strings = param_values_to_strings(&param_values)?;
-
-                let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
 
                 let mut cursor = match optional_strings.len() {
                     0 => stmt.execute(()).map_err(OdbcError::from)?,
@@ -137,7 +145,11 @@ impl BatchExecutor {
                         row_count,
                     )])
                 } else {
-                    let mut c = taken.take().expect("cursor is Some");
+                    let Some(mut c) = taken.take() else {
+                        return Err(OdbcError::InternalError(
+                            "Expected result cursor after successful execute".to_string(),
+                        ));
+                    };
                     let mut row_buffer = RowBuffer::new();
                     let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
                     let cols_u16: u16 = cols_i16.try_into().map_err(|_| {
@@ -155,18 +167,21 @@ impl BatchExecutor {
                         column_types.push(odbc_type);
                     }
 
+                    let mut cell_reader = CellReader::new();
                     while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
-                        let mut row_data = Vec::new();
+                        let mut row_data = Vec::with_capacity(column_types.len());
                         for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                             let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                                 OdbcError::InternalError("Invalid column number".to_string())
                             })?;
-                            let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                            let cell_data =
+                                cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
                             row_data.push(cell_data);
                         }
                         row_buffer.add_row(row_data);
                     }
 
+                    coalesce_for_json_rows(&mut row_buffer);
                     RowBufferEncoder::encode(&row_buffer)
                 };
 
@@ -175,6 +190,15 @@ impl BatchExecutor {
         }
 
         Ok(results)
+    }
+}
+
+fn batch_param_to_param_value(param: &BatchParam) -> ParamValue {
+    match param {
+        BatchParam::String(s) => ParamValue::String(s.clone()),
+        BatchParam::Integer(n) => ParamValue::Integer(*n),
+        BatchParam::BigInt(n) => ParamValue::BigInt(*n),
+        BatchParam::Null => ParamValue::Null,
     }
 }
 
@@ -324,5 +348,35 @@ mod tests {
     fn test_batch_executor_zero_batch_size() {
         let executor = BatchExecutor::new(10, 0);
         assert_eq!(executor.batch_size(), 0);
+        assert_eq!(executor.effective_batch_size(), 1);
+    }
+
+    #[test]
+    fn test_batch_executor_effective_batch_size_preserves_non_zero() {
+        let executor = BatchExecutor::new(10, 25);
+        assert_eq!(executor.effective_batch_size(), 25);
+    }
+
+    #[test]
+    fn test_batch_param_conversion() {
+        match batch_param_to_param_value(&BatchParam::String("hello".to_string())) {
+            ParamValue::String(value) => assert_eq!(value, "hello"),
+            _ => panic!("Expected String value"),
+        }
+
+        match batch_param_to_param_value(&BatchParam::Integer(42)) {
+            ParamValue::Integer(value) => assert_eq!(value, 42),
+            _ => panic!("Expected Integer value"),
+        }
+
+        match batch_param_to_param_value(&BatchParam::BigInt(123456789)) {
+            ParamValue::BigInt(value) => assert_eq!(value, 123456789),
+            _ => panic!("Expected BigInt value"),
+        }
+
+        match batch_param_to_param_value(&BatchParam::Null) {
+            ParamValue::Null => {}
+            _ => panic!("Expected Null value"),
+        }
     }
 }

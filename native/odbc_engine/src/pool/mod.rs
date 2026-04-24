@@ -210,6 +210,7 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
     }
 }
 
+#[derive(Clone)]
 pub struct ConnectionPool {
     pool: Pool<OdbcConnectionManager>,
     connection_string: String,

@@ -17,6 +17,7 @@ pub mod a2_array_binding_injection;
 pub mod a3_span_lifecycle;
 pub mod c10_integer_binary_decode;
 pub mod c1_ffi_panic_safety;
+pub mod c2_telemetry_ffi_safety;
 pub mod c6_multi_result_loop;
 pub mod c9_bitmap_truncation;
 pub mod d1_drt1_multi_result_wire;

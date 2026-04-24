@@ -1,13 +1,13 @@
 use crate::error::OdbcError;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 
-static RUNTIME: OnceLock<std::result::Result<Arc<Mutex<Runtime>>, String>> = OnceLock::new();
+static RUNTIME: OnceLock<std::result::Result<Arc<Runtime>, String>> = OnceLock::new();
 
-fn get_runtime() -> Result<Arc<Mutex<Runtime>>, OdbcError> {
+fn get_runtime() -> Result<Arc<Runtime>, OdbcError> {
     let runtime = RUNTIME.get_or_init(|| {
         Runtime::new()
-            .map(|rt| Arc::new(Mutex::new(rt)))
+            .map(Arc::new)
             .map_err(|e| format!("Failed to create tokio runtime: {}", e))
     });
 
@@ -18,7 +18,7 @@ fn get_runtime() -> Result<Arc<Mutex<Runtime>>, OdbcError> {
 }
 
 #[cfg(test)]
-fn get_runtime_for_test() -> Result<Arc<Mutex<Runtime>>, OdbcError> {
+fn get_runtime_for_test() -> Result<Arc<Runtime>, OdbcError> {
     get_runtime()
 }
 
@@ -36,10 +36,7 @@ where
     R: Send + 'static,
 {
     let runtime = get_runtime()?;
-    let rt = runtime
-        .lock()
-        .map_err(|_| OdbcError::InternalError("Async runtime lock poisoned".to_string()))?;
-    rt.block_on(f)
+    runtime.block_on(f)
 }
 
 #[allow(dead_code)]
@@ -48,10 +45,7 @@ where
     F: FnOnce() + Send + 'static,
 {
     let runtime = get_runtime()?;
-    let rt = runtime
-        .lock()
-        .map_err(|_| OdbcError::InternalError("Async runtime lock poisoned".to_string()))?;
-    Ok(rt.spawn_blocking(f))
+    Ok(runtime.spawn_blocking(f))
 }
 
 #[cfg(test)]
@@ -92,8 +86,7 @@ mod tests {
 
         let future = async { Ok::<i32, OdbcError>(42) };
 
-        let rt = runtime.lock().unwrap();
-        let result = rt.block_on(future);
+        let result = runtime.block_on(future);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
     }

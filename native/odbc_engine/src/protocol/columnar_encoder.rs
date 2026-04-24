@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnBlock, ColumnData, CompressionType, RowBufferV2};
 use crate::protocol::compression;
 use crate::protocol::converter::row_buffer_to_columnar;
@@ -11,13 +11,14 @@ pub struct ColumnarEncoder;
 
 impl ColumnarEncoder {
     pub fn encode(buffer: &RowBufferV2, use_compression: bool) -> Result<Vec<u8>> {
-        let mut output = Vec::new();
+        let mut output = Vec::with_capacity(Self::estimate_encoded_size(buffer)?);
 
         output.extend_from_slice(&MAGIC.to_le_bytes());
         output.extend_from_slice(&VERSION_V2.to_le_bytes());
         output.extend_from_slice(&buffer.flags.to_le_bytes());
-        output.extend_from_slice(&(buffer.column_count() as u16).to_le_bytes());
-        output.extend_from_slice(&(buffer.row_count as u32).to_le_bytes());
+        output
+            .extend_from_slice(&checked_u16(buffer.column_count(), "column count")?.to_le_bytes());
+        output.extend_from_slice(&checked_u32(buffer.row_count, "row count")?.to_le_bytes());
 
         let compression_flag = if use_compression { 1u8 } else { 0u8 };
         output.push(compression_flag);
@@ -31,7 +32,7 @@ impl ColumnarEncoder {
             Self::encode_column_block(&mut output, col_block, use_compression)?;
         }
 
-        let payload_size = (output.len() - payload_start) as u32;
+        let payload_size = checked_u32(output.len() - payload_start, "payload size")?;
         let payload_size_bytes = payload_size.to_le_bytes();
         output[payload_size_pos..payload_size_pos + 4].copy_from_slice(&payload_size_bytes);
 
@@ -45,17 +46,21 @@ impl ColumnarEncoder {
     ) -> Result<()> {
         let col_name_bytes = col_block.metadata.name.as_bytes();
         output.extend_from_slice(&(col_block.metadata.odbc_type as u16).to_le_bytes());
-        output.extend_from_slice(&(col_name_bytes.len() as u16).to_le_bytes());
+        output.extend_from_slice(
+            &checked_u16(col_name_bytes.len(), "column name length")?.to_le_bytes(),
+        );
         output.extend_from_slice(col_name_bytes);
 
-        let mut raw_data = Vec::new();
+        let mut raw_data = Vec::with_capacity(Self::estimate_column_payload_size(col_block)?);
 
         match &col_block.data {
             ColumnData::Varchar(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
                         raw_data.push(0);
-                        raw_data.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        raw_data.extend_from_slice(
+                            &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
+                        );
                         raw_data.extend_from_slice(bytes);
                     } else {
                         raw_data.push(1);
@@ -86,7 +91,9 @@ impl ColumnarEncoder {
                 for cell in data {
                     if let Some(bytes) = cell {
                         raw_data.push(0);
-                        raw_data.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        raw_data.extend_from_slice(
+                            &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
+                        );
                         raw_data.extend_from_slice(bytes);
                     } else {
                         raw_data.push(1);
@@ -116,10 +123,64 @@ impl ColumnarEncoder {
             output.push(compression_type as u8);
         }
 
-        output.extend_from_slice(&(compressed_data.len() as u32).to_le_bytes());
+        output.extend_from_slice(
+            &checked_u32(compressed_data.len(), "column payload length")?.to_le_bytes(),
+        );
         output.extend_from_slice(&compressed_data);
 
         Ok(())
+    }
+
+    fn estimate_encoded_size(buffer: &RowBufferV2) -> Result<usize> {
+        const HEADER_SIZE: usize = 19;
+        let mut size = HEADER_SIZE;
+        for col_block in &buffer.columns {
+            size = checked_add(size, 2, "column type")?;
+            size = checked_add(size, 2, "column name length")?;
+            size = checked_add(size, col_block.metadata.name.len(), "column name")?;
+            size = checked_add(size, 1, "compression flag")?;
+            size = checked_add(size, 1, "compression algorithm")?;
+            size = checked_add(size, 4, "column payload length")?;
+            size = checked_add(
+                size,
+                Self::estimate_column_payload_size(col_block)?,
+                "column payload",
+            )?;
+        }
+        Ok(size)
+    }
+
+    fn estimate_column_payload_size(col_block: &ColumnBlock) -> Result<usize> {
+        let mut size = 0usize;
+        match &col_block.data {
+            ColumnData::Varchar(data) | ColumnData::Binary(data) => {
+                for cell in data {
+                    size = checked_add(size, 1, "cell null flag")?;
+                    if let Some(bytes) = cell {
+                        checked_u32(bytes.len(), "cell length")?;
+                        size = checked_add(size, 4, "cell length")?;
+                        size = checked_add(size, bytes.len(), "cell payload")?;
+                    }
+                }
+            }
+            ColumnData::Integer(data) => {
+                for cell in data {
+                    size = checked_add(size, 1, "cell null flag")?;
+                    if cell.is_some() {
+                        size = checked_add(size, 4, "integer cell")?;
+                    }
+                }
+            }
+            ColumnData::BigInt(data) => {
+                for cell in data {
+                    size = checked_add(size, 1, "cell null flag")?;
+                    if cell.is_some() {
+                        size = checked_add(size, 8, "bigint cell")?;
+                    }
+                }
+            }
+        }
+        Ok(size)
     }
 
     /// Encode row-oriented buffer for bulk operations: transpose to columnar,
@@ -128,6 +189,27 @@ impl ColumnarEncoder {
         let columnar = row_buffer_to_columnar(buffer);
         Self::encode(&columnar, true)
     }
+}
+
+fn checked_u16(value: usize, field: &'static str) -> Result<u16> {
+    value.try_into().map_err(|_| {
+        OdbcError::ResourceLimitReached(format!("{} {} exceeds u16 wire limit", field, value))
+    })
+}
+
+fn checked_u32(value: usize, field: &'static str) -> Result<u32> {
+    value.try_into().map_err(|_| {
+        OdbcError::ResourceLimitReached(format!("{} {} exceeds u32 wire limit", field, value))
+    })
+}
+
+fn checked_add(current: usize, added: usize, context: &'static str) -> Result<usize> {
+    current.checked_add(added).ok_or_else(|| {
+        OdbcError::ResourceLimitReached(format!(
+            "Columnar payload size overflow while adding {}",
+            context
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -446,5 +528,57 @@ mod tests {
 
         let payload_size = u32::from_le_bytes([encoded[15], encoded[16], encoded[17], encoded[18]]);
         assert!(payload_size > 0);
+    }
+
+    #[test]
+    fn test_encode_uncompressed_binary_equivalence() {
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(2);
+        buffer.add_column(
+            ColumnMetadata {
+                name: "id".to_string(),
+                odbc_type: OdbcType::Integer,
+            },
+            ColumnData::Integer(vec![Some(7), None]),
+        );
+        buffer.add_column(
+            ColumnMetadata {
+                name: "name".to_string(),
+                odbc_type: OdbcType::Varchar,
+            },
+            ColumnData::Varchar(vec![Some(b"Al".to_vec()), None]),
+        );
+
+        let encoded = ColumnarEncoder::encode(&buffer, false).expect("Should encode");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&MAGIC.to_le_bytes());
+        expected.extend_from_slice(&VERSION_V2.to_le_bytes());
+        expected.extend_from_slice(&0u16.to_le_bytes());
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&38u32.to_le_bytes());
+
+        expected.extend_from_slice(&(OdbcType::Integer as u16).to_le_bytes());
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(b"id");
+        expected.push(0);
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&7i32.to_le_bytes());
+        expected.push(1);
+
+        expected.extend_from_slice(&(OdbcType::Varchar as u16).to_le_bytes());
+        expected.extend_from_slice(&4u16.to_le_bytes());
+        expected.extend_from_slice(b"name");
+        expected.push(0);
+        expected.extend_from_slice(&8u32.to_le_bytes());
+        expected.push(0);
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(b"Al");
+        expected.push(1);
+
+        assert_eq!(encoded, expected);
     }
 }

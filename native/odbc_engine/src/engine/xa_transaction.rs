@@ -407,6 +407,14 @@ impl XaTransaction {
         self.state.lock().map(|s| *s).unwrap_or(XaState::Failed)
     }
 
+    fn set_state(&self, state: XaState) -> Result<()> {
+        *self
+            .state
+            .lock()
+            .map_err(|_| OdbcError::InternalError("XA state lock poisoned".to_string()))? = state;
+        Ok(())
+    }
+
     /// `xa_end`: detach the branch from the connection. After this
     /// the connection can be reused for other work or for
     /// `xa_prepare` on this branch.
@@ -417,7 +425,7 @@ impl XaTransaction {
         } else {
             self.run_on_conn(apply_xa_end)?;
         }
-        *self.state.lock().unwrap() = XaState::Idle;
+        self.set_state(XaState::Idle)?;
         Ok(PreparingXa { inner: self })
     }
 
@@ -437,7 +445,7 @@ impl XaTransaction {
                     b.commit()?;
                 }
             }
-            *self.state.lock().unwrap() = XaState::Committed;
+            self.set_state(XaState::Committed)?;
             let _ = self.try_restore_autocommit();
             return Ok(());
         }
@@ -452,11 +460,11 @@ impl XaTransaction {
         let restore_autocommit = self.try_restore_autocommit();
         match (r, restore_autocommit) {
             (Ok(()), _) => {
-                *self.state.lock().unwrap() = XaState::Committed;
+                self.set_state(XaState::Committed)?;
                 Ok(())
             }
             (Err(e), _) => {
-                *self.state.lock().unwrap() = XaState::Failed;
+                self.set_state(XaState::Failed)?;
                 Err(e)
             }
         }
@@ -478,7 +486,7 @@ impl XaTransaction {
                 }
             }
             let _ = self.try_restore_autocommit();
-            *self.state.lock().unwrap() = XaState::RolledBack;
+            self.set_state(XaState::RolledBack)?;
             return Ok(());
         }
         let _ = self.run_on_conn(apply_xa_end);
@@ -486,11 +494,11 @@ impl XaTransaction {
         let _ = self.try_restore_autocommit();
         match r {
             Ok(()) => {
-                *self.state.lock().unwrap() = XaState::RolledBack;
+                self.set_state(XaState::RolledBack)?;
                 Ok(())
             }
             Err(e) => {
-                *self.state.lock().unwrap() = XaState::Failed;
+                self.set_state(XaState::Failed)?;
                 Err(e)
             }
         }
@@ -580,6 +588,13 @@ impl Drop for XaTransaction {
     }
 }
 
+fn set_xa_state(state: &Arc<Mutex<XaState>>, value: XaState) -> Result<()> {
+    *state
+        .lock()
+        .map_err(|_| OdbcError::InternalError("XA state lock poisoned".to_string()))? = value;
+    Ok(())
+}
+
 impl PreparingXa {
     /// `xa_prepare`: Phase 1 of 2PC. On success the branch becomes
     /// **heuristically committable** — its outcome survives a process
@@ -590,7 +605,7 @@ impl PreparingXa {
         inner.assert_state(XaState::Idle, "prepare")?;
         if inner.is_mssql_mdtc() {
             // MSDTC: no SQL PREPARE — branch is already coordinated by DTC.
-            *inner.state.lock().unwrap() = XaState::Prepared;
+            inner.set_state(XaState::Prepared)?;
             let _ = inner.try_restore_autocommit();
             let handles = inner.handles.clone();
             let conn_id = inner.conn_id;
@@ -613,7 +628,7 @@ impl PreparingXa {
         let r = inner.run_on_conn(apply_xa_prepare);
         match r {
             Ok(()) => {
-                *inner.state.lock().unwrap() = XaState::Prepared;
+                inner.set_state(XaState::Prepared)?;
                 let _ = inner.try_restore_autocommit();
                 Ok(PreparedXa {
                     handles: inner.handles.clone(),
@@ -626,7 +641,7 @@ impl PreparingXa {
                 })
             }
             Err(e) => {
-                *inner.state.lock().unwrap() = XaState::Failed;
+                inner.set_state(XaState::Failed)?;
                 let _ = inner.try_restore_autocommit();
                 Err(e)
             }
@@ -648,18 +663,18 @@ impl PreparingXa {
                 }
             }
             let _ = inner.try_restore_autocommit();
-            *inner.state.lock().unwrap() = XaState::RolledBack;
+            inner.set_state(XaState::RolledBack)?;
             return Ok(());
         }
         let r = inner.run_on_conn(apply_xa_rollback);
         let _ = inner.try_restore_autocommit();
         match r {
             Ok(()) => {
-                *inner.state.lock().unwrap() = XaState::RolledBack;
+                inner.set_state(XaState::RolledBack)?;
                 Ok(())
             }
             Err(e) => {
-                *inner.state.lock().unwrap() = XaState::Failed;
+                inner.set_state(XaState::Failed)?;
                 Err(e)
             }
         }
@@ -671,6 +686,10 @@ impl PreparedXa {
         &self.xid
     }
 
+    fn set_state(&self, state: XaState) -> Result<()> {
+        set_xa_state(&self.state, state)
+    }
+
     /// `xa_commit` (Phase 2): finalise the prepared branch. Returns
     /// success only when the engine confirmed the commit hit stable
     /// storage.
@@ -678,15 +697,16 @@ impl PreparedXa {
         self.assert_state(XaState::Prepared, "commit")?;
         #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
         {
+            let state = self.state.clone();
             if let Some(b) = self.dtc_branch {
                 let r = b.commit();
                 match r {
                     Ok(()) => {
-                        *self.state.lock().unwrap() = XaState::Committed;
+                        set_xa_state(&state, XaState::Committed)?;
                         return Ok(());
                     }
                     Err(e) => {
-                        *self.state.lock().unwrap() = XaState::Failed;
+                        set_xa_state(&state, XaState::Failed)?;
                         return Err(e);
                     }
                 }
@@ -695,11 +715,11 @@ impl PreparedXa {
         let r = self.run_on_conn(|c, e, x| apply_xa_commit(c, e, x, false));
         match r {
             Ok(()) => {
-                *self.state.lock().unwrap() = XaState::Committed;
+                self.set_state(XaState::Committed)?;
                 Ok(())
             }
             Err(e) => {
-                *self.state.lock().unwrap() = XaState::Failed;
+                self.set_state(XaState::Failed)?;
                 Err(e)
             }
         }
@@ -713,15 +733,16 @@ impl PreparedXa {
         self.assert_state(XaState::Prepared, "rollback")?;
         #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
         {
+            let state = self.state.clone();
             if let Some(b) = self.dtc_branch {
                 let r = b.abort();
                 match r {
                     Ok(()) => {
-                        *self.state.lock().unwrap() = XaState::RolledBack;
+                        set_xa_state(&state, XaState::RolledBack)?;
                         return Ok(());
                     }
                     Err(e) => {
-                        *self.state.lock().unwrap() = XaState::Failed;
+                        set_xa_state(&state, XaState::Failed)?;
                         return Err(e);
                     }
                 }
@@ -730,11 +751,11 @@ impl PreparedXa {
         let r = self.run_on_conn(apply_xa_rollback_prepared);
         match r {
             Ok(()) => {
-                *self.state.lock().unwrap() = XaState::RolledBack;
+                self.set_state(XaState::RolledBack)?;
                 Ok(())
             }
             Err(e) => {
-                *self.state.lock().unwrap() = XaState::Failed;
+                self.set_state(XaState::Failed)?;
                 Err(e)
             }
         }

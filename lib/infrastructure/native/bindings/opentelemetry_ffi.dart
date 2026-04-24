@@ -205,7 +205,7 @@ class OpenTelemetryFFI {
     }
 
     final buffer = malloc<ffi.Uint8>(_errorBufferSize);
-    final len = malloc<ffi.IntPtr>()..value = 0;
+    final len = malloc<ffi.IntPtr>()..value = _errorBufferSize;
     try {
       final result = getErrorPtr.asFunction<
           int Function(

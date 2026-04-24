@@ -1,4 +1,4 @@
-use crate::engine::cell_reader::read_cell_bytes;
+use crate::engine::cell_reader::CellReader;
 use crate::engine::core::{DiskSpillStream, DiskSpillWriter};
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
@@ -77,15 +77,16 @@ impl StreamingExecutor {
                 column_types.push(odbc_type);
             }
 
+            let mut cell_reader = CellReader::new();
             while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
+                let mut row_data = Vec::with_capacity(column_types.len());
 
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                     let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column number".to_string())
                     })?;
 
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                     row_data.push(cell_data);
                 }
@@ -99,7 +100,7 @@ impl StreamingExecutor {
             // `engine::sqlserver_json` (closes #2).
             coalesce_for_json_rows(&mut row_buffer);
 
-            let encoded = RowBufferEncoder::encode(&row_buffer);
+            let encoded = encode_row_buffer(&row_buffer)?;
             Ok(StreamingState {
                 data: encoded,
                 offset: 0,
@@ -142,15 +143,16 @@ impl StreamingExecutor {
                 column_types.push(odbc_type);
             }
 
+            let mut cell_reader = CellReader::new();
             while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::new();
+                let mut row_data = Vec::with_capacity(column_types.len());
 
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                     let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column number".to_string())
                     })?;
 
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
 
                     row_data.push(cell_data);
                 }
@@ -193,7 +195,7 @@ impl StreamingExecutor {
                     }
                 }
             } else {
-                let encoded = RowBufferEncoder::encode(&row_buffer);
+                let encoded = encode_row_buffer(&row_buffer)?;
                 Ok(StreamState::InMemory(StreamingState {
                     data: encoded,
                     offset: 0,
@@ -255,6 +257,7 @@ impl StreamingExecutor {
         }
 
         let mut first_batch = true;
+        let mut cell_reader = CellReader::new();
         loop {
             if cancel_requested
                 .as_ref()
@@ -270,12 +273,12 @@ impl StreamingExecutor {
                 let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? else {
                     break;
                 };
-                let mut row_data = Vec::new();
+                let mut row_data = Vec::with_capacity(column_types.len());
                 for (col_idx, &odbc_type) in column_types.iter().enumerate() {
                     let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
                         OdbcError::InternalError("Invalid column number".to_string())
                     })?;
-                    let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
                     row_data.push(cell_data);
                 }
                 row_buffer.add_row(row_data);
@@ -284,13 +287,13 @@ impl StreamingExecutor {
 
             if row_buffer.row_count() == 0 {
                 if first_batch {
-                    let encoded = RowBufferEncoder::encode(&row_buffer);
+                    let encoded = encode_row_buffer(&row_buffer)?;
                     on_batch(encoded)?;
                 }
                 break;
             }
 
-            let encoded = RowBufferEncoder::encode(&row_buffer);
+            let encoded = encode_row_buffer(&row_buffer)?;
             on_batch(encoded)?;
             first_batch = false;
         }
@@ -487,7 +490,7 @@ where
                 return Err(OdbcError::Cancelled);
             }
             let encoded = encode_cursor_to_buffer(&mut cursor)?;
-            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded))?;
+            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
             let _stmt_ref = cursor.into_stmt();
             true
         } else {
@@ -504,7 +507,7 @@ where
         on_item(frame_item(
             MULTI_STREAM_ITEM_TAG_ROW_COUNT,
             rc.to_le_bytes().to_vec(),
-        ))?;
+        )?)?;
     }
 
     loop {
@@ -547,7 +550,7 @@ where
             // SAFETY: just observed cols > 0 with no other live borrow.
             let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
             let encoded = encode_cursor_to_buffer(&mut cursor)?;
-            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded))?;
+            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
             let _stmt_ref = cursor.into_stmt();
         } else {
             let rc = stmt
@@ -558,7 +561,7 @@ where
             on_item(frame_item(
                 MULTI_STREAM_ITEM_TAG_ROW_COUNT,
                 (rc as i64).to_le_bytes().to_vec(),
-            ))?;
+            )?)?;
         }
     }
 }
@@ -587,13 +590,14 @@ where
         column_types.push(odbc_type);
     }
 
+    let mut cell_reader = CellReader::new();
     while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-        let mut row_data = Vec::new();
+        let mut row_data = Vec::with_capacity(column_types.len());
         for (col_idx, &odbc_type) in column_types.iter().enumerate() {
             let col_number: u16 = (col_idx + 1)
                 .try_into()
                 .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-            let cell_data = read_cell_bytes(&mut row, col_number, odbc_type)?;
+            let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
             row_data.push(cell_data);
         }
         row_buffer.add_row(row_data);
@@ -603,15 +607,30 @@ where
     // before framing, so the same coalescing applies here (closes #2).
     coalesce_for_json_rows(&mut row_buffer);
 
-    Ok(RowBufferEncoder::encode(&row_buffer))
+    encode_row_buffer(&row_buffer)
 }
 
-fn frame_item(tag: u8, payload: Vec<u8>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + 4 + payload.len());
+fn encode_row_buffer(row_buffer: &RowBuffer) -> Result<Vec<u8>> {
+    RowBufferEncoder::try_encode(row_buffer)
+        .map_err(|e| OdbcError::ResourceLimitReached(format!("result encoding failed: {e}")))
+}
+
+fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+    let payload_len: u32 = payload.len().try_into().map_err(|_| {
+        OdbcError::ResourceLimitReached(format!(
+            "multi-result stream item payload exceeds u32: {}",
+            payload.len()
+        ))
+    })?;
+    let capacity = payload
+        .len()
+        .checked_add(5)
+        .ok_or_else(|| OdbcError::ResourceLimitReached("stream item size overflow".to_string()))?;
+    let mut out = Vec::with_capacity(capacity);
     out.push(tag);
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&payload_len.to_le_bytes());
     out.extend(payload);
-    out
+    Ok(out)
 }
 
 /// Spawn a worker that streams a multi-result batch via `BatchedStreamingState`.
@@ -800,13 +819,18 @@ impl BatchedStreamingState {
             }
         }
 
+        let batch_len = self.current_batch.as_ref().map(|b| b.len()).unwrap_or(0);
+        if self.offset == 0 && self.chunk_size >= batch_len {
+            return Ok(self.current_batch.take());
+        }
+
         let b = self.current_batch.as_ref().ok_or_else(|| {
             OdbcError::InternalError(
                 "Streaming state corrupted: no batch available after receiver processing"
                     .to_string(),
             )
         })?;
-        let end = (self.offset + self.chunk_size).min(b.len());
+        let end = self.offset.saturating_add(self.chunk_size).min(b.len());
         let chunk = b[self.offset..end].to_vec();
         self.offset = end;
 
@@ -944,13 +968,18 @@ impl AsyncStreamingState {
             }
         }
 
+        let batch_len = self.current_batch_len();
+        if self.offset == 0 && self.chunk_size >= batch_len {
+            return Ok(self.current_batch.take());
+        }
+
         let b = self.current_batch.as_ref().ok_or_else(|| {
             OdbcError::InternalError(
                 "Async stream state corrupted: no batch available after receiver processing"
                     .to_string(),
             )
         })?;
-        let end = (self.offset + self.chunk_size).min(b.len());
+        let end = self.offset.saturating_add(self.chunk_size).min(b.len());
         let chunk = b[self.offset..end].to_vec();
         self.offset = end;
         Ok(Some(chunk))
@@ -1099,6 +1128,21 @@ mod tests {
     }
 
     #[test]
+    fn test_batched_streaming_state_takes_whole_batch_when_chunk_fits() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 8);
+        let chunk = state.fetch_next_chunk().unwrap();
+
+        assert_eq!(chunk, Some(vec![1, 2, 3]));
+        assert!(state.current_batch.is_none());
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
     fn test_batched_streaming_state_error() {
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
         let _ = tx.send(BatchedMessage::Error("test error".to_string()));
@@ -1127,6 +1171,33 @@ mod tests {
         assert_eq!(state.poll_status(), AsyncStreamStatus::Done);
         let c3 = state.fetch_next_chunk().unwrap();
         assert_eq!(c3, None);
+    }
+
+    #[test]
+    fn test_async_streaming_state_takes_whole_batch_when_chunk_fits() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![7, 8, 9]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 16);
+
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![7, 8, 9]));
+        assert!(state.current_batch.is_none());
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_frame_item_encodes_payload_header() {
+        let framed = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, vec![1, 2, 3]).unwrap();
+
+        assert_eq!(framed[0], MULTI_STREAM_ITEM_TAG_RESULT_SET);
+        assert_eq!(
+            u32::from_le_bytes([framed[1], framed[2], framed[3], framed[4]]),
+            3
+        );
+        assert_eq!(&framed[5..], &[1, 2, 3]);
     }
 
     #[test]
