@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.3] - 2026-04-24
+
+### Fixed
+
+- **Rust doctests:** `native/odbc_engine/src/ffi/guard.rs` no longer uses
+  `ignore` Rust code fences for illustrative FFI snippets. Those blocks are now
+  `text`, so `cargo test --include-ignored` / `cargo test --doc` do not try to
+  compile non–self-contained examples.
+- **MSDTC / XA regression smokes:** `xa_dtc_sqlserver_*` tests require
+  `ENABLE_MSDTC_XA_TESTS=1` in addition to `ENABLE_E2E_TESTS` and a SQL Server
+  DSN. Without it the tests return early (pass) instead of failing on
+  `SQL_ATTR_ENLIST_IN_DTC` when a DSN is present but MSDTC enlist is
+  unavailable. Helper: `should_run_msdtc_xa_tests()` in
+  `native/odbc_engine/tests/helpers/e2e.rs`.
+
+### Changed
+
+- **Docs:** `doc/development/msdtc-recovery.md` documents `ENABLE_MSDTC_XA_TESTS`
+  and updates the local PowerShell runbook.
+
 ## [3.5.2] - 2026-04-24
 
 ### Fixed
@@ -1768,7 +1788,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.3...HEAD
+[3.5.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...v3.5.3
 [3.5.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.1...v3.5.2
 [3.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.4.3...v3.5.0

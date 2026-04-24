@@ -42,7 +42,7 @@ name = "odbc_engine"
 #
 # 3.5.2 — CI stabilization follow-up: gate `size_of` import behind
 # `#[cfg(windows)]` to satisfy clippy `-D warnings` on Linux; no API/ABI changes.
-version = "3.5.2"
+version = "3.5.3"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"

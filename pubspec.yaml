@@ -79,7 +79,7 @@ name: odbc_fast
 #   where it is actually used,
 # - no public API/ABI changes.
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.5.2
+version: 3.5.3
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast
