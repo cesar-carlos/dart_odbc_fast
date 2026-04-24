@@ -9,6 +9,7 @@ use odbc_api::buffers::Indicator;
 use odbc_api::handles::Statement;
 use odbc_api::ParameterCollection;
 use odbc_api::{sys::ParamType, Nullable};
+#[cfg(windows)]
 use std::mem::size_of;
 
 #[cfg(windows)]

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.2] - 2026-04-24
+
+### Fixed
+
+- **CI / clippy (Linux):** `output_aware_params` imported `size_of` unconditionally
+  while only using it on Windows code paths. The import is now `#[cfg(windows)]`,
+  fixing `clippy -D warnings` (`unused import`) on Linux runners.
+
 ## [3.5.1] - 2026-04-24
 
 ### Fixed
@@ -1760,7 +1768,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.1...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...HEAD
+[3.5.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.1...v3.5.2
 [3.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.4.3...v3.5.0
 [1.2.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.1.2...v1.2.0

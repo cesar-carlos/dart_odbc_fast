@@ -74,12 +74,12 @@ name: odbc_fast
 # based fake; demo extended with a section showing the helper
 # (commit + rollback paths). No FFI / engine changes.
 #
-# 3.5.1 — CI stabilization patch:
-# - Fix Linux compilation in output_aware_params text boxing (E0308),
-# - normalize Rust formatting to satisfy cargo fmt --check in CI,
+# 3.5.2 — CI stabilization follow-up:
+# - Fix Linux `clippy -D warnings` by gating `size_of` import to Windows-only
+#   where it is actually used,
 # - no public API/ABI changes.
 # See doc/VERSIONING_STRATEGY.md and CHANGELOG.md for v3.1.x details.
-version: 3.5.1
+version: 3.5.2
 description: Enterprise-grade ODBC data platform for Dart with a Rust native engine, streaming queries, pooling, and structured diagnostics.
 
 homepage: https://github.com/cesar-carlos/dart_odbc_fast
