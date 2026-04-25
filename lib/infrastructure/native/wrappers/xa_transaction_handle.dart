@@ -1,6 +1,40 @@
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
+/// Native XA operations used by [XaTransactionHandle].
+abstract interface class XaTransactionBackend {
+  int xaEnd(int xaId);
+  int xaPrepare(int xaId);
+  int xaCommitPrepared(int xaId);
+  int xaRollbackPrepared(int xaId);
+  int xaCommitOnePhase(int xaId);
+  int xaRollbackActive(int xaId);
+}
+
+final class _NativeXaTransactionBackend implements XaTransactionBackend {
+  const _NativeXaTransactionBackend(this._conn);
+
+  final NativeOdbcConnection _conn;
+
+  @override
+  int xaEnd(int xaId) => _conn.native.xaEnd(xaId);
+
+  @override
+  int xaPrepare(int xaId) => _conn.native.xaPrepare(xaId);
+
+  @override
+  int xaCommitPrepared(int xaId) => _conn.native.xaCommitPrepared(xaId);
+
+  @override
+  int xaRollbackPrepared(int xaId) => _conn.native.xaRollbackPrepared(xaId);
+
+  @override
+  int xaCommitOnePhase(int xaId) => _conn.native.xaCommitOnePhase(xaId);
+
+  @override
+  int xaRollbackActive(int xaId) => _conn.native.xaRollbackActive(xaId);
+}
+
 /// Lifecycle states of an XA transaction branch — mirror of
 /// `engine::xa_transaction::XaState` (Rust).
 ///
@@ -54,7 +88,16 @@ class XaTransactionHandle {
     required this.xid,
     required NativeOdbcConnection conn,
     XaState initialState = XaState.active,
-  })  : _conn = conn,
+  })  : _backend = _NativeXaTransactionBackend(conn),
+        _state = initialState;
+
+  /// Internal/testable constructor for injecting deterministic XA operations.
+  XaTransactionHandle.withBackend({
+    required this.xaId,
+    required this.xid,
+    required XaTransactionBackend backend,
+    XaState initialState = XaState.active,
+  })  : _backend = backend,
         _state = initialState;
 
   /// Native XA branch id (>0). Pass to the lower-level
@@ -64,7 +107,7 @@ class XaTransactionHandle {
   /// XID this branch was opened with (or recovered as).
   final Xid xid;
 
-  final NativeOdbcConnection _conn;
+  final XaTransactionBackend _backend;
   XaState _state;
 
   /// Current state of the branch as observed by Dart. Engine-side the
@@ -78,7 +121,7 @@ class XaTransactionHandle {
   /// and the caller must invoke [prepare] (Phase 1 of 2PC) or
   /// [rollback].
   bool end() {
-    final rc = _conn.native.xaEnd(xaId);
+    final rc = _backend.xaEnd(xaId);
     if (rc == 0) {
       _state = XaState.idle;
       return true;
@@ -90,7 +133,7 @@ class XaTransactionHandle {
   /// `xa_prepare`: Phase 1 of 2PC. Promotes the branch from `Idle` to
   /// `Prepared`. Returns `true` on success.
   bool prepare() {
-    final rc = _conn.native.xaPrepare(xaId);
+    final rc = _backend.xaPrepare(xaId);
     if (rc == 0) {
       _state = XaState.prepared;
       return true;
@@ -101,7 +144,7 @@ class XaTransactionHandle {
 
   /// `xa_commit` (Phase 2): finalise a prepared branch.
   bool commitPrepared() {
-    final rc = _conn.native.xaCommitPrepared(xaId);
+    final rc = _backend.xaCommitPrepared(xaId);
     if (rc == 0) {
       _state = XaState.committed;
       return true;
@@ -112,7 +155,7 @@ class XaTransactionHandle {
 
   /// `xa_rollback` (Phase 2): roll back a prepared branch.
   bool rollbackPrepared() {
-    final rc = _conn.native.xaRollbackPrepared(xaId);
+    final rc = _backend.xaRollbackPrepared(xaId);
     if (rc == 0) {
       _state = XaState.rolledBack;
       return true;
@@ -125,7 +168,7 @@ class XaTransactionHandle {
   /// **Only safe when this RM is the sole participant** in the global
   /// transaction.
   bool commitOnePhase() {
-    final rc = _conn.native.xaCommitOnePhase(xaId);
+    final rc = _backend.xaCommitOnePhase(xaId);
     if (rc == 0) {
       _state = XaState.committed;
       return true;
@@ -138,7 +181,7 @@ class XaTransactionHandle {
   /// gone after this call — there is no recovery path because no
   /// prepare-log entry exists.
   bool rollback() {
-    final rc = _conn.native.xaRollbackActive(xaId);
+    final rc = _backend.xaRollbackActive(xaId);
     if (rc == 0) {
       _state = XaState.rolledBack;
       return true;

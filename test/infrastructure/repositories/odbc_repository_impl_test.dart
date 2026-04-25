@@ -5,6 +5,8 @@
 library;
 
 import 'package:odbc_fast/domain/entities/connection_options.dart';
+import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
@@ -335,6 +337,115 @@ void main() {
             (e as ValidationError).message,
             'Invalid stream ID',
           );
+        },
+      );
+    });
+
+    test('additional connection APIs validate invalid connectionId', () async {
+      final results = [
+        await repository.disconnect('invalid-id'),
+        await repository.beginTransaction(
+          'invalid-id',
+          IsolationLevel.readCommitted,
+        ),
+        await repository.xaStart(
+          'invalid-id',
+          Xid.fromStrings(gtrid: 'gtrid'),
+        ),
+        await repository.prepare('invalid-id', 'SELECT 1'),
+        await repository.executeQueryParamBuffer(
+          'invalid-id',
+          'SELECT ?',
+          null,
+        ),
+        await repository.executeQueryMultiParams(
+          'invalid-id',
+          'SELECT ?',
+          [1],
+        ),
+        await repository.closeStatement('invalid-id', 7),
+        await repository.cancelStatement('invalid-id', 7),
+      ];
+
+      for (final result in results) {
+        expect(result.isSuccess(), isFalse);
+        result.fold(
+          (_) => fail('Expected failure'),
+          (e) {
+            expect(e, isA<ValidationError>());
+            expect((e as ValidationError).message, 'Invalid connection ID');
+          },
+        );
+      }
+    });
+
+    test('catalog methods validate invalid connectionId', () async {
+      final results = [
+        await repository.catalogTables('invalid-id'),
+        await repository.catalogColumns('invalid-id', 'users'),
+        await repository.catalogTypeInfo('invalid-id'),
+        await repository.catalogPrimaryKeys('invalid-id', 'users'),
+        await repository.catalogForeignKeys('invalid-id', 'users'),
+        await repository.catalogIndexes('invalid-id', 'users'),
+      ];
+
+      for (final result in results) {
+        expect(result.isSuccess(), isFalse);
+        result.fold(
+          (_) => fail('Expected failure'),
+          (e) {
+            expect(e, isA<ValidationError>());
+            expect((e as ValidationError).message, 'Invalid connection ID');
+          },
+        );
+      }
+    });
+
+    test('poolSetSize validates pool id and size before native call', () async {
+      final invalidPool = await repository.poolSetSize(0, 4);
+      final invalidSize = await repository.poolSetSize(1, 0);
+
+      invalidPool.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect((e as ValidationError).message, 'Invalid pool ID');
+        },
+      );
+      invalidSize.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect(
+            (e as ValidationError).message,
+            'Pool maxSize must be greater than zero',
+          );
+        },
+      );
+    });
+
+    test('poolReleaseConnection validates invalid connectionId', () async {
+      final result = await repository.poolReleaseConnection('invalid-id');
+
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect((e as ValidationError).message, 'Invalid connection ID');
+        },
+      );
+    });
+
+    test('getConnectionDbmsInfo validates invalid connectionId', () async {
+      final result = await repository.getConnectionDbmsInfo('invalid-id');
+
+      expect(result.isSuccess(), isFalse);
+      result.fold(
+        (_) => fail('Expected failure'),
+        (e) {
+          expect(e, isA<ValidationError>());
+          expect((e as ValidationError).message, 'Invalid connection ID');
         },
       );
     });

@@ -14,7 +14,6 @@ library;
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/xid.dart';
-import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:test/test.dart';
 
@@ -225,6 +224,117 @@ void main() {
       );
     });
   });
+
+  group('XaTransactionHandle state transitions', () {
+    late _RecordingXaBackend backend;
+    late XaTransactionHandle handle;
+
+    setUp(() {
+      backend = _RecordingXaBackend();
+      handle = XaTransactionHandle.withBackend(
+        xaId: 9,
+        xid: mkXid('direct'),
+        backend: backend,
+      );
+    });
+
+    test('stores native id, xid and initial state', () {
+      expect(handle.xaId, 9);
+      expect(handle.xid.formatId, 0);
+      expect(handle.state, XaState.active);
+    });
+
+    test('successful operations update state and delegate branch id', () {
+      expect(handle.end(), isTrue);
+      expect(handle.state, XaState.idle);
+
+      expect(handle.prepare(), isTrue);
+      expect(handle.state, XaState.prepared);
+
+      expect(handle.commitPrepared(), isTrue);
+      expect(handle.state, XaState.committed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 10,
+        xid: mkXid('rollback-prepared'),
+        backend: backend,
+      );
+      expect(handle.rollbackPrepared(), isTrue);
+      expect(handle.state, XaState.rolledBack);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 11,
+        xid: mkXid('one-phase'),
+        backend: backend,
+      );
+      expect(handle.commitOnePhase(), isTrue);
+      expect(handle.state, XaState.committed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 12,
+        xid: mkXid('rollback'),
+        backend: backend,
+      );
+      expect(handle.rollback(), isTrue);
+      expect(handle.state, XaState.rolledBack);
+
+      expect(backend.calls, [
+        'end:9',
+        'prepare:9',
+        'commitPrepared:9',
+        'rollbackPrepared:10',
+        'commitOnePhase:11',
+        'rollbackActive:12',
+      ]);
+    });
+
+    test('failed operations mark branch as failed', () {
+      backend.result = 1;
+
+      expect(handle.end(), isFalse);
+      expect(handle.state, XaState.failed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 10,
+        xid: mkXid('prepare-fail'),
+        backend: backend,
+      );
+      expect(handle.prepare(), isFalse);
+      expect(handle.state, XaState.failed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 11,
+        xid: mkXid('commit-fail'),
+        backend: backend,
+      );
+      expect(handle.commitPrepared(), isFalse);
+      expect(handle.state, XaState.failed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 12,
+        xid: mkXid('rollback-prepared-fail'),
+        backend: backend,
+      );
+      expect(handle.rollbackPrepared(), isFalse);
+      expect(handle.state, XaState.failed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 13,
+        xid: mkXid('one-phase-fail'),
+        backend: backend,
+      );
+      expect(handle.commitOnePhase(), isFalse);
+      expect(handle.state, XaState.failed);
+
+      handle = XaTransactionHandle.withBackend(
+        xaId: 14,
+        xid: mkXid('rollback-fail'),
+        backend: backend,
+      );
+      expect(handle.rollback(), isFalse);
+      expect(handle.state, XaState.failed);
+    });
+  });
 }
 
 /// Identifies which step the fake should fail at, for the
@@ -233,11 +343,15 @@ enum _FailOn { none, end, prepare, commitPrepared, commitOnePhase, rollback }
 
 /// Test double for [XaTransactionHandle] that doesn't touch FFI.
 ///
-/// We pass `NativeOdbcConnection()` to super only because the field
-/// is non-nullable; every state-mutating method below is overridden
-/// so the underlying FFI surface is never reached.
+/// The injected backend is never reached because every state-mutating
+/// method below is overridden.
 class _FakeXa extends XaTransactionHandle {
-  _FakeXa(Xid xid) : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
+  _FakeXa(Xid xid)
+      : super.withBackend(
+          xaId: 1,
+          xid: xid,
+          backend: _RecordingXaBackend(),
+        );
 
   _FailOn failOn = _FailOn.none;
 
@@ -313,5 +427,46 @@ class _FakeXa extends XaTransactionHandle {
     }
     _fakeState = XaState.rolledBack;
     return true;
+  }
+}
+
+class _RecordingXaBackend implements XaTransactionBackend {
+  int result = 0;
+  final List<String> calls = [];
+
+  @override
+  int xaEnd(int xaId) {
+    calls.add('end:$xaId');
+    return result;
+  }
+
+  @override
+  int xaPrepare(int xaId) {
+    calls.add('prepare:$xaId');
+    return result;
+  }
+
+  @override
+  int xaCommitPrepared(int xaId) {
+    calls.add('commitPrepared:$xaId');
+    return result;
+  }
+
+  @override
+  int xaRollbackPrepared(int xaId) {
+    calls.add('rollbackPrepared:$xaId');
+    return result;
+  }
+
+  @override
+  int xaCommitOnePhase(int xaId) {
+    calls.add('commitOnePhase:$xaId');
+    return result;
+  }
+
+  @override
+  int xaRollbackActive(int xaId) {
+    calls.add('rollbackActive:$xaId');
+    return result;
   }
 }

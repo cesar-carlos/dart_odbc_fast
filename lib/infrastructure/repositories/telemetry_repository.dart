@@ -74,7 +74,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
     _buffer.onFlush = _exportBatch;
   }
 
-  final OpenTelemetryFFI _ffi;
+  final TelemetryNativeClient _ffi;
   final TelemetryBuffer _buffer;
   final _RetryHelper _retry;
   bool _isInitialized = false;
@@ -101,6 +101,7 @@ class TelemetryRepositoryImpl implements ITelemetryRepository {
   /// Call this to configure a ConsoleExporter to be used when OTLP fails.
   /// The exporter will receive all failed telemetry data.
   void setFallbackExporter(ConsoleExporter exporter) {
+    fallbackExporter = exporter;
     _updateExporterIfNeeded(exporter);
   }
 

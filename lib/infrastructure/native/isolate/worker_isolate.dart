@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
@@ -680,25 +681,23 @@ void _handleRequest(
   }
 }
 
-void _sendErrorResponse(
-  WorkerRequest request,
-  SendPort sendPort,
-  String error,
-) {
+/// Response sent when a worker [WorkerRequest] fails with an exception.
+///
+/// Isolated for unit tests — production path uses [_sendErrorResponse].
+@visibleForTesting
+WorkerResponse buildWorkerErrorResponse(WorkerRequest request, String error) {
   final id = request.requestId;
   switch (request) {
     case InitializeRequest():
-      sendPort.send(InitializeResponse(id, success: false));
+      return InitializeResponse(id, success: false);
     case ValidateConnectionStringRequest():
-      sendPort.send(
-        ValidateConnectionStringResponse(
-          id,
-          isValid: false,
-          errorMessage: error,
-        ),
+      return ValidateConnectionStringResponse(
+        id,
+        isValid: false,
+        errorMessage: error,
       );
     case ConnectRequest():
-      sendPort.send(ConnectResponse(id, 0, error: error));
+      return ConnectResponse(id, 0, error: error);
     case DisconnectRequest():
     case CancelStatementRequest():
     case CloseStatementRequest():
@@ -719,7 +718,7 @@ void _sendErrorResponse(
     case StreamCancelRequest():
     case MetadataCacheEnableRequest():
     case MetadataCacheClearRequest():
-      sendPort.send(BoolResponse(id, value: false));
+      return BoolResponse(id, value: false);
     case ExecuteQueryParamsRequest():
     case ExecuteQueryMultiRequest():
     case ExecuteQueryMultiParamsRequest():
@@ -731,7 +730,7 @@ void _sendErrorResponse(
     case CatalogForeignKeysRequest():
     case CatalogIndexesRequest():
     case AsyncGetResultRequest():
-      sendPort.send(QueryResponse(id, error: error));
+      return QueryResponse(id, error: error);
     case BeginTransactionRequest():
     case PrepareRequest():
     case PoolCreateRequest():
@@ -745,43 +744,49 @@ void _sendErrorResponse(
     case ExecuteAsyncStartRequest():
     case AsyncPollRequest():
     case StreamPollAsyncRequest():
-      sendPort.send(IntResponse(id, 0));
+      return IntResponse(id, 0);
     case StreamFetchRequest():
-      sendPort.send(
-        StreamFetchResponse(
-          id,
-          success: false,
-          error: error,
-        ),
+      return StreamFetchResponse(
+        id,
+        success: false,
+        error: error,
       );
     case StreamCloseRequest():
-      sendPort.send(BoolResponse(id, value: false));
+      return BoolResponse(id, value: false);
     case BulkInsertArrayRequest():
     case BulkInsertParallelRequest():
-      sendPort.send(IntResponse(id, -1));
+      return IntResponse(id, -1);
     case PoolGetStateRequest():
-      sendPort.send(PoolStateResponse(id, error: error));
+      return PoolStateResponse(id, error: error);
     case GetDriverCapabilitiesRequest():
     case GetConnectionDbmsInfoRequest():
     case PoolGetStateJsonRequest():
-      sendPort.send(AuditPayloadResponse(id, error: error));
+      return AuditPayloadResponse(id, error: error);
     case GetVersionRequest():
-      sendPort.send(VersionResponse(id));
+      return VersionResponse(id);
     case GetMetricsRequest():
-      sendPort.send(MetricsResponse(id, error: error));
+      return MetricsResponse(id, error: error);
     case GetErrorRequest():
-      sendPort.send(GetErrorResponse(id, error));
+      return GetErrorResponse(id, error);
     case GetStructuredErrorRequest():
-      sendPort.send(StructuredErrorResponse(id, message: error, error: error));
+      return StructuredErrorResponse(id, message: error, error: error);
     case DetectDriverRequest():
-      sendPort.send(DetectDriverResponse(id, null));
+      return DetectDriverResponse(id, null);
     case AuditGetEventsRequest():
     case AuditGetStatusRequest():
     case MetadataCacheStatsRequest():
-      sendPort.send(AuditPayloadResponse(id, error: error));
+      return AuditPayloadResponse(id, error: error);
     case GetCacheMetricsRequest():
-      sendPort.send(CacheMetricsResponse(id, error: error));
+      return CacheMetricsResponse(id, error: error);
     case ClearCacheRequest():
-      sendPort.send(ClearCacheResponse(id, error: error));
+      return ClearCacheResponse(id, error: error);
   }
+}
+
+void _sendErrorResponse(
+  WorkerRequest request,
+  SendPort sendPort,
+  String error,
+) {
+  sendPort.send(buildWorkerErrorResponse(request, error));
 }

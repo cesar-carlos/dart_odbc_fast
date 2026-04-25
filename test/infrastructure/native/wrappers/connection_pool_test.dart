@@ -57,6 +57,14 @@ void main() {
       expect(pool.getState(), isNull);
     });
 
+    test('setSize returns backend result', () {
+      backend.poolSetSizeResult = true;
+      expect(pool.setSize(12), isTrue);
+
+      backend.poolSetSizeResult = false;
+      expect(pool.setSize(12), isFalse);
+    });
+
     test('close returns backend result', () {
       backend.poolCloseResult = true;
       expect(pool.close(), true);

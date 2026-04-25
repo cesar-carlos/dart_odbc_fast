@@ -4,12 +4,27 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 
+/// Contract used by telemetry repositories to call native telemetry functions.
+abstract class TelemetryNativeClient {
+  int initialize([String otlpEndpoint = '']);
+  int exportTrace(String traceJson);
+  int exportTraceToString(String input);
+  int exportSpan(String spanJson);
+  int exportMetric(String metricJson);
+  int exportEvent(String eventJson);
+  int updateTrace(String traceId, String endTime, String attributesJson);
+  int updateSpan(String spanId, String endTime, String attributesJson);
+  int flush();
+  int shutdown();
+  String getLastErrorMessage();
+}
+
 /// OpenTelemetry FFI wrapper backed by the native ODBC engine library.
 ///
 /// For backward compatibility with previous stub behavior:
 /// - Success is returned as `1`
 /// - Failure is returned as `0`/non-zero native code
-class OpenTelemetryFFI {
+class OpenTelemetryFFI implements TelemetryNativeClient {
   OpenTelemetryFFI() : this._();
 
   OpenTelemetryFFI._() {
@@ -82,6 +97,7 @@ class OpenTelemetryFFI {
   /// Initializes telemetry exporter.
   ///
   /// Returns `1` on success to preserve legacy behavior.
+  @override
   int initialize([String otlpEndpoint = '']) {
     if (!_symbolsAvailable) {
       return 0;
@@ -111,6 +127,7 @@ class OpenTelemetryFFI {
   }
 
   /// Exports a single trace JSON payload.
+  @override
   int exportTrace(String traceJson) {
     if (!_initialized) {
       throw Exception('Not initialized');
@@ -138,6 +155,7 @@ class OpenTelemetryFFI {
   }
 
   /// Exports trace data to an output buffer (native behavior dependent).
+  @override
   int exportTraceToString(String input) {
     if (!_initialized) {
       throw Exception('Not initialized');
@@ -169,10 +187,14 @@ class OpenTelemetryFFI {
     }
   }
 
+  @override
   int exportSpan(String spanJson) => exportTrace(spanJson);
+  @override
   int exportMetric(String metricJson) => exportTrace(metricJson);
+  @override
   int exportEvent(String eventJson) => exportTrace(eventJson);
 
+  @override
   int updateTrace(String traceId, String endTime, String attributesJson) =>
       exportTrace(
         '{"trace_id":"$traceId",'
@@ -180,6 +202,7 @@ class OpenTelemetryFFI {
         '"attributes":$attributesJson}',
       );
 
+  @override
   int updateSpan(String spanId, String endTime, String attributesJson) =>
       exportTrace(
         '{"span_id":"$spanId",'
@@ -187,8 +210,10 @@ class OpenTelemetryFFI {
         '"attributes":$attributesJson}',
       );
 
+  @override
   int flush() => 1;
 
+  @override
   int shutdown() {
     final shutdownPtr = _otelShutdownPtr;
     if (shutdownPtr != null) {
@@ -242,6 +267,7 @@ class OpenTelemetryFFI {
     }
   }
 
+  @override
   String getLastErrorMessage() {
     final nativeError = _readNativeLastError();
     if (nativeError.isNotEmpty && nativeError != 'No error') {

@@ -9,11 +9,126 @@
 
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as bindings;
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+
+/// Backend contract used by [OdbcDriverFeatures].
+abstract interface class OdbcDriverFeatureBackend {
+  bool get supportsApi;
+
+  Uint8List? buildUpsertSql(
+    String connectionString,
+    String table,
+    String payloadJson,
+  );
+
+  Uint8List? appendReturningClause(
+    String connectionString,
+    String sql,
+    int verbCode,
+    String columnsCsv,
+  );
+
+  Uint8List? getSessionInitSql(String connectionString, String? optionsJson);
+}
+
+final class _NativeOdbcDriverFeatureBackend
+    implements OdbcDriverFeatureBackend {
+  _NativeOdbcDriverFeatureBackend(this._native);
+
+  final OdbcNative _native;
+
+  @override
+  bool get supportsApi => _native.rawBindings.supportsCapabilitiesApi;
+
+  @override
+  Uint8List? buildUpsertSql(
+    String connectionString,
+    String table,
+    String payloadJson,
+  ) {
+    final connPtr = connectionString.toNativeUtf8();
+    final tablePtr = table.toNativeUtf8();
+    final payloadPtr = payloadJson.toNativeUtf8();
+    try {
+      return _native.execWithBuffer(
+        (buf, bufLen, outWritten) => _native.rawBindings.odbc_build_upsert_sql(
+          connPtr.cast<bindings.Utf8>(),
+          tablePtr.cast<bindings.Utf8>(),
+          payloadPtr.cast<bindings.Utf8>(),
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      );
+    } finally {
+      malloc
+        ..free(connPtr)
+        ..free(tablePtr)
+        ..free(payloadPtr);
+    }
+  }
+
+  @override
+  Uint8List? appendReturningClause(
+    String connectionString,
+    String sql,
+    int verbCode,
+    String columnsCsv,
+  ) {
+    final connPtr = connectionString.toNativeUtf8();
+    final sqlPtr = sql.toNativeUtf8();
+    final colsPtr = columnsCsv.toNativeUtf8();
+    try {
+      return _native.execWithBuffer(
+        (buf, bufLen, outWritten) =>
+            _native.rawBindings.odbc_append_returning_sql(
+          connPtr.cast<bindings.Utf8>(),
+          sqlPtr.cast<bindings.Utf8>(),
+          verbCode,
+          colsPtr.cast<bindings.Utf8>(),
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      );
+    } finally {
+      malloc
+        ..free(connPtr)
+        ..free(sqlPtr)
+        ..free(colsPtr);
+    }
+  }
+
+  @override
+  Uint8List? getSessionInitSql(String connectionString, String? optionsJson) {
+    final connPtr = connectionString.toNativeUtf8();
+    final optsPtr = optionsJson == null
+        ? ffi.Pointer<bindings.Utf8>.fromAddress(0)
+        : optionsJson.toNativeUtf8().cast<bindings.Utf8>();
+    try {
+      return _native.execWithBuffer(
+        (buf, bufLen, outWritten) =>
+            _native.rawBindings.odbc_get_session_init_sql(
+          connPtr.cast<bindings.Utf8>(),
+          optsPtr,
+          buf,
+          bufLen,
+          outWritten,
+        ),
+      );
+    } finally {
+      malloc.free(connPtr);
+      if (optionsJson != null) {
+        malloc.free(optsPtr.cast<Utf8>());
+      }
+    }
+  }
+}
 
 /// DML category used by [OdbcDriverFeatures.appendReturningClause] to
 /// position the dialect-specific OUTPUT/RETURNING clause.
@@ -55,12 +170,15 @@ class SessionOptions {
 
 /// Typed wrapper for the v3.0 capability FFIs.
 class OdbcDriverFeatures {
-  OdbcDriverFeatures(this._native);
+  OdbcDriverFeatures(OdbcNative native)
+      : _backend = _NativeOdbcDriverFeatureBackend(native);
 
-  final OdbcNative _native;
+  OdbcDriverFeatures.withBackend(this._backend);
+
+  final OdbcDriverFeatureBackend _backend;
 
   /// True when the loaded native library exposes the v3.0 capability FFIs.
-  bool get supportsApi => _native.rawBindings.supportsCapabilitiesApi;
+  bool get supportsApi => _backend.supportsApi;
 
   /// Build an UPSERT statement for the dialect implied by [connectionString].
   ///
@@ -79,28 +197,13 @@ class OdbcDriverFeatures {
       'conflict': conflictColumns,
       if (updateColumns != null) 'update': updateColumns,
     };
-    final connPtr = connectionString.toNativeUtf8();
-    final tablePtr = table.toNativeUtf8();
-    final payloadPtr = jsonEncode(payload).toNativeUtf8();
-    try {
-      final data = _native.execWithBuffer(
-        (buf, bufLen, outWritten) => _native.rawBindings.odbc_build_upsert_sql(
-          connPtr.cast<bindings.Utf8>(),
-          tablePtr.cast<bindings.Utf8>(),
-          payloadPtr.cast<bindings.Utf8>(),
-          buf,
-          bufLen,
-          outWritten,
-        ),
-      );
-      if (data == null) return null;
-      return utf8.decode(data);
-    } finally {
-      malloc
-        ..free(connPtr)
-        ..free(tablePtr)
-        ..free(payloadPtr);
-    }
+    final data = _backend.buildUpsertSql(
+      connectionString,
+      table,
+      jsonEncode(payload),
+    );
+    if (data == null) return null;
+    return utf8.decode(data);
   }
 
   /// Append a RETURNING/OUTPUT clause to [sql], using the dialect implied by
@@ -114,30 +217,14 @@ class OdbcDriverFeatures {
     required List<String> columns,
   }) {
     if (!supportsApi) return null;
-    final connPtr = connectionString.toNativeUtf8();
-    final sqlPtr = sql.toNativeUtf8();
-    final colsPtr = columns.join(',').toNativeUtf8();
-    try {
-      final data = _native.execWithBuffer(
-        (buf, bufLen, outWritten) =>
-            _native.rawBindings.odbc_append_returning_sql(
-          connPtr.cast<bindings.Utf8>(),
-          sqlPtr.cast<bindings.Utf8>(),
-          verb.code,
-          colsPtr.cast<bindings.Utf8>(),
-          buf,
-          bufLen,
-          outWritten,
-        ),
-      );
-      if (data == null) return null;
-      return utf8.decode(data);
-    } finally {
-      malloc
-        ..free(connPtr)
-        ..free(sqlPtr)
-        ..free(colsPtr);
-    }
+    final data = _backend.appendReturningClause(
+      connectionString,
+      sql,
+      verb.code,
+      columns.join(','),
+    );
+    if (data == null) return null;
+    return utf8.decode(data);
   }
 
   /// Returns the post-connect SQL statements for the dialect implied by
@@ -149,30 +236,13 @@ class OdbcDriverFeatures {
     SessionOptions? options,
   }) {
     if (!supportsApi) return null;
-    final connPtr = connectionString.toNativeUtf8();
-    final optsPtr = options == null
-        ? ffi.Pointer<bindings.Utf8>.fromAddress(0)
-        : jsonEncode(options.toJson()).toNativeUtf8().cast<bindings.Utf8>();
-    try {
-      final data = _native.execWithBuffer(
-        (buf, bufLen, outWritten) =>
-            _native.rawBindings.odbc_get_session_init_sql(
-          connPtr.cast<bindings.Utf8>(),
-          optsPtr,
-          buf,
-          bufLen,
-          outWritten,
-        ),
-      );
-      if (data == null) return null;
-      final dynamic decoded = jsonDecode(utf8.decode(data));
-      if (decoded is! List) return <String>[];
-      return decoded.cast<String>();
-    } finally {
-      malloc.free(connPtr);
-      if (options != null) {
-        malloc.free(optsPtr.cast<Utf8>());
-      }
-    }
+    final data = _backend.getSessionInitSql(
+      connectionString,
+      options == null ? null : jsonEncode(options.toJson()),
+    );
+    if (data == null) return null;
+    final dynamic decoded = jsonDecode(utf8.decode(data));
+    if (decoded is! List) return <String>[];
+    return decoded.cast<String>();
   }
 }

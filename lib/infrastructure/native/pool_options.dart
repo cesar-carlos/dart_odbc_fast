@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 
 /// Optional eviction/timeout knobs for a connection pool created via
@@ -46,6 +47,33 @@ class PoolOptions {
       idleTimeout != null || maxLifetime != null || connectionTimeout != null;
 }
 
+/// Pure routing used by [OdbcPoolFactory.createPool], testable without FFI.
+@visibleForTesting
+int createPoolDispatch({
+  required bool supportsPoolCreateWithOptions,
+  required String connectionString,
+  required int maxSize,
+  required int Function(String connectionString, int maxSize) poolCreate,
+  required int Function(
+    String connectionString,
+    int maxSize, {
+    String? optionsJson,
+  }) poolCreateWithOptions,
+  PoolOptions? options,
+}) {
+  if (options == null || !options.hasAnyOption) {
+    return poolCreate(connectionString, maxSize);
+  }
+  if (!supportsPoolCreateWithOptions) {
+    return poolCreate(connectionString, maxSize);
+  }
+  return poolCreateWithOptions(
+    connectionString,
+    maxSize,
+    optionsJson: options.toJson(),
+  );
+}
+
 /// Typed wrapper for the v3.0 pool-creation FFI with options support.
 class OdbcPoolFactory {
   OdbcPoolFactory(this._native);
@@ -66,18 +94,13 @@ class OdbcPoolFactory {
     int maxSize, {
     PoolOptions? options,
   }) {
-    if (options == null || !options.hasAnyOption) {
-      return _native.poolCreate(connectionString, maxSize);
-    }
-    if (!supportsApi) {
-      // Old native lib: silently fall back to defaults but warn that the
-      // requested options were ignored. Caller can check `supportsApi` first.
-      return _native.poolCreate(connectionString, maxSize);
-    }
-    return _native.poolCreateWithOptions(
-      connectionString,
-      maxSize,
-      optionsJson: options.toJson(),
+    return createPoolDispatch(
+      supportsPoolCreateWithOptions: supportsApi,
+      connectionString: connectionString,
+      maxSize: maxSize,
+      options: options,
+      poolCreate: _native.poolCreate,
+      poolCreateWithOptions: _native.poolCreateWithOptions,
     );
   }
 }

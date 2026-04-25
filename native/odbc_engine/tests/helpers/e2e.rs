@@ -14,6 +14,7 @@ pub enum DatabaseType {
     Sybase,
     PostgreSQL,
     MySQL,
+    Db2,
     Oracle,
     MongoDB,
     SQLite,
@@ -30,6 +31,9 @@ pub fn detect_database_type(conn_str: &str) -> DatabaseType {
     }
     if conn_lower.contains("mysql") {
         return DatabaseType::MySQL;
+    }
+    if conn_lower.contains("db2") || conn_lower.contains("ibm db2") {
+        return DatabaseType::Db2;
     }
 
     // Sybase Anywhere.

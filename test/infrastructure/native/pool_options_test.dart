@@ -47,4 +47,88 @@ void main() {
       );
     });
   });
+
+  group('createPoolDispatch', () {
+    test('uses legacy create when options are null or empty', () {
+      int legacy(String cs, int max) {
+        expect(cs, 'DSN=X');
+        expect(max, 4);
+        return 7;
+      }
+
+      int withOpts(String cs, int max, {String? optionsJson}) {
+        fail('with-options path should not run');
+      }
+
+      final noOptions = createPoolDispatch(
+        supportsPoolCreateWithOptions: true,
+        connectionString: 'DSN=X',
+        maxSize: 4,
+        poolCreate: legacy,
+        poolCreateWithOptions: withOpts,
+      );
+      expect(noOptions, 7);
+
+      const empty = PoolOptions();
+      final emptyMap = createPoolDispatch(
+        supportsPoolCreateWithOptions: true,
+        connectionString: 'DSN=X',
+        maxSize: 4,
+        options: empty,
+        poolCreate: legacy,
+        poolCreateWithOptions: withOpts,
+      );
+      expect(emptyMap, 7);
+    });
+
+    test('falls back to legacy when options set but API unsupported', () {
+      var legacyCount = 0;
+      int legacy(String cs, int max) {
+        legacyCount++;
+        return 1;
+      }
+
+      int withOpts(String cs, int max, {String? optionsJson}) {
+        fail('with-options path should not run');
+      }
+
+      final id = createPoolDispatch(
+        supportsPoolCreateWithOptions: false,
+        connectionString: 'DSN=X',
+        maxSize: 2,
+        options: const PoolOptions(idleTimeout: Duration(seconds: 1)),
+        poolCreate: legacy,
+        poolCreateWithOptions: withOpts,
+      );
+      expect(id, 1);
+      expect(legacyCount, 1);
+    });
+
+    test('uses poolCreateWithOptions when supported and options non-empty', () {
+      String? lastJson;
+      int legacy(String cs, int max) => fail('legacy should not run');
+
+      int withOpts(String cs, int max, {String? optionsJson}) {
+        expect(cs, 'DSN=X');
+        expect(max, 3);
+        lastJson = optionsJson;
+        return 9;
+      }
+
+      final id = createPoolDispatch(
+        supportsPoolCreateWithOptions: true,
+        connectionString: 'DSN=X',
+        maxSize: 3,
+        options: const PoolOptions(connectionTimeout: Duration(seconds: 10)),
+        poolCreate: legacy,
+        poolCreateWithOptions: withOpts,
+      );
+      expect(id, 9);
+      expect(
+        lastJson,
+        '{"connection_timeout_ms":10000}',
+        reason: 'JSON matches PoolOptions.toJson for one field',
+      );
+    });
+  });
 }

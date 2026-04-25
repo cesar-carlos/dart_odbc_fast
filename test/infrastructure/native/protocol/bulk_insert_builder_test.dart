@@ -434,6 +434,57 @@ void main() {
       }
     });
 
+    test('serializes i64, decimal, binary and timestamp columns', () {
+      final b = BulkInsertBuilder()
+          .table('events')
+          .addColumn('id', BulkColumnType.i64)
+          .addColumn('amount', BulkColumnType.decimal, maxLen: 8)
+          .addColumn('payload', BulkColumnType.binary, maxLen: 4)
+          .addColumn('created_at', BulkColumnType.timestamp)
+          .addRow([
+        9007199254740991,
+        '12.34',
+        Uint8List.fromList([1, 2]),
+        DateTime.utc(2026, 1, 2, 3, 4, 5, 6, 7),
+      ]);
+
+      final enc = b.build();
+
+      expect(enc, isNotEmpty);
+      expect(b.tableName, 'events');
+      expect(b.columnNames, ['id', 'amount', 'payload', 'created_at']);
+      expect(b.rowCount, 1);
+    });
+
+    test('serializes nullable variable-width and timestamp nulls', () {
+      final b = BulkInsertBuilder()
+          .table('events')
+          .addColumn('amount', BulkColumnType.decimal,
+              nullable: true, maxLen: 8,)
+          .addColumn('payload', BulkColumnType.binary,
+              nullable: true, maxLen: 4,)
+          .addColumn('created_at', BulkColumnType.timestamp, nullable: true)
+          .addRow([null, null, null]);
+
+      expect(b.build, returnsNormally);
+    });
+
+    test('build throws when columns exist but no rows were added', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .build(),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'At least one row required',
+          ),
+        ),
+      );
+    });
+
     test('build throws when table empty', () {
       expect(
         () => BulkInsertBuilder()
@@ -445,7 +496,14 @@ void main() {
 
     test('build throws when no columns', () {
       expect(
-        () => BulkInsertBuilder().table('t').addRow([1]).build(),
+        () => BulkInsertBuilder().table('t').build(),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('addRow throws when no columns were added', () {
+      expect(
+        () => BulkInsertBuilder().table('t').addRow([1]),
         throwsA(isA<StateError>()),
       );
     });
