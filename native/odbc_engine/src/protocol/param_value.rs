@@ -537,4 +537,31 @@ mod tests {
 
         assert!(result.unwrap_err().to_string().contains("Parameter count"));
     }
+
+    #[test]
+    fn test_deserialize_params_rejects_too_many_params() {
+        let enc_one = ParamValue::Null.try_serialize().expect("ok");
+        let mut buf = Vec::new();
+        for _ in 0..(MAX_PARAM_COUNT + 1) {
+            buf.extend_from_slice(&enc_one);
+        }
+        let err = deserialize_params(&buf).expect_err("decode must fail");
+        assert!(err.to_string().contains("Parameter count exceeds limit"));
+    }
+
+    #[test]
+    fn test_param_values_to_strings_rejects_ref_cursor() {
+        let r = param_values_to_strings(&[ParamValue::RefCursorOut]);
+        let msg = r.expect_err("RefCursor out").to_string();
+        assert!(msg.contains("not convertible to string"));
+    }
+
+    #[test]
+    fn test_try_serialize_string_rejects_huge_payload() {
+        let s = "x".repeat(MAX_PARAM_VALUE_PAYLOAD_LEN + 1);
+        let r = ParamValue::String(s).try_serialize();
+        let msg = r.expect_err("oversize").to_string();
+        assert!(msg.contains("ParamValue::String"));
+        assert!(msg.contains("exceeds limit"));
+    }
 }

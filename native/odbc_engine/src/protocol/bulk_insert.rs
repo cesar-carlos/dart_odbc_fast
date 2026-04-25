@@ -676,4 +676,103 @@ mod tests {
             _ => panic!("expected Text"),
         }
     }
+
+    #[test]
+    fn null_bitmap_size_table() {
+        assert_eq!(null_bitmap_size(0), 0);
+        assert_eq!(null_bitmap_size(1), 1);
+        assert_eq!(null_bitmap_size(8), 1);
+        assert_eq!(null_bitmap_size(9), 2);
+    }
+
+    #[test]
+    fn is_null_strict_errors_on_bad_row() {
+        let e = is_null_strict(&[0u8], 1, 1).expect_err("out of range");
+        assert!(e.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn is_null_strict_errors_on_truncated_bitmap() {
+        let e = is_null_strict(&[], 0, 1).expect_err("truncated");
+        assert!(e.to_string().contains("null bitmap truncated"));
+    }
+
+    #[test]
+    fn serialize_rejects_too_many_rows() {
+        let p = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "a".to_string(),
+                col_type: BulkColumnType::I32,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: (MAX_BULK_ROWS as u32).saturating_add(1),
+            column_data: vec![BulkColumnData::I32 {
+                values: vec![],
+                null_bitmap: None,
+            }],
+        };
+        let e = serialize_bulk_insert_payload(&p).expect_err("rows");
+        assert!(e.to_string().contains("MAX_BULK_ROWS"));
+    }
+
+    #[test]
+    fn serialize_rejects_max_len_too_large() {
+        let p = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "a".to_string(),
+                col_type: BulkColumnType::I32,
+                nullable: false,
+                max_len: MAX_BULK_CELL_LEN + 1,
+            }],
+            row_count: 0,
+            column_data: vec![BulkColumnData::I32 {
+                values: vec![],
+                null_bitmap: None,
+            }],
+        };
+        let e = serialize_bulk_insert_payload(&p).expect_err("max_len");
+        assert!(e.to_string().contains("MAX_BULK_CELL_LEN"));
+    }
+
+    #[test]
+    fn parse_rejects_unknown_column_type_tag() {
+        let mut v = Vec::new();
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(b"t");
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(b"a");
+        v.push(0xFFu8);
+        v.push(0u8);
+        v.extend_from_slice(&0u32.to_le_bytes());
+        v.extend_from_slice(&0u32.to_le_bytes());
+        let e = parse_bulk_insert_payload(&v).expect_err("type tag");
+        assert!(e.to_string().contains("Unknown bulk column type tag"));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_garbage() {
+        let p = serialize_bulk_insert_payload(&BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "a".to_string(),
+                col_type: BulkColumnType::I32,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: 0,
+            column_data: vec![BulkColumnData::I32 {
+                values: vec![],
+                null_bitmap: None,
+            }],
+        })
+        .expect("ok");
+        let mut w = p;
+        w.push(0);
+        let e = parse_bulk_insert_payload(&w).expect_err("mismatch");
+        assert!(e.to_string().contains("length mismatch"));
+    }
 }

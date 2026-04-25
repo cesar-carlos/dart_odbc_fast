@@ -149,6 +149,20 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_empty_columns() {
+        let r = validate_upsert_inputs("t", &[], &["id"], None);
+        let msg = r.expect_err("columns").to_string();
+        assert!(msg.contains("at least one column"));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_empty_conflict_columns() {
+        let r = validate_upsert_inputs("t", &["id", "a"], &[], None);
+        let msg = r.expect_err("conflict").to_string();
+        assert!(msg.contains("at least one conflict"));
+    }
+
+    #[test]
     fn validate_inputs_rejects_conflict_not_in_columns() {
         let r = validate_upsert_inputs("t", &["a", "b"], &["c"], None);
         assert!(matches!(r, Err(OdbcError::ValidationError(_))));

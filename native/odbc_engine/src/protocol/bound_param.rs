@@ -164,4 +164,36 @@ mod tests {
 
         assert!(result.unwrap_err().to_string().contains("parameter count"));
     }
+
+    #[test]
+    fn drt1_rejects_trailing_bytes() {
+        let one = ParamValue::Null;
+        let b = one.serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(0u8);
+        buf.extend_from_slice(&b);
+        buf.push(0xff);
+        let e = deserialize_param_buffer(&buf).expect_err("trailing");
+        assert!(e.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn drt1_rejects_invalid_direction() {
+        let b = ParamValue::Null.serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(3u8);
+        buf.extend_from_slice(&b);
+        let e = deserialize_param_buffer(&buf).expect_err("dir");
+        assert!(e.to_string().contains("invalid direction"));
+    }
+
+    #[test]
+    fn drt1_rejects_count_exceeds_payload() {
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&10u32.to_le_bytes());
+        let e = deserialize_param_buffer(&buf).expect_err("count");
+        assert!(e.to_string().contains("exceeds available"));
+    }
 }

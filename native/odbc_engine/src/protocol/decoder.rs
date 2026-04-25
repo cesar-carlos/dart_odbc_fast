@@ -489,4 +489,75 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("row data"));
     }
+
+    /// `validate_shape` — column count cap before allocating metadata.
+    #[test]
+    fn test_decode_rejects_column_count_over_limit() {
+        let mut buffer = vec![0u8; HEADER_SIZE];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&(MAX_DECODED_COLUMNS as u16 + 1).to_le_bytes());
+        buffer[8..12].copy_from_slice(&0u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&0u32.to_le_bytes());
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Column count"), "got {msg}");
+        assert!(msg.contains("4096"), "got {msg}");
+    }
+
+    /// `validate_shape` — cell count cap.
+    #[test]
+    fn test_decode_rejects_cell_count_over_limit() {
+        let col = 2_500u16;
+        let row = 2_001u32;
+        assert!(col as usize * row as usize > MAX_DECODED_CELLS);
+        let mut buffer = vec![0u8; HEADER_SIZE];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&col.to_le_bytes());
+        buffer[8..12].copy_from_slice(&row.to_le_bytes());
+        buffer[12..16].copy_from_slice(&0u32.to_le_bytes());
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Cell count"), "got {msg}");
+    }
+
+    /// `validate_shape` — declared payload size cap.
+    #[test]
+    fn test_decode_rejects_payload_size_over_limit() {
+        let mut buffer = vec![0u8; HEADER_SIZE];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&0u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&0u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&(MAX_DECODED_PAYLOAD_SIZE as u32 + 1).to_le_bytes());
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Payload size"), "got {msg}");
+    }
+
+    /// Per-cell `data_len` must not exceed [MAX_DECODED_CELL_SIZE].
+    #[test]
+    fn test_decode_rejects_oversized_cell_data_length() {
+        const PAYLOAD: usize = 2 + 2 + 0 + 1 + 4;
+        let mut buffer = vec![0u8; HEADER_SIZE + PAYLOAD];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&(PAYLOAD as u32).to_le_bytes());
+        let o = 16;
+        buffer[o..o + 2].copy_from_slice(&2u16.to_le_bytes());
+        buffer[o + 2..o + 4].copy_from_slice(&0u16.to_le_bytes());
+        buffer[o + 4] = 0;
+        let bad_len = (MAX_DECODED_CELL_SIZE as u32).saturating_add(1);
+        buffer[o + 5..o + 9].copy_from_slice(&bad_len.to_le_bytes());
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Cell data length"), "got {msg}");
+    }
 }
