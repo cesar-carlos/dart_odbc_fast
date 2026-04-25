@@ -542,7 +542,8 @@ mod tests {
     /// Per-cell `data_len` must not exceed [MAX_DECODED_CELL_SIZE].
     #[test]
     fn test_decode_rejects_oversized_cell_data_length() {
-        const PAYLOAD: usize = 2 + 2 + 0 + 1 + 4;
+        // Wire: odbc type (2) + name_len (2) + name (0) + null flag (1) + data_len (4)
+        const PAYLOAD: usize = 2 + 2 + 1 + 4;
         let mut buffer = vec![0u8; HEADER_SIZE + PAYLOAD];
         buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
         buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
