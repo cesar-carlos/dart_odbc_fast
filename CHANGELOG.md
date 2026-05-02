@@ -66,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dynamic ODBC parameter binding collections, reuse shared column-description
   helpers, and reduce repeated plugin-lock work during row-shape discovery.
 - **Public docs/comments:** Dart and Rust API comments were updated to remove
-  the obsolete “up to 5 parameters” wording and to document repeated named
+  the obsolete "up to 5 parameters" wording and to document repeated named
   placeholder support.
 - **README / API docs:** `README.md` and `doc/API_SURFACE.md` now describe
   dynamic parameter counts, repeated named placeholder behavior, and the current
@@ -1890,7 +1890,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.4...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.0...HEAD
+[3.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.4...v3.6.0
 [3.5.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.3...v3.5.4
 [3.5.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...v3.5.3
 [3.5.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.1...v3.5.2

@@ -72,7 +72,7 @@ void main() {
         QueryResponse(4, data: data),
         const IntResponse(5, 8),
         const PoolStateResponse(6, size: 4, idle: 2),
-        const VersionResponse(7, api: '3.5.4', abi: '1'),
+        const VersionResponse(7, api: '3.6.0', abi: '1'),
         const GetErrorResponse(8, 'native error'),
         const DetectDriverResponse(9, 'SQLite'),
         const AuditPayloadResponse(10, payload: '{"ok":true}'),
