@@ -1,43 +1,55 @@
 ---
-description: Clean Architecture - generic dependency and layer boundary rules
+description: Clean architecture and dependency rules for Dart application code
 globs: ["lib/**/*.dart"]
 alwaysApply: true
 ---
 
-# Clean Architecture (Generic)
+# Clean Architecture
 
-## Layers
+## Layer Responsibilities
 
-- **Domain**: pure business rules (no Flutter, no IO, no infrastructure)
-- **Application**: use-case orchestration (depends on Domain + Core)
-- **Infrastructure**: implementations (depends on Domain + Core)
-- **Presentation**: UI/state (depends on Application + Domain + Core)
-- **Core/Shared**: cross-cutting code
+- `domain`: business rules, entities, typed errors, value objects, and pure
+  policies.
+- `application`: service orchestration and high-level workflows.
+- `infrastructure`: FFI, native protocol, repositories, and external-system
+  implementations.
+- `core` or `shared`: cross-cutting utilities used by multiple layers.
+- `lib/odbc_fast.dart`: curated public API barrel for package consumers.
 
-## Dependency Rules
+## Dependency Direction
 
-- **Domain**
-  - may import only core/shared and domain
-  - must not import application/infrastructure/presentation
-  - must not import framework-specific packages
+- `domain` may depend only on `domain` and `core/shared`.
+- `application` may depend on `domain` and `core/shared`.
+- `infrastructure` may depend on `domain`, `application` contracts, and
+  `core/shared` when implementing outer concerns.
+- No inner layer may import an outer layer.
+- Public package exports should flow through `lib/odbc_fast.dart`, not through
+  ad-hoc scattered entrypoints.
 
-- **Application**
-  - may import domain and core
-  - must not import infrastructure or presentation
-  - should depend on abstractions
+## Boundary Rules
 
-- **Infrastructure**
-  - may import domain and core
-  - must not import application or presentation
-  - implements domain contracts
+- Keep `domain` free of FFI, transport, isolate, and persistence details.
+- Keep `application` focused on orchestration, not wire formats or native
+  pointer concerns.
+- Keep FFI, buffer parsing, bindings, and native lifecycle management in
+  `infrastructure`.
+- Define abstractions close to the business rule that owns them.
+- Bind concrete implementations at composition-root boundaries, not inside the
+  domain.
 
-- **Presentation**
-  - may import application/domain/core
-  - must not import infrastructure directly
-  - contains rendering and UI state only
+## Design Heuristics
 
-## Guidance
+- Apply single responsibility at file, class, and use-case level.
+- Prefer small, focused interfaces over broad "god" contracts.
+- Depend on abstractions at boundaries, not concrete implementations.
+- Extend behavior through composition instead of editing stable paths when
+  possible.
+- Keep external-data normalization at the boundary before values spread inward.
 
-- Keep domain technology-agnostic.
-- Move side effects to infrastructure.
-- Prefer focused components and use cases.
+## Smells to Fix
+
+- Domain importing native bindings, protocol, or transport code.
+- Application code parsing raw buffers or dealing with pointers.
+- One class handling validation, orchestration, persistence, and mapping.
+- Large interfaces that force clients to depend on unused members.
+- Public APIs exported accidentally instead of deliberately through the barrel.

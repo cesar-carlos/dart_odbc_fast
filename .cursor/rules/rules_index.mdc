@@ -6,30 +6,39 @@ alwaysApply: true
 
 # Rules Index
 
-## Behavioral Guardrails
+## Core Guardrails
 
-- Do not commit, push, or create docs unless explicitly requested.
-- Prefer self-explanatory code through naming and structure.
+- Do not commit, push, or create documentation files unless explicitly asked.
+- Prefer self-explanatory code through naming, structure, and small units.
+- Do not suppress diagnostics unless allowed by `error_handling.mdc`.
+- Avoid duplicate rules: keep the detailed version only in the most specific
+  file.
+- This repository is a pure Dart package with a Rust native engine, not a
+  Flutter app.
 
-## Rule Files
+## Rule Map
 
-### Generic
+- `general_rules.mdc`: cross-cutting engineering principles for Dart and Rust.
+- `clean_architecture.mdc`: application layers, package boundaries, and
+  dependency direction.
+- `coding_style.mdc`: Dart syntax, naming, imports, formatting, collections,
+  logging, and modern language features.
+- `null_safety.mdc`: nullable contracts, external-data normalization, and safe
+  null handling.
+- `testing.mdc`: test naming, structure, and behavior expectations across unit,
+  integration, and E2E levels.
+- `rust_style.mdc`: Rust style, module/API design, and FFI safety.
+- `error_handling.mdc`: cross-language error propagation and suppression
+  allowlist.
+- `project_specifics.mdc`: `odbc_fast` conventions for public API, `Result<T>`,
+  FFI boundaries, native assets, and test environment decisions.
 
-- `general_rules.mdc`: core coding principles and documentation policy
-- `clean_architecture.mdc`: layer boundaries and dependency direction
-- `coding_style.mdc`: Dart style and project coding conventions
-- `null_safety.mdc`: null safety guidelines and patterns
-- `solid_principles.mdc`: SOLID principles
-- `flutter_widgets.mdc`: widget construction and performance patterns
-- `ui_ux_design.mdc`: desktop UI/UX principles
-- `testing.mdc`: unit and widget testing conventions
-- `rust_style.mdc`: Rust native code standards
-- `error_handling.mdc`: unified error handling and suppression policy
+## Placement Guide
 
-### Project-Specific
-
-- No `project_specifics.mdc` file is currently defined.
-
-## Reuse
-
-Use `README.md` in this folder for guidance on copying rules to other projects.
+- Put generic principles in `general_rules.mdc`.
+- Put architecture-only guidance in `clean_architecture.mdc`.
+- Put Dart-only language rules in `coding_style.mdc` and `null_safety.mdc`.
+- Put Rust-native guidance in `rust_style.mdc`.
+- Put every suppression and error-policy rule in `error_handling.mdc`.
+- Put package-specific conventions, dependencies, public API expectations, and
+  FFI/runtime decisions in `project_specifics.mdc`.

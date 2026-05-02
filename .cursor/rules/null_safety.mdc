@@ -1,42 +1,55 @@
 ---
 description: Null safety best practices for Dart
-globs: ["lib/**/*.dart"]
+globs: ["lib/**/*.dart", "test/**/*.dart"]
 alwaysApply: true
 ---
 
-# Null Safety Best Practices
+# Null Safety
 
-## Principles
+## Core Rules
 
 - Default to non-nullable types.
-- Use nullable (`T?`) only when null is part of the domain model.
-- Prefer explicit handling (`if`, `??`, `?.`) over force unwrap (`!`).
-- Use default values where appropriate.
+- Use `T?` only when absence is a real part of the domain contract.
+- Prefer explicit handling with `if`, `??`, `?.`, and guards over force unwrap.
+- Avoid `late` unless lifecycle or lazy initialization genuinely requires it.
 
-## Type and API Design
+## Modeling
 
-- Prefer required named parameters for mandatory values.
-- Return nullable values only when callers can handle absence safely.
-- Document nullable contracts in public APIs.
+- Do not use nullable fields to hide distinct states.
+- Prefer sealed classes, enums, or dedicated value objects when states are
+  better represented as explicit variants.
+- Do not mark fields nullable just to postpone proper modeling decisions.
+
+## API Design
+
+- Use required named parameters for mandatory values.
+- Return nullable values only when callers can safely model absence.
+- Make public nullability contracts obvious in naming, types, and docs.
+
+## Boundary Normalization
+
+- Treat JSON, FFI payloads, native buffers, env vars, and external inputs as
+  untrusted.
+- Normalize absent or malformed values at the boundary before they spread
+  through the package.
+- Keep transport or native null semantics out of stable domain entities when a
+  stronger internal model is available.
 
 ## Safe Patterns
 
 ```dart
-final String name = user.name;
 final String displayName = user.nickname ?? 'Unknown';
 final int count = items?.length ?? 0;
+
+if (result case final value?) {
+  use(value);
+}
 ```
 
 ## Avoid
 
 ```dart
-// Avoid force unwrap unless proven safe in the same scope.
 final int size = maybeList!.length;
 ```
 
-## Checklist
-
-- [ ] Nullable types are intentional.
-- [ ] Force unwrap (`!`) is justified and rare.
-- [ ] Public API null behavior is documented.
-- [ ] Defaults were used where they improve safety.
+Use force unwrap only when safety has already been proven in the same scope.

@@ -1,45 +1,68 @@
 ---
-description: General project rules - core coding principles and documentation policy
-globs: ["lib/**/*.dart", "test/**/*.dart"]
+description: Cross-cutting engineering principles shared by Dart and Rust code
+globs: ["lib/**/*.dart", "test/**/*.dart", "native/**/*.rs", "native/**/Cargo.toml"]
 alwaysApply: true
 ---
 
-# General Project Rules
+# General Engineering Rules
 
 ## Core Principles
 
-- Write concise, technical code with accurate examples.
-- Prefer composition over inheritance.
-- Use functional and declarative patterns when they improve clarity.
-- Use clear naming (`isLoading`, `hasError`, `canRetry`).
-- Keep source files organized and easy to scan.
-- Keep identifiers in English.
+- Keep code concise, technical, and easy to scan.
+- Prefer composition over inheritance when it improves flexibility.
+- Keep identifiers in English and aligned with the domain language.
+- Reduce duplication by extracting reusable logic or shared abstractions.
+- Prefer explicit contracts and strong types over loose, ad-hoc structures.
+- Prefer actionable failure messages over vague generic ones.
 
-## Documentation and Comments
+## Structure and Readability
 
-- Do not generate documentation files unless explicitly requested.
-- Do not add comments that only restate obvious code.
-- Explain intent, trade-offs, constraints, and non-obvious behavior.
-- Keep comments and docs in sync with implementation.
-- Keep user-facing text localizable when applicable.
+- Keep files, classes, and functions focused on one responsibility.
+- Use clear names that communicate intent, such as `isLoading`, `hasError`,
+  and `canRetry`.
+- Replace unexplained literals with named constants when the meaning is not
+  obvious.
+- Prefer clear control flow and shallow nesting over clever compactness.
+- Split validation, transformation, IO, and business decisions when those
+  concerns start competing inside one block.
 
-## Clean Code Rules
+## Comments and Documentation
 
-- Avoid magic numbers; use named constants.
-- Extract repeated UI and logic patterns into reusable components.
-- Keep functions focused and single-purpose.
-- Prefer explicit, typed contracts over loose dynamic structures.
+- Do not create documentation files unless explicitly requested.
+- Add comments only for intent, trade-offs, invariants, constraints, or
+  non-obvious behavior.
+- Do not add comments that only restate the line below them.
+- Keep comments synchronized with the implementation they describe.
+- Write comments in English when they are necessary.
 
-## Error and Lint Policy
+## Duplication and Reuse
 
-- Do not suppress diagnostics without a clear reason.
-- Keep suppression scope minimal and documented.
-- Follow the dedicated error handling rule file for allowed suppressions.
+- Extract an abstraction when the same pattern appears a second time with the
+  same intent.
+- Prefer small, stable helpers and shared abstractions over vague "utility"
+  buckets.
+- Remove dead code, commented-out code, and stale comments.
 
-## Implementation Checklist
+## Refactoring
 
-- [ ] Names are clear and intent-driven.
+- Apply the scout rule: when touching a file, leave it a bit better.
+- Refactor in small steps when the current structure blocks safe change.
+- Separate structural cleanup from behavior changes whenever practical.
+- Preserve or characterize observable behavior before refactoring risky areas.
+- Avoid speculative refactors for hypothetical future needs.
+
+## Diagnostics and Hygiene
+
+- Do not suppress diagnostics without a clear allowlisted reason.
+- Keep suppression scope as small as possible and document the reason.
+- Follow `error_handling.mdc` for all suppression and propagation rules.
+- Run the relevant analyzer and tests after meaningful structural changes.
+
+## Review Checklist
+
+- [ ] Names communicate intent clearly.
 - [ ] Duplication was reduced where practical.
-- [ ] Comments explain the why, not the what.
 - [ ] Constants replace unexplained literals.
+- [ ] Comments explain why, not what.
+- [ ] Structural cleanup was kept separate from behavior changes when needed.
 - [ ] No unnecessary suppressions were introduced.

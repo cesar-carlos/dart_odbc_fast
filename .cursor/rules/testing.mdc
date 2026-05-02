@@ -9,7 +9,8 @@ alwaysApply: true
 ## Structure
 
 - Mirror production folder structure in `test/`.
-- Group by layer (domain, application, infrastructure, integration).
+- Group tests by observable behavior, not by private implementation details.
+- Keep test file names predictable and easy to map back to source files.
 
 ## Test Design
 
@@ -17,28 +18,46 @@ alwaysApply: true
 - Keep tests deterministic and isolated.
 - Use descriptive names: `should_<behavior>_when_<condition>`.
 - Validate behavior, not implementation details.
+- Keep assertions close to the behavior they validate.
+
+## Test Levels
+
+- Unit tests validate small pure rules, mappers, entities, helpers, and typed
+  errors.
+- Service or component tests validate collaboration between nearby parts such as
+  service and repository boundaries.
+- Integration tests validate real contracts with FFI, native code, assets, or
+  environment-dependent resources.
+- E2E tests validate live database or driver behavior under controlled external
+  configuration.
 
 ## Mocks and Fakes
 
-- Mock external boundaries only (network, DB, platform APIs).
-- Prefer real domain entities/value objects in unit tests.
-- Use fakes when behavior matters more than call verification.
+- Mock external boundaries only, such as DB, FFI, process, network, or platform
+  dependencies.
+- Prefer real domain entities and value objects in unit tests.
+- Use fakes when behavior matters more than interaction verification.
+- Do not mock pure logic without a concrete reason.
 
-## Assertions
-
-- Prefer clear, expressive assertions.
-- Keep one main behavior expectation per test.
-- Add additional assertions only when they describe the same behavior contract.
-
-## Coverage Guidance
+## Failure Paths
 
 - Prioritize critical paths and error handling.
-- Cover boundary conditions and null/empty inputs.
+- Cover boundary conditions and null or empty inputs.
+- Validate expected failure behavior, not just that "an error happened."
 - Add regression tests for every confirmed bug.
 
-## Checklist
+## Environment-Dependent Tests
 
-- [ ] Test names are behavior-oriented.
-- [ ] Tests are independent and deterministic.
+- Gate live or environment-dependent tests clearly.
+- Skip environment-driven tests with explicit messages when prerequisites are
+  missing.
+- Keep helpers for env loading and test setup centralized.
+
+## Review Checklist
+
+- [ ] Tests mirror the relevant source structure.
+- [ ] Each test covers one observable behavior contract.
 - [ ] External dependencies are isolated correctly.
 - [ ] Critical and error paths are covered.
+- [ ] The simplest test level that proves the behavior was chosen.
+- [ ] Environment-dependent tests fail or skip clearly.

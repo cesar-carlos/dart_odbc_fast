@@ -1,0 +1,91 @@
+---
+description: Project-specific rules for the odbc_fast package
+globs: ["lib/**/*.dart", "test/**/*.dart", "pubspec.yaml", "analysis_options.yaml"]
+alwaysApply: true
+---
+
+# odbc_fast - Project Specifics
+
+## Scope
+
+This file contains only repository-specific decisions for `odbc_fast`.
+
+Keep generic guidance in:
+
+- `general_rules.mdc`
+- `clean_architecture.mdc`
+- `coding_style.mdc`
+- `null_safety.mdc`
+- `testing.mdc`
+- `rust_style.mdc`
+- `error_handling.mdc`
+
+## Repository Profile
+
+- This repository is a pure Dart package with a Rust native engine.
+- It is not a Flutter app and should not gain Flutter-specific architectural
+  assumptions.
+- The public consumer entrypoint is `lib/odbc_fast.dart`.
+- Native functionality lives behind FFI and Rust-backed infrastructure code.
+
+## Package API and Compatibility
+
+- Treat exported Dart APIs as package contracts that require deliberate review.
+- Add or remove exports in `lib/odbc_fast.dart` intentionally, not casually.
+- Prefer additive changes over breaking changes when extending the package API.
+- Keep public names stable and explicit; avoid leaking internal helper types
+  unless they are meant for consumers.
+
+## Architecture Ownership
+
+- `domain` owns stable business-facing entities, typed errors, and contracts.
+- `application` owns orchestration through service interfaces such as
+  `IOdbcService`.
+- `infrastructure` owns FFI bindings, protocol parsing, async worker plumbing,
+  native wrappers, and repository implementations.
+- `core` owns DI and shared utilities, not domain behavior.
+
+## Result and Error Conventions
+
+- Use `result_dart` for fallible service and repository contracts that already
+  expose `Result<T>`.
+- Preserve typed `OdbcError` variants when propagating failures.
+- Do not replace typed failures with `bool`, sentinel strings, or ad-hoc maps.
+- Thrown exceptions that cross into `Result<T>` boundaries should be translated
+  intentionally and keep diagnostic context.
+
+## FFI and Native Boundary Rules
+
+- Keep pointer handling, buffer decoding, ABI details, and native resource
+  lifecycle management out of domain and application layers.
+- Normalize native payloads into stable Dart models before exposing them to
+  higher layers.
+- Keep platform- or driver-specific quirks localized near the boundary where
+  they are discovered.
+- When the Rust engine and Dart layer evolve together, preserve documented ABI
+  compatibility intentionally.
+
+## Logging and Diagnostics
+
+- Prefer the package logging utilities over raw `print` in runtime code.
+- Keep diagnostics actionable for package consumers and maintainers.
+- Separate consumer-facing messages from deep native or protocol detail when the
+  latter belongs in logs or structured error context.
+
+## Testing Expectations
+
+- Protect the public barrel API with focused export tests.
+- Add regression tests when changing wire formats, multi-result parsing,
+  transaction helpers, or driver capability behavior.
+- For E2E or live-driver tests, rely on centralized env helpers and clear skip
+  behavior when prerequisites are absent.
+- When changing FFI contracts or native assets behavior, add the smallest test
+  that proves Dart and native layers stay aligned.
+
+## Tooling Baseline
+
+- Respect the existing analyzer baseline from `very_good_analysis` plus the
+  project overrides in `analysis_options.yaml`.
+- Use `dart analyze` as the primary Dart analyzer command.
+- Keep generated bindings or generated artifacts out of manual editing unless
+  the generation source itself is being changed.
