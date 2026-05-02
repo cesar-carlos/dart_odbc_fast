@@ -94,6 +94,53 @@ void main() {
       });
     });
 
+    test('buildUpsertSql omits update key when updateColumns not passed', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..upsertResponse = 'SQL'.utf8Bytes;
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final sql = features.buildUpsertSql(
+        connectionString: 'DSN=X',
+        table: 't',
+        columns: const ['id'],
+        conflictColumns: const ['id'],
+      );
+
+      expect(sql, 'SQL');
+      expect(jsonDecode(backend.lastPayloadJson!), {
+        'columns': ['id'],
+        'conflict': ['id'],
+      });
+    });
+
+    test('appendReturningClause passes empty CSV when columns empty', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..returningResponse = Uint8List(0);
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final sql = features.appendReturningClause(
+        connectionString: 'DSN=X',
+        sql: 'INSERT INTO t(id) VALUES (?)',
+        verb: DmlVerb.insert,
+        columns: const [],
+      );
+
+      expect(sql, '');
+      expect(backend.lastColumnsCsv, '');
+    });
+
+    test('getSessionInitSql returns empty list when backend returns JSON []',
+        () {
+      final backend = _FakeDriverFeatureBackend()
+        ..sessionResponse = jsonEncode([]).utf8Bytes;
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final statements = features.getSessionInitSql(connectionString: 'DSN=X');
+
+      expect(statements, isEmpty);
+      expect(backend.lastOptionsJson, isNull);
+    });
+
     test('appendReturningClause joins columns and passes verb code', () {
       final backend = _FakeDriverFeatureBackend()
         ..returningResponse = 'INSERT INTO t OUTPUT inserted.id'.utf8Bytes;

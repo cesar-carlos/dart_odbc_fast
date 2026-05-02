@@ -3420,8 +3420,8 @@ pub extern "C" fn odbc_exec_query_multi(
 }
 
 /// Execute parameterised batch SQL (multi-result) and return binary buffer.
-/// Same wire format as `odbc_exec_query_multi`. Up to 5 positional `?`
-/// parameters are supported (M5 in v3.2.0).
+/// Same wire format as `odbc_exec_query_multi`. Accepts positional `?`
+/// parameters serialized with the legacy ParamValue or DRT1 buffer formats.
 ///
 /// Accepts both connection IDs from `odbc_connect` and pooled IDs from
 /// `odbc_pool_get_connection`.

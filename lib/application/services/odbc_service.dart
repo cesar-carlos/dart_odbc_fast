@@ -193,7 +193,9 @@ abstract class IOdbcService {
   );
 
   /// Executes a parameterised batch SQL and returns all multi-result items.
-  /// Up to 5 positional `?` parameters are supported. New in v3.2.0.
+  ///
+  /// Supports positional `?` parameters using the same wire format as
+  /// [executeQueryMultiFull]. New in v3.2.0.
   Future<Result<QueryResultMulti>> executeQueryMultiParams(
     String connectionId,
     String sql,

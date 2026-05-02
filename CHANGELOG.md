@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-05-02
+
+### Added
+
+- **Async diagnostics parity:** the worker-isolate backend now exposes
+  per-connection structured error retrieval, aligning async error diagnostics
+  more closely with the sync/native backend.
+- **Regression coverage:** added Dart and Rust tests for repeated named
+  placeholders, parameterized execution with more than five parameters,
+  parameterized multi-result execution, NULL-heavy parameter binding, async
+  statement metadata invalidation, and async streaming fallback behavior.
+- **Test coverage expansion:** unit/component coverage was extended in Dart for
+  parser, prepared-statement, async-wrapper, repository-gap, driver capability,
+  library loader, telemetry, and stress-oriented paths; Rust and opt-in E2E
+  coverage were expanded for `>5` parameters, repeated named-parameter flows,
+  NULL scenarios, and batch / multi-result execution paths.
+- **Examples:** `example/named_parameters_demo.dart` now demonstrates repeated
+  named placeholders and `>5` named parameters; `example/multi_result_demo.dart`
+  now includes `executeQueryMultiParams`; `example/README.md` lists additional
+  demos that were previously omitted from the index.
+
+### Fixed
+
+- **Parameterized execution limit:** removed the artificial runtime cap of 5
+  parameters across direct execution, prepared statements, named-parameter
+  execution (`executeQueryNamed`, `prepareNamed`, `executePreparedNamed`),
+  parameterized multi-result execution, and batch execution. Named parameters
+  benefit from the same fix because they are expanded into the positional
+  runtime pipeline before execution. The effective limits now come from the
+  package protocol safety cap and the underlying driver/database.
+- **Named parameter semantics:** repeated placeholders such as `@id` / `:id`
+  now preserve occurrence order and correctly reuse the same input value at
+  every positional expansion.
+- **Named parameter parsing robustness:** placeholder rewriting now skips SQL
+  string literals, identifier quotes, line comments, nested block comments, and
+  PostgreSQL-style dollar-quoted strings, avoiding accidental rewrites inside
+  SQL text.
+- **Typed NULL binding and inference:** Rust parameter binding now uses typed
+  input parameters instead of coercing everything through strings, improving
+  correctness for `NULL`, binary values, mixed integer/BigInt families, and
+  metadata-driven parameter descriptions in direct, prepared, directed, and
+  batch paths.
+- **Async statement invalidation:** `clearAllStatements`, `disconnect`, and
+  reconnect flows now clear Dart-side prepared-statement metadata so stale
+  statement IDs do not survive after the native layer invalidates them.
+- **Async multi-result fallback:** `streamQueryMulti` now degrades gracefully to
+  `executeQueryMultiFull` when the async worker cannot start a streaming
+  multi-result session, matching the sync/native fallback behavior on older
+  binaries.
+- **Native library loading during development:** the native asset hook now
+  prefers local workspace builds before the version cache, reducing the chance
+  of running tests against stale native binaries.
+
+### Changed
+
+- **Runtime performance and internals:** execution and batch hot paths now use
+  dynamic ODBC parameter binding collections, reuse shared column-description
+  helpers, and reduce repeated plugin-lock work during row-shape discovery.
+- **Public docs/comments:** Dart and Rust API comments were updated to remove
+  the obsolete “up to 5 parameters” wording and to document repeated named
+  placeholder support.
+- **README / API docs:** `README.md` and `doc/API_SURFACE.md` now describe
+  dynamic parameter counts, repeated named placeholder behavior, and the current
+  async XA limitation more explicitly.
+
 ## [3.5.4] - 2026-04-24
 
 ### Added

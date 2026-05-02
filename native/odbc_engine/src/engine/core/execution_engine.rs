@@ -7,13 +7,15 @@ use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{
-    encode_multi, row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue,
-    RowBuffer, RowBufferEncoder,
+    encode_multi, has_null_param, param_values_to_input_params,
+    param_values_to_input_params_with_descriptions, param_values_to_input_params_with_inference,
+    row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue, RowBuffer,
+    RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
-use odbc_api::{Connection, Cursor, CursorImpl, IntoParameter, ResultSetMetadata};
+use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -123,79 +125,15 @@ impl ExecutionEngine {
     }
 
     fn execute_query_inner(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-        let optimized_sql = if let Ok(active) = self.active_plugin.lock() {
-            if let Some(ref plugin) = *active {
-                plugin.optimize_query(sql)
-            } else {
-                sql.to_string()
-            }
-        } else {
-            sql.to_string()
-        };
+        let plugin = self.current_plugin();
+        let optimized_sql = self.optimize_sql_with_plugin(sql, plugin.as_deref());
 
         self.prepared_cache.get_or_insert(&optimized_sql);
 
         let mut stmt = conn.prepare(&optimized_sql).map_err(OdbcError::from)?;
 
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
-
-        let mut row_buffer = RowBuffer::new();
-
-        if let Some(mut cursor) = cursor {
-            let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-            for col_idx in 1..=cols_u16 {
-                let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                    if let Some(ref plugin) = *active {
-                        plugin.map_type(sql_type_code)
-                    } else {
-                        OdbcType::from_odbc_sql_type(sql_type_code)
-                    }
-                } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
-                };
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
-
-            let mut cell_reader = CellReader::new();
-            while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::with_capacity(column_types.len());
-
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-
-                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                    row_data.push(cell_data);
-                }
-
-                row_buffer.add_row(row_data);
-            }
-        }
-
-        // Reassemble SQL Server FOR JSON multi-row chunks into a single
-        // logical cell. No-op for any other result shape. See
-        // `engine::sqlserver_json` for the rationale (closes #2).
-        coalesce_for_json_rows(&mut row_buffer);
-
-        if self.use_columnar {
-            let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
-        } else {
-            Ok(RowBufferEncoder::encode(&row_buffer))
-        }
+        self.encode_optional_cursor(cursor, plugin.as_deref())
     }
 
     /// Execute query using cached connection (reuses prepared statements when feature enabled).
@@ -212,15 +150,8 @@ impl ExecutionEngine {
         metadata.insert("span_id".to_string(), _span.span_id().to_string());
         self.logger.log_query(Level::Info, sql, &metadata);
 
-        let optimized_sql = if let Ok(active) = self.active_plugin.lock() {
-            if let Some(ref plugin) = *active {
-                plugin.optimize_query(sql)
-            } else {
-                sql.to_string()
-            }
-        } else {
-            sql.to_string()
-        };
+        let plugin = self.current_plugin();
+        let optimized_sql = self.optimize_sql_with_plugin(sql, plugin.as_deref());
 
         self.prepared_cache.get_or_insert(&optimized_sql);
 
@@ -323,6 +254,7 @@ impl ExecutionEngine {
                 prealloc.set_query_timeout_sec(s).map_err(OdbcError::from)?;
             }
             let mut row_buffer = RowBuffer::new();
+            let plugin = self.current_plugin();
             // Keep the cursor binding adjacent to the `if let` that consumes it. Any `let` in
             // between (e.g. `row_buffer`) can extend the borrow in NLL to the end of the outer
             // closure, blocking `row_count` / `more_results` on the same `Preallocated` handle.
@@ -331,30 +263,8 @@ impl ExecutionEngine {
                     .execute(sql, &mut odbc_params)
                     .map_err(OdbcError::from)?;
                 if let Some(mut cursor) = initial_cursor {
-                    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-                    let cols_u16: u16 = cols_i16.try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column count".to_string())
-                    })?;
-                    let cols_usize: usize = cols_u16.into();
-
-                    let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-                    for col_idx in 1..=cols_u16 {
-                        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                        let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                        let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                        let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                            if let Some(ref plugin) = *active {
-                                plugin.map_type(sql_type_code)
-                            } else {
-                                OdbcType::from_odbc_sql_type(sql_type_code)
-                            }
-                        } else {
-                            OdbcType::from_odbc_sql_type(sql_type_code)
-                        };
-                        row_buffer.add_column(col_name.to_string(), odbc_type);
-                        column_types.push(odbc_type);
-                    }
+                    let column_types =
+                        self.describe_columns(&mut cursor, &mut row_buffer, plugin.as_deref())?;
 
                     let mut cell_reader = CellReader::new();
                     while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
@@ -467,84 +377,60 @@ impl ExecutionEngine {
         timeout_sec: Option<usize>,
         _fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
-        let optional_strings = crate::protocol::param_values_to_strings(params)?;
-
-        let cursor = match optional_strings.len() {
-            0 => conn
+        let plugin = self.current_plugin();
+        if params.is_empty() {
+            let cursor = conn
                 .execute(sql, (), timeout_sec)
-                .map_err(OdbcError::from)?,
-            1 => {
-                let p0 = optional_strings[0].as_deref().into_parameter();
-                conn.execute(sql, (&p0,), timeout_sec)
-                    .map_err(OdbcError::from)?
-            }
-            2 => {
-                let p0 = optional_strings[0].as_deref().into_parameter();
-                let p1 = optional_strings[1].as_deref().into_parameter();
-                conn.execute(sql, (&p0, &p1), timeout_sec)
-                    .map_err(OdbcError::from)?
-            }
-            3 => {
-                let p0 = optional_strings[0].as_deref().into_parameter();
-                let p1 = optional_strings[1].as_deref().into_parameter();
-                let p2 = optional_strings[2].as_deref().into_parameter();
-                conn.execute(sql, (&p0, &p1, &p2), timeout_sec)
-                    .map_err(OdbcError::from)?
-            }
-            4 => {
-                let p0 = optional_strings[0].as_deref().into_parameter();
-                let p1 = optional_strings[1].as_deref().into_parameter();
-                let p2 = optional_strings[2].as_deref().into_parameter();
-                let p3 = optional_strings[3].as_deref().into_parameter();
-                conn.execute(sql, (&p0, &p1, &p2, &p3), timeout_sec)
-                    .map_err(OdbcError::from)?
-            }
-            5 => {
-                let p0 = optional_strings[0].as_deref().into_parameter();
-                let p1 = optional_strings[1].as_deref().into_parameter();
-                let p2 = optional_strings[2].as_deref().into_parameter();
-                let p3 = optional_strings[3].as_deref().into_parameter();
-                let p4 = optional_strings[4].as_deref().into_parameter();
-                conn.execute(sql, (&p0, &p1, &p2, &p3, &p4), timeout_sec)
-                    .map_err(OdbcError::from)?
-            }
-            n => {
-                return Err(OdbcError::ValidationError(format!(
-                    "At most 5 parameters supported, got {}. \
-                    For more parameters or proper NULL handling, \
-                    use bulk insert operations or direct prepared statements.",
-                    n
-                )))
-            }
-        };
+                .map_err(OdbcError::from)?;
+            return self.encode_optional_cursor(cursor, plugin.as_deref());
+        }
 
+        if has_null_param(params) {
+            if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+                let cursor = conn
+                    .execute(sql, parameters.as_slice(), timeout_sec)
+                    .map_err(OdbcError::from)?;
+                return self.encode_optional_cursor(cursor, plugin.as_deref());
+            }
+
+            let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+            if let Some(timeout_sec) = timeout_sec {
+                stmt.set_query_timeout_sec(timeout_sec)
+                    .map_err(OdbcError::from)?;
+            }
+            let descriptions = stmt
+                .parameter_descriptions()
+                .map_err(OdbcError::from)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(OdbcError::from)?;
+            let parameters = param_values_to_input_params_with_descriptions(params, &descriptions)?;
+            let cursor = stmt
+                .execute(parameters.as_slice())
+                .map_err(OdbcError::from)?;
+            return self.encode_optional_cursor(cursor, plugin.as_deref());
+        }
+
+        let parameters = param_values_to_input_params(params)?;
+        let cursor = conn
+            .execute(sql, parameters.as_slice(), timeout_sec)
+            .map_err(OdbcError::from)?;
+        self.encode_optional_cursor(cursor, plugin.as_deref())
+
+        // FOR JSON normalisation — see execute_query_inner above (closes #2).
+    }
+
+    fn encode_optional_cursor<C>(
+        &self,
+        cursor: Option<C>,
+        plugin: Option<&dyn DriverPlugin>,
+    ) -> Result<Vec<u8>>
+    where
+        C: Cursor + ResultSetMetadata,
+    {
         let mut row_buffer = RowBuffer::new();
 
         if let Some(mut cursor) = cursor {
-            let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-            for col_idx in 1..=cols_u16 {
-                let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                    if let Some(ref plugin) = *active {
-                        plugin.map_type(sql_type_code)
-                    } else {
-                        OdbcType::from_odbc_sql_type(sql_type_code)
-                    }
-                } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
-                };
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
+            let column_types = self.describe_columns(&mut cursor, &mut row_buffer, plugin)?;
 
             let mut cell_reader = CellReader::new();
             while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
@@ -597,8 +483,7 @@ impl ExecutionEngine {
     }
 
     /// Execute a multi-result batch with `?` positional parameters.
-    /// Same wire format as [`execute_multi_result`]; supports up to 5 params
-    /// (M5 in v3.2.0).
+    /// Same wire format as [`execute_multi_result`].
     pub fn execute_multi_result_with_params(
         &self,
         conn: &Connection<'static>,
@@ -666,52 +551,63 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
-        let optional_strings = crate::protocol::param_values_to_strings(params)?;
+        if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+            let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
+            let mut all_items: Vec<MultiResultItem> = Vec::new();
+
+            let had_initial_cursor = {
+                let initial_cursor = if parameters.is_empty() {
+                    prealloc.execute(sql, ()).map_err(OdbcError::from)?
+                } else {
+                    prealloc
+                        .execute(sql, parameters.as_slice())
+                        .map_err(OdbcError::from)?
+                };
+
+                if let Some(mut cursor) = initial_cursor {
+                    let encoded = self.encode_cursor(&mut cursor)?;
+                    all_items.push(MultiResultItem::ResultSet(encoded));
+                    let _stmt_ref = cursor.into_stmt();
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if !had_initial_cursor {
+                let rc = prealloc
+                    .row_count()
+                    .map_err(OdbcError::from)?
+                    .map(|n| n as i64)
+                    .unwrap_or(0);
+                all_items.push(MultiResultItem::RowCount(rc));
+            }
+
+            self.drive_more_results(&mut prealloc, &mut all_items)?;
+            return Ok(encode_multi(&all_items));
+        }
+
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+        let parameters = if params.is_empty() {
+            Vec::new()
+        } else if has_null_param(params) {
+            let descriptions = stmt
+                .parameter_descriptions()
+                .map_err(OdbcError::from)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(OdbcError::from)?;
+            param_values_to_input_params_with_descriptions(params, &descriptions)?
+        } else {
+            param_values_to_input_params(params)?
+        };
         let mut all_items: Vec<MultiResultItem> = Vec::new();
 
         let had_initial_cursor = {
-            let initial_cursor = match optional_strings.len() {
-                0 => stmt.execute(()).map_err(OdbcError::from)?,
-                1 => {
-                    let p0 = optional_strings[0].as_deref().into_parameter();
-                    stmt.execute((&p0,)).map_err(OdbcError::from)?
-                }
-                2 => {
-                    let p0 = optional_strings[0].as_deref().into_parameter();
-                    let p1 = optional_strings[1].as_deref().into_parameter();
-                    stmt.execute((&p0, &p1)).map_err(OdbcError::from)?
-                }
-                3 => {
-                    let p0 = optional_strings[0].as_deref().into_parameter();
-                    let p1 = optional_strings[1].as_deref().into_parameter();
-                    let p2 = optional_strings[2].as_deref().into_parameter();
-                    stmt.execute((&p0, &p1, &p2)).map_err(OdbcError::from)?
-                }
-                4 => {
-                    let p0 = optional_strings[0].as_deref().into_parameter();
-                    let p1 = optional_strings[1].as_deref().into_parameter();
-                    let p2 = optional_strings[2].as_deref().into_parameter();
-                    let p3 = optional_strings[3].as_deref().into_parameter();
-                    stmt.execute((&p0, &p1, &p2, &p3))
-                        .map_err(OdbcError::from)?
-                }
-                5 => {
-                    let p0 = optional_strings[0].as_deref().into_parameter();
-                    let p1 = optional_strings[1].as_deref().into_parameter();
-                    let p2 = optional_strings[2].as_deref().into_parameter();
-                    let p3 = optional_strings[3].as_deref().into_parameter();
-                    let p4 = optional_strings[4].as_deref().into_parameter();
-                    stmt.execute((&p0, &p1, &p2, &p3, &p4))
-                        .map_err(OdbcError::from)?
-                }
-                n => {
-                    return Err(OdbcError::ValidationError(format!(
-                        "At most 5 parameters supported in execute_multi_result_with_params, \
-                         got {}",
-                        n
-                    )))
-                }
+            let initial_cursor = if parameters.is_empty() {
+                stmt.execute(()).map_err(OdbcError::from)?
+            } else {
+                stmt.execute(parameters.as_slice())
+                    .map_err(OdbcError::from)?
             };
 
             if let Some(mut cursor) = initial_cursor {
@@ -948,27 +844,8 @@ impl ExecutionEngine {
     /// for `RC1\0` embedded messages on the wire).
     fn encode_cursor_v1<C: Cursor + ResultSetMetadata>(&self, cursor: &mut C) -> Result<Vec<u8>> {
         let mut row_buffer = RowBuffer::new();
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_u16 as usize);
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                if let Some(ref plugin) = *active {
-                    plugin.map_type(sql_type_code)
-                } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
-                }
-            } else {
-                OdbcType::from_odbc_sql_type(sql_type_code)
-            };
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
+        let plugin = self.current_plugin();
+        let column_types = self.describe_columns(cursor, &mut row_buffer, plugin.as_deref())?;
         let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
             let mut row_data = Vec::with_capacity(column_types.len());
@@ -994,29 +871,8 @@ impl ExecutionEngine {
     /// latter.
     fn encode_cursor<C: Cursor + ResultSetMetadata>(&self, cursor: &mut C) -> Result<Vec<u8>> {
         let mut row_buffer = RowBuffer::new();
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = if let Ok(active) = self.active_plugin.lock() {
-                if let Some(ref plugin) = *active {
-                    plugin.map_type(sql_type_code)
-                } else {
-                    OdbcType::from_odbc_sql_type(sql_type_code)
-                }
-            } else {
-                OdbcType::from_odbc_sql_type(sql_type_code)
-            };
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
+        let plugin = self.current_plugin();
+        let column_types = self.describe_columns(cursor, &mut row_buffer, plugin.as_deref())?;
 
         let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
@@ -1052,6 +908,50 @@ impl ExecutionEngine {
 
     pub fn clear_cache(&self) {
         self.prepared_cache.clear();
+    }
+
+    fn current_plugin(&self) -> Option<Arc<dyn DriverPlugin>> {
+        self.active_plugin
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    fn optimize_sql_with_plugin(&self, sql: &str, plugin: Option<&dyn DriverPlugin>) -> String {
+        plugin
+            .map(|active| active.optimize_query(sql))
+            .unwrap_or_else(|| sql.to_string())
+    }
+
+    fn map_sql_type(&self, sql_type_code: i16, plugin: Option<&dyn DriverPlugin>) -> OdbcType {
+        plugin
+            .map(|active| active.map_type(sql_type_code))
+            .unwrap_or_else(|| OdbcType::from_odbc_sql_type(sql_type_code))
+    }
+
+    fn describe_columns<C: ResultSetMetadata>(
+        &self,
+        cursor: &mut C,
+        row_buffer: &mut RowBuffer,
+        plugin: Option<&dyn DriverPlugin>,
+    ) -> Result<Vec<OdbcType>> {
+        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+        let cols_u16: u16 = cols_i16
+            .try_into()
+            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+        let cols_usize: usize = cols_u16.into();
+        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+        for col_idx in 1..=cols_u16 {
+            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+            let odbc_type = self.map_sql_type(sql_type_code, plugin);
+            row_buffer.add_column(col_name.to_string(), odbc_type);
+            column_types.push(odbc_type);
+        }
+
+        Ok(column_types)
     }
 }
 

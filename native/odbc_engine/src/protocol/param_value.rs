@@ -1,4 +1,14 @@
 use crate::error::{OdbcError, Result};
+use odbc_api::{
+    handles::ParameterDescription,
+    parameter::{InputParameter, VarBinaryBox, WithDataType},
+    DataType, IntoParameter, Nullability, Nullable,
+};
+
+#[cfg(windows)]
+type NullTextBox = odbc_api::parameter::VarWCharBox;
+#[cfg(not(windows))]
+type NullTextBox = odbc_api::parameter::VarCharBox;
 
 const TAG_NULL: u8 = 0;
 const TAG_STRING: u8 = 1;
@@ -217,6 +227,62 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<Strin
     Ok(out)
 }
 
+pub fn param_value_to_input_parameter(param: &ParamValue) -> Result<Box<dyn InputParameter>> {
+    match param {
+        ParamValue::Null => Ok(Box::new(Option::<String>::None.into_parameter())),
+        ParamValue::String(s) => Ok(Box::new(s.clone().into_parameter())),
+        ParamValue::Integer(n) => Ok(Box::new((*n).into_parameter())),
+        ParamValue::BigInt(n) => Ok(Box::new((*n).into_parameter())),
+        ParamValue::Decimal(s) => Ok(Box::new(s.clone().into_parameter())),
+        ParamValue::Binary(b) => Ok(Box::new(b.clone().into_parameter())),
+        ParamValue::RefCursorOut => Err(OdbcError::ValidationError(
+            "ParamValue::RefCursorOut is not bindable as an input parameter".to_string(),
+        )),
+    }
+}
+
+pub fn param_values_to_input_params(params: &[ParamValue]) -> Result<Vec<Box<dyn InputParameter>>> {
+    params.iter().map(param_value_to_input_parameter).collect()
+}
+
+pub fn param_values_to_input_params_with_inference(
+    params: &[ParamValue],
+) -> Result<Option<Vec<Box<dyn InputParameter>>>> {
+    let inferred_kind = match infer_shared_non_null_kind(params) {
+        Some(kind) => kind,
+        None => return Ok(None),
+    };
+
+    params
+        .iter()
+        .map(|param| input_parameter_for_inferred_kind(param, inferred_kind))
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+pub fn param_values_to_input_params_with_descriptions(
+    params: &[ParamValue],
+    descriptions: &[ParameterDescription],
+) -> Result<Vec<Box<dyn InputParameter>>> {
+    if params.len() != descriptions.len() {
+        return Err(OdbcError::ValidationError(format!(
+            "Parameter description count {} does not match parameter count {}",
+            descriptions.len(),
+            params.len()
+        )));
+    }
+
+    let inferred_null_kind = infer_shared_non_null_kind(params);
+
+    params
+        .iter()
+        .zip(descriptions.iter())
+        .map(|(param, description)| {
+            input_parameter_for_description(param, *description, inferred_null_kind)
+        })
+        .collect()
+}
+
 pub fn has_null_param(params: &[ParamValue]) -> bool {
     params.iter().any(|p| matches!(p, ParamValue::Null))
 }
@@ -252,9 +318,174 @@ fn checked_payload_len(value: usize, field: &'static str) -> Result<u32> {
         .map_err(|_| OdbcError::ValidationError(format!("{} length {} exceeds u32", field, value)))
 }
 
+fn null_input_parameter_for_description(
+    description: ParameterDescription,
+) -> Result<Box<dyn InputParameter>> {
+    if description.nullability == Nullability::NoNulls {
+        return Err(OdbcError::ValidationError(
+            "Parameter does not accept NULL according to driver metadata".to_string(),
+        ));
+    }
+
+    Ok(match description.data_type {
+        DataType::Integer => Box::new(WithDataType::new(
+            Nullable::<i32>::null(),
+            DataType::Integer,
+        )),
+        DataType::SmallInt => Box::new(WithDataType::new(
+            Nullable::<i16>::null(),
+            DataType::SmallInt,
+        )),
+        DataType::BigInt => Box::new(WithDataType::new(Nullable::<i64>::null(), DataType::BigInt)),
+        DataType::TinyInt | DataType::Bit => Box::new(WithDataType::new(
+            Nullable::<u8>::null(),
+            description.data_type,
+        )),
+        DataType::Real => Box::new(WithDataType::new(Nullable::<f32>::null(), DataType::Real)),
+        DataType::Float { .. } | DataType::Double => Box::new(WithDataType::new(
+            Nullable::<f64>::null(),
+            description.data_type,
+        )),
+        DataType::Binary { .. } | DataType::Varbinary { .. } | DataType::LongVarbinary { .. } => {
+            Box::new(WithDataType::new(
+                VarBinaryBox::null(),
+                description.data_type,
+            ))
+        }
+        _ => Box::new(WithDataType::new(
+            NullTextBox::null(),
+            description.data_type,
+        )),
+    })
+}
+
+fn input_parameter_for_description(
+    param: &ParamValue,
+    description: ParameterDescription,
+    inferred_null_kind: Option<InferredNullKind>,
+) -> Result<Box<dyn InputParameter>> {
+    match param {
+        ParamValue::Null => {
+            if has_usable_description_type(description.data_type) {
+                null_input_parameter_for_description(description)
+            } else if let Some(kind) = inferred_null_kind {
+                null_input_parameter_for_inferred_kind(kind)
+            } else {
+                param_value_to_input_parameter(param)
+            }
+        }
+        ParamValue::String(_) => param_value_to_input_parameter(param),
+        ParamValue::Integer(n) => {
+            if has_usable_description_type(description.data_type) {
+                Ok(Box::new(WithDataType::new(*n, description.data_type)))
+            } else {
+                param_value_to_input_parameter(param)
+            }
+        }
+        ParamValue::BigInt(n) => {
+            if has_usable_description_type(description.data_type) {
+                Ok(Box::new(WithDataType::new(*n, description.data_type)))
+            } else {
+                param_value_to_input_parameter(param)
+            }
+        }
+        ParamValue::Decimal(_) => param_value_to_input_parameter(param),
+        ParamValue::Binary(_) => param_value_to_input_parameter(param),
+        ParamValue::RefCursorOut => Err(OdbcError::ValidationError(
+            "ParamValue::RefCursorOut is not bindable as an input parameter".to_string(),
+        )),
+    }
+}
+
+fn input_parameter_for_inferred_kind(
+    param: &ParamValue,
+    inferred_kind: InferredNullKind,
+) -> Result<Box<dyn InputParameter>> {
+    match (param, inferred_kind) {
+        (ParamValue::Null, kind) => null_input_parameter_for_inferred_kind(kind),
+        (ParamValue::Integer(n), InferredNullKind::BigInt) => {
+            Ok(Box::new(WithDataType::new(i64::from(*n), DataType::BigInt)))
+        }
+        _ => param_value_to_input_parameter(param),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum InferredNullKind {
+    Integer,
+    BigInt,
+    Decimal,
+    Binary,
+    String,
+}
+
+fn infer_shared_non_null_kind(params: &[ParamValue]) -> Option<InferredNullKind> {
+    let mut inferred: Option<InferredNullKind> = None;
+
+    for param in params {
+        let current = match param {
+            ParamValue::Null => continue,
+            ParamValue::Integer(_) => InferredNullKind::Integer,
+            ParamValue::BigInt(_) => InferredNullKind::BigInt,
+            ParamValue::Decimal(_) => InferredNullKind::Decimal,
+            ParamValue::Binary(_) => InferredNullKind::Binary,
+            ParamValue::String(_) => InferredNullKind::String,
+            ParamValue::RefCursorOut => return None,
+        };
+
+        match inferred {
+            None => inferred = Some(current),
+            Some(existing)
+                if std::mem::discriminant(&existing) == std::mem::discriminant(&current) => {}
+            Some(InferredNullKind::Integer) if matches!(current, InferredNullKind::BigInt) => {
+                inferred = Some(InferredNullKind::BigInt);
+            }
+            Some(InferredNullKind::BigInt) if matches!(current, InferredNullKind::Integer) => {}
+            Some(_) => return None,
+        }
+    }
+
+    inferred
+}
+
+fn null_input_parameter_for_inferred_kind(
+    kind: InferredNullKind,
+) -> Result<Box<dyn InputParameter>> {
+    Ok(match kind {
+        InferredNullKind::Integer => Box::new(WithDataType::new(
+            Nullable::<i32>::null(),
+            DataType::Integer,
+        )),
+        InferredNullKind::BigInt => {
+            Box::new(WithDataType::new(Nullable::<i64>::null(), DataType::BigInt))
+        }
+        InferredNullKind::Decimal => Box::new(WithDataType::new(
+            NullTextBox::null(),
+            DataType::Varchar { length: None },
+        )),
+        InferredNullKind::Binary => Box::new(WithDataType::new(
+            VarBinaryBox::null(),
+            DataType::Varbinary { length: None },
+        )),
+        InferredNullKind::String => Box::new(WithDataType::new(
+            NullTextBox::null(),
+            DataType::Varchar { length: None },
+        )),
+    })
+}
+
+fn has_usable_description_type(data_type: DataType) -> bool {
+    !matches!(data_type, DataType::Unknown | DataType::Other { .. })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use odbc_api::{
+        handles::{HasDataType, ParameterDescription},
+        DataType, Nullability,
+    };
+    use std::num::NonZeroUsize;
 
     #[test]
     fn test_param_value_null_roundtrip() {
@@ -554,6 +785,114 @@ mod tests {
         let r = param_values_to_strings(&[ParamValue::RefCursorOut]);
         let msg = r.expect_err("RefCursor out").to_string();
         assert!(msg.contains("not convertible to string"));
+    }
+
+    #[test]
+    fn test_param_value_to_input_parameter_accepts_integer_and_binary() {
+        let int_param =
+            param_value_to_input_parameter(&ParamValue::Integer(7)).expect("int param should bind");
+        let binary_param = param_value_to_input_parameter(&ParamValue::Binary(vec![1, 2, 3]))
+            .expect("binary param should bind");
+
+        assert_eq!(int_param.data_type(), 4_i32.data_type());
+        assert_eq!(
+            binary_param.data_type(),
+            vec![1_u8, 2, 3].into_parameter().data_type()
+        );
+    }
+
+    #[test]
+    fn test_param_value_to_input_parameter_rejects_ref_cursor() {
+        let err = match param_value_to_input_parameter(&ParamValue::RefCursorOut) {
+            Ok(_) => panic!("RefCursorOut must not bind as input"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("not bindable as an input"));
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_with_descriptions_uses_integer_null_type() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Integer,
+        }];
+
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("described NULL should bind");
+
+        assert_eq!(bound.len(), 1);
+        assert_eq!(bound[0].data_type(), 4_i32.data_type());
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_with_descriptions_uses_binary_null_type() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Varbinary {
+                length: Some(NonZeroUsize::new(32).expect("non-zero")),
+            },
+        }];
+
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("binary NULL should bind");
+
+        assert_eq!(bound.len(), 1);
+        assert_eq!(
+            bound[0].data_type(),
+            DataType::Varbinary {
+                length: Some(NonZeroUsize::new(32).expect("non-zero")),
+            },
+        );
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_with_descriptions_rejects_non_nullable_null() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::NoNulls,
+            data_type: DataType::Integer,
+        }];
+
+        let err = match param_values_to_input_params_with_descriptions(&params, &descriptions) {
+            Ok(_) => panic!("non-nullable metadata must reject NULL"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("does not accept NULL"));
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_with_inference_promotes_integer_family_to_bigint() {
+        let params = [
+            ParamValue::Integer(7),
+            ParamValue::Null,
+            ParamValue::BigInt(9),
+        ];
+
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("inference should succeed")
+            .expect("mixed integer family should infer");
+
+        assert_eq!(bound.len(), 3);
+        assert_eq!(bound[0].data_type(), DataType::BigInt);
+        assert_eq!(bound[1].data_type(), DataType::BigInt);
+        assert_eq!(bound[2].data_type(), DataType::BigInt);
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_with_inference_returns_none_for_mixed_families() {
+        let params = [
+            ParamValue::Integer(7),
+            ParamValue::Null,
+            ParamValue::String("x".into()),
+        ];
+
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("inference should not error");
+
+        assert!(bound.is_none());
     }
 
     #[test]

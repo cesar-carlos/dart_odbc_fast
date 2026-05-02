@@ -14,7 +14,7 @@ void main() {
       expect(result.paramNames, orderedEquals(['id', 'name']));
     });
 
-    test('should dedupe multiple occurrences of same named param', () {
+    test('should preserve repeated named params in occurrence order', () {
       const sql = 'SELECT * FROM t WHERE id = @id OR parent_id = @id';
       final result = NamedParameterParser.extract(sql);
 
@@ -22,7 +22,7 @@ void main() {
         result.cleanedSql,
         equals('SELECT * FROM t WHERE id = ? OR parent_id = ?'),
       );
-      expect(result.paramNames, orderedEquals(['id']));
+      expect(result.paramNames, orderedEquals(['id', 'id']));
     });
 
     test('should handle @ prefix only', () {
@@ -47,6 +47,124 @@ void main() {
 
       expect(result.cleanedSql, equals('SELECT 1'));
       expect(result.paramNames, isEmpty);
+    });
+
+    test('should ignore placeholders inside single-quoted strings', () {
+      const sql = "SELECT '@ignored' AS sample, name FROM t WHERE id = @id";
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals("SELECT '@ignored' AS sample, name FROM t WHERE id = ?"),
+      );
+      expect(result.paramNames, orderedEquals(['id']));
+    });
+
+    test('should ignore placeholders inside comments and casts', () {
+      const sql = '''
+SELECT value::int
+FROM t
+-- @ignored
+WHERE id = :id /* :also_ignored */
+''';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals('''
+SELECT value::int
+FROM t
+-- @ignored
+WHERE id = ? /* :also_ignored */
+'''),
+      );
+      expect(result.paramNames, orderedEquals(['id']));
+    });
+
+    test('should ignore placeholders inside nested block comments', () {
+      const sql = '''
+SELECT 1
+/* outer :ignored /* inner @ignored */ still comment */
+WHERE id = :id
+''';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals('''
+SELECT 1
+/* outer :ignored /* inner @ignored */ still comment */
+WHERE id = ?
+'''),
+      );
+      expect(result.paramNames, orderedEquals(['id']));
+    });
+
+    test('should ignore SQL Server system variables and bracketed names', () {
+      const sql = 'SELECT @@ROWCOUNT, [@literal] FROM t '
+          'WHERE id = @id AND code = :code';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals(
+          'SELECT @@ROWCOUNT, [@literal] FROM t WHERE id = ? AND code = ?',
+        ),
+      );
+      expect(result.paramNames, orderedEquals(['id', 'code']));
+    });
+
+    test(
+      'should extract many distinct named placeholders (no fixed arity limit)',
+      () {
+        const sql =
+            'SELECT :a, :b, :c, :d, :e, :f, :g FROM t WHERE x = @h AND y = @i';
+        final result = NamedParameterParser.extract(sql);
+
+        expect(
+          result.cleanedSql,
+          equals(
+            'SELECT ?, ?, ?, ?, ?, ?, ? FROM t WHERE x = ? AND y = ?',
+          ),
+        );
+        expect(
+          result.paramNames,
+          orderedEquals(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']),
+        );
+      },
+    );
+
+    test('should ignore placeholders inside PostgreSQL dollar-quoted strings',
+        () {
+      const sql = r'''
+          SELECT $$@ignored and :also_ignored$$ AS sample
+          WHERE id = @id
+            ''';
+      final result = NamedParameterParser.extract(sql);
+
+      const expected = r'''
+          SELECT $$@ignored and :also_ignored$$ AS sample
+          WHERE id = ?
+            ''';
+      expect(result.cleanedSql, equals(expected));
+      expect(result.paramNames, orderedEquals(['id']));
+    });
+
+    test('should ignore placeholders inside tagged dollar-quoted strings', () {
+      const sql = r'''
+SELECT $tag$:ignored and @ignored$tag$ AS sample
+WHERE id = :id
+''';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals(r'''
+SELECT $tag$:ignored and @ignored$tag$ AS sample
+WHERE id = ?
+'''),
+      );
+      expect(result.paramNames, orderedEquals(['id']));
     });
   });
 
@@ -99,6 +217,50 @@ void main() {
       );
 
       expect(result, orderedEquals([null, 'ok']));
+    });
+
+    test('should duplicate values for repeated named params', () {
+      final result = NamedParameterParser.toPositionalParams(
+        namedParams: {'id': 7, 'name': 'Alice'},
+        paramNames: ['id', 'name', 'id'],
+      );
+
+      expect(result, orderedEquals([7, 'Alice', 7]));
+    });
+
+    test('should convert maps with many distinct keys (no arity cap)', () {
+      final result = NamedParameterParser.toPositionalParams(
+        namedParams: {
+          'a': 1,
+          'b': 2,
+          'c': 3,
+          'd': 4,
+          'e': 5,
+          'f': 6,
+          'g': 7,
+          'h': 8,
+          'i': 9,
+        },
+        paramNames: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'],
+      );
+
+      expect(result, orderedEquals([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    });
+
+    test('should report missing repeated param only once', () {
+      expect(
+        () => NamedParameterParser.toPositionalParams(
+          namedParams: const {},
+          paramNames: ['id', 'id'],
+        ),
+        throwsA(
+          isA<ParameterMissingException>().having(
+            (e) => e.message,
+            'message',
+            'Missing required parameters: id',
+          ),
+        ),
+      );
     });
   });
 

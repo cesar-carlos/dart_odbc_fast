@@ -62,5 +62,54 @@ void main() {
       },
       skip: runSkippedTests ? null : 'Stress test - runs too long',
     );
+
+    test(
+      'extreme: should handle 20 concurrent connections',
+      () async {
+        final dsn = connectionString;
+        if (dsn == null) return;
+
+        final connections = <Connection>[];
+
+        for (var i = 0; i < 20; i++) {
+          final connResult = await locator.service.connect(dsn);
+          connResult.fold(
+            connections.add,
+            (error) {
+              final errorObj = error as OdbcError;
+              fail('Connection $i failed: ${errorObj.message}');
+            },
+          );
+        }
+
+        expect(connections.length, equals(20));
+
+        for (final conn in connections) {
+          final disconnectResult = await locator.service.disconnect(conn.id);
+          expect(disconnectResult.isSuccess(), isTrue);
+        }
+      },
+      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test(
+      'extreme: should handle rapid connect/disconnect cycles (100)',
+      () async {
+        final dsn = connectionString;
+        if (dsn == null) return;
+
+        for (var i = 0; i < 100; i++) {
+          final connResult = await locator.service.connect(dsn);
+          final connection =
+              connResult.getOrElse((_) => throw Exception('Failed to connect'));
+          final disconnectResult =
+              await locator.service.disconnect(connection.id);
+          expect(disconnectResult.isSuccess(), isTrue);
+        }
+      },
+      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      timeout: const Timeout(Duration(minutes: 4)),
+    );
   });
 }

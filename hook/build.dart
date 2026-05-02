@@ -79,8 +79,8 @@ String _getLibraryName(OS os) {
 /// Returns native library path.
 ///
 /// Search strategy in priority order:
-/// 1. Local cache (~/.cache/odbc_fast/)
-/// 2. Development build output (native/target/release/)
+/// 1. Development build output (native/target/release/)
+/// 2. Local cache (~/.cache/odbc_fast/)
 /// 3. Automatic GitHub Release download (skipped in CI/pub.dev)
 /// 4. null (allows tests without native library)
 Future<Uri?> _getLibraryPath(
@@ -94,23 +94,23 @@ Future<Uri?> _getLibraryPath(
     File.fromUri(packageRoot.resolve('pubspec.yaml')),
   );
 
-  // 1. Check local cache first (versioned)
-  final cachedLib = _getCachedLibrary(os, arch, libName, version);
-  if (cachedLib != null) {
-    return cachedLib;
-  }
-
-  // 2. Development: native/target/release/ (workspace target)
+  // 1. Development: native/target/release/ (workspace target)
   final devPath = packageRoot.resolve('native/target/release/$libName');
   if (File.fromUri(devPath).existsSync()) {
     return devPath;
   }
 
-  // 3. Fallback: native/odbc_engine/target/release/ (target local)
+  // 2. Fallback: native/odbc_engine/target/release/ (crate-local target)
   final devPathLocal =
       packageRoot.resolve('native/odbc_engine/target/release/$libName');
   if (File.fromUri(devPathLocal).existsSync()) {
     return devPathLocal;
+  }
+
+  // 3. Check local cache after workspace builds to avoid stale dev binaries.
+  final cachedLib = _getCachedLibrary(os, arch, libName, version);
+  if (cachedLib != null) {
+    return cachedLib;
   }
 
   // 4. Download from GitHub Release (production/build only, skipped in CI/pub.dev)

@@ -5,6 +5,20 @@ import 'package:test/test.dart';
 
 /// Nullability validation tests for bulk insert behavior.
 void main() {
+  group('BulkTimestamp', () {
+    test('fromDateTime maps millisecond and microsecond to fraction ns', () {
+      final dt = DateTime.utc(2026, 5, 2, 12, 30, 45, 123, 456);
+      final t = BulkTimestamp.fromDateTime(dt);
+      expect(t.year, 2026);
+      expect(t.month, 5);
+      expect(t.day, 2);
+      expect(t.hour, 12);
+      expect(t.minute, 30);
+      expect(t.second, 45);
+      expect(t.fraction, 123 * 1000000 + 456);
+    });
+  });
+
   group('Phase 2: Non-nullable null validation', () {
     test('non-nullable i32 column throws in addRow', () {
       expect(
@@ -516,6 +530,67 @@ void main() {
             .addRow([1, 2]),
         throwsA(isA<ArgumentError>()),
       );
+    });
+
+    test('serializes BulkTimestamp passed directly in row', () {
+      const bt = BulkTimestamp(
+        year: 2025,
+        month: 6,
+        day: 15,
+        hour: 10,
+        minute: 11,
+        second: 12,
+        fraction: 500,
+      );
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('ts', BulkColumnType.timestamp)
+          .addRow([bt]);
+      expect(b.build(), isNotEmpty);
+    });
+
+    test('binary column accepts Uint8List cell value', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('p', BulkColumnType.binary, maxLen: 4)
+          .addRow([Uint8List.fromList([7, 8])]);
+      expect(b.build(), isNotEmpty);
+    });
+
+    test('i32 column uses tryParse path when row mutated after addRow', () {
+      final row = <dynamic>[1];
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.i32)
+          .addRow(row);
+      row[0] = '42';
+      final enc = b.build();
+      final view = ByteData.sublistView(enc);
+      var o = 0;
+      o += 4 + 1;
+      o += 4 + 4 + 1 + 1 + 1 + 4;
+      expect(view.getUint32(o, Endian.little), equals(1));
+      o += 4;
+      expect(view.getInt32(o, Endian.little), equals(42));
+    });
+
+    test('timestamp column uses zero sentinel when row mutated to string', () {
+      final row = <dynamic>[DateTime.utc(2020, 1, 1)];
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('a', BulkColumnType.timestamp)
+          .addRow(row);
+      row[0] = 'unexpected';
+      final enc = b.build();
+      final view = ByteData.sublistView(enc);
+      var o = 0;
+      o += 4 + 1;
+      o += 4 + 4 + 1 + 1 + 1 + 4 + 4;
+      expect(view.getInt16(o, Endian.little), equals(0));
+      o += 2;
+      expect(view.getUint16(o, Endian.little), equals(0));
+      o += 2;
+      expect(view.getUint16(o, Endian.little), equals(0));
     });
   });
 }

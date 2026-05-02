@@ -9,6 +9,16 @@ import 'package:test/test.dart';
 
 import '../../../helpers/fake_odbc_backend.dart';
 
+void expectInt32Param(ParamValue? actual, int value) {
+  expect(actual, isA<ParamValueInt32>());
+  expect((actual! as ParamValueInt32).value, value);
+}
+
+void expectStringParam(ParamValue? actual, String value) {
+  expect(actual, isA<ParamValueString>());
+  expect((actual! as ParamValueString).value, value);
+}
+
 void main() {
   group('PreparedStatement', () {
     late FakeOdbcConnectionBackend backend;
@@ -71,6 +81,33 @@ void main() {
         namedParams: {'id': 1, 'name': 'Alice'},
       );
       expect(result, isNotNull);
+      final params = backend.lastExecutePreparedParams;
+      expect(params, isNotNull);
+      expect(params, hasLength(2));
+      expectInt32Param(params![0], 1);
+      expectStringParam(params[1], 'Alice');
+    });
+
+    test('executeNamed duplicates repeated placeholders in positional order',
+        () {
+      final stmtWithNames = PreparedStatement(
+        backend,
+        7,
+        paramNamesForNamedExecution: ['id', 'name', 'id'],
+      );
+      backend.executePreparedResult = Uint8List(0);
+
+      final result = stmtWithNames.executeNamed(
+        namedParams: {'id': 9, 'name': 'Bob'},
+      );
+
+      expect(result, isNotNull);
+      final params = backend.lastExecutePreparedParams;
+      expect(params, isNotNull);
+      expect(params, hasLength(3));
+      expectInt32Param(params![0], 9);
+      expectStringParam(params[1], 'Bob');
+      expectInt32Param(params[2], 9);
     });
   });
 }

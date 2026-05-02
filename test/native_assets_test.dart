@@ -20,10 +20,15 @@ void main() {
     test(
       'should load library from custom path',
       () {
-        final lib = loadOdbcLibraryFromPath('custom/path/to/lib');
+        final path = getTestEnv('ODBC_CUSTOM_LIB_PATH');
+        expect(path, isNotNull);
+        final lib = loadOdbcLibraryFromPath(path!);
         expect(lib, isNotNull);
       },
-      skip: runSkippedTests ? null : 'Requires custom library path',
+      skip: getTestEnv('ODBC_CUSTOM_LIB_PATH') == null ||
+              getTestEnv('ODBC_CUSTOM_LIB_PATH')!.isEmpty
+          ? 'Set ODBC_CUSTOM_LIB_PATH to an existing native library file'
+          : null,
     );
   });
 }

@@ -1,5 +1,5 @@
 /// E2E tests for BatchExecutor with real SQL Server connection
-use odbc_engine::engine::core::{BatchExecutor, BatchQuery};
+use odbc_engine::engine::core::{BatchExecutor, BatchParam, BatchQuery};
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
@@ -495,6 +495,123 @@ fn test_execute_batch_optimized_multiple_columns() {
     conn.disconnect().expect("Failed to disconnect");
 
     println!("✅ Multiple columns optimized batch test PASSED");
+}
+
+#[test]
+fn test_execute_batch_optimized_more_than_five_params() {
+    if !should_run_e2e_tests() {
+        eprintln!("âš ï¸  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize ODBC environment");
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let conn_handles = conn.get_handles();
+    let handles = conn_handles.lock().unwrap();
+    let conn_arc = handles
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let executor = BatchExecutor::new(100, 10);
+    let sql = "EXEC sp_executesql \
+               N'SELECT @a AS a, @b AS b, @c AS c, @d AS d, @e AS e, @f AS f', \
+               N'@a INT, @b INT, @c INT, @d INT, @e INT, @f INT', \
+               ?, ?, ?, ?, ?, ?";
+    let param_sets = vec![vec![
+        BatchParam::Integer(1),
+        BatchParam::Integer(2),
+        BatchParam::Integer(3),
+        BatchParam::Integer(4),
+        BatchParam::Integer(5),
+        BatchParam::Integer(6),
+    ]];
+
+    let results = executor
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
+        .expect("Failed to execute batch optimized with more than five params");
+
+    assert_eq!(results.len(), 1, "Should have 1 result");
+    let decoded = BinaryProtocolDecoder::parse(&results[0]).expect("Failed to decode result");
+
+    assert_eq!(decoded.column_count, 6, "Should have 6 columns");
+    assert_eq!(decoded.row_count, 1, "Should have 1 row");
+
+    for (index, expected) in [1, 2, 3, 4, 5, 6].iter().enumerate() {
+        let bytes = decoded.rows[0][index]
+            .as_ref()
+            .unwrap_or_else(|| panic!("Column {} should not be NULL", index + 1));
+        let value = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(value, *expected, "Unexpected value at column {}", index + 1);
+    }
+
+    drop(handles);
+    conn.disconnect().expect("Failed to disconnect");
+}
+
+#[test]
+fn test_execute_batch_optimized_more_than_five_params_with_null() {
+    if !should_run_e2e_tests() {
+        eprintln!("âš ï¸  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize ODBC environment");
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let conn_handles = conn.get_handles();
+    let handles = conn_handles.lock().unwrap();
+    let conn_arc = handles
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection handle");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let executor = BatchExecutor::new(100, 10);
+    let sql = "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f";
+    let param_sets = vec![vec![
+        BatchParam::Integer(1),
+        BatchParam::Null,
+        BatchParam::Integer(3),
+        BatchParam::Integer(4),
+        BatchParam::Integer(5),
+        BatchParam::Integer(6),
+    ]];
+
+    let results = executor
+        .execute_batch_optimized(&odbc_conn, sql, param_sets)
+        .expect("Failed to execute batch optimized with NULL among more than five params");
+
+    assert_eq!(results.len(), 1, "Should have 1 result");
+    let decoded = BinaryProtocolDecoder::parse(&results[0]).expect("Failed to decode result");
+
+    assert_eq!(decoded.column_count, 6, "Should have 6 columns");
+    assert_eq!(decoded.row_count, 1, "Should have 1 row");
+
+    let first = decoded.rows[0][0]
+        .as_ref()
+        .expect("First column should not be NULL");
+    let last = decoded.rows[0][5]
+        .as_ref()
+        .expect("Last column should not be NULL");
+    assert_eq!(
+        i32::from_le_bytes([first[0], first[1], first[2], first[3]]),
+        1
+    );
+    assert_eq!(i32::from_le_bytes([last[0], last[1], last[2], last[3]]), 6);
+
+    drop(handles);
+    conn.disconnect().expect("Failed to disconnect");
 }
 
 #[test]

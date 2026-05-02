@@ -23,6 +23,7 @@ import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
@@ -147,6 +148,48 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     return null;
   }
 
+  void _clearStatementMetadataForConnection(String connectionId) {
+    final stmtIdsToRemove = _statementConnectionByStmtId.entries
+        .where((entry) => entry.value == connectionId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final stmtId in stmtIdsToRemove) {
+      _statementConnectionByStmtId.remove(stmtId);
+      _namedParamOrderByStmtId.remove(stmtId);
+    }
+  }
+
+  void _clearAllStatementMetadata() {
+    _statementConnectionByStmtId.clear();
+    _namedParamOrderByStmtId.clear();
+  }
+
+  Future<StructuredError?> _getStructuredNativeError({
+    int? nativeConnectionId,
+  }) async {
+    if (_isAsync) {
+      final asyncNative = _native as AsyncNativeOdbcConnection;
+      if (nativeConnectionId != null) {
+        final connectionScoped = await asyncNative
+            .getStructuredErrorForConnection(nativeConnectionId);
+        if (connectionScoped != null) {
+          return connectionScoped;
+        }
+      }
+      return asyncNative.getStructuredError();
+    }
+
+    final native = _native as NativeOdbcConnection;
+    if (nativeConnectionId != null) {
+      final connectionScoped =
+          native.getStructuredErrorForConnection(nativeConnectionId);
+      if (connectionScoped != null) {
+        return connectionScoped;
+      }
+    }
+    return native.getStructuredError();
+  }
+
   /// Converts native error to Failure with proper error type.
   ///
   /// Tries to get structured error first (with SQLSTATE and native code),
@@ -158,10 +201,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       int? nativeCode,
     }) errorFactory,
     String? fallbackMessage,
+    int? nativeConnectionId,
   }) async {
-    final structuredError = _isAsync
-        ? await (_native as AsyncNativeOdbcConnection).getStructuredError()
-        : (_native as NativeOdbcConnection).getStructuredError();
+    final structuredError = await _getStructuredNativeError(
+      nativeConnectionId: nativeConnectionId,
+    );
 
     if (structuredError != null) {
       return Failure<T, OdbcError>(
@@ -199,6 +243,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       } else {
         (_native as NativeOdbcConnection).disconnect(nativeId);
       }
+      _clearStatementMetadataForConnection(connectionId);
       _connectionIds.remove(connectionId);
       _connectionOptions.remove(connectionId);
       _connectionStrings.remove(connectionId);
@@ -382,14 +427,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           : (_native as NativeOdbcConnection).disconnect(nativeId);
 
       if (success) {
-        final stmtIdsToRemove = _statementConnectionByStmtId.entries
-            .where((entry) => entry.value == connectionId)
-            .map((entry) => entry.key)
-            .toList(growable: false);
-        for (final stmtId in stmtIdsToRemove) {
-          _statementConnectionByStmtId.remove(stmtId);
-          _namedParamOrderByStmtId.remove(stmtId);
-        }
+        _clearStatementMetadataForConnection(connectionId);
         _connectionIds.remove(connectionId);
         _connectionOptions.remove(connectionId);
         _connectionStrings.remove(connectionId);
@@ -407,6 +445,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
             nativeCode: nativeCode,
           ),
           fallbackMessage: 'Failed to disconnect from database',
+          nativeConnectionId: nativeId,
         );
       }
     } on Exception catch (e) {
@@ -596,11 +635,10 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       return;
     }
 
-    // The streaming multi-result FFIs were added in v3.3.0. On older sync
-    // native libraries we degrade gracefully to executeQueryMultiFull
-    // (single batch in memory) so the API contract holds even without M8
-    // binaries. The async path always tries the worker; if the worker
-    // replies with streamId=0 we surface a clear error.
+    // The streaming multi-result FFIs were added in v3.3.0. On older native
+    // libraries, or when the async worker reports streaming unavailable, we
+    // degrade gracefully to executeQueryMultiFull (single batch in memory) so
+    // the API contract keeps working even without M8 binaries.
     final supportsStreaming =
         _isAsync || (_native as NativeOdbcConnection).supportsStreamQueryMulti;
     if (!supportsStreaming) {
@@ -628,12 +666,29 @@ class OdbcRepositoryImpl implements IOdbcRepository {
                   .streamMultiStartBatched(nativeId, sql) ??
               0;
       if (streamId == 0) {
-        final nativeErr = _isAsync
-            ? '(async worker reported failure)'
-            : (_native as NativeOdbcConnection).getError();
+        final fallback = await executeQueryMultiFull(connectionId, sql);
+        if (fallback.isSuccess()) {
+          for (final item in fallback.getOrNull()!.items) {
+            yield Success<QueryResultMultiItem, OdbcError>(item);
+          }
+          return;
+        }
+        final structuredError = await _getStructuredNativeError(
+          nativeConnectionId: nativeId,
+        );
+        final nativeErr = structuredError?.message ??
+            (_isAsync
+                ? await (_native as AsyncNativeOdbcConnection).getError()
+                : (_native as NativeOdbcConnection).getError());
+        final fallbackErr = fallback.exceptionOrNull();
+        final message = nativeErr.isNotEmpty && nativeErr != 'No error'
+            ? nativeErr
+            : (fallbackErr?.toString() ?? 'Streaming unavailable');
         yield Failure<QueryResultMultiItem, OdbcError>(
           QueryError(
-            message: 'Failed to start streaming multi-result: $nativeErr',
+            message: 'Failed to start streaming multi-result: $message',
+            sqlState: structuredError?.sqlStateString,
+            nativeCode: structuredError?.nativeCode,
           ),
         );
         return;
@@ -1710,6 +1765,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
             nativeCode: nativeCode,
           ),
           fallbackMessage: e.toString(),
+          nativeConnectionId: nativeId,
         );
       }
     }
@@ -1783,6 +1839,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
             nativeCode: nativeCode,
           ),
           fallbackMessage: e.toString(),
+          nativeConnectionId: nativeId,
         );
       }
     }
@@ -2599,6 +2656,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           : (_native as NativeOdbcConnection).clearAllStatements();
 
       if (code == 0) {
+        _clearAllStatementMetadata();
         return const Success(unit);
       }
       return await _convertNativeErrorToFailure<Unit>(

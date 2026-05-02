@@ -59,6 +59,7 @@ enum RequestType {
   catalogIndexes,
   getError,
   getStructuredError,
+  getStructuredErrorForConnection,
   detectDriver,
   auditEnable,
   auditGetEvents,
@@ -592,6 +593,14 @@ class GetErrorRequest extends WorkerRequest {
 class GetStructuredErrorRequest extends WorkerRequest {
   const GetStructuredErrorRequest(int requestId)
       : super(requestId, RequestType.getStructuredError);
+}
+
+/// Get structured error scoped to a specific connection.
+class GetStructuredErrorForConnectionRequest extends WorkerRequest {
+  const GetStructuredErrorForConnectionRequest(int requestId, this.connectionId)
+      : super(requestId, RequestType.getStructuredErrorForConnection);
+
+  final int connectionId;
 }
 
 /// Detect database driver from connection string.

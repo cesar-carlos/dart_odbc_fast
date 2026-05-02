@@ -464,8 +464,9 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// `PreparedStatement` wrapper that supports `executeNamed`.
   ///
   /// Supports @name and :name syntax. Converts to positional placeholders
-  /// before preparing. The returned `PreparedStatement` can use
-  /// `executeNamed` with a map of parameter values.
+  /// before preparing while preserving every placeholder occurrence. The
+  /// returned `PreparedStatement` can use `executeNamed` with a map of
+  /// parameter values, including repeated placeholder names.
   PreparedStatement? prepareStatementNamed(
     int connectionId,
     String sql, {

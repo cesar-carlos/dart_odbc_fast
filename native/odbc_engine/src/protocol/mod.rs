@@ -34,6 +34,8 @@ pub use multi_result::{
 };
 pub use param_value::{
     deserialize_params, has_null_param, max_param_string_len, param_count_exceeds_limit,
+    param_value_to_input_parameter, param_values_to_input_params,
+    param_values_to_input_params_with_descriptions, param_values_to_input_params_with_inference,
     param_values_to_strings, serialize_params, ParamValue,
 };
 pub use row_buffer::RowBuffer;

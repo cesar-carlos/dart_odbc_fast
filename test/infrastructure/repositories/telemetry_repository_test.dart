@@ -124,6 +124,56 @@ void main() {
       expect(result.isSuccess(), isTrue);
       expect(fake.shutdownCalls, isZero);
     });
+
+    test('updateTrace returns NOT_INITIALIZED before initialize', () async {
+      final repository = TelemetryRepositoryImpl(_FakeTelemetryNativeClient());
+
+      final result = await repository.updateTrace(
+        traceId: 'x',
+        endTime: DateTime.utc(2026),
+      );
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull()?.code, equals('NOT_INITIALIZED'));
+    });
+
+    test('updateSpan returns NOT_INITIALIZED before initialize', () async {
+      final repository = TelemetryRepositoryImpl(_FakeTelemetryNativeClient());
+
+      final result = await repository.updateSpan(
+        spanId: 's',
+        endTime: DateTime.utc(2026),
+      );
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull()?.code, equals('NOT_INITIALIZED'));
+    });
+
+    test('updateTrace maps native exception to UPDATE_TRACE_FAILED', () async {
+      final fake = _FakeTelemetryNativeClient()
+        ..throwOnExportTrace = Exception('native');
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      final result = await repository.updateTrace(
+        traceId: 'trace-z',
+        endTime: DateTime.utc(2026),
+      );
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull()?.code, equals('UPDATE_TRACE_FAILED'));
+    });
+
+    test('initialize maps unexpected native throw to INIT_ERROR', () async {
+      final fake = _FakeTelemetryNativeClient()
+        ..throwOnInit = Exception('ffi down');
+      final repository = TelemetryRepositoryImpl(fake);
+
+      final result = await repository.initialize();
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull()?.code, equals('INIT_ERROR'));
+    });
   });
 }
 
@@ -163,9 +213,14 @@ class _FakeTelemetryNativeClient implements TelemetryNativeClient {
   final List<String> exportedTraces = [];
   int shutdownCalls = 0;
   Exception? throwOnExportTrace;
+  Exception? throwOnInit;
 
   @override
   int initialize([String otlpEndpoint = '']) {
+    final throwInit = throwOnInit;
+    if (throwInit != null) {
+      throw throwInit;
+    }
     initializeCalls.add(otlpEndpoint);
     return initializeResult;
   }

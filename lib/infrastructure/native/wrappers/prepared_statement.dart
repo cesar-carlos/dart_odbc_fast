@@ -61,8 +61,9 @@ class PreparedStatement {
   ///
   /// Requires `paramNamesForNamedExecution` at construction (e.g. from
   /// `prepareStatementNamed`). Converts `namedParams` to positional
-  /// and delegates to `execute`. Throws `ParameterMissingException`
-  /// if a required parameter is missing.
+  /// and delegates to `execute`. Repeated placeholders reuse the same value
+  /// from `namedParams`. Throws `ParameterMissingException` if a required
+  /// parameter is missing.
   Uint8List? executeNamed({
     required Map<String, Object?> namedParams,
     int timeoutOverrideMs = 0,

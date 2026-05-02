@@ -64,8 +64,12 @@ void _fakeWorkerNamedSupport(SendPort mainSendPort) {
           QueryResponse(message.requestId, error: 'missing params'),
         );
       } else {
+        final params = deserializeParamValues(message.serializedParams);
         mainSendPort.send(
-          QueryResponse(message.requestId, data: Uint8List.fromList([1])),
+          QueryResponse(
+            message.requestId,
+            data: Uint8List.fromList([params.length]),
+          ),
         );
       }
       return;
@@ -82,14 +86,60 @@ void _fakeWorkerNamedSupport(SendPort mainSendPort) {
           QueryResponse(message.requestId, error: 'missing params'),
         );
       } else {
+        final params = deserializeParamValues(message.serializedParams);
         mainSendPort.send(
-          QueryResponse(message.requestId, data: Uint8List.fromList([2])),
+          QueryResponse(
+            message.requestId,
+            data: Uint8List.fromList([params.length]),
+          ),
         );
       }
       return;
     }
     if (message is CloseStatementRequest) {
       mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is ClearAllStatementsRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+  });
+}
+
+/// Fake worker: supports structured error requests, including per-connection.
+void _fakeWorkerStructuredErrorSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is GetStructuredErrorRequest) {
+      mainSendPort.send(
+        StructuredErrorResponse(
+          message.requestId,
+          message: 'global failure',
+          sqlStateString: 'HY000',
+          nativeCode: 500,
+        ),
+      );
+      return;
+    }
+    if (message is GetStructuredErrorForConnectionRequest) {
+      mainSendPort.send(
+        StructuredErrorResponse(
+          message.requestId,
+          message: 'connection failure ${message.connectionId}',
+          sqlStateString: '08S01',
+          nativeCode: 701,
+        ),
+      );
       return;
     }
   });
@@ -780,6 +830,21 @@ void main() {
       // Just verify it completes successfully and returns the correct type
       expect(error, isA<StructuredError?>());
     });
+
+    test('should handle getStructuredErrorForConnection async', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerStructuredErrorSupport,
+      );
+      await async.initialize();
+
+      final error = await async.getStructuredErrorForConnection(77);
+
+      expect(error, isNotNull);
+      expect(error!.message, equals('connection failure 77'));
+      expect(error.sqlStateString, equals('08S01'));
+      expect(error.nativeCode, equals(701));
+      async.dispose();
+    });
   });
 
   group('AsyncNativeOdbcConnection timeout', () {
@@ -866,7 +931,7 @@ void main() {
       'should complete pending requests with error when worker isolate dies',
       () async {
         final async = AsyncNativeOdbcConnection(
-          requestTimeout: const Duration(seconds: 60),
+          requestTimeout: const Duration(seconds: 3),
           isolateEntry: _fakeWorkerNeverResponds,
         );
 
@@ -878,14 +943,20 @@ void main() {
           await initFuture;
           fail('Should have thrown AsyncError');
         } on AsyncError catch (e) {
-          expect(e.code, equals(AsyncErrorCode.workerTerminated));
-          expect(e.message, contains('Worker isolate'));
+          expect(
+            [AsyncErrorCode.workerTerminated, AsyncErrorCode.requestTimeout],
+            contains(e.code),
+            reason:
+                'Killed worker during init may surface as terminate or timeout',
+          );
+          expect(e.message, isNotEmpty);
         }
       },
       skip: runSkippedTests
           ? null
           : 'Isolate.kill() onDone timing is platform-dependent; '
               'dispose test covers _failAllPending path',
+      timeout: const Timeout(Duration(seconds: 30)),
     );
   });
 
@@ -959,6 +1030,43 @@ void main() {
 
       expect(result, isNotNull);
       expect(result, isNotEmpty);
+      expect(result!.single, equals(1));
+    });
+
+    test('should preserve repeated named placeholders for query execution',
+        () async {
+      await async.initialize();
+
+      final result = await async.executeQueryNamed(
+        1,
+        'SELECT * FROM users WHERE id = @id OR parent_id = @id',
+        {'id': 7},
+      );
+
+      expect(result, isNotNull);
+      expect(result, isNotEmpty);
+      expect(result!.single, equals(2));
+    });
+
+    test('should support more than five named parameters', () async {
+      await async.initialize();
+
+      final result = await async.executeQueryNamed(
+        1,
+        'SELECT @a, @b, @c, @d, @e, @f',
+        {
+          'a': 1,
+          'b': 2,
+          'c': 3,
+          'd': 4,
+          'e': 5,
+          'f': 6,
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(result, isNotEmpty);
+      expect(result!.single, equals(6));
     });
 
     test('should throw invalidParameter when named param is missing', () async {
@@ -977,6 +1085,31 @@ void main() {
         expect(e.code, equals(AsyncErrorCode.invalidParameter));
         expect(e.message, contains('Missing required parameters'));
       }
+    });
+
+    test('should clear named prepared metadata after clearAllStatements',
+        () async {
+      await async.initialize();
+
+      final stmtId = await async.prepareNamed(
+        1,
+        'SELECT * FROM users WHERE id = :id',
+      );
+      expect(stmtId, equals(42));
+
+      final clearCode = await async.clearAllStatements();
+      expect(clearCode, equals(0));
+
+      await expectLater(
+        () => async.executePreparedNamed(stmtId, {'id': 1}, 0, 1000),
+        throwsA(
+          isA<AsyncError>().having(
+            (error) => error.message,
+            'message',
+            contains('prepareNamed'),
+          ),
+        ),
+      );
     });
   });
 

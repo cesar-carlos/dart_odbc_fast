@@ -18,6 +18,10 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   bool rollbackToSavepointResult = true;
   bool releaseSavepointResult = true;
   Uint8List? executePreparedResult;
+  List<ParamValue>? lastExecutePreparedParams;
+  int? lastExecutePreparedTimeoutOverrideMs;
+  int? lastExecutePreparedFetchSize;
+  int? lastExecutePreparedMaxBufferBytes;
   bool closeStatementResult = true;
   int clearAllStatementsResult = 0;
   PreparedStatementMetrics? getCacheMetricsResult;
@@ -57,8 +61,13 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
-  }) =>
-      executePreparedResult;
+  }) {
+    lastExecutePreparedParams = params;
+    lastExecutePreparedTimeoutOverrideMs = timeoutOverrideMs;
+    lastExecutePreparedFetchSize = fetchSize;
+    lastExecutePreparedMaxBufferBytes = maxBufferBytes;
+    return executePreparedResult;
+  }
 
   @override
   bool closeStatement(int stmtId) => closeStatementResult;

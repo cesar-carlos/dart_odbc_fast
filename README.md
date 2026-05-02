@@ -63,15 +63,19 @@ for the remaining backlog.
   | SQL Server (MSDTC)    | ✅ Windows + `--features xa-dtc` (DTC enlist + XA branch); Linux/CI still unsupported — see `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.1 |
   | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
 
-  1RM optimisation (`commit_one_phase`) skips the prepare-log write
-  when this RM is the sole participant. Crash-recovery via
-  `xaRecover` + `xaResumePrepared` (works across reconnects on every
-  ✅ engine, including Oracle). See
-  [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart) for the
-  full lifecycle (full 2PC, 1RM, crash-recovery, plus an
-  Oracle-specific section that runs DML inside the branch so the
-  prepare actually writes a log entry — without DML Oracle returns
-  `XA_RDONLY` and silently auto-completes the branch).
+1RM optimisation (`commit_one_phase`) skips the prepare-log write
+when this RM is the sole participant. Crash-recovery via
+`xaRecover` + `xaResumePrepared` (works across reconnects on every
+✅ engine, including Oracle). See
+[`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart) for the
+full lifecycle (full 2PC, 1RM, crash-recovery, plus an
+Oracle-specific section that runs DML inside the branch so the
+prepare actually writes a log entry — without DML Oracle returns
+`XA_RDONLY` and silently auto-completes the branch).
+
+Current Dart limitation: XA/2PC is available through the sync/native backend
+(`NativeOdbcConnection`, `OdbcService(useAsync: false)`). The async worker
+backend does not expose `XaTransactionHandle` lifecycle methods yet.
 
 ### `SqlDataType` extras (17 new kinds, 27 total)
 
@@ -248,7 +252,7 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 - Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`, `executePreparedNamed`, `cancelStatement`, `closeStatement`
 - Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
 - Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
-- Multi-result: `executeQueryMulti`, `executeQueryMultiFull`
+- Multi-result: `executeQueryMulti`, `executeQueryMultiParams`, `executeQueryMultiFull`
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`, `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
 - Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
@@ -269,13 +273,12 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 - Use query timeout as workaround (`ConnectionOptions.queryTimeout`,
   prepare/statement timeout options).
 
-### Parameter count limit (current runtime)
+### Parameterized execution
 
-- Current native execution path supports up to **5 parameters** per execution
-  for `executeQueryParams`, `executeQueryNamed`, `executePrepared`, and
-  `executePreparedNamed`.
-- This is a current implementation limit, not a long-term API goal.
-- For larger payloads, prefer `bulkInsert`/`bulkInsertParallel` where applicable.
+- Positional and prepared execution support a dynamic number of parameters,
+  subject to the package protocol safety cap and the underlying driver/database.
+- Named placeholders preserve occurrence order. Repeating `@id` or `:id` in the
+  same SQL reuses the same map value for every matching position.
 
 ### Low-level wrappers (`NativeOdbcConnection`)
 
@@ -669,6 +672,7 @@ Primary keys, foreign keys, and indexes
 - ✅ Standard SQL named parameter syntax
 - ✅ Prepared statement reuse for performance
 - ✅ Mixed @name and :name in same example
+- ✅ Repeated placeholders reuse the same supplied value
 - ✅ Type-safe parameter binding
 
 **Advantages**:

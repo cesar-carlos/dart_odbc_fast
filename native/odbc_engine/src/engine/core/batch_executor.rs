@@ -2,8 +2,13 @@ use super::pipeline::QueryPipeline;
 use crate::engine::cell_reader::CellReader;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
-use crate::protocol::{param_values_to_strings, OdbcType, ParamValue, RowBuffer, RowBufferEncoder};
-use odbc_api::{Connection, Cursor, IntoParameter, ResultSetMetadata};
+use crate::protocol::{
+    has_null_param, param_values_to_input_params, param_values_to_input_params_with_descriptions,
+    param_values_to_input_params_with_inference, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+};
+use odbc_api::handles::ParameterDescription;
+use odbc_api::parameter::InputParameter;
+use odbc_api::{Connection, Cursor, ResultSetMetadata};
 use std::sync::Arc;
 
 pub struct BatchQuery {
@@ -86,54 +91,45 @@ impl BatchExecutor {
 
         let batch_size = self.effective_batch_size();
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+        let mut parameter_descriptions: Option<Vec<ParameterDescription>> = None;
 
         for params_chunk in param_sets.chunks(batch_size) {
             for param_set in params_chunk {
                 let param_values: Vec<ParamValue> =
                     param_set.iter().map(batch_param_to_param_value).collect();
 
-                let optional_strings = param_values_to_strings(&param_values)?;
+                if let Some(parameters) =
+                    param_values_to_input_params_with_inference(&param_values)?
+                {
+                    let encoded = self.execute_direct_param_set(conn, sql, parameters)?;
+                    results.push(encoded);
+                    continue;
+                }
 
-                let mut cursor = match optional_strings.len() {
-                    0 => stmt.execute(()).map_err(OdbcError::from)?,
-                    1 => {
-                        let p0 = optional_strings[0].as_deref().into_parameter();
-                        stmt.execute((&p0,)).map_err(OdbcError::from)?
-                    }
-                    2 => {
-                        let p0 = optional_strings[0].as_deref().into_parameter();
-                        let p1 = optional_strings[1].as_deref().into_parameter();
-                        stmt.execute((&p0, &p1)).map_err(OdbcError::from)?
-                    }
-                    3 => {
-                        let p0 = optional_strings[0].as_deref().into_parameter();
-                        let p1 = optional_strings[1].as_deref().into_parameter();
-                        let p2 = optional_strings[2].as_deref().into_parameter();
-                        stmt.execute((&p0, &p1, &p2)).map_err(OdbcError::from)?
-                    }
-                    4 => {
-                        let p0 = optional_strings[0].as_deref().into_parameter();
-                        let p1 = optional_strings[1].as_deref().into_parameter();
-                        let p2 = optional_strings[2].as_deref().into_parameter();
-                        let p3 = optional_strings[3].as_deref().into_parameter();
-                        stmt.execute((&p0, &p1, &p2, &p3))
-                            .map_err(OdbcError::from)?
-                    }
-                    5 => {
-                        let p0 = optional_strings[0].as_deref().into_parameter();
-                        let p1 = optional_strings[1].as_deref().into_parameter();
-                        let p2 = optional_strings[2].as_deref().into_parameter();
-                        let p3 = optional_strings[3].as_deref().into_parameter();
-                        let p4 = optional_strings[4].as_deref().into_parameter();
-                        stmt.execute((&p0, &p1, &p2, &p3, &p4))
-                            .map_err(OdbcError::from)?
-                    }
-                    n => {
-                        return Err(OdbcError::ValidationError(format!(
-                            "At most 5 parameters supported in batch, got {}",
-                            n
-                        )));
-                    }
+                let parameters = if param_values.is_empty() {
+                    Vec::new()
+                } else if has_null_param(&param_values) {
+                    let descriptions = match parameter_descriptions.as_ref() {
+                        Some(descriptions) => descriptions,
+                        None => {
+                            let collected = stmt
+                                .parameter_descriptions()
+                                .map_err(OdbcError::from)?
+                                .collect::<std::result::Result<Vec<_>, _>>()
+                                .map_err(OdbcError::from)?;
+                            parameter_descriptions.insert(collected)
+                        }
+                    };
+                    param_values_to_input_params_with_descriptions(&param_values, descriptions)?
+                } else {
+                    param_values_to_input_params(&param_values)?
+                };
+
+                let mut cursor = if parameters.is_empty() {
+                    stmt.execute(()).map_err(OdbcError::from)?
+                } else {
+                    stmt.execute(parameters.as_slice())
+                        .map_err(OdbcError::from)?
                 };
 
                 let mut taken = cursor.take();
@@ -190,6 +186,70 @@ impl BatchExecutor {
         }
 
         Ok(results)
+    }
+
+    fn execute_direct_param_set(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        parameters: Vec<Box<dyn InputParameter>>,
+    ) -> Result<Vec<u8>> {
+        let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
+        let mut cursor = if parameters.is_empty() {
+            prealloc.execute(sql, ()).map_err(OdbcError::from)?
+        } else {
+            prealloc
+                .execute(sql, parameters.as_slice())
+                .map_err(OdbcError::from)?
+        };
+
+        let mut taken = cursor.take();
+        if taken.is_none() {
+            drop(taken);
+            drop(cursor);
+            let row_count = prealloc.row_count().map_err(OdbcError::from)?.unwrap_or(0) as i64;
+            return Ok(crate::protocol::encode_multi(&[
+                crate::protocol::MultiResultItem::RowCount(row_count),
+            ]));
+        }
+
+        let Some(mut c) = taken.take() else {
+            return Err(OdbcError::InternalError(
+                "Expected result cursor after successful execute".to_string(),
+            ));
+        };
+        let mut row_buffer = RowBuffer::new();
+        let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
+        let cols_u16: u16 = cols_i16
+            .try_into()
+            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+        let cols_usize: usize = cols_u16.into();
+        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+
+        for col_idx in 1..=cols_u16 {
+            let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
+            let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
+            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+            let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
+            row_buffer.add_column(col_name.to_string(), odbc_type);
+            column_types.push(odbc_type);
+        }
+
+        let mut cell_reader = CellReader::new();
+        while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
+            let mut row_data = Vec::with_capacity(column_types.len());
+            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
+                let col_number: u16 = (col_idx + 1)
+                    .try_into()
+                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
+                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
+                row_data.push(cell_data);
+            }
+            row_buffer.add_row(row_data);
+        }
+
+        coalesce_for_json_rows(&mut row_buffer);
+        Ok(RowBufferEncoder::encode(&row_buffer))
     }
 }
 

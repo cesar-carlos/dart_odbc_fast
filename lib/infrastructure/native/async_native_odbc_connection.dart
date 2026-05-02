@@ -380,6 +380,27 @@ class AsyncNativeOdbcConnection {
     );
   }
 
+  /// Returns the last structured error for [connectionId], or `null` when
+  /// there is no connection-scoped error information.
+  Future<StructuredError?> getStructuredErrorForConnection(
+    int connectionId,
+  ) async {
+    final r = await _sendRequest<StructuredErrorResponse>(
+      GetStructuredErrorForConnectionRequest(
+        _nextRequestId(),
+        connectionId,
+      ),
+    );
+    if (r.error != null) return null;
+    if (r.message.isEmpty && r.sqlStateString == null) return null;
+    final sqlState = (r.sqlStateString ?? '').codeUnits;
+    return StructuredError(
+      message: r.message,
+      sqlState: sqlState.isNotEmpty ? sqlState : List.filled(5, 0),
+      nativeCode: r.nativeCode ?? 0,
+    );
+  }
+
   /// Starts non-blocking query execution in native layer.
   ///
   /// Returns async request ID (>0) on success, or 0 on failure.
@@ -609,8 +630,10 @@ class AsyncNativeOdbcConnection {
   /// Prepares [sql] with named parameters on [connectionId] in the worker.
   ///
   /// Supports `@name` and `:name` syntax. Named placeholders are converted
-  /// to positional placeholders before prepare. On success, internal metadata
-  /// is stored so [executePreparedNamed] can bind values by name.
+  /// to positional placeholders before prepare. All placeholder occurrences
+  /// are preserved so repeated names can reuse the same input value during
+  /// execution. On success, internal metadata is stored so
+  /// [executePreparedNamed] can bind values by name.
   Future<int> prepareNamed(
     int connectionId,
     String sql, {
@@ -657,7 +680,8 @@ class AsyncNativeOdbcConnection {
   ///
   /// The [stmtId] must come from [prepareNamed]. Throws [AsyncError] with
   /// [AsyncErrorCode.invalidParameter] when named parameter metadata is
-  /// missing or required parameters are not provided.
+  /// missing or required parameters are not provided. Repeated placeholders
+  /// reuse the same value from [namedParams].
   Future<Uint8List?> executePreparedNamed(
     int stmtId,
     Map<String, Object?> namedParams,
@@ -744,7 +768,8 @@ class AsyncNativeOdbcConnection {
   /// Executes [sql] on [connectionId] using named parameters.
   ///
   /// Supports `@name` and `:name` syntax, converting placeholders to
-  /// positional order before sending the query to the worker.
+  /// positional order before sending the query to the worker. Repeated
+  /// placeholders reuse the same value from [namedParams].
   ///
   /// Throws [AsyncError] with [AsyncErrorCode.invalidParameter] when any
   /// required named parameter is missing.
@@ -798,8 +823,7 @@ class AsyncNativeOdbcConnection {
   /// Executes a parameterised multi-result batch in the worker.
   ///
   /// `paramsBuffer` is the output of `serializeParams(...)`. Pass `null` for
-  /// no parameters. Up to 5 positional `?` parameters are supported.
-  /// New in v3.2.0 (M5).
+  /// no parameters. New in v3.2.0 (M5).
   Future<Uint8List?> executeQueryMultiParams(
     int connectionId,
     String sql,
@@ -845,6 +869,9 @@ class AsyncNativeOdbcConnection {
     final r = await _sendRequest<IntResponse>(
       ClearAllStatementsRequest(_nextRequestId()),
     );
+    if (r.value == 0) {
+      _namedParamOrderByStmtId.clear();
+    }
     return r.value;
   }
 

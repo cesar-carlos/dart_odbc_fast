@@ -39,6 +39,14 @@ void main() {
       expect(detectDatabaseType(dsn1), DatabaseType.oracle);
     });
 
+    test('detectDatabaseType identifies SQLite', () {
+      const dsn1 = 'Driver={SQLite3 ODBC Driver};Database=test.db';
+      expect(detectDatabaseType(dsn1), DatabaseType.sqlite);
+
+      const dsn2 = 'DRIVER=SQLite;Database=:memory:';
+      expect(detectDatabaseType(dsn2), DatabaseType.sqlite);
+    });
+
     test('detectDatabaseType returns unknown for unrecognized drivers', () {
       const dsn1 = 'Driver={Unknown Driver};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.unknown);

@@ -1,4 +1,5 @@
-// Multi-result demo using executeQueryMulti + MultiResultParser.
+// Multi-result demo using executeQueryMulti, executeQueryMultiParams,
+// and MultiResultParser.
 // Run: dart run example/multi_result_demo.dart
 
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
@@ -29,6 +30,7 @@ void main() async {
   try {
     await _createSetup(native, connId);
     await _runMultiResultBatch(native, connId);
+    await _runParameterizedMultiResultBatch(native, connId);
   } finally {
     native.disconnect(connId);
     AppLogger.info('Disconnected');
@@ -93,23 +95,10 @@ Future<void> _runMultiResultBatch(
   }
 
   final items = MultiResultParser.parse(payload);
-  AppLogger.info('Multi-result items: ${items.length}');
-
-  for (var i = 0; i < items.length; i++) {
-    final item = items[i];
-
-    if (item.resultSet != null) {
-      final rs = item.resultSet!;
-      AppLogger.info('Item $i => result-set '
-          '(rows=${rs.rowCount}, columns=${rs.columnCount})');
-      for (final row in rs.rows) {
-        AppLogger.fine('  Row: $row');
-      }
-      continue;
-    }
-
-    AppLogger.info('Item $i => row-count (${item.rowCount})');
-  }
+  _logMultiResultItems(
+    'Multi-result items (plain batch)',
+    items,
+  );
 
   final first = MultiResultParser.getFirstResultSet(items);
   if (first != null) {
@@ -119,5 +108,70 @@ Future<void> _runMultiResultBatch(
       'No result set in batch (only row-counts) -- expected when the '
       'batch contains DML/DDL only.',
     );
+  }
+}
+
+Future<void> _runParameterizedMultiResultBatch(
+  NativeOdbcConnection native,
+  int connId,
+) async {
+  if (!native.supportsExecuteQueryMultiParams) {
+    AppLogger.warning(
+      'Loaded native library does not support executeQueryMultiParams. '
+      'Skipping parameterized multi-result demo.',
+    );
+    return;
+  }
+
+  const sql = '''
+    SELECT ? AS first_a, ? AS first_b, ? AS first_optional;
+    SELECT ? AS second_d, ? AS second_e, ? AS second_f;
+  ''';
+
+  final payload = native.executeQueryMultiParams(
+    connId,
+    sql,
+    serializeParams(const <ParamValue>[
+      ParamValueInt32(1),
+      ParamValueInt32(2),
+      ParamValueNull(),
+      ParamValueInt32(4),
+      ParamValueInt32(5),
+      ParamValueInt32(6),
+    ]),
+  );
+  if (payload == null) {
+    AppLogger.severe(
+      'Parameterized multi-result query failed: ${native.getError()}',
+    );
+    return;
+  }
+
+  final items = MultiResultParser.parse(payload);
+  _logMultiResultItems(
+    'Multi-result items (parameterized batch with >5 params)',
+    items,
+  );
+}
+
+void _logMultiResultItems(String label, List<MultiResultItem> items) {
+  AppLogger.info('$label: ${items.length}');
+
+  for (var i = 0; i < items.length; i++) {
+    final item = items[i];
+
+    if (item.resultSet != null) {
+      final rs = item.resultSet!;
+      AppLogger.info(
+        'Item $i => result-set '
+        '(rows=${rs.rowCount}, columns=${rs.columnCount})',
+      );
+      for (final row in rs.rows) {
+        AppLogger.fine('  Row: $row');
+      }
+      continue;
+    }
+
+    AppLogger.info('Item $i => row-count (${item.rowCount})');
   }
 }

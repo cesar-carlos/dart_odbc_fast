@@ -180,7 +180,8 @@ abstract class IOdbcRepository {
   /// Prepares a SQL statement with named parameters.
   ///
   /// Supports `@name` and `:name` syntax. Named placeholders are converted
-  /// to positional `?` placeholders before prepare.
+  /// to positional `?` placeholders before prepare, preserving placeholder
+  /// occurrence order so repeated names can reuse the same input value.
   ///
   /// The returned statement ID must be executed with [executePreparedNamed]
   /// or [executePrepared].
@@ -209,7 +210,7 @@ abstract class IOdbcRepository {
   /// Executes a prepared statement using named parameters.
   ///
   /// The [stmtId] should come from [prepareNamed] so parameter order metadata
-  /// is available.
+  /// is available, including repeated placeholder occurrences.
   Future<Result<QueryResult>> executePreparedNamed(
     String connectionId,
     int stmtId,
@@ -252,7 +253,8 @@ abstract class IOdbcRepository {
   /// Executes a SQL query with named parameters.
   ///
   /// Supports `@name` and `:name` syntax. Named placeholders are converted
-  /// to positional `?` placeholders before execution.
+  /// to positional `?` placeholders before execution, preserving placeholder
+  /// occurrence order so repeated names can reuse the same input value.
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
@@ -278,8 +280,8 @@ abstract class IOdbcRepository {
 
   /// Executes a parameterised batch SQL and returns all multi-result items.
   ///
-  /// Same wire format as [executeQueryMultiFull] but accepts up to 5
-  /// positional `?` parameters. New in v3.2.0 (M5).
+  /// Same wire format as [executeQueryMultiFull] but accepts positional `?`
+  /// parameters. New in v3.2.0 (M5).
   Future<Result<QueryResultMulti>> executeQueryMultiParams(
     String connectionId,
     String sql,

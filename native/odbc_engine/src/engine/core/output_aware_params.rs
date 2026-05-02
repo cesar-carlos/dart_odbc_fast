@@ -2,11 +2,11 @@
 
 use crate::error::{OdbcError, Result};
 use crate::protocol::bound_param::{BoundParam, ParamDirection};
-use crate::protocol::param_value::ParamValue;
-use crate::protocol::param_values_to_strings;
+use crate::protocol::param_value::{param_value_to_input_parameter, ParamValue};
 
 use odbc_api::buffers::Indicator;
 use odbc_api::handles::Statement;
+use odbc_api::parameter::InputParameter;
 use odbc_api::ParameterCollection;
 use odbc_api::{sys::ParamType, Nullable};
 #[cfg(windows)]
@@ -31,39 +31,13 @@ pub(crate) struct OutputAwareParams {
 
 /// Discriminated bind storage.
 pub(crate) enum ParamSlot {
-    InText(TextBox),
+    InAny(Box<dyn InputParameter>),
     OutI32(Nullable<i32>),
     OutI64(Nullable<i64>),
     InOutI32(Nullable<i32>),
     InOutI64(Nullable<i64>),
     OutText(TextBox),
     InOutText(TextBox),
-}
-
-fn in_text_from_param_value(v: &ParamValue) -> Result<TextBox> {
-    let o = param_values_to_strings(std::slice::from_ref(v))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| OdbcError::ValidationError("param_values_to_strings empty".to_string()))?;
-    Ok(match o {
-        None => TextBox::null(),
-        Some(s) => in_text_box_from_owned_string(s),
-    })
-}
-
-fn in_text_box_from_owned_string(s: String) -> TextBox {
-    #[cfg(windows)]
-    {
-        let wide: Vec<u16> = s.encode_utf16().collect();
-        let byte_len = wide.len() * size_of::<u16>();
-        TextBox::from_buffer(wide.into_boxed_slice(), Indicator::Length(byte_len))
-    }
-    #[cfg(not(windows))]
-    {
-        let bytes = s.into_bytes();
-        let byte_len = bytes.len();
-        TextBox::from_buffer(bytes.into_boxed_slice(), Indicator::Length(byte_len))
-    }
 }
 
 /// Empty receive buffer for textual `OUT` (wide or narrow) with a terminating nul.
@@ -149,7 +123,7 @@ pub(crate) fn bound_to_slots(bound: &[BoundParam]) -> Result<OutputAwareParams> 
                      valid for ParamDirection::output",
                 ));
             }
-            (ParamDirection::Input, v) => ParamSlot::InText(in_text_from_param_value(v)?),
+            (ParamDirection::Input, v) => ParamSlot::InAny(param_value_to_input_parameter(v)?),
             (ParamDirection::Output, ParamValue::RefCursorOut)
             | (ParamDirection::InOut, ParamValue::RefCursorOut) => {
                 // The Oracle *directed* path uses `ref_cursor_oracle::filter_…` and never calls
@@ -227,7 +201,7 @@ impl OutputAwareParams {
         let mut v = Vec::new();
         for s in &self.slots {
             match s {
-                ParamSlot::InText(_) => {}
+                ParamSlot::InAny(_) => {}
                 ParamSlot::OutI32(n) | ParamSlot::InOutI32(n) => {
                     let t = *n;
                     v.push(
@@ -265,7 +239,7 @@ unsafe impl ParameterCollection for OutputAwareParams {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let num = (i + 1) as u16;
             match slot {
-                ParamSlot::InText(t) => {
+                ParamSlot::InAny(t) => {
                     unsafe { stmt.bind_input_parameter(num, t) }.into_result(stmt)?;
                 }
                 ParamSlot::OutI32(n) => {

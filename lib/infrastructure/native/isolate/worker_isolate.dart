@@ -609,6 +609,21 @@ void _handleRequest(
           sendPort.send(StructuredErrorResponse(request.requestId));
         }
 
+      case GetStructuredErrorForConnectionRequest():
+        final se = conn.getStructuredErrorForConnection(request.connectionId);
+        if (se != null) {
+          sendPort.send(
+            StructuredErrorResponse(
+              request.requestId,
+              message: se.message,
+              sqlStateString: se.sqlStateString,
+              nativeCode: se.nativeCode,
+            ),
+          );
+        } else {
+          sendPort.send(StructuredErrorResponse(request.requestId));
+        }
+
       case AuditEnableRequest():
         final ok = conn.setAuditEnabled(enabled: request.enabled);
         sendPort.send(BoolResponse(request.requestId, value: ok));
@@ -769,6 +784,7 @@ WorkerResponse buildWorkerErrorResponse(WorkerRequest request, String error) {
     case GetErrorRequest():
       return GetErrorResponse(id, error);
     case GetStructuredErrorRequest():
+    case GetStructuredErrorForConnectionRequest():
       return StructuredErrorResponse(id, message: error, error: error);
     case DetectDriverRequest():
       return DetectDriverResponse(id, null);

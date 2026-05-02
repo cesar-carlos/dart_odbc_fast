@@ -741,9 +741,9 @@ class OdbcNative {
 
   /// Executes a parameterised batch SQL that may return multiple result sets.
   ///
-  /// Same wire format as [execQueryMulti]. Up to 5 positional `?` parameters
-  /// are supported. The Rust engine collects every result set (cursor or
-  /// row-count) the batch produces in order — see M1 fix in v3.2.0.
+  /// Same wire format as [execQueryMulti]. The Rust engine collects every
+  /// result set (cursor or row-count) the batch produces in order — see M1
+  /// fix in v3.2.0.
   ///
   /// [paramsBuffer] is the output of `serializeParams(...)`. Pass `null` (or
   /// an empty buffer) for the no-params case (equivalent to [execQueryMulti]).

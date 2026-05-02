@@ -73,6 +73,10 @@ Convenção geral:
 Adicionados em v3.4.0 (PostgreSQL, MySQL/MariaDB, DB2) e v3.4.1 (Oracle via `DBMS_XA`).
 `xa-dtc` (v3.4.0b) cobre SQL Server / MSDTC (Windows-only).
 
+Observação de camada Dart: o backend sync/nativo expõe `XaTransactionHandle`
+no alto nível. O backend async por worker isolate ainda não oferece a
+mesma superfície de XA/2PC sem mudar a API pública.
+
 | Função | Propósito |
 |---|---|
 | `odbc_xa_start(conn_id, format_id, gtrid, bqual, ...) -> xa_id` | Demarca início de ramo XA. |
@@ -142,14 +146,14 @@ Adicionados em v3.0.0. Despacham via `PluginRegistry` — sem I/O, geradores pur
 | Função | Propósito |
 |---|---|
 | `odbc_exec_query(conn_id, sql, buf, ...) -> c_int` | Sync, sem parâmetros. |
-| `odbc_exec_query_params(conn_id, sql, params, ...) -> c_int` | Sync, com `ParamValue` / DRT1 serializado. |
+| `odbc_exec_query_params(conn_id, sql, params, ...) -> c_int` | Sync, com `ParamValue` / DRT1 serializado e bind dinâmico de parâmetros (sem teto artificial local; limites reais vêm do protocolo/driver). |
 | `odbc_exec_query_multi(conn_id, sql, buf, ...) -> c_int` | Multi-resultset (batch `;`). |
 
 ### 1.13 Multi-resultset com parâmetros (1)
 
 | Função | Propósito |
 |---|---|
-| `odbc_exec_query_multi_params(conn_id, sql, params, ...) -> c_int` | Multi-resultset + parâmetros DRT1 (v3.2+). |
+| `odbc_exec_query_multi_params(conn_id, sql, params, ...) -> c_int` | Multi-resultset + parâmetros DRT1 (v3.2+) com bind dinâmico de parâmetros. |
 
 ### 1.14 Execução assíncrona (5)
 
@@ -166,7 +170,7 @@ Adicionados em v3.0.0. Despacham via `PluginRegistry` — sem I/O, geradores pur
 | Função | Propósito |
 |---|---|
 | `odbc_prepare(conn_id, sql, timeout_ms) -> stmt_id` | Prepara e cacheia. |
-| `odbc_execute(stmt_id, params, buf, ...) -> c_int` | Executa com bind. |
+| `odbc_execute(stmt_id, params, buf, ...) -> c_int` | Executa com bind dinâmico, reutilizando o mesmo pipeline parametrizado do runtime. |
 | `odbc_cancel(stmt_id) -> c_int` | `SQLCancel`; gera erro estruturado se driver não suporta. |
 | `odbc_close_statement(stmt_id) -> c_int` | Fecha e remove do cache. |
 | `odbc_clear_all_statements() -> c_int` | Limpa todos os statements (shutdown helper). |
@@ -256,7 +260,7 @@ Os demais módulos (`engine`, `plugins`, `pool`, `protocol`, `security`, `observ
 | `StatementHandle` | struct | Wrapper de prepared statement com TTL. |
 | `StreamingExecutor`, `StreamState`, `BatchedStreamingState`, `AsyncStreamingState`, `StreamingState`, `AsyncStreamStatus` | streaming | Três modos: sync buffer, batched (mpsc), async batched (Tokio). |
 | `list_tables`, `list_columns`, `list_primary_keys`, `list_foreign_keys`, `list_indexes`, `get_type_info` | fn | Catálogo high-level. |
-| `execute_multi_result`, `execute_query_with_connection`, `execute_query_with_params`, `execute_query_with_params_and_timeout`, `execute_query_with_cached_connection`, `get_global_metrics` | fn | Helpers de query. |
+| `execute_multi_result`, `execute_query_with_connection`, `execute_query_with_params`, `execute_query_with_params_and_timeout`, `execute_query_with_cached_connection`, `get_global_metrics` | fn | Helpers de query; os caminhos parametrizados aceitam contagem dinâmica de parâmetros. |
 
 ### 2.2 `engine::core::` — engines e adapters internos
 

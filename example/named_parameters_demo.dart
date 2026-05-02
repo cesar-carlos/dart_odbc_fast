@@ -1,4 +1,5 @@
-// Named parameters demo: @name and :name syntax.
+// Named parameters demo: @name and :name syntax, repeated placeholders,
+// and more than five named parameters.
 // Run: dart run example/named_parameters_demo.dart
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
@@ -31,6 +32,8 @@ void main() async {
     await _createExampleTable(native, connId);
     await _runInsertWithAtSyntax(native, connId);
     await _runInsertWithColonSyntax(native, connId);
+    await _runRepeatedPlaceholderQuery(native, connId);
+    await _runMoreThanFiveNamedParamsQuery(native, connId);
     await _runPreparedReuse(native, connId);
     await _printAllRows(native, connId);
   } finally {
@@ -100,6 +103,94 @@ Future<void> _runInsertWithColonSyntax(
       return;
     }
     AppLogger.info('Inserted row with :name syntax');
+  } finally {
+    stmt.close();
+  }
+}
+
+Future<void> _runRepeatedPlaceholderQuery(
+  NativeOdbcConnection native,
+  int connId,
+) async {
+  const sql = '''
+    SELECT
+      @id AS first_id,
+      @id AS second_id,
+      :label AS first_label,
+      :label AS second_label
+  ''';
+
+  final stmt = native.prepareStatementNamed(connId, sql);
+  if (stmt == null) {
+    AppLogger.severe(
+      'Prepare (repeated placeholders) failed: ${native.getError()}',
+    );
+    return;
+  }
+
+  try {
+    final result = stmt.executeNamed(
+      namedParams: <String, Object?>{
+        'id': 77,
+        'label': 'shared-value',
+      },
+    );
+    if (result == null) {
+      AppLogger.severe(
+        'Execute (repeated placeholders) failed: ${native.getError()}',
+      );
+      return;
+    }
+
+    final parsed = BinaryProtocolParser.parse(result);
+    final row = parsed.rows.isNotEmpty ? parsed.rows.first : const <Object?>[];
+    AppLogger.info('Repeated placeholders OK: $row');
+  } finally {
+    stmt.close();
+  }
+}
+
+Future<void> _runMoreThanFiveNamedParamsQuery(
+  NativeOdbcConnection native,
+  int connId,
+) async {
+  const sql = '''
+    SELECT
+      :a AS a,
+      :b AS b,
+      :c AS c,
+      :d AS d,
+      :e AS e,
+      :f AS f
+  ''';
+
+  final stmt = native.prepareStatementNamed(connId, sql);
+  if (stmt == null) {
+    AppLogger.severe('Prepare (>5 named params) failed: ${native.getError()}');
+    return;
+  }
+
+  try {
+    final result = stmt.executeNamed(
+      namedParams: <String, Object?>{
+        'a': 1,
+        'b': 2,
+        'c': 3,
+        'd': 4,
+        'e': 5,
+        'f': 6,
+      },
+    );
+    if (result == null) {
+      AppLogger.severe(
+        'Execute (>5 named params) failed: ${native.getError()}',
+      );
+      return;
+    }
+
+    final parsed = BinaryProtocolParser.parse(result);
+    final row = parsed.rows.isNotEmpty ? parsed.rows.first : const <Object?>[];
+    AppLogger.info('More than five named params OK: $row');
   } finally {
     stmt.close();
   }

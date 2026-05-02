@@ -760,9 +760,8 @@ fn test_exec_query_with_params_null() {
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 
-    // NULL is currently converted to empty string (limited support); query may succeed or fail per driver.
-    let _ = result
-        .expect("Execute with Null param should not panic (handled as empty string or error)");
+    // NULL is bound as a real nullable parameter. Driver-specific coercion may still vary by SQL type.
+    let _ = result.expect("Execute with Null param should not panic");
     println!("✓ Exec query with params (null) completed");
 }
 
@@ -826,6 +825,127 @@ fn test_exec_query_with_params_mixed_types() {
     );
 
     println!("✓ Exec query with params (mixed types) test passed");
+}
+
+#[test]
+fn test_exec_query_with_params_more_than_five() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let engine = ExecutionEngine::new(100);
+    engine.set_connection_string(&conn_str);
+
+    let params = vec![
+        ParamValue::Integer(1),
+        ParamValue::Integer(2),
+        ParamValue::Integer(3),
+        ParamValue::Integer(4),
+        ParamValue::Integer(5),
+        ParamValue::Integer(6),
+    ];
+    let sql = "EXEC sp_executesql \
+               N'SELECT @a AS a, @b AS b, @c AS c, @d AS d, @e AS e, @f AS f', \
+               N'@a INT, @b INT, @c INT, @d INT, @e INT, @f INT', \
+               ?, ?, ?, ?, ?, ?";
+    let buffer = engine
+        .execute_query_with_params(&odbc_conn, sql, &params)
+        .expect("Failed to execute parameterized query with more than five params");
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode binary protocol");
+
+    assert_eq!(decoded.column_count, 6, "Should have 6 columns");
+    assert_eq!(decoded.row_count, 1, "Should have 1 row");
+
+    for (index, expected) in [1, 2, 3, 4, 5, 6].iter().enumerate() {
+        let value_data = decoded.rows[0][index]
+            .as_ref()
+            .expect("parameterized column should not be NULL");
+        assert_eq!(decode_integer(value_data), *expected);
+    }
+
+    println!("✓ Exec query with params (>5) test passed");
+}
+
+#[test]
+fn test_exec_query_with_params_more_than_five_with_null() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let engine = ExecutionEngine::new(100);
+    engine.set_connection_string(&conn_str);
+
+    let params = vec![
+        ParamValue::Integer(1),
+        ParamValue::Null,
+        ParamValue::Integer(3),
+        ParamValue::Integer(4),
+        ParamValue::Integer(5),
+        ParamValue::Integer(6),
+    ];
+    let sql = "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f";
+    let buffer = engine
+        .execute_query_with_params(&odbc_conn, sql, &params)
+        .expect("Failed to execute parameterized query with NULL among more than five params");
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    let decoded = BinaryProtocolDecoder::parse(&buffer).expect("Failed to decode binary protocol");
+
+    assert_eq!(decoded.column_count, 6, "Should have 6 columns");
+    assert_eq!(decoded.row_count, 1, "Should have 1 row");
+
+    let first = decoded.rows[0][0]
+        .as_ref()
+        .expect("first column should not be NULL");
+    assert_eq!(decode_integer(first), 1);
+    let last = decoded.rows[0][5]
+        .as_ref()
+        .expect("last column should not be NULL");
+    assert_eq!(decode_integer(last), 6);
+
+    println!("✓ Exec query with params (>5, includes NULL) test passed");
 }
 
 #[test]
@@ -939,6 +1059,188 @@ fn test_execute_multi_result_multiple_result_sets() {
     }
 
     println!("✓ Execute multi-result (multiple result sets via SQLMoreResults) test passed");
+}
+
+#[test]
+fn test_execute_multi_result_with_params_more_than_five() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        eprintln!(
+            "⚠️  Skipping test_execute_multi_result_with_params_more_than_five: validated on SQL Server"
+        );
+        return;
+    }
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let engine = ExecutionEngine::new(100);
+    engine.set_connection_string(&conn_str);
+
+    let params = vec![
+        ParamValue::Integer(1),
+        ParamValue::Integer(2),
+        ParamValue::Integer(3),
+        ParamValue::Integer(4),
+        ParamValue::Integer(5),
+        ParamValue::Integer(6),
+    ];
+    let sql = "SELECT ? AS a, ? AS b, ? AS c; SELECT ? AS d, ? AS e, ? AS f;";
+    let buffer = engine
+        .execute_multi_result_with_params(&odbc_conn, sql, &params)
+        .expect("Failed to execute multi-result with more than five params");
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    let items = decode_multi(&buffer).expect("Failed to decode multi-result");
+    assert_eq!(items.len(), 2, "Should have 2 result sets");
+
+    match &items[0] {
+        MultiResultItem::ResultSet(ref enc) => {
+            let decoded =
+                BinaryProtocolDecoder::parse(enc).expect("Failed to decode first result set");
+            assert_eq!(decoded.column_count, 3);
+            assert_eq!(decoded.row_count, 1);
+            assert_eq!(
+                decode_integer(decoded.rows[0][0].as_ref().expect("a should not be NULL")),
+                1
+            );
+            assert_eq!(
+                decode_integer(decoded.rows[0][2].as_ref().expect("c should not be NULL")),
+                3
+            );
+        }
+        MultiResultItem::RowCount(_) => panic!("Expected ResultSet for first multi result"),
+    }
+
+    match &items[1] {
+        MultiResultItem::ResultSet(ref enc) => {
+            let decoded =
+                BinaryProtocolDecoder::parse(enc).expect("Failed to decode second result set");
+            assert_eq!(decoded.column_count, 3);
+            assert_eq!(decoded.row_count, 1);
+            assert_eq!(
+                decode_integer(decoded.rows[0][0].as_ref().expect("d should not be NULL")),
+                4
+            );
+            assert_eq!(
+                decode_integer(decoded.rows[0][2].as_ref().expect("f should not be NULL")),
+                6
+            );
+        }
+        MultiResultItem::RowCount(_) => panic!("Expected ResultSet for second multi result"),
+    }
+
+    println!("✓ Execute multi-result with params (>5) test passed");
+}
+
+#[test]
+fn test_execute_multi_result_with_params_more_than_five_with_null() {
+    if !should_run_e2e_tests() {
+        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        eprintln!(
+            "⚠️  Skipping test_execute_multi_result_with_params_more_than_five_with_null: validated on SQL Server"
+        );
+        return;
+    }
+    let conn_str: String =
+        get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
+
+    let env = OdbcEnvironment::new();
+    env.init().expect("Failed to initialize environment");
+
+    let handles = env.get_handles();
+    let conn =
+        OdbcConnection::connect(handles, &conn_str).expect("Failed to connect to SQL Server");
+
+    let handles = conn.get_handles();
+    let handles_guard = handles.lock().unwrap();
+    let conn_arc = handles_guard
+        .get_connection(conn.get_connection_id())
+        .expect("Failed to get ODBC connection");
+    let odbc_conn = conn_arc.lock().unwrap();
+
+    let engine = ExecutionEngine::new(100);
+    engine.set_connection_string(&conn_str);
+
+    let params = vec![
+        ParamValue::Integer(1),
+        ParamValue::Null,
+        ParamValue::Integer(3),
+        ParamValue::Integer(4),
+        ParamValue::Null,
+        ParamValue::Integer(6),
+    ];
+    let sql = "SELECT ? AS a, ? AS b, ? AS c; SELECT ? AS d, ? AS e, ? AS f;";
+    let buffer = engine
+        .execute_multi_result_with_params(&odbc_conn, sql, &params)
+        .expect("Failed to execute multi-result with NULL among more than five params");
+
+    drop(handles_guard);
+    conn.disconnect().expect("Failed to disconnect");
+
+    let items = decode_multi(&buffer).expect("Failed to decode multi-result");
+    assert_eq!(items.len(), 2, "Should have 2 result sets");
+
+    match &items[0] {
+        MultiResultItem::ResultSet(ref enc) => {
+            let decoded =
+                BinaryProtocolDecoder::parse(enc).expect("Failed to decode first result set");
+            assert_eq!(decoded.column_count, 3);
+            assert_eq!(decoded.row_count, 1);
+            assert_eq!(
+                decode_integer(decoded.rows[0][0].as_ref().expect("a should not be NULL")),
+                1
+            );
+            assert!(decoded.rows[0][1].is_none(), "b should be NULL");
+            assert_eq!(
+                decode_integer(decoded.rows[0][2].as_ref().expect("c should not be NULL")),
+                3
+            );
+        }
+        MultiResultItem::RowCount(_) => panic!("Expected ResultSet for first multi result"),
+    }
+
+    match &items[1] {
+        MultiResultItem::ResultSet(ref enc) => {
+            let decoded =
+                BinaryProtocolDecoder::parse(enc).expect("Failed to decode second result set");
+            assert_eq!(decoded.column_count, 3);
+            assert_eq!(decoded.row_count, 1);
+            assert_eq!(
+                decode_integer(decoded.rows[0][0].as_ref().expect("d should not be NULL")),
+                4
+            );
+            assert!(decoded.rows[0][1].is_none(), "e should be NULL");
+            assert_eq!(
+                decode_integer(decoded.rows[0][2].as_ref().expect("f should not be NULL")),
+                6
+            );
+        }
+        MultiResultItem::RowCount(_) => panic!("Expected ResultSet for second multi result"),
+    }
 }
 
 #[test]
