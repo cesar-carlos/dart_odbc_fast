@@ -41,9 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full payload. Row-buffer encoding now preallocates the final wire buffer,
   spill encoding avoids per-chunk temporary `Vec` allocations, and file-backed
   streaming keeps the spill file open while fetching chunks instead of
-  reopening/seeking on every read. The `sqlserver-bcp` feature keeps a
-  documented chunk materialization fallback because the BCP executor consumes
-  an owned payload.
+  reopening/seeking on every read. Bulk payload serialization preallocates the
+  expected output size, legacy bulk text/binary parsing copies only the trimmed
+  cell bytes, and multi-result encoding validates/preallocates payload size
+  before writing. The `sqlserver-bcp` feature keeps a documented chunk
+  materialization fallback because the BCP executor consumes an owned payload.
 - **Statement reuse docs:** documentation now states that
   `statement-handle-reuse` remains opt-in and that the default path keeps only
   metrics/cache metadata, not reusable statement handles.

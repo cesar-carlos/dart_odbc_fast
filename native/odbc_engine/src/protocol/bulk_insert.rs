@@ -394,11 +394,7 @@ fn parse_column_data(
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
                 let raw = read_bytes(data, &mut o, max_len)?;
-                let mut v = raw.to_vec();
-                if let Some(trimmed) = v.iter().position(|&b| b == 0) {
-                    v.truncate(trimmed);
-                }
-                rows.push(v);
+                rows.push(trim_legacy_nul_padded_cell(raw).to_vec());
             }
             Ok((
                 BulkColumnData::Text {
@@ -415,11 +411,7 @@ fn parse_column_data(
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
                 let raw = read_bytes(data, &mut o, max_len)?;
-                let mut v = raw.to_vec();
-                if let Some(trimmed) = v.iter().position(|&b| b == 0) {
-                    v.truncate(trimmed);
-                }
-                rows.push(v);
+                rows.push(trim_legacy_nul_padded_cell(raw).to_vec());
             }
             Ok((
                 BulkColumnData::Binary {
@@ -467,6 +459,11 @@ fn parse_column_data(
             ))
         }
     }
+}
+
+fn trim_legacy_nul_padded_cell(raw: &[u8]) -> &[u8] {
+    let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    &raw[..end]
 }
 
 fn parse_column_data_v2(
@@ -565,7 +562,7 @@ fn serialize_bulk_insert_payload_with_wire(
             payload.row_count
         )));
     }
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(estimate_serialized_payload_size(payload, wire)?);
     if wire == BulkPayloadWire::V2 {
         out.extend_from_slice(BULK_V2_MAGIC);
         out.extend_from_slice(&BULK_V2_VERSION.to_le_bytes());
@@ -605,6 +602,78 @@ fn serialize_bulk_insert_payload_with_wire(
     }
 
     Ok(out)
+}
+
+fn estimate_serialized_payload_size(
+    payload: &BulkInsertPayload,
+    wire: BulkPayloadWire,
+) -> Result<usize> {
+    let mut size = 0usize;
+    if wire == BulkPayloadWire::V2 {
+        size = checked_payload_size_add(size, BULK_V2_MAGIC.len())?;
+        size = checked_payload_size_add(size, 2)?; // version
+        size = checked_payload_size_add(size, 2)?; // flags
+    }
+
+    size = checked_payload_size_add(size, 4)?; // table length
+    size = checked_payload_size_add(size, payload.table.len())?;
+    size = checked_payload_size_add(size, 4)?; // column count
+
+    for spec in &payload.columns {
+        size = checked_payload_size_add(size, 4)?; // column name length
+        size = checked_payload_size_add(size, spec.name.len())?;
+        size = checked_payload_size_add(size, 1)?; // type tag
+        size = checked_payload_size_add(size, 1)?; // nullable
+        size = checked_payload_size_add(size, 4)?; // max_len
+    }
+
+    size = checked_payload_size_add(size, 4)?; // row count
+
+    let row_count = payload.row_count as usize;
+    for (spec, data) in payload.columns.iter().zip(payload.column_data.iter()) {
+        if spec.nullable {
+            size = checked_payload_size_add(size, null_bitmap_size(row_count))?;
+        }
+        size = checked_payload_size_add(
+            size,
+            match (wire, data, &spec.col_type) {
+                (_, BulkColumnData::I32 { values, .. }, BulkColumnType::I32) => {
+                    checked_payload_size_mul(values.len(), 4)?
+                }
+                (_, BulkColumnData::I64 { values, .. }, BulkColumnType::I64) => {
+                    checked_payload_size_mul(values.len(), 8)?
+                }
+                (_, BulkColumnData::Timestamp { values, .. }, BulkColumnType::Timestamp) => {
+                    checked_payload_size_mul(values.len(), 16)?
+                }
+                (BulkPayloadWire::Legacy, BulkColumnData::Text { rows, max_len, .. }, _)
+                | (BulkPayloadWire::Legacy, BulkColumnData::Binary { rows, max_len, .. }, _) => {
+                    checked_payload_size_mul(rows.len(), *max_len)?
+                }
+                (BulkPayloadWire::V2, BulkColumnData::Text { rows, .. }, _)
+                | (BulkPayloadWire::V2, BulkColumnData::Binary { rows, .. }, _) => {
+                    rows.iter().try_fold(0usize, |acc, row| {
+                        checked_payload_size_add(acc, 4)
+                            .and_then(|acc| checked_payload_size_add(acc, row.len()))
+                    })?
+                }
+                _ => 0,
+            },
+        )?;
+    }
+
+    Ok(size)
+}
+
+fn checked_payload_size_add(current: usize, added: usize) -> Result<usize> {
+    current
+        .checked_add(added)
+        .ok_or_else(|| OdbcError::ResourceLimitReached("bulk payload size overflow".to_string()))
+}
+
+fn checked_payload_size_mul(left: usize, right: usize) -> Result<usize> {
+    left.checked_mul(right)
+        .ok_or_else(|| OdbcError::ResourceLimitReached("bulk payload size overflow".to_string()))
 }
 
 fn serialize_column_data(
@@ -876,6 +945,38 @@ mod tests {
             }
             _ => panic!("expected Text"),
         }
+    }
+
+    #[test]
+    fn legacy_parse_trims_nul_padding_before_copying_cell() {
+        assert_eq!(trim_legacy_nul_padded_cell(b"abc\0\0"), b"abc");
+        assert_eq!(trim_legacy_nul_padded_cell(b"abc"), b"abc");
+        assert_eq!(trim_legacy_nul_padded_cell(b"\0abc"), b"");
+    }
+
+    #[test]
+    fn estimate_serialized_payload_size_matches_v2_length() {
+        let payload = BulkInsertPayload {
+            table: "files".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "payload".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: 2,
+            column_data: vec![BulkColumnData::Binary {
+                rows: vec![vec![1, 0, 2], vec![3, 4]],
+                max_len: 0,
+                null_bitmap: None,
+            }],
+        };
+
+        let estimated =
+            estimate_serialized_payload_size(&payload, BulkPayloadWire::V2).expect("estimate");
+        let encoded = serialize_bulk_insert_payload_v2(&payload).expect("serialize");
+
+        assert_eq!(estimated, encoded.len());
     }
 
     #[test]

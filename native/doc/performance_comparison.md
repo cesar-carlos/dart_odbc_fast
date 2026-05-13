@@ -50,6 +50,10 @@ xychart-beta
   file-backed reads keep the spill file open across fetches. This reduces CPU
   and filesystem overhead for large result sets without changing the wire
   format.
+- **Protocol encoding**: Row-buffer, bulk payload, and multi-result encoders
+  pre-measure payload sizes before writing. This keeps large FFI payloads on a
+  single planned allocation path where possible and rejects impossible
+  multi-result lengths before emitting truncated length fields.
 
 ### BCP (Bulk Copy)
 

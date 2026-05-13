@@ -8,8 +8,12 @@ handling larger datasets: streaming, batching, pooling, transactions, and array 
 Most APIs ultimately produce a `Vec<u8>` encoded by:
 
 - `protocol::RowBufferEncoder::encode(&RowBuffer)`
+- `protocol::multi_result::encode_multi(...)` for multi-result responses
+- `protocol::bulk_insert::serialize_bulk_insert_payload(_v2)` for bulk inserts
 
 This buffer is the unit transported over FFI (`odbc_exec_query`, streaming batches, etc).
+The current encoders pre-measure payload size where practical so the final
+`Vec<u8>` can be preallocated once instead of growing repeatedly while writing.
 
 ### 1.1 Spill-to-disk for large buffers
 
