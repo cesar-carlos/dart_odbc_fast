@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-05-13
+
+Patch release: Rust FFI and wire-format throughput, safer bulk v2 defaults, and
+tighter regression coverage. No Dart SDK constraint change.
+
 ### Added
 
 - **Bulk payload v2:** Dart `BulkInsertBuilder.build()` now emits the `BLK2`
@@ -35,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pool close/resize safety:** pooled connections temporarily removed from
   global state for active FFI calls are tracked as busy, preventing pool close
   or resize from racing an in-flight operation.
+- **SQL Server E2E:** null-only parameterized execution test uses
+  `CAST(? AS INT)` so SQL Server Native Client does not fail with ambiguous type
+  inference for `@P1` (native error 11506).
 
 ### Changed
 

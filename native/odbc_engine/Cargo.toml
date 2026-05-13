@@ -1,6 +1,6 @@
 [package]
 name = "odbc_engine"
-version = "3.6.0"
+version = "3.6.1"
 edition = "2021"
 authors = ["ODBC Fast Team"]
 description = "Enterprise-grade ODBC data platform engine"
