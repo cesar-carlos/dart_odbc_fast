@@ -38,8 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Bulk/streaming performance:** pool-based parallel bulk insert uses row
   ranges/views on the default ArrayBinding path to avoid cloning each chunk's
-  full payload. The `sqlserver-bcp` feature keeps a documented chunk
-  materialization fallback because the BCP executor consumes an owned payload.
+  full payload. Row-buffer encoding now preallocates the final wire buffer,
+  spill encoding avoids per-chunk temporary `Vec` allocations, and file-backed
+  streaming keeps the spill file open while fetching chunks instead of
+  reopening/seeking on every read. The `sqlserver-bcp` feature keeps a
+  documented chunk materialization fallback because the BCP executor consumes
+  an owned payload.
 - **Statement reuse docs:** documentation now states that
   `statement-handle-reuse` remains opt-in and that the default path keeps only
   metrics/cache metadata, not reusable statement handles.

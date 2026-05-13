@@ -7,7 +7,7 @@ use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -179,12 +179,9 @@ impl StreamingExecutor {
                         let total_len = std::fs::metadata(&path)
                             .map(|m| m.len() as usize)
                             .unwrap_or(0);
-                        Ok(StreamState::FileBacked(StreamingStateFileBacked {
-                            path,
-                            offset: 0,
-                            chunk_size,
-                            total_len,
-                        }))
+                        Ok(StreamState::FileBacked(StreamingStateFileBacked::new(
+                            path, chunk_size, total_len,
+                        )?))
                     }
                     crate::engine::core::SpillReadSource::Memory(data) => {
                         Ok(StreamState::InMemory(StreamingState {
@@ -1030,28 +1027,39 @@ impl StreamState {
 /// Streaming state backed by a temp file. Reads in chunks; deletes file on drop.
 pub struct StreamingStateFileBacked {
     path: PathBuf,
+    file: Option<File>,
     offset: usize,
     chunk_size: usize,
     total_len: usize,
 }
 
 impl StreamingStateFileBacked {
+    fn new(path: PathBuf, chunk_size: usize, total_len: usize) -> Result<Self> {
+        let file = File::open(&path)
+            .map_err(|e| OdbcError::InternalError(format!("spill file open: {}", e)))?;
+        Ok(Self {
+            path,
+            file: Some(file),
+            offset: 0,
+            chunk_size,
+            total_len,
+        })
+    }
+
     pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
         if self.offset >= self.total_len {
             return Ok(None);
         }
-
-        let mut f = File::open(&self.path)
-            .map_err(|e| OdbcError::InternalError(format!("spill file read: {}", e)))?;
-        f.seek(SeekFrom::Start(self.offset as u64))
-            .map_err(|e| OdbcError::InternalError(format!("spill file seek: {}", e)))?;
 
         let to_read = (self.chunk_size).min(self.total_len - self.offset);
         let mut buf = vec![0u8; to_read];
         // A6 fix: a single `read()` may return fewer bytes than requested
         // (especially on Windows for files >64 KiB). Use `read_exact` so the
         // caller never observes a short chunk silently.
-        f.read_exact(&mut buf)
+        self.file
+            .as_mut()
+            .ok_or_else(|| OdbcError::InternalError("spill file already closed".to_string()))?
+            .read_exact(&mut buf)
             .map_err(|e| OdbcError::InternalError(format!("spill file read_exact: {}", e)))?;
         self.offset += to_read;
 
@@ -1069,6 +1077,7 @@ impl StreamingStateFileBacked {
 
 impl Drop for StreamingStateFileBacked {
     fn drop(&mut self) {
+        drop(self.file.take());
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -1320,6 +1329,29 @@ mod tests {
         let chunk2 = state.fetch_next_chunk().unwrap();
         assert_eq!(chunk2, None);
         assert_eq!(state.offset, 3);
+    }
+
+    #[test]
+    fn test_file_backed_streaming_state_keeps_file_open_and_cleans_up() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_state_test_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1u8, 2, 3, 4, 5, 6, 7]).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 3, 7).unwrap();
+
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2, 3]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![4, 5, 6]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![7]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        }
+
+        assert!(!path.exists(), "file-backed stream should remove temp file");
     }
 
     #[test]

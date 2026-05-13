@@ -23,6 +23,10 @@ the engine provides `engine::core::DiskSpillStream`:
 This is wired into `odbc_stream_start` when `ODBC_STREAM_SPILL_THRESHOLD_MB` is set:
 buffer-mode streaming encodes via `DiskSpillWriter`; when data exceeds threshold,
 it spills to temp file and `StreamingStateFileBacked` reads in chunks.
+`DiskSpillWriter` writes full 64 KiB slices directly to the spill stream instead
+of allocating a temporary `Vec` per flush chunk. File-backed streaming opens the
+spill file once and advances sequentially for each `fetch_next_chunk`, avoiding
+per-chunk open/seek overhead.
 
 The FFI global state mutex is not held while streaming prepares, executes,
 reads cursor rows, or encodes/spills data. It is used only for lookup and stream

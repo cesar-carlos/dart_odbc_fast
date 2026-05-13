@@ -45,6 +45,11 @@ xychart-beta
   with 4+ workers for large datasets. The default ArrayBinding path executes
   worker chunks by row range over the original payload, avoiding a full payload
   clone per worker.
+- **Streaming spill**: When `ODBC_STREAM_SPILL_THRESHOLD_MB` is enabled,
+  encoded chunks are written without per-chunk temporary allocation and
+  file-backed reads keep the spill file open across fetches. This reduces CPU
+  and filesystem overhead for large result sets without changing the wire
+  format.
 
 ### BCP (Bulk Copy)
 

@@ -110,10 +110,11 @@ impl BinaryProtocolDecoder {
                     "Buffer too small for column name".to_string(),
                 ));
             }
-            let name =
-                String::from_utf8(buffer[offset..offset + name_len].to_vec()).map_err(|e| {
+            let name = std::str::from_utf8(&buffer[offset..offset + name_len])
+                .map_err(|e| {
                     OdbcError::ValidationError(format!("Invalid UTF-8 in column name: {}", e))
-                })?;
+                })?
+                .to_owned();
             offset += name_len;
 
             columns.push(ColumnInfo { name, odbc_type });
