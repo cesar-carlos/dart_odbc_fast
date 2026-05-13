@@ -1,31 +1,48 @@
 ---
-description: Rust style, API, and FFI quality rules for native crates
+description: Rust style, API, ownership, and module design rules
 globs: ["native/**/*.rs", "native/**/Cargo.toml"]
 alwaysApply: true
 ---
 
 # Rust Style and Quality
 
-## Formatting and Linting
+## Style Baseline
 
-- Format touched Rust code with `cargo fmt`.
-- Run `cargo clippy --all-targets --all-features` for touched Rust crates.
+- Let `rustfmt` define formatting; do not hand-format against a competing
+  local style.
+- Follow `rust_testing.mdc` for `cargo fmt`, Clippy, and native test commands.
 - Prefer fixing warnings over silencing them.
-- Follow `error_handling.mdc` for every allowlisted suppression.
 
 ## API and Module Design
 
-- Follow idiomatic Rust naming and module structure.
+- Follow Rust naming conventions: `snake_case` for functions/modules,
+  `UpperCamelCase` for types/traits, and `SCREAMING_SNAKE_CASE` for constants.
 - Keep visibility minimal: private or `pub(crate)` by default.
 - Prefer small, explicit public APIs.
+- Keep modules cohesive; split protocol, connection, execution, and FFI concerns
+  before one module becomes a mixed responsibility bucket.
 - Prefer strong domain types over loose `String`, `Vec<u8>`, or untyped maps
   when contracts matter.
+- Use newtypes or enums for handles, protocol tags, ABI versions, driver kinds,
+  and other values where raw primitives would blur meaning.
+- Prefer standard conversion traits such as `From`, `TryFrom`, `AsRef`, and
+  `AsMut` over ad-hoc conversion method names.
+- Implement common traits such as `Debug`, `Clone`, `Eq`, `Hash`, `Default`, or
+  `Display` when the semantics are obvious and useful to callers.
+
+## Ownership and Data Flow
+
+- Prefer borrowing, slices, and iterators over unnecessary allocation or cloning.
+- Make ownership transfer explicit in names and types.
+- Avoid storing borrowed data beyond the scope where the owner is obvious.
+- Keep shared mutable state behind explicit synchronization primitives and avoid
+  global mutable state unless the lifecycle is deliberate.
+- Keep feature-gated code narrow and local to the capability it enables.
 
 ## Error Handling
 
-- Return `Result<T, E>` for recoverable failures.
-- Add context when crossing abstraction or FFI boundaries.
-- Avoid `unwrap()` and `expect()` in library and runtime code.
+- Follow `error_handling.mdc` for recoverable failures, propagation, source
+  chains, and suppression policy.
 - Reserve `panic!` for unrecoverable invariant violations.
 
 ## Comments and Safety Notes
@@ -33,10 +50,3 @@ alwaysApply: true
 - Use comments for intent, invariants, safety rationale, and ownership rules.
 - Prefer self-explanatory code over comment-heavy code.
 - Document public APIs whose contracts are not obvious.
-
-## FFI Rules
-
-- Use `#[repr(C)]` for FFI-facing structs and enums exposed across the boundary.
-- Validate pointers, lengths, nullability, and ownership at every FFI boundary.
-- Ensure panics never cross the FFI boundary.
-- Make allocation and release responsibilities explicit.

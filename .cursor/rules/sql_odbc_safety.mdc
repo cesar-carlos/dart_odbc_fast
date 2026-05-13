@@ -1,0 +1,58 @@
+---
+description: SQL, ODBC, driver, and database-safety rules
+globs: ["lib/**/*.dart", "test/**/*.dart", "native/**/*.rs"]
+alwaysApply: true
+---
+
+# SQL and ODBC Safety
+
+## Scope
+
+This file owns SQL, ODBC, driver, and database-boundary safety rules. Keep Dart
+style in `coding_style.mdc`, Rust FFI safety in `rust_ffi.mdc`, and package API
+decisions in `project_specifics.mdc`.
+
+## SQL Construction
+
+- Prefer parameter binding for values; do not interpolate untrusted values into
+  SQL text.
+- Treat identifiers separately from values. Validate and quote identifiers with
+  dialect-aware helpers before composing SQL.
+- Do not concatenate schema, table, column, transaction, savepoint, or XA
+  identifiers without validation.
+- Keep dialect-specific SQL generation behind explicit dialect or capability
+  branches.
+- Keep raw SQL helpers narrow and covered by tests for malicious, empty, quoted,
+  unicode, and boundary inputs.
+
+## ODBC and Driver Boundaries
+
+- Treat driver metadata, diagnostics, SQLSTATEs, row counts, column metadata,
+  and output buffers as external data.
+- Normalize driver-specific quirks near the ODBC boundary before values reach
+  domain or public API models.
+- Preserve SQLSTATE, native error code, driver message, and operation context
+  when translating database failures.
+- Never rely on one driver's behavior as a portable contract unless the
+  capability matrix or tests prove it.
+- Make unsupported database features explicit through typed errors or documented
+  no-op behavior.
+
+## Transactions and Multi-Result Behavior
+
+- Keep transaction, savepoint, timeout, XA, and auto-commit behavior explicit in
+  APIs and tests.
+- Do not silently drop result sets, row counts, diagnostics, or partial-failure
+  information from multi-result flows.
+- Keep wire-format and protocol decoders defensive against malformed, truncated,
+  oversized, or version-mismatched payloads.
+- Add regression tests for every confirmed dialect, driver, transaction, or
+  multi-result bug.
+
+## Live Database Tests
+
+- Gate live database tests behind clear environment prerequisites.
+- Prefer centralized helpers for DSNs, credentials, docker profiles, and skip
+  messages.
+- Keep tests deterministic by cleaning up database objects, handles,
+  transactions, and prepared state they create.

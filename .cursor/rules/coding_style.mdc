@@ -64,14 +64,19 @@ alwaysApply: true
   meaningful data.
 - Prefer tear-offs when the target signature matches exactly.
 - Keep lambdas when adapting arguments makes intent clearer.
+- Do not use dot shorthand syntax until the package SDK lower bound supports
+  Dart 3.10 or newer.
+- Once supported, use dot shorthands only when the context type is obvious and
+  the shorter form improves readability.
 - Use modern features only when they improve clarity for the current SDK
   constraint and team readability.
 
 ## Async and Logging
 
-- Capture the most specific failure you can actually handle.
-- Preserve `error` and `stackTrace` when translating failures.
-- Prefer explicit error boundaries over spreading `try/catch` everywhere.
+- Keep async error boundaries explicit instead of spreading `try/catch`
+  everywhere.
+- Translate failures only at meaningful boundaries and preserve context as
+  defined in `error_handling.mdc`.
 - Do not use `print` in library/runtime code; use the project's logging
   abstraction or structured logging instead.
 

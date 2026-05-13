@@ -39,12 +39,23 @@ alwaysApply: true
 
 ## Design Heuristics
 
-- Apply single responsibility at file, class, and use-case level.
+- Keep use-case boundaries cohesive and split orchestration from mapping when
+  concerns compete.
 - Prefer small, focused interfaces over broad "god" contracts.
 - Depend on abstractions at boundaries, not concrete implementations.
-- Extend behavior through composition instead of editing stable paths when
-  possible.
 - Keep external-data normalization at the boundary before values spread inward.
+
+## SOLID and Composition
+
+- Apply single responsibility to files, classes, services, and use cases.
+- Prefer composition and delegation over inheritance for sharing behavior.
+- Extend behavior through new implementations or collaborators instead of
+  editing stable paths when that keeps the design simpler.
+- Keep implementations substitutable for their contracts; avoid hidden
+  preconditions that break callers using an abstraction.
+- Split broad interfaces when consumers are forced to depend on unused members.
+- Keep dependency inversion at boundaries: inner policies define contracts,
+  outer infrastructure provides implementations.
 
 ## Smells to Fix
 

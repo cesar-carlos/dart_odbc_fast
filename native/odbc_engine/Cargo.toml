@@ -1,47 +1,5 @@
 [package]
 name = "odbc_engine"
-# v3.4.0 release: transaction control Sprint 4.
-# - 4.1 SET TRANSACTION READ ONLY (PG/MySQL/MariaDB/DB2/Oracle).
-# - 4.2 Lock / statement timeouts per transaction (engine::LockTimeout typed
-#   wrapper; FFI v3 with v1/v2 ABI preserved via delegation).
-# - 4.3 X/Open XA / 2PC for PG, MySQL/MariaDB, DB2 with state machine
-#   (Xid -> XaTransaction -> PreparingXa -> PreparedXa); 1RM fast-path;
-#   crash recovery via recover_prepared_xids/resume_prepared.
-# - 4.3b XA on SQL Server (MSDTC) -- Phase 1 scaffolding under
-#   --features xa-dtc (Windows-only). Phase 2 wiring + E2E pending.
-# - 4.3c XA on Oracle (OCI XA) -- Phase 1 scaffolding under --features
-#   xa-oci (cross-platform). Phase 2 wiring + E2E pending.
-# - 4.4 IOdbcService.runInTransaction<T> helper.
-# - 17 new SqlDataType kinds (now 27/30 covering PG/MySQL/MariaDB/SQL
-#   Server/Oracle/SQLite specific types).
-# - test_ffi_get_structured_error flakiness fixed (atomic inject+read).
-# See CHANGELOG.md [3.4.0] for the complete list and migration notes.
-#
-# 3.4.1 -- Sprint 4.3c Phase 2: Oracle XA / 2PC implemented via the
-# SYS.DBMS_XA PL/SQL package -- works through any Oracle ODBC driver
-# without needing OCIServer* (which odbc-api does not surface).
-# - apply_xa_start/end/prepare/commit/rollback for ENGINE_ORACLE emit
-#   PL/SQL blocks calling DBMS_XA.* with SYS.DBMS_XA_XID literals;
-#   recovery reads DBA_PENDING_TRANSACTIONS via RAWTOHEX().
-# - Tolerates XA_RDONLY (rc=3) on prepare and XAER_NOTA (rc=-4) on
-#   commit-prepared so read-only branches are a no-op.
-# - 4 new E2E tests (full 2PC commit, rollback prepared, one-phase
-#   shortcut, resume after disconnect) validated against Oracle XE
-#   21 in the docker test-runner-oracle profile.
-# - 5 new unit tests pin the Oracle component encoding + PL/SQL
-#   block shape.
-# - engine::SharedHandleManager re-exported (was reachable only via
-#   the private crate::handles path).
-# - engine::xa_oci retained as documented OCI ABI scaffolding but
-#   reframed as an alternative path; production Oracle XA flows
-#   through DBMS_XA.
-# See CHANGELOG.md [3.4.1] for the complete list and migration notes.
-#
-# 3.4.2 — Align crate version with Dart pubspec; release notes in
-# CHANGELOG.md [3.4.2] (Dart XA helpers + Docker E2E script/test fixes).
-#
-# 3.5.2 — CI stabilization follow-up: gate `size_of` import behind
-# `#[cfg(windows)]` to satisfy clippy `-D warnings` on Linux; no API/ABI changes.
 version = "3.6.0"
 edition = "2021"
 authors = ["ODBC Fast Team"]
@@ -59,30 +17,19 @@ crate-type = ["cdylib", "rlib"]
 default = ["test-helpers", "observability"]
 sqlserver-bcp = []
 # Reuse ODBC prepared statement handles per connection (LRU cache).
-# Default off; enables ~10%+ improvement in repetitive prepare/execute workloads.
+# Default off; enables repetitive prepare/execute workload improvements.
 statement-handle-reuse = []
 # Full observability: OTLP exporter, metrics, tracing. Disable for minimal builds.
 observability = ["dep:ureq"]
-# Load .env in lib and integration tests (needs dotenvy).
+# Load .env in library and integration tests.
 test-helpers = ["dep:dotenvy"]
-# Enables FFI tests (concurrent_error_test, e2e_savepoint_test FFI parts).
-# FFI symbols may not be visible in all build configs.
+# Enables FFI tests whose symbols may not be visible in every build config.
 ffi-tests = []
-# Sprint 4.3b — XA / 2PC on SQL Server via MSDTC (Windows-only).
-# Pulls `windows-sys` and links into the OLE32/MSDTC COM API. The
-# feature is a no-op on non-Windows targets (the underlying engine
-# matrix returns `UnsupportedFeature` there). Code outside the
-# `xa-dtc` feature gate continues to behave exactly as before.
+# XA / 2PC on SQL Server via MSDTC. No-op on non-Windows targets.
 xa-dtc = ["dep:windows"]
-# Sprint 4.3c — XA / 2PC on Oracle via the OCI XA library
-# (`libclntsh.so` / `oci.dll`, header `oraxa.h`). The Oracle Instant
-# Client must be present at runtime; the FFI is loaded dynamically
-# via `libloading` so the engine can be shipped without an Oracle
-# build dependency. Code outside the `xa-oci` feature gate continues
-# to behave exactly as before.
+# XA / 2PC on Oracle through a dynamically loaded OCI XA library.
 xa-oci = ["dep:libloading"]
-# Columnar result protocol v2 (header constants + future emitter) — see
-# `doc/notes/columnar_protocol_sketch.md`.
+# Columnar result protocol v2 placeholder and benches.
 columnar-v2 = []
 
 [dependencies]
@@ -101,25 +48,11 @@ ureq = { version = "2.9", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = { version = "0.15", optional = true }
-# Sprint 4.3c — Oracle OCI XA dynamic-loading shim. Cross-platform
-# because Oracle Instant Client ships on Windows + Linux + macOS;
-# we resolve the right shared library at runtime so the same Cargo
-# feature works everywhere.
+# Oracle OCI XA dynamic-loading shim.
 libloading = { version = "0.8", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-# Sprint 4.3b — MSDTC COM enlistment.
-#
-# We use the `windows` crate (NOT `windows-sys`) because MSDTC is a
-# COM API and we need auto-generated `IUnknown` / `ITransaction` /
-# `ITransactionDispenser` interface bindings. `windows-sys` only
-# ships raw FFI declarations and would require us to hand-roll the
-# vtables — error-prone and not worth the binary-size saving for an
-# opt-in feature.
-#
-# The feature gate `xa-dtc` controls whether the bindings are
-# linked; without the feature this dep is not pulled and the binary
-# is byte-identical to today.
+# MSDTC COM enlistment uses the `windows` crate for generated COM interfaces.
 windows = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Com",

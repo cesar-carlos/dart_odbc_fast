@@ -27,7 +27,14 @@ alwaysApply: true
   null handling.
 - `testing.mdc`: test naming, structure, and behavior expectations across unit,
   integration, and E2E levels.
-- `rust_style.mdc`: Rust style, module/API design, and FFI safety.
+- `rust_style.mdc`: Rust style, ownership, and module/API design.
+- `rust_ffi.mdc`: Rust unsafe, ABI, and FFI boundary safety.
+- `rust_cargo.mdc`: Rust Cargo manifests, dependencies, and feature gates.
+- `rust_testing.mdc`: Rust native tooling, feature, and regression-test rules.
+- `sql_odbc_safety.mdc`: SQL construction, ODBC, driver, dialect, and live DB
+  safety rules.
+- `generated_artifacts.mdc`: generated bindings, headers, artifacts, and build
+  outputs.
 - `error_handling.mdc`: cross-language error propagation and suppression
   allowlist.
 - `project_specifics.mdc`: `odbc_fast` conventions for public API, `Result<T>`,
@@ -38,7 +45,36 @@ alwaysApply: true
 - Put generic principles in `general_rules.mdc`.
 - Put architecture-only guidance in `clean_architecture.mdc`.
 - Put Dart-only language rules in `coding_style.mdc` and `null_safety.mdc`.
-- Put Rust-native guidance in `rust_style.mdc`.
+- Put Rust style, ownership, and API guidance in `rust_style.mdc`.
+- Put Rust `unsafe`, ABI, and FFI boundary rules in `rust_ffi.mdc`.
+- Put Rust manifests, dependencies, and feature gates in `rust_cargo.mdc`.
+- Put Rust native tooling, feature, and regression-test rules in
+  `rust_testing.mdc`.
+- Put SQL, ODBC, dialect, driver, and live database safety in
+  `sql_odbc_safety.mdc`.
+- Put generated bindings, headers, and build-output policy in
+  `generated_artifacts.mdc`.
 - Put every suppression and error-policy rule in `error_handling.mdc`.
 - Put package-specific conventions, dependencies, public API expectations, and
   FFI/runtime decisions in `project_specifics.mdc`.
+
+## Decision Checklist
+
+- Touching `lib/**/*.dart`: read `coding_style.mdc`, `null_safety.mdc`,
+  `clean_architecture.mdc`, `project_specifics.mdc`, and `error_handling.mdc`.
+- Touching Dart SQL, transactions, query execution, or driver behavior: also
+  read `sql_odbc_safety.mdc`.
+- Touching `test/**/*.dart`: read `testing.mdc` and any rule for the production
+  area under test.
+- Touching `native/**/*.rs`: read `rust_style.mdc`, `rust_testing.mdc`, and
+  `error_handling.mdc`.
+- Touching native FFI, exported symbols, handles, buffers, cbindgen, or ABI:
+  also read `rust_ffi.mdc` and `generated_artifacts.mdc`.
+- Touching native SQL, ODBC driver behavior, dialects, wire formats, or live DB
+  tests: also read `sql_odbc_safety.mdc`.
+- Touching `native/**/Cargo.toml`, `Cargo.lock`, dependencies, or features:
+  also read `rust_cargo.mdc`.
+- Touching generated Dart bindings, cbindgen output, headers, symbol exports, or
+  build artifacts: read `generated_artifacts.mdc`.
+- Touching public exports, package API, native assets, or release behavior: read
+  `project_specifics.mdc`.

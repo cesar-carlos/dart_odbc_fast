@@ -1,0 +1,52 @@
+---
+description: Rust Cargo manifest, dependency, and feature-gate rules
+globs: ["native/**/Cargo.toml", "native/**/Cargo.lock", "native/**/*.rs"]
+alwaysApply: true
+---
+
+# Rust Cargo and Feature Rules
+
+## Scope
+
+This file owns native Cargo manifest, dependency, and feature-gate policy. Keep
+runtime error policy in `error_handling.mdc`, FFI safety in `rust_ffi.mdc`, and
+test execution guidance in `rust_testing.mdc`.
+
+## Manifests
+
+- Keep `Cargo.toml` focused on package metadata, dependencies, features, tests,
+  benches, and build configuration.
+- Move release history, sprint notes, and long migration narratives to
+  `CHANGELOG.md` or native docs instead of growing manifests.
+- Keep workspace-level settings in `native/Cargo.toml` when they apply to every
+  native crate.
+- Keep crate-level settings in the crate `Cargo.toml` when they apply only to
+  that crate.
+
+## Dependencies
+
+- Prefer the smallest dependency set that keeps code clearer and safer.
+- Avoid adding a dependency for simple helpers that are easier to maintain
+  locally.
+- Make optional dependencies explicit with `dep:` feature entries.
+- Document why platform-specific or dynamically loaded dependencies exist.
+- Review default features before accepting them; disable defaults when the
+  crate only needs a narrow capability.
+
+## Features
+
+- Keep features additive and narrowly scoped to the capability they enable.
+- Use feature names that describe behavior, not implementation accidents.
+- Keep feature-gated code local to the module or adapter that owns the optional
+  behavior.
+- Cross-platform features must either work on supported platforms or degrade to
+  a documented no-op or typed unsupported error.
+- Add or update tests for feature-gated behavior when a feature changes.
+
+## Lockfile and Build Outputs
+
+- Treat `Cargo.lock` as part of the native build contract for this repository.
+- Do not commit generated build outputs from `target/` or ad-hoc native binaries
+  unless the repository intentionally tracks that artifact.
+- When dependency versions change, verify the affected native build and tests at
+  the narrowest practical scope.

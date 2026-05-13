@@ -18,6 +18,11 @@ the rule set. Read it first.
 |-- null_safety.mdc
 |-- testing.mdc
 |-- rust_style.mdc
+|-- rust_ffi.mdc
+|-- rust_cargo.mdc
+|-- rust_testing.mdc
+|-- sql_odbc_safety.mdc
+|-- generated_artifacts.mdc
 |-- error_handling.mdc
 `-- project_specifics.mdc
 ```
@@ -32,7 +37,16 @@ the rule set. Read it first.
   features, logging, and tooling.
 - `null_safety.mdc`: nullable contracts and safe Dart modeling patterns.
 - `testing.mdc`: unit, service, integration, and E2E testing expectations.
-- `rust_style.mdc`: Rust style, API shape, and FFI-specific safety.
+- `rust_style.mdc`: Rust style, ownership, module design, and API shape.
+- `rust_ffi.mdc`: Rust unsafe code, ABI layout, resource ownership, and FFI
+  boundary safety.
+- `rust_cargo.mdc`: Rust Cargo manifests, dependencies, optional dependencies,
+  and feature gates.
+- `rust_testing.mdc`: Rust native tooling, features, and regression testing.
+- `sql_odbc_safety.mdc`: SQL construction, ODBC behavior, dialect differences,
+  driver boundaries, and live database tests.
+- `generated_artifacts.mdc`: generated bindings, headers, artifacts, and build
+  outputs.
 - `error_handling.mdc`: error propagation and suppression policy.
 - `project_specifics.mdc`: `odbc_fast`-specific package, FFI, public API, and
   environment rules.
@@ -60,3 +74,7 @@ the rule set. Read it first.
 - https://dart.dev/effective-dart
 - https://dart.dev/language
 - https://doc.rust-lang.org/style-guide/
+- https://rust-lang.github.io/api-guidelines/
+- https://doc.rust-lang.org/reference/unsafe-keyword.html
+- https://doc.rust-lang.org/nomicon/ffi.html
+- https://doc.rust-lang.org/cargo/

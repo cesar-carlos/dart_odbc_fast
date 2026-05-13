@@ -18,6 +18,11 @@ Keep generic guidance in:
 - `null_safety.mdc`
 - `testing.mdc`
 - `rust_style.mdc`
+- `rust_ffi.mdc`
+- `rust_cargo.mdc`
+- `rust_testing.mdc`
+- `sql_odbc_safety.mdc`
+- `generated_artifacts.mdc`
 - `error_handling.mdc`
 
 ## Repository Profile
@@ -36,13 +41,13 @@ Keep generic guidance in:
 - Keep public names stable and explicit; avoid leaking internal helper types
   unless they are meant for consumers.
 
-## Architecture Ownership
+## Architecture Deltas
 
-- `domain` owns stable business-facing entities, typed errors, and contracts.
-- `application` owns orchestration through service interfaces such as
+- Follow `clean_architecture.mdc` for layer ownership and dependency direction.
+- `application` service boundaries include package contracts such as
   `IOdbcService`.
-- `infrastructure` owns FFI bindings, protocol parsing, async worker plumbing,
-  native wrappers, and repository implementations.
+- `infrastructure` owns package-specific protocol parsing, async worker
+  plumbing, native wrappers, and repository implementations.
 - `core` owns DI and shared utilities, not domain behavior.
 
 ## Result and Error Conventions
@@ -56,8 +61,11 @@ Keep generic guidance in:
 
 ## FFI and Native Boundary Rules
 
-- Keep pointer handling, buffer decoding, ABI details, and native resource
-  lifecycle management out of domain and application layers.
+- Follow `clean_architecture.mdc` for Dart layer isolation around native
+  concerns.
+- Follow `rust_ffi.mdc` for Rust-side ABI and FFI safety.
+- Follow `sql_odbc_safety.mdc` for SQL, ODBC, dialect, and driver boundary
+  behavior.
 - Normalize native payloads into stable Dart models before exposing them to
   higher layers.
 - Keep platform- or driver-specific quirks localized near the boundary where
@@ -88,4 +96,7 @@ Keep generic guidance in:
   project overrides in `analysis_options.yaml`.
 - Use `dart analyze` as the primary Dart analyzer command.
 - Keep generated bindings or generated artifacts out of manual editing unless
-  the generation source itself is being changed.
+  the generation source itself is being changed; follow
+  `generated_artifacts.mdc`.
+- Keep manifest release history in changelogs or docs instead of expanding
+  `pubspec.yaml` or `Cargo.toml` with long historical notes.

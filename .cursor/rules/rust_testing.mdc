@@ -1,0 +1,48 @@
+---
+description: Rust native tooling, tests, features, and regression standards
+globs: ["native/**/*.rs", "native/**/Cargo.toml"]
+alwaysApply: true
+---
+
+# Rust Native Tooling and Tests
+
+## Tooling
+
+- Run `cargo fmt` after touching Rust code.
+- Run `cargo clippy --all-targets --all-features` for touched native crates
+  when practical.
+- Run the narrowest relevant `cargo test` command first, then broaden coverage
+  for cross-module, feature, ABI, or FFI changes.
+- Follow `rust_cargo.mdc` for dependency and feature-gate policy.
+
+## Test Selection
+
+- Add unit tests for pure protocol, parsing, validation, encoding, and dialect
+  logic.
+- Add integration tests for native resource lifecycles, connection behavior,
+  wire formats, and feature-gated behavior.
+- Add ABI or FFI regression tests when exported symbols, layouts, cbindgen
+  headers, handle lifecycles, or Dart-facing native contracts change.
+- Gate live-driver and environment-dependent tests behind clear prerequisites.
+
+## Test Matrix
+
+- Unit: pure Rust rules, protocol encoding/decoding, validation, dialect
+  selection, and typed errors.
+- Integration: native resource lifecycles, connection behavior, worker plumbing,
+  feature-gated code, and driver abstractions.
+- ABI/FFI: exported symbols, layouts, panic boundaries, handle lifecycles,
+  allocation/release pairs, and Dart-facing contracts.
+- Regression: confirmed native bugs, malformed payloads, concurrency races,
+  protocol compatibility, and driver-specific behavior.
+- Live E2E: real database or driver behavior with explicit environment gates.
+
+## Test Quality
+
+- Prefer deterministic tests that do not depend on execution order.
+- Use `expect` messages in tests to describe the violated invariant or missing
+  prerequisite.
+- Follow `error_handling.mdc` for runtime `unwrap` and `expect` policy; tests
+  may use them for setup and assertions when the failure message is useful.
+- Add regression tests for every confirmed native bug, especially panic-safety,
+  ABI compatibility, wire decoding, concurrency, and driver-specific behavior.

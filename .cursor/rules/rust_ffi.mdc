@@ -1,0 +1,80 @@
+---
+description: Rust unsafe, ABI, and FFI boundary rules for the native engine
+globs: ["native/**/*.rs", "native/**/cbindgen.toml", "native/**/*.def"]
+alwaysApply: true
+---
+
+# Rust FFI and Unsafe Boundaries
+
+## Scope
+
+This file owns Rust-side `unsafe`, ABI, and FFI boundary rules. Keep general
+Rust style in `rust_style.mdc` and cross-language error policy in
+`error_handling.mdc`.
+
+## Unsafe Code
+
+- Prefer safe Rust by default; isolate `unsafe` into the smallest practical
+  block or helper.
+- Every `unsafe` block must have a nearby `SAFETY:` comment explaining the
+  invariants that make it sound.
+- Every `unsafe fn` must document its caller obligations in a `# Safety`
+  section.
+- Do not hide unsoundness behind a safe API. A safe wrapper must validate all
+  invariants required by the unsafe operation it contains.
+- Avoid widening lifetimes or aliasing guarantees beyond what the foreign API or
+  owner can actually provide.
+
+## FFI Entry Points
+
+- Validate pointers, lengths, alignment, nullability, and ownership before
+  constructing references, slices, or strings.
+- Treat all data from Dart, C ABI callers, ODBC drivers, environment variables,
+  and dynamically loaded libraries as untrusted.
+- Ensure panics never cross non-unwinding FFI boundaries. Catch and translate
+  boundary failures to explicit error codes or stored structured errors.
+- Keep FFI entry points thin: validate inputs, call safe internal code, convert
+  outputs, and return ABI-safe status.
+- Do not store foreign pointers beyond the documented lifetime unless ownership
+  has been transferred and release is defined.
+
+## ABI and Layout
+
+- Use `#[repr(C)]` for FFI-facing structs and enums exposed across the boundary.
+- Use ABI-stable primitive types, pointers, and explicit lengths at the boundary.
+- Do not expose Rust-specific layout types such as `String`, `Vec<T>`,
+  `Result<T, E>`, trait objects, or non-`repr(C)` enums across FFI.
+- Version wire formats and ABI changes deliberately; preserve compatibility
+  unless the project explicitly accepts a breaking native contract change.
+- Keep cbindgen headers, `.def` exports, Dart FFI bindings, and native symbols
+  aligned when exported functions change.
+
+## ABI Change Checklist
+
+- Update the Rust export, symbol list, cbindgen output, and Dart FFI binding
+  together.
+- Preserve old exported functions when compatibility requires delegation instead
+  of replacement.
+- Version new wire formats and keep decoders backward-compatible when older
+  payloads are still supported.
+- Add or update ABI, symbol, layout, wire-format, and Dart/native alignment
+  tests for every exported contract change.
+- Document intentional breaking ABI changes in the changelog or native docs.
+
+## Allocation and Resources
+
+- Make allocation and release responsibilities explicit for every buffer,
+  handle, string, and native resource.
+- Free memory with the same allocator and layer that allocated it.
+- Prefer RAII internally and expose explicit release functions only at the ABI
+  edge.
+- Make handle ownership, invalidation, and thread-safety rules explicit.
+- On partial failure, release already-acquired native resources before returning.
+
+## Concurrency
+
+- Treat shared handles, ODBC connections, global registries, and telemetry state
+  as concurrency-sensitive.
+- Require explicit synchronization for mutable shared state.
+- Do not assume a foreign caller serializes calls unless the ABI contract says
+  so and tests cover it.

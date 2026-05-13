@@ -53,9 +53,7 @@ alwaysApply: true
 
 ## Diagnostics and Hygiene
 
-- Do not suppress diagnostics without a clear allowlisted reason.
-- Keep suppression scope as small as possible and document the reason.
-- Follow `error_handling.mdc` for all suppression and propagation rules.
+- Follow `error_handling.mdc` for error propagation and diagnostic suppression.
 - Run the relevant analyzer and tests after meaningful structural changes.
 
 ## Review Checklist

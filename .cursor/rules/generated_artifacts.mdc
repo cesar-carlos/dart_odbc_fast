@@ -1,0 +1,32 @@
+---
+description: Generated binding, header, artifact, and build-output rules
+globs: ["**/*.g.dart", "**/*.freezed.dart", "lib/**/*.dart", "native/**/*.rs", "native/**/*.h", "native/**/*.def", "native/**/cbindgen.toml"]
+alwaysApply: true
+---
+
+# Generated Artifacts
+
+## Source of Truth
+
+- Do not manually edit generated bindings, headers, or generated artifacts
+  unless the generation source itself is being changed and regeneration is part
+  of the task.
+- Update the generator input, schema, Rust export, build script, or binding
+  source first; then regenerate the derived artifact.
+- Keep generated Dart bindings, cbindgen headers, exported symbols, and Rust FFI
+  signatures aligned.
+- Review generated diffs for ABI, layout, naming, and nullability changes before
+  accepting them.
+
+## Suppressions
+
+- Generated files may use broader lint suppressions only when allowed by
+  `error_handling.mdc`.
+- Do not copy generated-file suppressions into handwritten code.
+
+## Build Outputs
+
+- Do not treat `build/`, `target/`, coverage output, temporary generated files,
+  or ad-hoc binaries as source files.
+- Do not commit regenerated build outputs unless the repository intentionally
+  tracks that artifact.
