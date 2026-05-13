@@ -18,6 +18,11 @@ Columnar v2 encoding keeps that path for compressed columns, but writes
 uncompressed column payloads directly into the final output buffer to avoid a
 temporary per-column payload allocation.
 
+Binary result cells reuse an internal scratch buffer while reading from ODBC.
+When a cell is handed to the row buffer, the scratch buffer is recreated with
+the previous capacity so binary-heavy result sets avoid growing from zero for
+every cell.
+
 ### 1.1 Spill-to-disk for large buffers
 
 For cases where you want to build a large payload but avoid keeping it all in RAM,
@@ -34,6 +39,11 @@ it spills to temp file and `StreamingStateFileBacked` reads in chunks.
 of allocating a temporary `Vec` per flush chunk. File-backed streaming opens the
 spill file once and advances sequentially for each `fetch_next_chunk`, avoiding
 per-chunk open/seek overhead.
+
+The FFI fetch path uses `copy_next_chunk` to write stream chunks directly into
+the caller-provided buffer. If the buffer is too small, the stream offset is not
+advanced and the next call can retry with a larger buffer without storing a
+pending chunk copy in global state.
 
 The FFI global state mutex is not held while streaming prepares, executes,
 reads cursor rows, or encodes/spills data. It is used only for lookup and stream

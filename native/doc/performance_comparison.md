@@ -47,9 +47,10 @@ xychart-beta
   clone per worker.
 - **Streaming spill**: When `ODBC_STREAM_SPILL_THRESHOLD_MB` is enabled,
   encoded chunks are written without per-chunk temporary allocation and
-  file-backed reads keep the spill file open across fetches. This reduces CPU
-  and filesystem overhead for large result sets without changing the wire
-  format.
+  file-backed reads keep the spill file open across fetches. FFI stream fetch
+  writes directly into the caller buffer, avoiding an intermediate chunk `Vec`
+  allocation on every fetch. This reduces CPU and filesystem overhead for large
+  result sets without changing the wire format.
 - **Protocol encoding**: Row-buffer, bulk payload, and multi-result encoders
   pre-measure payload sizes before writing. This keeps large FFI payloads on a
   single planned allocation path where possible and rejects impossible

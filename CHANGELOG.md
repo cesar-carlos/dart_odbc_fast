@@ -43,13 +43,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full payload. Row-buffer encoding now preallocates the final wire buffer,
   spill encoding avoids per-chunk temporary `Vec` allocations, and file-backed
   streaming keeps the spill file open while fetching chunks instead of
-  reopening/seeking on every read. Bulk payload serialization preallocates the
-  expected output size, legacy bulk text/binary parsing copies only the trimmed
-  cell bytes, and multi-result encoding validates/preallocates payload size
-  before writing. Columnar encoding writes uncompressed column payloads directly
-  into the final buffer, parameter-list serialization writes into one
-  preallocated buffer, and ArrayBinding SQL assembly avoids temporary `Vec`
-  joins for placeholders/columns. The `sqlserver-bcp` feature keeps a
+  reopening/seeking on every read. `odbc_stream_fetch` now copies stream chunks
+  directly into the caller buffer, avoiding an intermediate `Vec` allocation
+  and removing the pending-chunk copy path on `-2` retries. Binary cell reads
+  retain the internal scratch-buffer capacity between cells to reduce repeated
+  allocations on binary-heavy result sets. Bulk payload serialization
+  preallocates the expected output size, legacy bulk text/binary parsing copies
+  only the trimmed cell bytes, and multi-result encoding validates/preallocates
+  payload size before writing. Columnar encoding writes uncompressed column
+  payloads directly into the final buffer, parameter-list serialization writes
+  into one preallocated buffer, and ArrayBinding SQL assembly avoids temporary
+  `Vec` joins for placeholders/columns. The `sqlserver-bcp` feature keeps a
   documented chunk materialization fallback because the BCP executor consumes
   an owned payload.
 - **Statement reuse docs:** documentation now states that

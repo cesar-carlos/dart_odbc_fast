@@ -74,7 +74,10 @@ impl CellReader {
             .map_err(OdbcError::from)?;
 
         if has_value {
-            Ok(Some(std::mem::take(&mut self.binary_buf)))
+            let mut out = Vec::new();
+            std::mem::swap(&mut out, &mut self.binary_buf);
+            self.binary_buf = Vec::with_capacity(out.capacity());
+            Ok(Some(out))
         } else {
             Ok(None)
         }

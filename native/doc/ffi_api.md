@@ -292,6 +292,10 @@ Fetches the next chunk. Works for both buffer and batched streams.
 - On success:
   - `out_written` is set to the bytes written for this chunk (may be `0` on EOF).
   - `out_has_more` is set to `1` if there is more, otherwise `0`.
+- If the function returns `-2`, the stream offset is not advanced; retry with a
+  larger buffer to receive the same chunk.
+- Chunks are copied directly into `out_buffer`; the FFI fetch path does not
+  allocate an intermediate chunk buffer.
 
 ### `odbc_stream_cancel(stream_id) -> int`
 

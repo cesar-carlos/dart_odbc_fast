@@ -17,8 +17,8 @@ use crate::engine::{
     list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
     resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
     DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
-    OdbcEnvironment, PreparedXa, PreparingXa, SavepointDialect, StatementHandle, StreamState,
-    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
+    OdbcEnvironment, PreparedXa, PreparingXa, SavepointDialect, StatementHandle, StreamCopyResult,
+    StreamState, StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -70,19 +70,11 @@ enum StreamKind {
 }
 
 impl StreamKind {
-    fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+    fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
         match self {
-            StreamKind::Buffer(s) => s.fetch_next_chunk(),
-            StreamKind::Batched(s) => s.fetch_next_chunk(),
-            StreamKind::AsyncBatched(s) => s.fetch_next_chunk(),
-        }
-    }
-
-    fn has_more(&self) -> bool {
-        match self {
-            StreamKind::Buffer(s) => s.has_more(),
-            StreamKind::Batched(s) => s.has_more(),
-            StreamKind::AsyncBatched(s) => s.has_more(),
+            StreamKind::Buffer(s) => s.copy_next_chunk(out),
+            StreamKind::Batched(s) => s.copy_next_chunk(out),
+            StreamKind::AsyncBatched(s) => s.copy_next_chunk(out),
         }
     }
 
@@ -486,7 +478,6 @@ struct GlobalState {
     statements: HashMap<u32, StatementHandle>,
     streams: HashMap<u32, StreamKind>,
     stream_connections: HashMap<u32, u32>, // Map stream_id -> conn_id
-    pending_stream_chunks: HashMap<u32, PendingStreamChunk>,
     pending_result_buffers: HashMap<PendingResultKey, PendingResultBuffer>,
     pools: HashMap<u32, Arc<ConnectionPool>>,
     pooled_connections: HashMap<u32, (u32, PooledConnectionWrapper)>, // pooled_conn_id -> (pool_id, wrapper)
@@ -510,11 +501,6 @@ struct GlobalState {
     metadata_cache: MetadataCache,
     metrics: Arc<Metrics>,
     audit_logger: Arc<AuditLogger>,
-}
-
-struct PendingStreamChunk {
-    data: Vec<u8>,
-    has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -664,7 +650,6 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             statements: HashMap::new(),
             streams: HashMap::new(),
             stream_connections: HashMap::new(),
-            pending_stream_chunks: HashMap::new(),
             pending_result_buffers: HashMap::new(),
             pools: HashMap::new(),
             pooled_connections: HashMap::new(),
@@ -1200,7 +1185,6 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                     stream.cancel();
                 }
                 state.stream_connections.remove(&stream_id);
-                state.pending_stream_chunks.remove(&stream_id);
             }
             state.async_requests.free_for_connection(conn_id);
             state.pending_result_buffers.retain(|key, _| match key {
@@ -4865,60 +4849,6 @@ pub extern "C" fn odbc_stream_fetch(
 
         let stream_conn_id = state.stream_connections.get(&stream_id).copied();
 
-        if let Some(needed_len) = state
-            .pending_stream_chunks
-            .get(&stream_id)
-            .map(|pending| pending.data.len())
-        {
-            if needed_len > buf_len as usize {
-                if let Some(conn_id) = stream_conn_id {
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            needed_len, buf_len
-                        ),
-                    );
-                } else {
-                    set_error(
-                        &mut state,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            needed_len, buf_len
-                        ),
-                    );
-                }
-                return -2;
-            }
-
-            let pending = match state.pending_stream_chunks.remove(&stream_id) {
-                Some(p) => p,
-                None => {
-                    // Race: chunk vanished between length check and removal. Treat as
-                    // an internal-state error rather than panicking across the FFI.
-                    set_error(
-                        &mut state,
-                        format!("Stream {} pending chunk vanished concurrently", stream_id),
-                    );
-                    return -1;
-                }
-            };
-            // Keep has_more from the original fetch that produced this chunk.
-            // This preserves stream semantics across buffer-resize retries.
-            let has_more_value = pending.has_more;
-            let written_len = pending.data.len();
-            // SAFETY: `out_buf` was checked non-null and `buf_len` covers `written_len`
-            // (verified above against `needed_len`). `out_written`/`has_more` were
-            // checked non-null at function entry.
-            unsafe {
-                std::ptr::copy_nonoverlapping(pending.data.as_ptr(), out_buf, written_len);
-                *out_written = written_len as c_uint;
-                *has_more = if has_more_value { 1 } else { 0 };
-            }
-            return 0;
-        }
-
         let mut stream = match state.streams.remove(&stream_id) {
             Some(s) => s,
             None => {
@@ -4928,8 +4858,8 @@ pub extern "C" fn odbc_stream_fetch(
         };
         drop(state);
 
-        let fetch_result = stream.fetch_next_chunk();
-        let has_more_after_fetch = stream.has_more();
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_buf, buf_len as usize) };
+        let fetch_result = stream.copy_next_chunk(out_slice);
 
         let Some(mut state) = try_lock_global_state() else {
             return -1;
@@ -4937,43 +4867,33 @@ pub extern "C" fn odbc_stream_fetch(
         state.streams.insert(stream_id, stream);
 
         match fetch_result {
-            Ok(Some(data)) => {
-                let has_more_value = has_more_after_fetch;
-                let data_len = data.len();
-                if data.len() > buf_len as usize {
-                    state.pending_stream_chunks.insert(
-                        stream_id,
-                        PendingStreamChunk {
-                            data,
-                            has_more: has_more_value,
-                        },
-                    );
-                    if let Some(conn_id) = stream_conn_id {
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
-                        );
-                    } else {
-                        set_error(
-                            &mut state,
-                            format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
-                        );
-                    }
-                    return -2;
-                }
-
-                // Safety: Pointers must be valid for their respective writes
-                // out_buf: data.len() bytes, out_written/has_more: respective sizes
+            Ok(StreamCopyResult::Copied {
+                written,
+                has_more: more,
+            }) => {
                 unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buf, data.len());
-                    *out_written = data.len() as c_uint;
-                    *has_more = if has_more_value { 1 } else { 0 };
+                    *out_written = written as c_uint;
+                    *has_more = if more { 1 } else { 0 };
                 }
 
                 0
             }
-            Ok(None) => {
+            Ok(StreamCopyResult::BufferTooSmall { needed }) => {
+                if let Some(conn_id) = stream_conn_id {
+                    set_connection_error(
+                        &mut state,
+                        conn_id,
+                        format!("Buffer too small: need {} bytes, got {}", needed, buf_len),
+                    );
+                } else {
+                    set_error(
+                        &mut state,
+                        format!("Buffer too small: need {} bytes, got {}", needed, buf_len),
+                    );
+                }
+                -2
+            }
+            Ok(StreamCopyResult::End) => {
                 // Safety: Pointers must be valid for writes (verified by null checks earlier)
                 unsafe {
                     *out_written = 0;
@@ -5008,15 +4928,12 @@ pub extern "C" fn odbc_stream_cancel(stream_id: c_uint) -> c_int {
             return -1;
         };
 
-        match state.streams.get(&stream_id) {
-            Some(stream) => {
-                stream.cancel();
-                0
-            }
-            None => {
-                set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
-                1
-            }
+        if let Some(stream) = state.streams.get(&stream_id) {
+            stream.cancel();
+            0
+        } else {
+            set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
+            1
         }
     })
 }
@@ -5033,7 +4950,6 @@ pub extern "C" fn odbc_stream_close(stream_id: c_uint) -> c_int {
 
         if state.streams.remove(&stream_id).is_some() {
             state.stream_connections.remove(&stream_id);
-            state.pending_stream_chunks.remove(&stream_id);
             0
         } else {
             set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
