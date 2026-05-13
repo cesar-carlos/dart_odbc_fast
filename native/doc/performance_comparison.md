@@ -54,6 +54,9 @@ xychart-beta
   pre-measure payload sizes before writing. This keeps large FFI payloads on a
   single planned allocation path where possible and rejects impossible
   multi-result lengths before emitting truncated length fields.
+- **Columnar/parameter paths**: Columnar v2 skips the temporary column payload
+  buffer when no compression is emitted, and parameter serialization builds the
+  full parameter list in one preallocated buffer.
 
 ### BCP (Bulk Copy)
 

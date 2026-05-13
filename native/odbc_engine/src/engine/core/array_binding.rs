@@ -6,7 +6,6 @@ use crate::protocol::bulk_insert::{
 use odbc_api::handles::AsStatementRef;
 use odbc_api::sys::NULL_DATA;
 use odbc_api::{buffers::BufferDesc, Connection};
-use std::iter::once;
 
 /// Validate and quote each `&str` in `columns`, returning a comma-separated
 /// list ready to inject into a SQL `INSERT (...)` clause.
@@ -14,11 +13,25 @@ use std::iter::once;
 /// A2 fix: every column identifier passes through `quote_identifier_default`
 /// before reaching the wire, eliminating SQL injection vectors.
 fn quote_column_list(columns: &[&str]) -> Result<String> {
-    let mut quoted = Vec::with_capacity(columns.len());
-    for c in columns {
-        quoted.push(quote_identifier_default(c)?);
+    let mut out = String::with_capacity(columns.len().saturating_mul(8));
+    for (idx, c) in columns.iter().enumerate() {
+        if idx > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&quote_identifier_default(c)?);
     }
-    Ok(quoted.join(", "))
+    Ok(out)
+}
+
+fn placeholders(n_cols: usize) -> String {
+    let mut out = String::with_capacity(n_cols.saturating_mul(3).saturating_sub(2));
+    for idx in 0..n_cols {
+        if idx > 0 {
+            out.push_str(", ");
+        }
+        out.push('?');
+    }
+    out
 }
 
 const DEFAULT_PARAMSET_SIZE: usize = 1000;
@@ -76,11 +89,7 @@ impl ArrayBinding {
             return Ok(0);
         }
 
-        let placeholders = once("?")
-            .cycle()
-            .take(n_cols)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = placeholders(n_cols);
         let col_list = quote_column_list(columns)?;
         let qtable = quote_qualified_default(table)?;
         let sql = format!("INSERT INTO {qtable} ({col_list}) VALUES ({placeholders})");
@@ -213,16 +222,14 @@ impl ArrayBinding {
             ));
         }
 
-        let mut quoted_cols = Vec::with_capacity(payload.columns.len());
-        for s in &payload.columns {
-            quoted_cols.push(quote_identifier_default(&s.name)?);
+        let mut col_list = String::with_capacity(payload.columns.len().saturating_mul(8));
+        for (idx, s) in payload.columns.iter().enumerate() {
+            if idx > 0 {
+                col_list.push_str(", ");
+            }
+            col_list.push_str(&quote_identifier_default(&s.name)?);
         }
-        let col_list = quoted_cols.join(", ");
-        let placeholders = once("?")
-            .cycle()
-            .take(n_cols)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = placeholders(n_cols);
         let qtable = quote_qualified_default(&payload.table)?;
         let sql = format!("INSERT INTO {qtable} ({col_list}) VALUES ({placeholders})");
 
@@ -519,5 +526,12 @@ mod tests {
     fn test_array_binding_min_size_one() {
         let ab = ArrayBinding::new(0);
         assert_eq!(ab.paramset_size(), 1);
+    }
+
+    #[test]
+    fn test_placeholders_builds_without_extra_separator() {
+        assert_eq!(placeholders(0), "");
+        assert_eq!(placeholders(1), "?");
+        assert_eq!(placeholders(3), "?, ?, ?");
     }
 }

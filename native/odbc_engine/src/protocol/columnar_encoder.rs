@@ -51,83 +51,89 @@ impl ColumnarEncoder {
         );
         output.extend_from_slice(col_name_bytes);
 
-        let mut raw_data = Vec::with_capacity(Self::estimate_column_payload_size(col_block)?);
+        let raw_payload_size = Self::estimate_column_payload_size(col_block)?;
+        if !use_compression || raw_payload_size <= 100 {
+            output.push(0);
+            output.extend_from_slice(
+                &checked_u32(raw_payload_size, "column payload length")?.to_le_bytes(),
+            );
+            Self::encode_column_payload(output, col_block)?;
+            return Ok(());
+        }
 
+        let mut raw_data = Vec::with_capacity(raw_payload_size);
+        Self::encode_column_payload(&mut raw_data, col_block)?;
+
+        match compression::compress(&raw_data, CompressionType::Zstd) {
+            Ok(compressed) if compressed.len() < raw_data.len() => {
+                output.push(1);
+                output.push(CompressionType::Zstd as u8);
+                output.extend_from_slice(
+                    &checked_u32(compressed.len(), "column payload length")?.to_le_bytes(),
+                );
+                output.extend_from_slice(&compressed);
+            }
+            _ => {
+                output.push(0);
+                output.extend_from_slice(
+                    &checked_u32(raw_data.len(), "column payload length")?.to_le_bytes(),
+                );
+                output.extend_from_slice(&raw_data);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn encode_column_payload(output: &mut Vec<u8>, col_block: &ColumnBlock) -> Result<()> {
         match &col_block.data {
             ColumnData::Varchar(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        raw_data.push(0);
-                        raw_data.extend_from_slice(
+                        output.push(0);
+                        output.extend_from_slice(
                             &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
                         );
-                        raw_data.extend_from_slice(bytes);
+                        output.extend_from_slice(bytes);
                     } else {
-                        raw_data.push(1);
+                        output.push(1);
                     }
                 }
             }
             ColumnData::Integer(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        raw_data.push(0);
-                        raw_data.extend_from_slice(&value.to_le_bytes());
+                        output.push(0);
+                        output.extend_from_slice(&value.to_le_bytes());
                     } else {
-                        raw_data.push(1);
+                        output.push(1);
                     }
                 }
             }
             ColumnData::BigInt(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        raw_data.push(0);
-                        raw_data.extend_from_slice(&value.to_le_bytes());
+                        output.push(0);
+                        output.extend_from_slice(&value.to_le_bytes());
                     } else {
-                        raw_data.push(1);
+                        output.push(1);
                     }
                 }
             }
             ColumnData::Binary(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        raw_data.push(0);
-                        raw_data.extend_from_slice(
+                        output.push(0);
+                        output.extend_from_slice(
                             &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
                         );
-                        raw_data.extend_from_slice(bytes);
+                        output.extend_from_slice(bytes);
                     } else {
-                        raw_data.push(1);
+                        output.push(1);
                     }
                 }
             }
         }
-
-        let (compressed_data, compression_type) = if use_compression && raw_data.len() > 100 {
-            match compression::compress(&raw_data, CompressionType::Zstd) {
-                Ok(compressed) if compressed.len() < raw_data.len() => {
-                    (compressed, CompressionType::Zstd)
-                }
-                _ => (raw_data, CompressionType::None),
-            }
-        } else {
-            (raw_data, CompressionType::None)
-        };
-
-        output.push(if compression_type != CompressionType::None {
-            1
-        } else {
-            0
-        });
-
-        if compression_type != CompressionType::None {
-            output.push(compression_type as u8);
-        }
-
-        output.extend_from_slice(
-            &checked_u32(compressed_data.len(), "column payload length")?.to_le_bytes(),
-        );
-        output.extend_from_slice(&compressed_data);
-
         Ok(())
     }
 

@@ -14,6 +14,9 @@ Most APIs ultimately produce a `Vec<u8>` encoded by:
 This buffer is the unit transported over FFI (`odbc_exec_query`, streaming batches, etc).
 The current encoders pre-measure payload size where practical so the final
 `Vec<u8>` can be preallocated once instead of growing repeatedly while writing.
+Columnar v2 encoding keeps that path for compressed columns, but writes
+uncompressed column payloads directly into the final output buffer to avoid a
+temporary per-column payload allocation.
 
 ### 1.1 Spill-to-disk for large buffers
 
