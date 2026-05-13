@@ -754,7 +754,9 @@ fn test_exec_query_with_params_null() {
     engine.set_connection_string(&conn_str);
 
     let params = vec![ParamValue::Null];
-    let sql = "SELECT ? AS x";
+    // A bare `SELECT ?` leaves SQL Server unable to pick a concrete type for an all-NULL parameter
+    // (e.g. sql_variant vs xml, error 11506). CAST fixes the target type while still exercising NULL binding.
+    let sql = "SELECT CAST(? AS INT) AS x";
     let result = engine.execute_query_with_params(&odbc_conn, sql, &params);
 
     drop(handles_guard);
