@@ -6,6 +6,7 @@ use thiserror::Error;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION: u16 = 1;
+const HEADER_SIZE: usize = 16;
 
 /// Appended after the v1 row-major message when a query used `OUT` / `INOUT` parameters.
 pub const OUTPUT_FOOTER_MAGIC: [u8; 4] = *b"OUT1";
@@ -16,6 +17,14 @@ pub const OUTPUT_FOOTER_MAGIC: [u8; 4] = *b"OUT1";
 pub const REF_CURSOR_FOOTER_MAGIC: [u8; 4] = [b'R', b'C', b'1', 0];
 
 pub struct RowBufferEncoder;
+
+#[derive(Clone, Copy)]
+struct EncodedShape {
+    column_count: u16,
+    row_count: u32,
+    payload_size: u32,
+    total_len: usize,
+}
 
 #[derive(Debug, Error)]
 pub enum EncodeError {
@@ -39,41 +48,28 @@ impl RowBufferEncoder {
     }
 
     pub fn try_encode(buffer: &RowBuffer) -> Result<Vec<u8>, EncodeError> {
-        let mut output = Vec::new();
-        Self::encode_to_writer(buffer, &mut output)?;
+        let shape = measure_buffer(buffer)?;
+        let mut output = Vec::with_capacity(shape.total_len);
+        Self::encode_to_writer_with_shape(buffer, &mut output, shape)?;
         Ok(output)
     }
 
     /// Encode buffer to a writer. Used for spill-to-disk when result exceeds memory threshold.
     pub fn encode_to_writer<W: Write>(buffer: &RowBuffer, w: &mut W) -> Result<(), EncodeError> {
-        let column_count = checked_u16_len(buffer.column_count(), "column count")?;
-        let row_count = checked_u32_len(buffer.row_count(), "row count")?;
-        let mut metadata_size = 0usize;
-        for col in &buffer.columns {
-            checked_u16_len(col.name.len(), "column name length")?;
-            metadata_size = checked_payload_add(metadata_size, 2, "column type")?;
-            metadata_size = checked_payload_add(metadata_size, 2, "column name length")?;
-            metadata_size = checked_payload_add(metadata_size, col.name.len(), "column name")?;
-        }
+        let shape = measure_buffer(buffer)?;
+        Self::encode_to_writer_with_shape(buffer, w, shape)
+    }
 
-        let mut payload_size = metadata_size;
-        for row in &buffer.rows {
-            for cell in row {
-                payload_size = checked_payload_add(payload_size, 1, "cell null flag")?;
-                if let Some(data) = cell {
-                    checked_u32_len(data.len(), "cell data length")?;
-                    payload_size = checked_payload_add(payload_size, 4, "cell data length")?;
-                    payload_size = checked_payload_add(payload_size, data.len(), "cell data")?;
-                }
-            }
-        }
-        let payload_size = checked_u32_len(payload_size, "payload size")?;
-
+    fn encode_to_writer_with_shape<W: Write>(
+        buffer: &RowBuffer,
+        w: &mut W,
+        shape: EncodedShape,
+    ) -> Result<(), EncodeError> {
         w.write_all(&MAGIC.to_le_bytes())?;
         w.write_all(&VERSION.to_le_bytes())?;
-        w.write_all(&column_count.to_le_bytes())?;
-        w.write_all(&row_count.to_le_bytes())?;
-        w.write_all(&payload_size.to_le_bytes())?;
+        w.write_all(&shape.column_count.to_le_bytes())?;
+        w.write_all(&shape.row_count.to_le_bytes())?;
+        w.write_all(&shape.payload_size.to_le_bytes())?;
 
         for col in &buffer.columns {
             w.write_all(&(col.odbc_type as u16).to_le_bytes())?;
@@ -158,6 +154,44 @@ impl RowBufferEncoder {
             Err(_) => Self::try_encode(buffer)?,
         })
     }
+}
+
+fn measure_buffer(buffer: &RowBuffer) -> Result<EncodedShape, EncodeError> {
+    let column_count = checked_u16_len(buffer.column_count(), "column count")?;
+    let row_count = checked_u32_len(buffer.row_count(), "row count")?;
+    let mut metadata_size = 0usize;
+    for col in &buffer.columns {
+        checked_u16_len(col.name.len(), "column name length")?;
+        metadata_size = checked_payload_add(metadata_size, 2, "column type")?;
+        metadata_size = checked_payload_add(metadata_size, 2, "column name length")?;
+        metadata_size = checked_payload_add(metadata_size, col.name.len(), "column name")?;
+    }
+
+    let mut payload_size = metadata_size;
+    for row in &buffer.rows {
+        for cell in row {
+            payload_size = checked_payload_add(payload_size, 1, "cell null flag")?;
+            if let Some(data) = cell {
+                checked_u32_len(data.len(), "cell data length")?;
+                payload_size = checked_payload_add(payload_size, 4, "cell data length")?;
+                payload_size = checked_payload_add(payload_size, data.len(), "cell data")?;
+            }
+        }
+    }
+    let payload_size = checked_u32_len(payload_size, "payload size")?;
+    let total_len =
+        HEADER_SIZE
+            .checked_add(payload_size as usize)
+            .ok_or(EncodeError::PayloadSizeOverflow {
+                context: "encoded row buffer",
+            })?;
+
+    Ok(EncodedShape {
+        column_count,
+        row_count,
+        payload_size,
+        total_len,
+    })
 }
 
 fn checked_u16_len(value: usize, field: &'static str) -> Result<u16, EncodeError> {

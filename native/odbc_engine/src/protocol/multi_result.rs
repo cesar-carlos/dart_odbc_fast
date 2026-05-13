@@ -43,13 +43,21 @@ pub enum MultiResultItem {
 
 /// Encode a list of items using the v2 framing (magic + version + count).
 pub fn encode_multi(items: &[MultiResultItem]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(HEADER_V2_LEN + estimate_payload_size(items));
+    try_encode_multi(items).expect("multi-result payload exceeds wire limits")
+}
+
+/// Checked variant of [`encode_multi`] for callers that prefer an error over a
+/// panic when a result set exceeds the wire-format limits.
+pub fn try_encode_multi(items: &[MultiResultItem]) -> Result<Vec<u8>> {
+    let capacity = checked_add_len(HEADER_V2_LEN, estimate_payload_size(items)?)?;
+    let count = checked_u32_len(items.len(), "multi-result item count")?;
+    let mut out = Vec::with_capacity(capacity);
     out.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
     out.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // reserved
-    out.extend_from_slice(&(items.len() as u32).to_le_bytes());
-    encode_items(items, &mut out);
-    out
+    out.extend_from_slice(&count.to_le_bytes());
+    encode_items(items, &mut out)?;
+    Ok(out)
 }
 
 /// Encode using the legacy v1 framing (no magic, no version). Kept around for
@@ -57,18 +65,26 @@ pub fn encode_multi(items: &[MultiResultItem]) -> Vec<u8> {
 /// [`encode_multi`].
 #[doc(hidden)]
 pub fn encode_multi_v1(items: &[MultiResultItem]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + estimate_payload_size(items));
-    out.extend_from_slice(&(items.len() as u32).to_le_bytes());
-    encode_items(items, &mut out);
-    out
+    try_encode_multi_v1(items).expect("multi-result v1 payload exceeds wire limits")
 }
 
-fn encode_items(items: &[MultiResultItem], out: &mut Vec<u8>) {
+#[doc(hidden)]
+pub fn try_encode_multi_v1(items: &[MultiResultItem]) -> Result<Vec<u8>> {
+    let capacity = checked_add_len(4, estimate_payload_size(items)?)?;
+    let count = checked_u32_len(items.len(), "multi-result item count")?;
+    let mut out = Vec::with_capacity(capacity);
+    out.extend_from_slice(&count.to_le_bytes());
+    encode_items(items, &mut out)?;
+    Ok(out)
+}
+
+fn encode_items(items: &[MultiResultItem], out: &mut Vec<u8>) -> Result<()> {
     for item in items {
         match item {
             MultiResultItem::ResultSet(buf) => {
                 out.push(TAG_RESULT_SET);
-                out.extend_from_slice(&(buf.len() as u32).to_le_bytes());
+                let len = checked_u32_len(buf.len(), "multi-result item payload")?;
+                out.extend_from_slice(&len.to_le_bytes());
                 out.extend_from_slice(buf);
             }
             MultiResultItem::RowCount(n) => {
@@ -78,16 +94,34 @@ fn encode_items(items: &[MultiResultItem], out: &mut Vec<u8>) {
             }
         }
     }
+    Ok(())
 }
 
-fn estimate_payload_size(items: &[MultiResultItem]) -> usize {
-    items
-        .iter()
-        .map(|i| match i {
-            MultiResultItem::ResultSet(b) => 1 + 4 + b.len(),
-            MultiResultItem::RowCount(_) => 1 + 4 + 8,
-        })
-        .sum()
+fn estimate_payload_size(items: &[MultiResultItem]) -> Result<usize> {
+    let mut size = 0usize;
+    for item in items {
+        size = checked_add_len(size, MIN_ITEM_LEN)?;
+        size = checked_add_len(
+            size,
+            match item {
+                MultiResultItem::ResultSet(b) => b.len(),
+                MultiResultItem::RowCount(_) => 8,
+            },
+        )?;
+    }
+    Ok(size)
+}
+
+fn checked_u32_len(value: usize, field: &'static str) -> Result<u32> {
+    value.try_into().map_err(|_| {
+        OdbcError::ResourceLimitReached(format!("{field} length/count {value} does not fit in u32"))
+    })
+}
+
+fn checked_add_len(left: usize, right: usize) -> Result<usize> {
+    left.checked_add(right).ok_or_else(|| {
+        OdbcError::ResourceLimitReached("multi-result payload size overflow".to_string())
+    })
 }
 
 /// Decode a multi-result buffer. Accepts both the v2 framing (magic +
@@ -265,6 +299,23 @@ mod tests {
         let enc = encode_multi(&items);
         let dec = decode_multi(&enc).unwrap();
         assert_eq!(dec, items);
+    }
+
+    #[test]
+    fn try_encode_multi_matches_public_encoder() {
+        let items = vec![
+            MultiResultItem::ResultSet(vec![1, 2, 3]),
+            MultiResultItem::RowCount(-5),
+        ];
+
+        assert_eq!(try_encode_multi(&items).unwrap(), encode_multi(&items));
+    }
+
+    #[test]
+    fn checked_add_len_rejects_overflow() {
+        let err = checked_add_len(usize::MAX, 1).unwrap_err();
+
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
     }
 
     #[test]

@@ -20,8 +20,8 @@ pub use bound_param::{
     deserialize_param_buffer, is_directed_param_buffer, BoundParam, ParamDirection, ParamList,
 };
 pub use bulk_insert::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData, BulkColumnSpec,
-    BulkColumnType, BulkInsertPayload, BulkTimestamp,
+    parse_bulk_insert_payload, serialize_bulk_insert_payload, serialize_bulk_insert_payload_v2,
+    BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp,
 };
 pub use columnar::{ColumnBlock, ColumnData, ColumnMetadata, CompressionType, RowBufferV2};
 pub use columnar_encoder::ColumnarEncoder;
@@ -30,7 +30,8 @@ pub use converter::row_buffer_to_columnar;
 pub use decoder::{BinaryProtocolDecoder, ColumnInfo, DecodedResult};
 pub use encoder::RowBufferEncoder;
 pub use multi_result::{
-    decode_multi, encode_multi, MultiResultItem, MULTI_RESULT_MAGIC, MULTI_RESULT_VERSION,
+    decode_multi, encode_multi, try_encode_multi, MultiResultItem, MULTI_RESULT_MAGIC,
+    MULTI_RESULT_VERSION,
 };
 pub use param_value::{
     deserialize_params, has_null_param, max_param_string_len, param_count_exceeds_limit,

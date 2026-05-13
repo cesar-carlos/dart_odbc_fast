@@ -7,7 +7,7 @@ use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -42,6 +42,13 @@ pub enum AsyncStreamStatus {
     Done,
     Cancelled,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamCopyResult {
+    Copied { written: usize, has_more: bool },
+    End,
+    BufferTooSmall { needed: usize },
 }
 
 impl StreamingExecutor {
@@ -179,12 +186,9 @@ impl StreamingExecutor {
                         let total_len = std::fs::metadata(&path)
                             .map(|m| m.len() as usize)
                             .unwrap_or(0);
-                        Ok(StreamState::FileBacked(StreamingStateFileBacked {
-                            path,
-                            offset: 0,
-                            chunk_size,
-                            total_len,
-                        }))
+                        Ok(StreamState::FileBacked(StreamingStateFileBacked::new(
+                            path, chunk_size, total_len,
+                        )?))
                     }
                     crate::engine::core::SpillReadSource::Memory(data) => {
                         Ok(StreamState::InMemory(StreamingState {
@@ -837,6 +841,67 @@ impl BatchedStreamingState {
         Ok(Some(chunk))
     }
 
+    pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
+        if let Some(ref msg) = self.stream_error {
+            return Err(OdbcError::InternalError(msg.clone()));
+        }
+        if self.done {
+            return Ok(StreamCopyResult::End);
+        }
+
+        let batch_len = self.current_batch.as_ref().map_or(0, Vec::len);
+        if self.current_batch.is_none() || self.offset >= batch_len {
+            match self.receiver.recv() {
+                Ok(BatchedMessage::Batch(b)) => {
+                    self.current_batch = Some(b);
+                    self.offset = 0;
+                }
+                Ok(BatchedMessage::Done) => {
+                    self.done = true;
+                    return Ok(StreamCopyResult::End);
+                }
+                Ok(BatchedMessage::Cancelled) => {
+                    self.done = true;
+                    self.cancelled = true;
+                    return Ok(StreamCopyResult::End);
+                }
+                Ok(BatchedMessage::Error(m)) => {
+                    self.stream_error = Some(m.clone());
+                    return Err(OdbcError::InternalError(m));
+                }
+                Err(disc_err) => {
+                    self.done = true;
+                    let msg = format!("Stream worker disconnected unexpectedly: {disc_err}");
+                    self.stream_error = Some(msg.clone());
+                    return Err(OdbcError::WorkerCrashed(msg));
+                }
+            }
+        }
+
+        let batch = self.current_batch.as_ref().ok_or_else(|| {
+            OdbcError::InternalError(
+                "Streaming state corrupted: no batch available after receiver processing"
+                    .to_string(),
+            )
+        })?;
+        let end = self.offset.saturating_add(self.chunk_size).min(batch.len());
+        let needed = end - self.offset;
+        if out.len() < needed {
+            return Ok(StreamCopyResult::BufferTooSmall { needed });
+        }
+
+        out[..needed].copy_from_slice(&batch[self.offset..end]);
+        self.offset = end;
+        if self.offset >= batch.len() {
+            self.current_batch = None;
+            self.offset = 0;
+        }
+        Ok(StreamCopyResult::Copied {
+            written: needed,
+            has_more: self.has_more(),
+        })
+    }
+
     pub fn has_more(&self) -> bool {
         !self.done
     }
@@ -985,6 +1050,67 @@ impl AsyncStreamingState {
         Ok(Some(chunk))
     }
 
+    pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
+        if let Some(ref msg) = self.stream_error {
+            return Err(OdbcError::InternalError(msg.clone()));
+        }
+        if self.done {
+            return Ok(StreamCopyResult::End);
+        }
+
+        let batch_len = self.current_batch_len();
+        if self.current_batch.is_none() || self.offset >= batch_len {
+            match self.receiver.recv() {
+                Ok(BatchedMessage::Batch(b)) => {
+                    self.current_batch = Some(b);
+                    self.offset = 0;
+                }
+                Ok(BatchedMessage::Done) => {
+                    self.done = true;
+                    return Ok(StreamCopyResult::End);
+                }
+                Ok(BatchedMessage::Cancelled) => {
+                    self.done = true;
+                    self.cancelled = true;
+                    return Ok(StreamCopyResult::End);
+                }
+                Ok(BatchedMessage::Error(m)) => {
+                    self.stream_error = Some(m.clone());
+                    return Err(OdbcError::InternalError(m));
+                }
+                Err(disc_err) => {
+                    self.done = true;
+                    let msg = format!("Async stream worker disconnected unexpectedly: {disc_err}");
+                    self.stream_error = Some(msg.clone());
+                    return Err(OdbcError::WorkerCrashed(msg));
+                }
+            }
+        }
+
+        let batch = self.current_batch.as_ref().ok_or_else(|| {
+            OdbcError::InternalError(
+                "Async stream state corrupted: no batch available after receiver processing"
+                    .to_string(),
+            )
+        })?;
+        let end = self.offset.saturating_add(self.chunk_size).min(batch.len());
+        let needed = end - self.offset;
+        if out.len() < needed {
+            return Ok(StreamCopyResult::BufferTooSmall { needed });
+        }
+
+        out[..needed].copy_from_slice(&batch[self.offset..end]);
+        self.offset = end;
+        if self.offset >= batch.len() {
+            self.current_batch = None;
+            self.offset = 0;
+        }
+        Ok(StreamCopyResult::Copied {
+            written: needed,
+            has_more: self.has_more(),
+        })
+    }
+
     pub fn has_more(&self) -> bool {
         !self.done
     }
@@ -1025,33 +1151,51 @@ impl StreamState {
             StreamState::FileBacked(s) => s.has_more(),
         }
     }
+
+    pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
+        match self {
+            StreamState::InMemory(s) => s.copy_next_chunk(out),
+            StreamState::FileBacked(s) => s.copy_next_chunk(out),
+        }
+    }
 }
 
 /// Streaming state backed by a temp file. Reads in chunks; deletes file on drop.
 pub struct StreamingStateFileBacked {
     path: PathBuf,
+    file: Option<File>,
     offset: usize,
     chunk_size: usize,
     total_len: usize,
 }
 
 impl StreamingStateFileBacked {
+    fn new(path: PathBuf, chunk_size: usize, total_len: usize) -> Result<Self> {
+        let file = File::open(&path)
+            .map_err(|e| OdbcError::InternalError(format!("spill file open: {}", e)))?;
+        Ok(Self {
+            path,
+            file: Some(file),
+            offset: 0,
+            chunk_size,
+            total_len,
+        })
+    }
+
     pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
         if self.offset >= self.total_len {
             return Ok(None);
         }
-
-        let mut f = File::open(&self.path)
-            .map_err(|e| OdbcError::InternalError(format!("spill file read: {}", e)))?;
-        f.seek(SeekFrom::Start(self.offset as u64))
-            .map_err(|e| OdbcError::InternalError(format!("spill file seek: {}", e)))?;
 
         let to_read = (self.chunk_size).min(self.total_len - self.offset);
         let mut buf = vec![0u8; to_read];
         // A6 fix: a single `read()` may return fewer bytes than requested
         // (especially on Windows for files >64 KiB). Use `read_exact` so the
         // caller never observes a short chunk silently.
-        f.read_exact(&mut buf)
+        self.file
+            .as_mut()
+            .ok_or_else(|| OdbcError::InternalError("spill file already closed".to_string()))?
+            .read_exact(&mut buf)
             .map_err(|e| OdbcError::InternalError(format!("spill file read_exact: {}", e)))?;
         self.offset += to_read;
 
@@ -1062,6 +1206,29 @@ impl StreamingStateFileBacked {
         }
     }
 
+    pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
+        if self.offset >= self.total_len {
+            return Ok(StreamCopyResult::End);
+        }
+
+        let to_read = self.chunk_size.min(self.total_len - self.offset);
+        if out.len() < to_read {
+            return Ok(StreamCopyResult::BufferTooSmall { needed: to_read });
+        }
+
+        self.file
+            .as_mut()
+            .ok_or_else(|| OdbcError::InternalError("spill file already closed".to_string()))?
+            .read_exact(&mut out[..to_read])
+            .map_err(|e| OdbcError::InternalError(format!("spill file read_exact: {}", e)))?;
+        self.offset += to_read;
+
+        Ok(StreamCopyResult::Copied {
+            written: to_read,
+            has_more: self.has_more(),
+        })
+    }
+
     pub fn has_more(&self) -> bool {
         self.offset < self.total_len
     }
@@ -1069,6 +1236,7 @@ impl StreamingStateFileBacked {
 
 impl Drop for StreamingStateFileBacked {
     fn drop(&mut self) {
+        drop(self.file.take());
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -1090,6 +1258,28 @@ impl StreamingState {
         self.offset = end;
 
         Ok(Some(chunk))
+    }
+
+    pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
+        if self.offset >= self.data.len() {
+            return Ok(StreamCopyResult::End);
+        }
+
+        let end = self
+            .offset
+            .saturating_add(self.chunk_size)
+            .min(self.data.len());
+        let needed = end - self.offset;
+        if out.len() < needed {
+            return Ok(StreamCopyResult::BufferTooSmall { needed });
+        }
+
+        out[..needed].copy_from_slice(&self.data[self.offset..end]);
+        self.offset = end;
+        Ok(StreamCopyResult::Copied {
+            written: needed,
+            has_more: self.has_more(),
+        })
     }
 
     pub fn has_more(&self) -> bool {
@@ -1140,6 +1330,31 @@ mod tests {
         assert_eq!(chunk, Some(vec![1, 2, 3]));
         assert!(state.current_batch.is_none());
         assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_batched_streaming_state_copy_preserves_offset_when_buffer_too_small() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3, 4]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 3);
+        let mut tiny = [0u8; 2];
+        assert_eq!(
+            state.copy_next_chunk(&mut tiny).unwrap(),
+            StreamCopyResult::BufferTooSmall { needed: 3 }
+        );
+
+        let mut out = [0u8; 3];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 3,
+                has_more: true
+            }
+        );
+        assert_eq!(&out, &[1, 2, 3]);
     }
 
     #[test]
@@ -1225,6 +1440,60 @@ mod tests {
     }
 
     #[test]
+    fn test_streaming_spill_writer_matches_row_buffer_encoder() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("id".to_string(), OdbcType::Integer);
+        buffer.add_column("name".to_string(), OdbcType::Varchar);
+        buffer.add_row(vec![
+            Some(1i32.to_le_bytes().to_vec()),
+            Some(b"one".to_vec()),
+        ]);
+        buffer.add_row(vec![Some(2i32.to_le_bytes().to_vec()), None]);
+
+        let expected = RowBufferEncoder::encode(&buffer);
+        let mut spill = DiskSpillStream::new(1);
+        {
+            let mut writer = DiskSpillWriter::new(&mut spill);
+            RowBufferEncoder::encode_to_writer(&buffer, &mut writer).unwrap();
+            writer.flush().unwrap();
+        }
+        let actual = spill.read_back().unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_streaming_spill_threshold_file_backed_matches_encoder() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("payload".to_string(), OdbcType::Binary);
+        buffer.add_row(vec![Some(vec![42u8; 1024 * 1024 + 128])]);
+
+        let expected = RowBufferEncoder::encode(&buffer);
+        let mut spill = DiskSpillStream::new(1);
+        {
+            let mut writer = DiskSpillWriter::new(&mut spill);
+            RowBufferEncoder::encode_to_writer(&buffer, &mut writer).unwrap();
+            writer.flush().unwrap();
+        }
+
+        let source = spill.finish_for_streaming_read().unwrap();
+        let actual = match source {
+            crate::engine::core::SpillReadSource::File(path) => {
+                let bytes = std::fs::read(&path).unwrap();
+                let _ = std::fs::remove_file(path);
+                bytes
+            }
+            crate::engine::core::SpillReadSource::Memory(bytes) => bytes,
+        };
+
+        assert_eq!(actual, expected);
+        assert!(
+            actual.len() > 1024 * 1024,
+            "test must exercise the low-threshold spill path"
+        );
+    }
+
+    #[test]
     fn test_streaming_state_fetch_next_chunk() {
         let data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let mut state = StreamingState {
@@ -1251,6 +1520,34 @@ mod tests {
     }
 
     #[test]
+    fn test_streaming_state_copy_next_chunk_writes_without_advancing_on_small_buffer() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut state = StreamingState {
+            data,
+            offset: 0,
+            chunk_size: 4,
+        };
+
+        let mut tiny = [0u8; 3];
+        assert_eq!(
+            state.copy_next_chunk(&mut tiny).unwrap(),
+            StreamCopyResult::BufferTooSmall { needed: 4 }
+        );
+        assert_eq!(state.offset, 0);
+
+        let mut out = [0u8; 4];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 4,
+                has_more: true
+            }
+        );
+        assert_eq!(&out, &[1, 2, 3, 4]);
+        assert_eq!(state.offset, 4);
+    }
+
+    #[test]
     fn test_streaming_state_fetch_next_chunk_returns_none_when_exhausted() {
         let data = vec![1, 2, 3];
         let mut state = StreamingState {
@@ -1266,6 +1563,62 @@ mod tests {
         let chunk2 = state.fetch_next_chunk().unwrap();
         assert_eq!(chunk2, None);
         assert_eq!(state.offset, 3);
+    }
+
+    #[test]
+    fn test_file_backed_streaming_state_keeps_file_open_and_cleans_up() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_state_test_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1u8, 2, 3, 4, 5, 6, 7]).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 3, 7).unwrap();
+
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2, 3]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![4, 5, 6]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![7]));
+            assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        }
+
+        assert!(!path.exists(), "file-backed stream should remove temp file");
+    }
+
+    #[test]
+    fn test_file_backed_streaming_state_copy_preserves_offset_when_buffer_too_small() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_state_copy_test_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [9u8, 8, 7, 6]).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 3, 4).unwrap();
+            let mut tiny = [0u8; 2];
+            assert_eq!(
+                state.copy_next_chunk(&mut tiny).unwrap(),
+                StreamCopyResult::BufferTooSmall { needed: 3 }
+            );
+
+            let mut out = [0u8; 3];
+            assert_eq!(
+                state.copy_next_chunk(&mut out).unwrap(),
+                StreamCopyResult::Copied {
+                    written: 3,
+                    has_more: true
+                }
+            );
+            assert_eq!(&out, &[9, 8, 7]);
+        }
+
+        assert!(!path.exists(), "file-backed stream should remove temp file");
     }
 
     #[test]

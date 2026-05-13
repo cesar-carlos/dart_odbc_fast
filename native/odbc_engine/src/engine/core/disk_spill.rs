@@ -23,23 +23,44 @@ impl<'a> DiskSpillWriter<'a> {
 }
 
 impl Write for DiskSpillWriter<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buffer.extend_from_slice(buf);
-        while self.buffer.len() >= WRITE_CHUNK_SIZE {
-            let chunk: Vec<u8> = self.buffer.drain(..WRITE_CHUNK_SIZE).collect();
-            self.spill
-                .write_chunk(&chunk)
-                .map_err(std::io::Error::other)?;
+    fn write(&mut self, mut buf: &[u8]) -> std::io::Result<usize> {
+        let written = buf.len();
+
+        if !self.buffer.is_empty() {
+            let remaining = WRITE_CHUNK_SIZE - self.buffer.len();
+            let to_buffer = remaining.min(buf.len());
+            self.buffer.extend_from_slice(&buf[..to_buffer]);
+            buf = &buf[to_buffer..];
+
+            if self.buffer.len() == WRITE_CHUNK_SIZE {
+                self.spill
+                    .write_chunk(&self.buffer)
+                    .map_err(std::io::Error::other)?;
+                self.buffer.clear();
+            }
         }
-        Ok(buf.len())
+
+        while buf.len() >= WRITE_CHUNK_SIZE {
+            let (chunk, rest) = buf.split_at(WRITE_CHUNK_SIZE);
+            self.spill
+                .write_chunk(chunk)
+                .map_err(std::io::Error::other)?;
+            buf = rest;
+        }
+
+        if !buf.is_empty() {
+            self.buffer.extend_from_slice(buf);
+        }
+
+        Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         if !self.buffer.is_empty() {
-            let chunk = std::mem::take(&mut self.buffer);
             self.spill
-                .write_chunk(&chunk)
+                .write_chunk(&self.buffer)
                 .map_err(std::io::Error::other)?;
+            self.buffer.clear();
         }
         Ok(())
     }
@@ -216,5 +237,22 @@ mod tests {
         let out = s.read_back().unwrap();
         assert_eq!(out.len(), 1 + 2 * 1024 * 1024);
         assert_eq!(out[0], 42);
+    }
+
+    #[test]
+    fn test_disk_spill_writer_large_write_roundtrip() {
+        let mut s = DiskSpillStream::new(1);
+        let input: Vec<u8> = (0..(WRITE_CHUNK_SIZE * 3 + 17))
+            .map(|n| (n % 251) as u8)
+            .collect();
+
+        {
+            let mut writer = DiskSpillWriter::new(&mut s);
+            writer.write_all(&input).unwrap();
+            writer.flush().unwrap();
+        }
+
+        let out = s.read_back().unwrap();
+        assert_eq!(out, input);
     }
 }

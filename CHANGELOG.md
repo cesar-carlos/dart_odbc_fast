@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk payload v2:** Dart `BulkInsertBuilder.build()` now emits the `BLK2`
+  wire format by default and exposes `BulkPayloadVersion { legacy, v2 }`.
+  Rust auto-detects v1/v2 in `odbc_bulk_insert_array` and
+  `odbc_bulk_insert_parallel`, preserving compatibility with existing payloads.
+- **Regression coverage:** added Rust coverage for bulk v2 binary cells with
+  embedded `NUL`, variable-length binary cells, truncation and max-length
+  validation, pending-result replay, per-connection errors, parallel bulk
+  chunking, and streaming spill encoding. Dart coverage now verifies the v2
+  default, legacy format opt-in, binary `NUL` preservation, and `maxLen`
+  validation. Opt-in Rust E2E coverage now exercises bulk v2 binary readback,
+  global-state availability during long FFI calls, pool close/resize busy
+  guards during in-flight pooled execution, and spill-backed streaming.
+
+### Fixed
+
+- **Binary bulk insert correctness:** v2 variable-width cells carry a per-cell
+  length, so binary values such as `Uint8List([1, 0, 2])` are no longer
+  truncated at the first `0x00`.
+- **FFI concurrency:** long ODBC calls in connection lifecycle, query,
+  prepared execution, catalog metadata, savepoint/XA transitions, streaming,
+  pool release/close, and bulk insert paths no longer run while `GLOBAL_STATE`
+  is locked. The global mutex is now limited to lookup/registration,
+  pending-buffer replay, metrics, and error recording.
+- **Pool close/resize safety:** pooled connections temporarily removed from
+  global state for active FFI calls are tracked as busy, preventing pool close
+  or resize from racing an in-flight operation.
+
+### Changed
+
+- **Bulk/streaming performance:** pool-based parallel bulk insert uses row
+  ranges/views on the default ArrayBinding path to avoid cloning each chunk's
+  full payload. Row-buffer encoding now preallocates the final wire buffer,
+  spill encoding avoids per-chunk temporary `Vec` allocations, and file-backed
+  streaming keeps the spill file open while fetching chunks instead of
+  reopening/seeking on every read. `odbc_stream_fetch` now copies stream chunks
+  directly into the caller buffer, avoiding an intermediate `Vec` allocation
+  and removing the pending-chunk copy path on `-2` retries. Binary cell reads
+  retain the internal scratch-buffer capacity between cells to reduce repeated
+  allocations on binary-heavy result sets. Bulk payload serialization
+  preallocates the expected output size, legacy bulk text/binary parsing copies
+  only the trimmed cell bytes, and multi-result encoding validates/preallocates
+  payload size before writing. Columnar encoding writes uncompressed column
+  payloads directly into the final buffer, parameter-list serialization writes
+  into one preallocated buffer, and ArrayBinding SQL assembly avoids temporary
+  `Vec` joins for placeholders/columns. The `sqlserver-bcp` feature keeps a
+  documented chunk materialization fallback because the BCP executor consumes
+  an owned payload.
+- **Statement reuse docs:** documentation now states that
+  `statement-handle-reuse` remains opt-in and that the default path keeps only
+  metrics/cache metadata, not reusable statement handles.
+
 ## [3.6.0] - 2026-05-02
 
 ### Added

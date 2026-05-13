@@ -119,7 +119,7 @@ void main() {
             .table('t')
             .addColumn('a', BulkColumnType.i32, nullable: true)
             .addRow([null]).addRow([1]);
-        final enc = b.build();
+        final enc = b.build(version: BulkPayloadVersion.legacy);
 
         // For nullable columns, there should be a null bitmap
         // Offset calculation: table(5) + col(15) + rowCount(4) = 24
@@ -286,6 +286,24 @@ void main() {
       );
     });
 
+    test('binary column rejects value longer than maxLen in addRow', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.binary, maxLen: 2)
+            .addRow([
+          Uint8List.fromList([1, 2, 3]),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('exceeds max length 2'),
+          ),
+        ),
+      );
+    });
+
     test('timestamp column rejects invalid value type in addRow', () {
       expect(
         () => BulkInsertBuilder()
@@ -330,7 +348,7 @@ void main() {
       // Ownership contract: mutating source list after addRow affects output.
       row[0] = 7;
 
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
 
       var o = 0;
@@ -371,7 +389,7 @@ void main() {
       expect(b.columnNames, equals(['a']));
       expect(b.rowCount, equals(2));
 
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
 
       var o = 0;
@@ -404,7 +422,7 @@ void main() {
           .table('t')
           .addColumn('a', BulkColumnType.i32, nullable: true)
           .addRow([1]).addRow([null]).addRow([3]);
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
 
       var o = 0;
@@ -430,7 +448,7 @@ void main() {
           .table('t')
           .addColumn('x', BulkColumnType.text, maxLen: 10)
           .addRow(['hi']).addRow(['world']);
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
 
       var o = 0;
@@ -470,13 +488,63 @@ void main() {
       expect(b.rowCount, 1);
     });
 
+    test('default build emits v2 BLK2 payload with per-cell binary length', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('p', BulkColumnType.binary, maxLen: 4)
+          .addRow([
+        Uint8List.fromList([1, 0, 2]),
+      ]);
+
+      final enc = b.build();
+      final view = ByteData.sublistView(enc);
+
+      expect(enc.sublist(0, 4), equals([0x42, 0x4C, 0x4B, 0x32]));
+      expect(view.getUint16(4, Endian.little), equals(2));
+      expect(view.getUint16(6, Endian.little), equals(0));
+
+      var o = 8;
+      o += 4 + 1; // table
+      o += 4; // column count
+      o += 4 + 1 + 1 + 1 + 4; // column metadata
+      o += 4; // row count
+      expect(view.getUint32(o, Endian.little), equals(3));
+      o += 4;
+      expect(enc.sublist(o, o + 3), equals([1, 0, 2]));
+    });
+
+    test('legacy build keeps fixed-width binary payload', () {
+      final b = BulkInsertBuilder()
+          .table('t')
+          .addColumn('p', BulkColumnType.binary, maxLen: 4)
+          .addRow([
+        Uint8List.fromList([1, 0, 2]),
+      ]);
+
+      final enc = b.build(version: BulkPayloadVersion.legacy);
+      var o = 0;
+      o += 4 + 1; // table
+      o += 4; // column count
+      o += 4 + 1 + 1 + 1 + 4; // column metadata
+      o += 4; // row count
+      expect(enc.sublist(o, o + 4), equals([1, 0, 2, 0]));
+    });
+
     test('serializes nullable variable-width and timestamp nulls', () {
       final b = BulkInsertBuilder()
           .table('events')
-          .addColumn('amount', BulkColumnType.decimal,
-              nullable: true, maxLen: 8,)
-          .addColumn('payload', BulkColumnType.binary,
-              nullable: true, maxLen: 4,)
+          .addColumn(
+            'amount',
+            BulkColumnType.decimal,
+            nullable: true,
+            maxLen: 8,
+          )
+          .addColumn(
+            'payload',
+            BulkColumnType.binary,
+            nullable: true,
+            maxLen: 4,
+          )
           .addColumn('created_at', BulkColumnType.timestamp, nullable: true)
           .addRow([null, null, null]);
 
@@ -553,7 +621,9 @@ void main() {
       final b = BulkInsertBuilder()
           .table('t')
           .addColumn('p', BulkColumnType.binary, maxLen: 4)
-          .addRow([Uint8List.fromList([7, 8])]);
+          .addRow([
+        Uint8List.fromList([7, 8]),
+      ]);
       expect(b.build(), isNotEmpty);
     });
 
@@ -564,7 +634,7 @@ void main() {
           .addColumn('a', BulkColumnType.i32)
           .addRow(row);
       row[0] = '42';
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
       var o = 0;
       o += 4 + 1;
@@ -575,13 +645,13 @@ void main() {
     });
 
     test('timestamp column uses zero sentinel when row mutated to string', () {
-      final row = <dynamic>[DateTime.utc(2020, 1, 1)];
+      final row = <dynamic>[DateTime.utc(2020)];
       final b = BulkInsertBuilder()
           .table('t')
           .addColumn('a', BulkColumnType.timestamp)
           .addRow(row);
       row[0] = 'unexpected';
-      final enc = b.build();
+      final enc = b.build(version: BulkPayloadVersion.legacy);
       final view = ByteData.sublistView(enc);
       var o = 0;
       o += 4 + 1;

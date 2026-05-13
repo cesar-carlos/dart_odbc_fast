@@ -8,8 +8,20 @@ handling larger datasets: streaming, batching, pooling, transactions, and array 
 Most APIs ultimately produce a `Vec<u8>` encoded by:
 
 - `protocol::RowBufferEncoder::encode(&RowBuffer)`
+- `protocol::multi_result::encode_multi(...)` for multi-result responses
+- `protocol::bulk_insert::serialize_bulk_insert_payload(_v2)` for bulk inserts
 
 This buffer is the unit transported over FFI (`odbc_exec_query`, streaming batches, etc).
+The current encoders pre-measure payload size where practical so the final
+`Vec<u8>` can be preallocated once instead of growing repeatedly while writing.
+Columnar v2 encoding keeps that path for compressed columns, but writes
+uncompressed column payloads directly into the final output buffer to avoid a
+temporary per-column payload allocation.
+
+Binary result cells reuse an internal scratch buffer while reading from ODBC.
+When a cell is handed to the row buffer, the scratch buffer is recreated with
+the previous capacity so binary-heavy result sets avoid growing from zero for
+every cell.
 
 ### 1.1 Spill-to-disk for large buffers
 
@@ -23,6 +35,19 @@ the engine provides `engine::core::DiskSpillStream`:
 This is wired into `odbc_stream_start` when `ODBC_STREAM_SPILL_THRESHOLD_MB` is set:
 buffer-mode streaming encodes via `DiskSpillWriter`; when data exceeds threshold,
 it spills to temp file and `StreamingStateFileBacked` reads in chunks.
+`DiskSpillWriter` writes full 64 KiB slices directly to the spill stream instead
+of allocating a temporary `Vec` per flush chunk. File-backed streaming opens the
+spill file once and advances sequentially for each `fetch_next_chunk`, avoiding
+per-chunk open/seek overhead.
+
+The FFI fetch path uses `copy_next_chunk` to write stream chunks directly into
+the caller-provided buffer. If the buffer is too small, the stream offset is not
+advanced and the next call can retry with a larger buffer without storing a
+pending chunk copy in global state.
+
+The FFI global state mutex is not held while streaming prepares, executes,
+reads cursor rows, or encodes/spills data. It is used only for lookup and stream
+registration.
 
 ### 1.2 Caches and protocol negotiation (supporting utilities)
 
@@ -43,6 +68,8 @@ FFI streaming (`odbc_stream_*`) has two modes:
 - Executes the query
 - Encodes the full result set into a `Vec<u8>`
 - Lets the caller pull it in fixed-size chunks via `odbc_stream_fetch`
+- If `ODBC_STREAM_SPILL_THRESHOLD_MB` is set, encoding goes through
+  `DiskSpillWriter` and may return a file-backed stream
 
 Use when: you need **bounded memory on the Dart side**, but can tolerate the engine holding the full result in memory.
 
@@ -83,8 +110,18 @@ does not apply the `BatchParam` values (placeholder for future parameter binding
 
 - `bulk_insert_i32(...)`
 - `bulk_insert_i32_text(...)`
+- `bulk_insert_generic(...)`
+- `bulk_insert_generic_range(...)` for pool workers that should operate on a
+  row range without cloning the entire payload chunk
 
 It uses an internal `paramset_size` (default: 1000) and sends rows in chunks.
+
+Bulk payload formats:
+
+- Legacy v1 remains accepted by Rust for compatibility.
+- v2 starts with `BLK2`, is the Dart default, and stores per-cell lengths for
+  text, decimal, and binary cells. This preserves embedded `0x00` bytes and
+  supports variable-width binary rows without padding.
 
 ### 4.1 Parallel bulk insert (pool + rayon + array binding)
 
@@ -94,6 +131,11 @@ It uses an internal `paramset_size` (default: 1000) and sends rows in chunks.
 - runs chunk inserts in parallel using `rayon`
 - each worker checks out a connection from `pool::ConnectionPool`
 - inserts via `engine::core::ArrayBinding`
+
+The FFI `odbc_bulk_insert_parallel` path uses row ranges over the original
+payload for ArrayBinding. When compiled with `sqlserver-bcp`, native BCP keeps
+an owned-chunk fallback because the BCP executor consumes a full
+`BulkInsertPayload`.
 
 ## 5) Connection pooling
 
@@ -153,15 +195,17 @@ These are implemented in Rust and used by the engine/FFI:
   - Compatibility notes: `native/doc/bcp_dll_compatibility.md`.
 - **FFI pooled connections**:
   - Pooled connections are tracked separately from `odbc_connect` connections.
-  - `odbc_exec_query` / `odbc_exec_query_params` / `odbc_exec_query_multi` still operate on
-    `conn_id` from `odbc_connect`.
-  - `odbc_prepare` / `odbc_execute` accept both regular `conn_id` and pooled connection IDs.
+  - Query, prepared execution, catalog, streaming buffer mode, and bulk array paths accept
+    both regular `conn_id` and pooled connection IDs where the public FFI contract permits.
+  - Pooled connections temporarily removed from `GlobalState` for long FFI calls are counted
+    as busy, so pool close/resize cannot race an in-flight operation.
   - **Lifecycle hardening**: `odbc_pool_release_connection` and `odbc_pool_close` remove all
     prepared statements for the released/closed connections to avoid orphaned statements and
     connection reuse hazards.
   - **RAII (rollback/autocommit restore)**: On release and pool close, any active transaction is
     rolled back and autocommit is restored before the connection returns to the pool or is
-    dropped. This ensures clean connection state regardless of `test_on_checkout`.
+    dropped. This cleanup runs outside the global state lock and ensures clean connection state
+    regardless of `test_on_checkout`.
 - **Lock poisoning recovery**:
   - Critical runtime locks (Tracer, BufferPool, PreparedStatementCache, Metrics) use
     `lock().unwrap_or_else(|e| e.into_inner())` to recover from poisoning instead of panicking.
@@ -182,8 +226,9 @@ These are implemented in Rust and used by the engine/FFI:
   - ID 0 is always reserved/invalid and indicates allocation failure.
   - See `ffi_conventions.md` for detailed ID allocation rules.
 - **E2E / coverage**:
-  - E2E tests may self-skip when no DSN is configured. See:
-    - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
-    - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
-
-
+  - E2E tests may self-skip when `ENABLE_E2E_TESTS=1` and a usable DSN are not
+    configured. The Rust FFI refactor coverage lives in
+    `native/odbc_engine/tests/e2e_ffi_refactor_regression_test.rs` and requires
+    SQL Server because it uses `WAITFOR DELAY`, `VARBINARY`, and `DATALENGTH`.
+  - Run the focused refactor E2E suite with:
+    `ENABLE_E2E_TESTS=1 ODBC_TEST_DSN="<connection string>" cargo test --test e2e_ffi_refactor_regression_test --all-features`.

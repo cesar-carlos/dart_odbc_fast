@@ -17,20 +17,22 @@ use crate::engine::{
     list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
     resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
     DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
-    OdbcEnvironment, PreparedXa, PreparingXa, SavepointDialect, StatementHandle, StreamState,
-    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
+    OdbcEnvironment, PreparedXa, PreparingXa, SavepointDialect, StatementHandle, StreamCopyResult,
+    StreamState, StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
-use crate::handles::SharedHandleManager;
+use crate::handles::{SharedConnection, SharedHandleManager};
 use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
 use crate::protocol::bound_param::ParamDirection;
 use crate::protocol::{
-    bound_param::ParamList, bulk_insert::is_null, deserialize_param_buffer,
-    parse_bulk_insert_payload, BulkColumnData, BulkInsertPayload, ParamValue,
+    bound_param::ParamList, deserialize_param_buffer, parse_bulk_insert_payload, BulkInsertPayload,
+    ParamValue,
 };
+#[cfg(feature = "sqlserver-bcp")]
+use crate::protocol::{bulk_insert::is_null, BulkColumnData};
 use crate::security::AuditLogger;
 use log::LevelFilter;
 use rayon::prelude::*;
@@ -68,19 +70,11 @@ enum StreamKind {
 }
 
 impl StreamKind {
-    fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+    fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
         match self {
-            StreamKind::Buffer(s) => s.fetch_next_chunk(),
-            StreamKind::Batched(s) => s.fetch_next_chunk(),
-            StreamKind::AsyncBatched(s) => s.fetch_next_chunk(),
-        }
-    }
-
-    fn has_more(&self) -> bool {
-        match self {
-            StreamKind::Buffer(s) => s.has_more(),
-            StreamKind::Batched(s) => s.has_more(),
-            StreamKind::AsyncBatched(s) => s.has_more(),
+            StreamKind::Buffer(s) => s.copy_next_chunk(out),
+            StreamKind::Batched(s) => s.copy_next_chunk(out),
+            StreamKind::AsyncBatched(s) => s.copy_next_chunk(out),
         }
     }
 
@@ -347,6 +341,126 @@ fn run_async_query(handles: SharedHandleManager, conn_id: u32, sql: &str) -> Res
     execute_query_with_cached_connection(&mut conn_guard, sql)
 }
 
+enum RunnableConnection {
+    Regular(SharedConnection),
+    Pooled {
+        pool_id: u32,
+        pooled: PooledConnectionWrapper,
+    },
+}
+
+fn take_runnable_connection(state: &mut GlobalState, conn_id: u32) -> Result<RunnableConnection> {
+    if let Some(conn) = state.connections.get(&conn_id) {
+        let handles = conn.get_handles();
+        let handles_guard = handles
+            .lock()
+            .map_err(|_| OdbcError::InternalError("Failed to lock handles mutex".to_string()))?;
+        let conn_arc = handles_guard.get_connection(conn_id)?;
+        return Ok(RunnableConnection::Regular(conn_arc));
+    }
+
+    if let Some((pool_id, pooled)) = state.pooled_connections.remove(&conn_id) {
+        *state.pooled_busy_counts.entry(pool_id).or_insert(0) += 1;
+        return Ok(RunnableConnection::Pooled { pool_id, pooled });
+    }
+
+    Err(OdbcError::InvalidHandle(conn_id))
+}
+
+fn restore_pooled_connection(state: &mut GlobalState, conn_id: u32, target: RunnableConnection) {
+    if let RunnableConnection::Pooled { pool_id, pooled } = target {
+        state.pooled_connections.insert(conn_id, (pool_id, pooled));
+        if let Some(count) = state.pooled_busy_counts.get_mut(&pool_id) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.pooled_busy_counts.remove(&pool_id);
+            }
+        }
+    }
+}
+
+fn run_buffered_connection_call<F>(
+    conn_id: u32,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+    run: F,
+) -> c_int
+where
+    F: FnOnce(&odbc_api::Connection<'static>) -> Result<Vec<u8>>,
+{
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let metrics = Arc::clone(&state.metrics);
+    let start = Instant::now();
+    let mut target = match take_runnable_connection(&mut state, conn_id) {
+        Ok(target) => target,
+        Err(e) => {
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            return -1;
+        }
+    };
+    drop(state);
+
+    let result = match &mut target {
+        RunnableConnection::Regular(conn_arc) => {
+            let conn_guard = match conn_arc.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let Some(mut state) = try_lock_global_state() else {
+                        return -1;
+                    };
+                    set_connection_error(
+                        &mut state,
+                        conn_id,
+                        "Failed to lock connection".to_string(),
+                    );
+                    return -1;
+                }
+            };
+            run(conn_guard.connection())
+        }
+        RunnableConnection::Pooled { pooled, .. } => run(pooled.get_connection()),
+    };
+
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    restore_pooled_connection(&mut state, conn_id, target);
+
+    match result {
+        Ok(data) => {
+            metrics.record_query(start.elapsed());
+            if data.len() > buffer_len as usize {
+                metrics.record_error();
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!(
+                        "Buffer too small: need {} bytes, got {}",
+                        data.len(),
+                        buffer_len
+                    ),
+                );
+                set_out_written_zero(out_written);
+                return -2;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                *out_written = data.len() as c_uint;
+            }
+            0
+        }
+        Err(e) => {
+            metrics.record_error();
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            set_out_written_zero(out_written);
+            -1
+        }
+    }
+}
+
 struct GlobalState {
     env: Option<Arc<Mutex<OdbcEnvironment>>>,
     connections: HashMap<u32, OdbcConnection>,
@@ -364,10 +478,10 @@ struct GlobalState {
     statements: HashMap<u32, StatementHandle>,
     streams: HashMap<u32, StreamKind>,
     stream_connections: HashMap<u32, u32>, // Map stream_id -> conn_id
-    pending_stream_chunks: HashMap<u32, PendingStreamChunk>,
     pending_result_buffers: HashMap<PendingResultKey, PendingResultBuffer>,
     pools: HashMap<u32, Arc<ConnectionPool>>,
     pooled_connections: HashMap<u32, (u32, PooledConnectionWrapper)>, // pooled_conn_id -> (pool_id, wrapper)
+    pooled_busy_counts: HashMap<u32, usize>, // pool_id -> connections temporarily removed for active FFI calls
     pooled_free_ids: HashMap<u32, Vec<u32>>, // pool_id -> reusable pooled connection IDs
     next_stream_id: u32,
     next_pool_id: u32,
@@ -387,11 +501,6 @@ struct GlobalState {
     metadata_cache: MetadataCache,
     metrics: Arc<Metrics>,
     audit_logger: Arc<AuditLogger>,
-}
-
-struct PendingStreamChunk {
-    data: Vec<u8>,
-    has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -541,10 +650,10 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             statements: HashMap::new(),
             streams: HashMap::new(),
             stream_connections: HashMap::new(),
-            pending_stream_chunks: HashMap::new(),
             pending_result_buffers: HashMap::new(),
             pools: HashMap::new(),
             pooled_connections: HashMap::new(),
+            pooled_busy_counts: HashMap::new(),
             pooled_free_ids: HashMap::new(),
             next_stream_id: 1,
             next_pool_id: 1,
@@ -927,8 +1036,14 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
             };
             env_guard.get_handles()
         };
+        drop(state);
 
-        match crate::engine::OdbcConnection::connect(handles, conn_str_rust) {
+        let result = crate::engine::OdbcConnection::connect(handles, conn_str_rust);
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+        match result {
             Ok(conn) => {
                 let conn_id = conn.get_connection_id();
                 state.connections.insert(conn_id, conn);
@@ -990,12 +1105,18 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
             };
             env_guard.get_handles()
         };
+        drop(state);
 
-        match crate::engine::OdbcConnection::connect_with_timeout(
+        let result = crate::engine::OdbcConnection::connect_with_timeout(
             handles,
             conn_str_rust,
             timeout_secs,
-        ) {
+        );
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+        match result {
             Ok(conn) => {
                 let conn_id = conn.get_connection_id();
                 state.connections.insert(conn_id, conn);
@@ -1037,9 +1158,10 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 .filter(|(_, t)| t.conn_id() == conn_id)
                 .map(|(id, _)| *id)
                 .collect();
+            let mut transactions = Vec::with_capacity(txns_to_rollback.len());
             for txn_id in txns_to_rollback {
                 if let Some(txn) = state.transactions.remove(&txn_id) {
-                    let _ = txn.rollback();
+                    transactions.push(txn);
                 }
             }
             let stmts_to_drop: Vec<u32> = state
@@ -1063,7 +1185,6 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                     stream.cancel();
                 }
                 state.stream_connections.remove(&stream_id);
-                state.pending_stream_chunks.remove(&stream_id);
             }
             state.async_requests.free_for_connection(conn_id);
             state.pending_result_buffers.retain(|key, _| match key {
@@ -1078,7 +1199,17 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 } => *key_conn != conn_id,
                 PendingResultKey::Execute { stmt_id, .. } => !stmts_to_drop.contains(stmt_id),
             });
-            match conn.disconnect() {
+            drop(state);
+
+            for txn in transactions {
+                let _ = txn.rollback();
+            }
+            let disconnect_result = conn.disconnect();
+
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
+            match disconnect_result {
                 Ok(_) => {
                     // Remove connection error when disconnecting
                     state.connection_errors.remove(&conn_id);
@@ -1348,12 +1479,21 @@ where
     let Some(mut state) = try_lock_global_state() else {
         return -1;
     };
-    let Some(txn) = state.transactions.get(&txn_id) else {
+    let Some(txn) = state.transactions.remove(&txn_id) else {
         set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
         return 1;
     };
     let conn_id = txn.conn_id();
-    match action(txn, name_str) {
+    drop(state);
+
+    let result = action(&txn, name_str);
+
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    state.transactions.insert(txn_id, txn);
+
+    match result {
         Ok(()) => 0,
         Err(e) => {
             set_connection_error(&mut state, conn_id, format!("Savepoint {op} failed: {}", e));
@@ -1528,8 +1668,14 @@ pub extern "C" fn odbc_xa_start(
         let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) else {
             return 0;
         };
+        drop(state);
 
-        let xa = match XaTransaction::start(handles, conn_id, xid) {
+        let xa_result = XaTransaction::start(handles, conn_id, xid);
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+        let xa = match xa_result {
             Ok(x) => x,
             Err(e) => {
                 set_connection_error(&mut state, conn_id, format!("odbc_xa_start: {}", e));
@@ -1562,7 +1708,14 @@ pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
             return 1;
         };
-        match xa.end() {
+        drop(state);
+
+        let result = xa.end();
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        match result {
             Ok(preparing) => {
                 state.xa_preparing.insert(xa_id, preparing);
                 0
@@ -1590,7 +1743,14 @@ pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
             );
             return 1;
         };
-        match preparing.prepare() {
+        drop(state);
+
+        let result = preparing.prepare();
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        match result {
             Ok(prepared) => {
                 state.xa_prepared.insert(xa_id, prepared);
                 0
@@ -1614,10 +1774,14 @@ pub extern "C" fn odbc_xa_commit_prepared(xa_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid XA ID (Prepared): {}", xa_id));
             return 1;
         };
+        drop(state);
+
         match prepared.commit() {
             Ok(()) => 0,
             Err(e) => {
-                set_error(&mut state, format!("xa_commit_prepared failed: {}", e));
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, format!("xa_commit_prepared failed: {}", e));
+                }
                 1
             }
         }
@@ -1635,10 +1799,14 @@ pub extern "C" fn odbc_xa_rollback_prepared(xa_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid XA ID (Prepared): {}", xa_id));
             return 1;
         };
+        drop(state);
+
         match prepared.rollback() {
             Ok(()) => 0,
             Err(e) => {
-                set_error(&mut state, format!("xa_rollback_prepared failed: {}", e));
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, format!("xa_rollback_prepared failed: {}", e));
+                }
                 1
             }
         }
@@ -1658,10 +1826,14 @@ pub extern "C" fn odbc_xa_commit_one_phase(xa_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
             return 1;
         };
+        drop(state);
+
         match xa.commit_one_phase() {
             Ok(()) => 0,
             Err(e) => {
-                set_error(&mut state, format!("xa_commit_one_phase failed: {}", e));
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, format!("xa_commit_one_phase failed: {}", e));
+                }
                 1
             }
         }
@@ -1680,10 +1852,14 @@ pub extern "C" fn odbc_xa_rollback_active(xa_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
             return 1;
         };
+        drop(state);
+
         match xa.rollback() {
             Ok(()) => 0,
             Err(e) => {
-                set_error(&mut state, format!("xa_rollback_active failed: {}", e));
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, format!("xa_rollback_active failed: {}", e));
+                }
                 1
             }
         }
@@ -1864,7 +2040,14 @@ pub extern "C" fn odbc_xa_resume_prepared(
             );
             return 0;
         };
-        let prepared = match resume_prepared(handles, conn_id, xid) {
+        drop(state);
+
+        let prepared_result = resume_prepared(handles, conn_id, xid);
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+        let prepared = match prepared_result {
             Ok(p) => p,
             Err(e) => {
                 set_connection_error(
@@ -2475,31 +2658,51 @@ pub extern "C" fn odbc_get_connection_dbms_info(
             set_out_written_zero(out_written);
             return -1;
         }
-        let Some(state) = try_lock_global_state() else {
+        let Some(mut state) = try_lock_global_state() else {
             set_out_written_zero(out_written);
             return -1;
         };
-
-        // Try direct connections first, then pooled connections.
-        let info_result = if let Some(conn) = state.connections.get(&conn_id) {
-            let handles = conn.get_handles();
-            DbmsInfo::detect_for_conn_id(&handles, conn_id)
-        } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
-            DbmsInfo::detect(pooled.get_connection())
-        } else {
-            let mut state_mut = state;
-            set_error(&mut state_mut, format!("Invalid connection ID: {conn_id}"));
-            set_out_written_zero(out_written);
-            return -1;
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
+                return -1;
+            }
         };
         drop(state);
+
+        let info_result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        if let Some(mut state) = try_lock_global_state() {
+                            set_connection_error(
+                                &mut state,
+                                conn_id,
+                                "Failed to lock connection".to_string(),
+                            );
+                        }
+                        set_out_written_zero(out_written);
+                        return -1;
+                    }
+                };
+                DbmsInfo::detect(conn_guard.connection())
+            }
+            RunnableConnection::Pooled { pooled, .. } => DbmsInfo::detect(pooled.get_connection()),
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
+            return -1;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         let info = match info_result {
             Ok(i) => i,
             Err(e) => {
-                if let Some(mut s) = try_lock_global_state() {
-                    set_connection_error(&mut s, conn_id, e.to_string());
-                }
+                set_connection_error(&mut state, conn_id, e.to_string());
                 set_out_written_zero(out_written);
                 return -1;
             }
@@ -2827,86 +3030,46 @@ pub extern "C" fn odbc_exec_query(
             return code;
         }
 
-        // Resolve `conn_id` to a runnable query. We accept both:
-        //   1. plain connection IDs created by `odbc_connect`
-        //      (`state.connections`), and
-        //   2. pooled IDs handed out by `odbc_pool_get_connection`
-        //      (`state.pooled_connections`).
-        // Until v3.1.1 only path (1) was implemented here, so any caller
-        // using `odbc_pool_get_connection` + `odbc_exec_query` got
-        // "Invalid connection ID" -- this regressed the
-        // `test_ffi_pool_release_raii_rollback_autocommit` E2E test.
-        let result = if let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles())
-        {
-            let Ok(handles_guard) = handles.lock() else {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    set_out_written_zero(out_written);
-                    return -1;
-                };
-                set_error(&mut state, "Failed to lock handles mutex".to_string());
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 set_out_written_zero(out_written);
                 return -1;
-            };
-            let conn_arc = match handles_guard.get_connection(conn_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    drop(handles_guard);
-                    drop(state);
-                    let Some(mut state) = try_lock_global_state() else {
-                        set_out_written_zero(out_written);
-                        return -1;
-                    };
-                    set_error(&mut state, format!("Failed to get connection: {}", e));
-                    set_out_written_zero(out_written);
-                    return -1;
-                }
-            };
-            drop(handles_guard);
-            drop(state);
+            }
+        };
+        drop(state);
 
-            let mut conn_guard = match conn_arc.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    let Some(mut state) = try_lock_global_state() else {
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let mut conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            set_out_written_zero(out_written);
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
                         set_out_written_zero(out_written);
                         return -1;
-                    };
-                    set_error(&mut state, "Failed to lock connection".to_string());
-                    set_out_written_zero(out_written);
-                    return -1;
-                }
-            };
-            execute_query_with_cached_connection(&mut conn_guard, sql_str)
-        } else if let Some((pool_id, pooled)) = state.pooled_connections.remove(&conn_id) {
-            drop(state);
-            let result = execute_query_with_connection(pooled.get_connection(), sql_str);
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            state.pooled_connections.insert(conn_id, (pool_id, pooled));
-            drop(state);
-            result
-        } else {
-            drop(state);
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            set_connection_error(
-                &mut state,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
-            set_out_written_zero(out_written);
-            return -1;
+                    }
+                };
+                execute_query_with_cached_connection(&mut conn_guard, sql_str)
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                execute_query_with_connection(pooled.get_connection(), sql_str)
+            }
         };
 
         let Some(mut state) = try_lock_global_state() else {
             set_out_written_zero(out_written);
             return -1;
         };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         match result {
             Ok(data) => {
@@ -2937,11 +3100,6 @@ pub extern "C" fn odbc_exec_query(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    set_out_written_zero(out_written);
-                    return -1;
-                };
                 let structured = e.to_structured();
                 set_connection_structured_error(&mut state, conn_id, structured);
                 let error_message = state
@@ -3134,58 +3292,6 @@ pub extern "C" fn odbc_exec_query_params(
             return -1;
         };
 
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let mut conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
         let metrics = Arc::clone(&state.metrics);
         let start = Instant::now();
         let params_hash = if params_buffer.is_null() || params_len == 0 {
@@ -3210,24 +3316,58 @@ pub extern "C" fn odbc_exec_query_params(
             return code;
         }
 
-        let result = if params_buffer.is_null() || params_len == 0 {
-            execute_query_with_cached_connection(&mut conn_guard, sql_str)
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        drop(state);
+
+        let params_slice = if params_buffer.is_null() || params_len == 0 {
+            &[][..]
         } else {
-            let params_slice =
-                unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            match execute_query_with_param_buffer(conn_guard.connection(), sql_str, params_slice) {
-                Ok(d) => Ok(d),
-                Err(e) => {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
+            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
+        };
+
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let mut conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        set_out_written_zero(out_written);
                         return -1;
-                    };
-                    set_connection_error(&mut s, conn_id, e.to_string());
-                    return -1;
+                    }
+                };
+                if params_slice.is_empty() {
+                    execute_query_with_cached_connection(&mut conn_guard, sql_str)
+                } else {
+                    execute_query_with_param_buffer(conn_guard.connection(), sql_str, params_slice)
+                }
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                if params_slice.is_empty() {
+                    execute_query_with_connection(pooled.get_connection(), sql_str)
+                } else {
+                    execute_query_with_param_buffer(pooled.get_connection(), sql_str, params_slice)
                 }
             }
         };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         match result {
             Ok(data) => {
@@ -3244,6 +3384,7 @@ pub extern "C" fn odbc_exec_query_params(
                             data_len, buffer_len
                         ),
                     );
+                    set_out_written_zero(out_written);
                     return -2;
                 }
 
@@ -3258,12 +3399,9 @@ pub extern "C" fn odbc_exec_query_params(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut s, conn_id, structured);
+                set_connection_structured_error(&mut state, conn_id, structured);
+                set_out_written_zero(out_written);
                 -1
             }
         }
@@ -3318,65 +3456,42 @@ pub extern "C" fn odbc_exec_query_multi(
             return code;
         }
 
-        // Resolve `conn_id` to a runnable query (M2 fix). Accepts plain conn IDs
-        // and pooled IDs (>= 1_000_000) returned by `odbc_pool_get_connection`.
-        let result = if state.connections.contains_key(&conn_id) {
-            let handles = state
-                .connections
-                .get(&conn_id)
-                .expect("conn_id present, just checked")
-                .get_handles();
-            let Ok(handles_guard) = handles.lock() else {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return -1;
+            }
+        };
+        drop(state);
+
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        return -1;
+                    }
                 };
-                set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-                return -1;
-            };
-            let conn_arc = match handles_guard.get_connection(conn_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    drop(handles_guard);
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!("Failed to get connection: {}", e),
-                    );
-                    return -1;
-                }
-            };
-            drop(handles_guard);
-            let conn_guard = match conn_arc.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                    return -1;
-                }
-            };
-            execute_multi_result(conn_guard.connection(), sql_str)
-        } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
-            execute_multi_result(pooled.get_connection(), sql_str)
-        } else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(
-                &mut s,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
+                execute_multi_result(conn_guard.connection(), sql_str)
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                execute_multi_result(pooled.get_connection(), sql_str)
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         match result {
             Ok(data) => {
@@ -3407,12 +3522,8 @@ pub extern "C" fn odbc_exec_query_multi(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut s, conn_id, structured);
+                set_connection_structured_error(&mut state, conn_id, structured);
                 -1
             }
         }
@@ -3508,63 +3619,44 @@ pub extern "C" fn odbc_exec_query_multi_params(
             return code;
         }
 
-        let result = if state.connections.contains_key(&conn_id) {
-            let handles = state
-                .connections
-                .get(&conn_id)
-                .expect("conn_id present, just checked")
-                .get_handles();
-            let Ok(handles_guard) = handles.lock() else {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        drop(state);
+
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        set_out_written_zero(out_written);
+                        return -1;
+                    }
                 };
-                set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-                return -1;
-            };
-            let conn_arc = match handles_guard.get_connection(conn_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    drop(handles_guard);
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!("Failed to get connection: {}", e),
-                    );
-                    return -1;
-                }
-            };
-            drop(handles_guard);
-            let conn_guard = match conn_arc.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                    return -1;
-                }
-            };
-            execute_multi_result_with_params(conn_guard.connection(), sql_str, &params)
-        } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
-            execute_multi_result_with_params(pooled.get_connection(), sql_str, &params)
-        } else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(
-                &mut s,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
+                execute_multi_result_with_params(conn_guard.connection(), sql_str, &params)
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                execute_multi_result_with_params(pooled.get_connection(), sql_str, &params)
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         match result {
             Ok(data) => {
@@ -3593,12 +3685,8 @@ pub extern "C" fn odbc_exec_query_multi_params(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut s, conn_id, structured);
+                set_connection_structured_error(&mut state, conn_id, structured);
                 set_out_written_zero(out_written);
                 -1
             }
@@ -3629,101 +3717,9 @@ pub extern "C" fn odbc_catalog_tables(
         let cat_ref = cat_opt.as_deref();
         let sch_ref = sch_opt.as_deref();
 
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-
-        match list_tables(conn_guard.connection(), cat_ref, sch_ref) {
-            Ok(data) => {
-                metrics.record_query(start.elapsed());
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    return -2;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
-            }
-            Err(e) => {
-                metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
-                -1
-            }
-        }
+        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
+            list_tables(conn, cat_ref, sch_ref)
+        })
     })
 }
 
@@ -3749,35 +3745,15 @@ pub extern "C" fn odbc_catalog_columns(
             Err(_) => return -1,
         };
 
-        let Some(state) = try_lock_global_state() else {
+        let Some(mut state) = try_lock_global_state() else {
             return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
         };
 
         let cache_key = format!("{}:{}", conn_id, table_str);
         if let Some(cached_data) = state.metadata_cache.get_payload(&cache_key) {
             if cached_data.len() > buffer_len as usize {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
                 set_connection_error(
-                    &mut s,
+                    &mut state,
                     conn_id,
                     format!(
                         "Buffer too small: need {} bytes, got {}",
@@ -3785,6 +3761,7 @@ pub extern "C" fn odbc_catalog_columns(
                         buffer_len
                     ),
                 );
+                set_out_written_zero(out_written);
                 return -2;
             }
             unsafe {
@@ -3794,57 +3771,54 @@ pub extern "C" fn odbc_catalog_columns(
             return 0;
         }
 
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
         let metrics = Arc::clone(&state.metrics);
         let start = Instant::now();
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        drop(state);
 
-        match list_columns(conn_guard.connection(), table_str) {
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        return -1;
+                    }
+                };
+                list_columns(conn_guard.connection(), table_str)
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                list_columns(pooled.get_connection(), table_str)
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
+
+        match result {
             Ok(data) => {
                 metrics.record_query(start.elapsed());
                 state.metadata_cache.cache_payload(&cache_key, &data);
                 if data.len() > buffer_len as usize {
                     metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
                     set_connection_error(
-                        &mut s,
+                        &mut state,
                         conn_id,
                         format!(
                             "Buffer too small: need {} bytes, got {}",
@@ -3852,6 +3826,7 @@ pub extern "C" fn odbc_catalog_columns(
                             buffer_len
                         ),
                     );
+                    set_out_written_zero(out_written);
                     return -2;
                 }
                 unsafe {
@@ -3862,11 +3837,8 @@ pub extern "C" fn odbc_catalog_columns(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
                 -1
             }
         }
@@ -3887,101 +3859,7 @@ pub extern "C" fn odbc_catalog_type_info(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-
-        match get_type_info(conn_guard.connection()) {
-            Ok(data) => {
-                metrics.record_query(start.elapsed());
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    return -2;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
-            }
-            Err(e) => {
-                metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
-                -1
-            }
-        }
+        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, get_type_info)
     })
 }
 
@@ -4002,31 +3880,10 @@ pub extern "C" fn odbc_catalog_primary_keys(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
         let c_str = unsafe { CStr::from_ptr(table) };
         let table_str = match c_str.to_str() {
             Ok(s) => s,
             Err(_) => {
-                drop(state);
                 let Some(mut s) = try_lock_global_state() else {
                     return -1;
                 };
@@ -4035,81 +3892,9 @@ pub extern "C" fn odbc_catalog_primary_keys(
             }
         };
 
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-
-        match list_primary_keys(conn_guard.connection(), table_str) {
-            Ok(data) => {
-                metrics.record_query(start.elapsed());
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    return -2;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
-            }
-            Err(e) => {
-                metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
-                -1
-            }
-        }
+        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
+            list_primary_keys(conn, table_str)
+        })
     })
 }
 
@@ -4130,31 +3915,10 @@ pub extern "C" fn odbc_catalog_foreign_keys(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
         let c_str = unsafe { CStr::from_ptr(table) };
         let table_str = match c_str.to_str() {
             Ok(s) => s,
             Err(_) => {
-                drop(state);
                 let Some(mut s) = try_lock_global_state() else {
                     return -1;
                 };
@@ -4163,81 +3927,9 @@ pub extern "C" fn odbc_catalog_foreign_keys(
             }
         };
 
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-
-        match list_foreign_keys(conn_guard.connection(), table_str) {
-            Ok(data) => {
-                metrics.record_query(start.elapsed());
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    return -2;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
-            }
-            Err(e) => {
-                metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
-                -1
-            }
-        }
+        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
+            list_foreign_keys(conn, table_str)
+        })
     })
 }
 
@@ -4258,31 +3950,10 @@ pub extern "C" fn odbc_catalog_indexes(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(
-                    &mut s,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
         let c_str = unsafe { CStr::from_ptr(table) };
         let table_str = match c_str.to_str() {
             Ok(s) => s,
             Err(_) => {
-                drop(state);
                 let Some(mut s) = try_lock_global_state() else {
                     return -1;
                 };
@@ -4291,81 +3962,9 @@ pub extern "C" fn odbc_catalog_indexes(
             }
         };
 
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, format!("Failed to get connection: {}", e));
-                return -1;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-
-        match list_indexes(conn_guard.connection(), table_str) {
-            Ok(data) => {
-                metrics.record_query(start.elapsed());
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    return -2;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
-            }
-            Err(e) => {
-                metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
-                -1
-            }
-        }
+        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
+            list_indexes(conn, table_str)
+        })
     })
 }
 
@@ -4521,74 +4120,54 @@ pub extern "C" fn odbc_execute(
             None
         };
 
-        let result = if let Some(conn) = state.connections.get(&conn_id) {
-            let handles = conn.get_handles();
-            let Some(handles_guard) = handles.lock().ok() else {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return -1;
+            }
+        };
+        drop(state);
+
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        return -1;
+                    }
                 };
-                set_connection_error(&mut s, conn_id, "Failed to lock handles mutex".to_string());
-                return -1;
-            };
+                execute_query_with_param_buffer_and_timeout(
+                    conn_guard.connection(),
+                    &sql_str,
+                    params_slice,
+                    timeout_sec,
+                    fetch_size_opt,
+                )
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                execute_query_with_param_buffer_and_timeout(
+                    pooled.get_connection(),
+                    &sql_str,
+                    params_slice,
+                    timeout_sec,
+                    fetch_size_opt,
+                )
+            }
+        };
 
-            let conn_arc = match handles_guard.get_connection(conn_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    drop(handles_guard);
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(
-                        &mut s,
-                        conn_id,
-                        format!("Failed to get connection: {}", e),
-                    );
-                    return -1;
-                }
-            };
-            drop(handles_guard);
-
-            let conn_guard = match conn_arc.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(&mut s, conn_id, "Failed to lock connection".to_string());
-                    return -1;
-                }
-            };
-
-            execute_query_with_param_buffer_and_timeout(
-                conn_guard.connection(),
-                &sql_str,
-                params_slice,
-                timeout_sec,
-                fetch_size_opt,
-            )
-        } else if let Some((_pool_id, pooled)) = state.pooled_connections.get(&conn_id) {
-            execute_query_with_param_buffer_and_timeout(
-                pooled.get_connection(),
-                &sql_str,
-                params_slice,
-                timeout_sec,
-                fetch_size_opt,
-            )
-        } else {
-            drop(state);
-            let Some(mut s) = try_lock_global_state() else {
-                return -1;
-            };
-            set_connection_error(
-                &mut s,
-                conn_id,
-                format!("Connection {} no longer valid", conn_id),
-            );
+        let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
+        restore_pooled_connection(&mut state, conn_id, target);
 
         match result {
             Ok(data) => {
@@ -4616,11 +4195,7 @@ pub extern "C" fn odbc_execute(
             }
             Err(e) => {
                 metrics.record_error();
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_connection_structured_error(&mut s, conn_id, e.to_structured());
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 -1
             }
         }
@@ -4732,62 +4307,6 @@ pub extern "C" fn odbc_stream_start(
             Err(_) => return 0,
         };
 
-        let Some(state) = try_lock_global_state() else {
-            return 0;
-        };
-
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return 0;
-            }
-        };
-
-        let handles = conn.get_handles();
-        let Some(handles_guard) = handles.lock().ok() else {
-            drop(state);
-            let Some(mut state) = try_lock_global_state() else {
-                return 0;
-            };
-            set_error(&mut state, "Failed to lock handles mutex".to_string());
-            return 0;
-        };
-
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                drop(handles_guard);
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_error(&mut state, format!("Failed to get connection: {}", e));
-                return 0;
-            }
-        };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_error(&mut state, "Failed to lock connection".to_string());
-                return 0;
-            }
-        };
-
         let chunk_size = if chunk_size > 0 {
             chunk_size as usize
         } else {
@@ -4798,20 +4317,69 @@ pub extern "C" fn odbc_stream_start(
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&t| t > 0);
 
-        let executor = StreamingExecutor::new(chunk_size);
-        let stream_state = if let Some(threshold) = spill_threshold_mb {
-            executor.execute_streaming_with_spill(conn_guard.connection(), sql_str, Some(threshold))
-        } else {
-            executor
-                .execute_streaming(conn_guard.connection(), sql_str)
-                .map(crate::engine::StreamState::InMemory)
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
         };
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return 0;
+            }
+        };
+        drop(state);
+
+        let executor = StreamingExecutor::new(chunk_size);
+        let stream_state = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return 0;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        return 0;
+                    }
+                };
+                if let Some(threshold) = spill_threshold_mb {
+                    executor.execute_streaming_with_spill(
+                        conn_guard.connection(),
+                        sql_str,
+                        Some(threshold),
+                    )
+                } else {
+                    executor
+                        .execute_streaming(conn_guard.connection(), sql_str)
+                        .map(crate::engine::StreamState::InMemory)
+                }
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                if let Some(threshold) = spill_threshold_mb {
+                    executor.execute_streaming_with_spill(
+                        pooled.get_connection(),
+                        sql_str,
+                        Some(threshold),
+                    )
+                } else {
+                    executor
+                        .execute_streaming(pooled.get_connection(), sql_str)
+                        .map(crate::engine::StreamState::InMemory)
+                }
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
+
         match stream_state {
             Ok(stream_state) => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
                 let stream_id = {
                     let mut id = 0u32;
                     for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
@@ -4839,10 +4407,6 @@ pub extern "C" fn odbc_stream_start(
                 stream_id
             }
             Err(e) => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
                 set_connection_error(
                     &mut state,
                     conn_id,
@@ -5285,60 +4849,6 @@ pub extern "C" fn odbc_stream_fetch(
 
         let stream_conn_id = state.stream_connections.get(&stream_id).copied();
 
-        if let Some(needed_len) = state
-            .pending_stream_chunks
-            .get(&stream_id)
-            .map(|pending| pending.data.len())
-        {
-            if needed_len > buf_len as usize {
-                if let Some(conn_id) = stream_conn_id {
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            needed_len, buf_len
-                        ),
-                    );
-                } else {
-                    set_error(
-                        &mut state,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            needed_len, buf_len
-                        ),
-                    );
-                }
-                return -2;
-            }
-
-            let pending = match state.pending_stream_chunks.remove(&stream_id) {
-                Some(p) => p,
-                None => {
-                    // Race: chunk vanished between length check and removal. Treat as
-                    // an internal-state error rather than panicking across the FFI.
-                    set_error(
-                        &mut state,
-                        format!("Stream {} pending chunk vanished concurrently", stream_id),
-                    );
-                    return -1;
-                }
-            };
-            // Keep has_more from the original fetch that produced this chunk.
-            // This preserves stream semantics across buffer-resize retries.
-            let has_more_value = pending.has_more;
-            let written_len = pending.data.len();
-            // SAFETY: `out_buf` was checked non-null and `buf_len` covers `written_len`
-            // (verified above against `needed_len`). `out_written`/`has_more` were
-            // checked non-null at function entry.
-            unsafe {
-                std::ptr::copy_nonoverlapping(pending.data.as_ptr(), out_buf, written_len);
-                *out_written = written_len as c_uint;
-                *has_more = if has_more_value { 1 } else { 0 };
-            }
-            return 0;
-        }
-
         let mut stream = match state.streams.remove(&stream_id) {
             Some(s) => s,
             None => {
@@ -5348,8 +4858,8 @@ pub extern "C" fn odbc_stream_fetch(
         };
         drop(state);
 
-        let fetch_result = stream.fetch_next_chunk();
-        let has_more_after_fetch = stream.has_more();
+        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_buf, buf_len as usize) };
+        let fetch_result = stream.copy_next_chunk(out_slice);
 
         let Some(mut state) = try_lock_global_state() else {
             return -1;
@@ -5357,43 +4867,33 @@ pub extern "C" fn odbc_stream_fetch(
         state.streams.insert(stream_id, stream);
 
         match fetch_result {
-            Ok(Some(data)) => {
-                let has_more_value = has_more_after_fetch;
-                let data_len = data.len();
-                if data.len() > buf_len as usize {
-                    state.pending_stream_chunks.insert(
-                        stream_id,
-                        PendingStreamChunk {
-                            data,
-                            has_more: has_more_value,
-                        },
-                    );
-                    if let Some(conn_id) = stream_conn_id {
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
-                        );
-                    } else {
-                        set_error(
-                            &mut state,
-                            format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
-                        );
-                    }
-                    return -2;
-                }
-
-                // Safety: Pointers must be valid for their respective writes
-                // out_buf: data.len() bytes, out_written/has_more: respective sizes
+            Ok(StreamCopyResult::Copied {
+                written,
+                has_more: more,
+            }) => {
                 unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buf, data.len());
-                    *out_written = data.len() as c_uint;
-                    *has_more = if has_more_value { 1 } else { 0 };
+                    *out_written = written as c_uint;
+                    *has_more = if more { 1 } else { 0 };
                 }
 
                 0
             }
-            Ok(None) => {
+            Ok(StreamCopyResult::BufferTooSmall { needed }) => {
+                if let Some(conn_id) = stream_conn_id {
+                    set_connection_error(
+                        &mut state,
+                        conn_id,
+                        format!("Buffer too small: need {} bytes, got {}", needed, buf_len),
+                    );
+                } else {
+                    set_error(
+                        &mut state,
+                        format!("Buffer too small: need {} bytes, got {}", needed, buf_len),
+                    );
+                }
+                -2
+            }
+            Ok(StreamCopyResult::End) => {
                 // Safety: Pointers must be valid for writes (verified by null checks earlier)
                 unsafe {
                     *out_written = 0;
@@ -5428,15 +4928,12 @@ pub extern "C" fn odbc_stream_cancel(stream_id: c_uint) -> c_int {
             return -1;
         };
 
-        match state.streams.get(&stream_id) {
-            Some(stream) => {
-                stream.cancel();
-                0
-            }
-            None => {
-                set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
-                1
-            }
+        if let Some(stream) = state.streams.get(&stream_id) {
+            stream.cancel();
+            0
+        } else {
+            set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
+            1
         }
     })
 }
@@ -5453,7 +4950,6 @@ pub extern "C" fn odbc_stream_close(stream_id: c_uint) -> c_int {
 
         if state.streams.remove(&stream_id).is_some() {
             state.stream_connections.remove(&stream_id);
-            state.pending_stream_chunks.remove(&stream_id);
             0
         } else {
             set_error(&mut state, format!("Invalid stream ID: {}", stream_id));
@@ -5671,14 +5167,20 @@ pub extern "C" fn odbc_pool_release_connection(connection_id: c_uint) -> c_int {
         };
 
         if let Some((pool_id, mut pooled)) = state.pooled_connections.remove(&connection_id) {
+            state
+                .statements
+                .retain(|_, stmt| stmt.conn_id() != connection_id);
+            drop(state);
+
             // RAII: rollback any active transaction and restore autocommit before returning to pool
             let conn = pooled.get_connection_mut();
             let _ = conn.rollback();
             let _ = conn.set_autocommit(true);
+            drop(pooled);
 
-            state
-                .statements
-                .retain(|_, stmt| stmt.conn_id() != connection_id);
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
             state
                 .pooled_free_ids
                 .entry(pool_id)
@@ -5848,11 +5350,10 @@ pub extern "C" fn odbc_pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c
             return -1;
         }
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
         let conn_str = {
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
             let pool = match state.pools.get(&pool_id) {
                 Some(p) => p,
                 None => {
@@ -5871,21 +5372,48 @@ pub extern "C" fn odbc_pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c
                 );
                 return -1;
             }
+            if state.pooled_busy_counts.get(&pool_id).copied().unwrap_or(0) > 0 {
+                set_error(
+                    &mut state,
+                    "Cannot resize pool while connections are executing".to_string(),
+                );
+                return -1;
+            }
             pool.connection_string().to_string()
         };
 
-        state.pools.remove(&pool_id);
-
-        match ConnectionPool::new(&conn_str, new_max_size) {
-            Ok(pool) => {
-                state.pools.insert(pool_id, Arc::new(pool));
-                0
-            }
+        let pool = match ConnectionPool::new(&conn_str, new_max_size) {
+            Ok(pool) => pool,
             Err(e) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return -1;
+                };
                 set_error(&mut state, format!("odbc_pool_set_size failed: {}", e));
-                -1
+                return -1;
             }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        if state
+            .pooled_connections
+            .values()
+            .any(|(pid, _)| *pid == pool_id)
+            || state.pooled_busy_counts.get(&pool_id).copied().unwrap_or(0) > 0
+        {
+            set_error(
+                &mut state,
+                "Cannot resize pool while connections are checked out or executing".to_string(),
+            );
+            return -1;
         }
+        if !state.pools.contains_key(&pool_id) {
+            set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+            return -1;
+        }
+        state.pools.insert(pool_id, Arc::new(pool));
+        0
     })
 }
 
@@ -5904,31 +5432,45 @@ pub extern "C" fn odbc_pool_close(pool_id: c_uint) -> c_int {
             set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
             return 1;
         }
+        if state.pooled_busy_counts.get(&pool_id).copied().unwrap_or(0) > 0 {
+            set_error(
+                &mut state,
+                "Cannot close pool while connections are executing".to_string(),
+            );
+            return 1;
+        }
 
-        // C4 fix: drain checked-out connections **before** removing the pool from
-        // the map. r2d2 returns a `PooledConnection` that releases back to the
-        // pool on Drop; if we removed the pool first and then dropped the last
-        // wrapper, r2d2 could deadlock waiting on internals that we just
-        // dismantled. Order matters: drop conns → drop free-id buckets → drop pool.
+        // Prevent new checkouts while keeping the pool Arc alive locally until
+        // checked-out wrappers are rolled back, restored and dropped.
+        // r2d2 returns a `PooledConnection` that releases back to the pool on
+        // Drop; holding this Arc preserves pool internals until wrappers drop.
+        let pool = state
+            .pools
+            .remove(&pool_id)
+            .expect("pool existence checked above");
         let conn_ids: Vec<u32> = state
             .pooled_connections
             .iter()
             .filter(|(_, (pid, _))| *pid == pool_id)
             .map(|(cid, _)| *cid)
             .collect();
+        let mut checked_out = Vec::with_capacity(conn_ids.len());
         for cid in conn_ids {
             state.statements.retain(|_, stmt| stmt.conn_id() != cid);
-            if let Some((_, mut pooled)) = state.pooled_connections.remove(&cid) {
-                let conn = pooled.get_connection_mut();
-                let _ = conn.rollback();
-                let _ = conn.set_autocommit(true);
-                // `pooled` is dropped here, releasing the connection back to the pool.
+            if let Some((_, pooled)) = state.pooled_connections.remove(&cid) {
+                checked_out.push(pooled);
             }
         }
         state.pooled_free_ids.remove(&pool_id);
+        drop(state);
 
-        // Now safe to remove the pool itself; no live checkouts remain.
-        state.pools.remove(&pool_id);
+        for mut pooled in checked_out {
+            let conn = pooled.get_connection_mut();
+            let _ = conn.rollback();
+            let _ = conn.set_autocommit(true);
+            // `pooled` is dropped here, releasing the connection back to the pool.
+        }
+        drop(pool);
         0
     })
 }
@@ -5976,46 +5518,51 @@ pub extern "C" fn odbc_bulk_insert_array(
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return -1;
-            }
-        };
-
-        let handles = conn.get_handles();
-        let Ok(handles_guard) = handles.lock() else {
-            set_error(&mut state, "Failed to lock handles mutex".to_string());
-            return -1;
-        };
-        let conn_arc = match handles_guard.get_connection(conn_id) {
-            Ok(c) => c,
+        #[cfg(feature = "sqlserver-bcp")]
+        let conn_str_owned = state.connection_strings.get(&conn_id).cloned();
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
             Err(e) => {
-                set_error(&mut state, format!("Failed to get connection: {}", e));
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return -1;
             }
         };
-        drop(handles_guard);
-
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                set_error(&mut state, "Failed to lock connection".to_string());
-                return -1;
-            }
-        };
+        drop(state);
 
         #[cfg(feature = "sqlserver-bcp")]
-        let conn_str = state.connection_strings.get(&conn_id).map(String::as_str);
+        let conn_str = conn_str_owned.as_deref();
         #[cfg(not(feature = "sqlserver-bcp"))]
         let conn_str: Option<&str> = None;
 
-        match bulk_insert_payload(conn_guard.connection(), &payload, conn_str) {
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        return -1;
+                    }
+                };
+                bulk_insert_payload(conn_guard.connection(), &payload, conn_str)
+            }
+            RunnableConnection::Pooled { pooled, .. } => {
+                bulk_insert_payload(pooled.get_connection(), &payload, conn_str)
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
+
+        match result {
             Ok(total) => {
                 unsafe {
                     *rows_inserted = total as c_uint;
@@ -6050,6 +5597,28 @@ fn bulk_insert_payload(
     }
 }
 
+fn bulk_insert_payload_range(
+    conn: &odbc_api::Connection<'static>,
+    payload: &BulkInsertPayload,
+    conn_str: Option<&str>,
+    start: usize,
+    end: usize,
+) -> Result<usize> {
+    #[cfg(feature = "sqlserver-bcp")]
+    {
+        // Native BCP currently consumes an owned BulkInsertPayload, so parallel
+        // BCP keeps the chunk materialization fallback. The default array
+        // binding path below uses the original payload by row range.
+        let chunk = slice_payload_rows(payload, start, end)?;
+        bulk_insert_payload(conn, &chunk, conn_str)
+    }
+    #[cfg(not(feature = "sqlserver-bcp"))]
+    {
+        let _ = conn_str;
+        ArrayBinding::default().bulk_insert_generic_range(conn, payload, start, end)
+    }
+}
+
 fn row_chunk_ranges(row_count: usize, parallelism: usize) -> Vec<(usize, usize)> {
     if row_count == 0 {
         return Vec::new();
@@ -6062,6 +5631,7 @@ fn row_chunk_ranges(row_count: usize, parallelism: usize) -> Vec<(usize, usize)>
         .collect()
 }
 
+#[cfg(feature = "sqlserver-bcp")]
 fn slice_null_bitmap(bitmap: &[u8], start: usize, len: usize) -> Vec<u8> {
     let mut out = vec![0u8; len.div_ceil(8)];
     for i in 0..len {
@@ -6072,6 +5642,7 @@ fn slice_null_bitmap(bitmap: &[u8], start: usize, len: usize) -> Vec<u8> {
     out
 }
 
+#[cfg(feature = "sqlserver-bcp")]
 fn slice_payload_rows(
     payload: &BulkInsertPayload,
     start: usize,
@@ -6166,8 +5737,7 @@ fn bulk_insert_parallel_with_pool(
         .map(|(start, end)| {
             let pooled = pool.get()?;
             let odbc_conn = pooled.get_connection();
-            let chunk = slice_payload_rows(payload, start, end)?;
-            bulk_insert_payload(odbc_conn, &chunk, Some(conn_str))
+            bulk_insert_payload_range(odbc_conn, payload, Some(conn_str), start, end)
         })
         .collect();
 
@@ -6278,8 +5848,8 @@ pub extern "C" fn odbc_bulk_insert_parallel(
 mod tests {
     use super::*;
     use crate::protocol::{
-        serialize_bulk_insert_payload, serialize_params, BulkColumnData, BulkColumnSpec,
-        BulkColumnType, BulkInsertPayload, ParamValue,
+        serialize_bulk_insert_payload, serialize_bulk_insert_payload_v2, serialize_params,
+        BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, ParamValue,
     };
     use serde_json::Value;
     use serial_test::serial;
@@ -6317,6 +5887,108 @@ mod tests {
 
         let len = result as usize;
         String::from_utf8_lossy(&buffer[..len]).to_string()
+    }
+
+    #[test]
+    #[serial(ffi_last_error)]
+    fn test_pending_result_replay_removes_buffer_after_success() {
+        odbc_init();
+        let key = PendingResultKey::ExecQueryMulti {
+            conn_id: 77,
+            sql_hash: hash_bytes(b"SELECT 1"),
+        };
+        let mut out = [0u8; 8];
+        let mut written: c_uint = 0;
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        stash_pending_result(&mut state, key.clone(), vec![1, 2, 3, 4]);
+        let code = try_write_pending_result(
+            &mut state,
+            &key,
+            out.as_mut_ptr(),
+            out.len() as c_uint,
+            &mut written,
+            Some(77),
+        );
+
+        assert_eq!(code, Some(0));
+        assert_eq!(written, 4);
+        assert_eq!(&out[..4], &[1, 2, 3, 4]);
+        assert!(!state.pending_result_buffers.contains_key(&key));
+    }
+
+    #[test]
+    #[serial(ffi_last_error)]
+    fn test_pending_result_replay_keeps_buffer_when_retry_too_small() {
+        odbc_init();
+        let key = PendingResultKey::Execute {
+            stmt_id: 11,
+            params_hash: hash_bytes(b"params"),
+            timeout_override_ms: 0,
+            fetch_size: 0,
+        };
+        let mut out = [0u8; 2];
+        let mut written: c_uint = 123;
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        stash_pending_result(&mut state, key.clone(), vec![9, 8, 7, 6]);
+        let code = try_write_pending_result(
+            &mut state,
+            &key,
+            out.as_mut_ptr(),
+            out.len() as c_uint,
+            &mut written,
+            Some(11),
+        );
+
+        assert_eq!(code, Some(-2));
+        assert_eq!(written, 0);
+        assert!(state.pending_result_buffers.contains_key(&key));
+        assert!(
+            get_connection_error(&state, Some(11)).contains("Buffer too small"),
+            "per-connection pending error should be written"
+        );
+    }
+
+    #[test]
+    #[serial(ffi_last_error)]
+    fn test_connection_errors_are_isolated_by_connection_id() {
+        odbc_init();
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+
+        set_connection_error(&mut state, 101, "conn 101 failed".to_string());
+        set_connection_error(&mut state, 202, "conn 202 failed".to_string());
+
+        assert_eq!(get_connection_error(&state, Some(101)), "conn 101 failed");
+        assert_eq!(get_connection_error(&state, Some(202)), "conn 202 failed");
+    }
+
+    #[test]
+    fn test_simulated_long_call_can_reacquire_global_state_after_lookup() {
+        odbc_init();
+        {
+            let Some(_lookup_phase) = try_lock_global_state() else {
+                panic!("Failed to lock global state");
+            };
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reacquired = try_lock_global_state().is_some();
+            tx.send(reacquired).expect("send lock result");
+        });
+
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(250)),
+            Ok(true),
+            "simulated ODBC execution must not keep GLOBAL_STATE locked"
+        );
     }
 
     fn trigger_structured_cancel_unsupported_error() {
@@ -8717,6 +8389,84 @@ mod tests {
             "Error should mention invalid connection, payload, or buffer: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_ffi_bulk_insert_array_accepts_v2_payload_before_connection_lookup() {
+        odbc_init();
+        let payload = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "blob".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: false,
+                max_len: 8,
+            }],
+            row_count: 1,
+            column_data: vec![BulkColumnData::Binary {
+                rows: vec![vec![1, 0, 2]],
+                max_len: 8,
+                null_bitmap: None,
+            }],
+        };
+        let enc = serialize_bulk_insert_payload_v2(&payload).unwrap();
+        let mut rows: c_uint = 0;
+        let r = odbc_bulk_insert_array(
+            TEST_INVALID_ID,
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            enc.as_ptr(),
+            enc.len() as c_uint,
+            0,
+            &mut rows,
+        );
+
+        assert_eq!(r, -1, "Invalid conn_id should return -1 after v2 parse");
+        let err = get_last_error();
+        assert!(
+            err.contains("Invalid handle") || err.contains(&TEST_INVALID_ID.to_string()),
+            "v2 payload should parse before connection lookup, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_bulk_parallel_row_chunk_ranges_cover_all_rows() {
+        assert_eq!(row_chunk_ranges(0, 4), Vec::<(usize, usize)>::new());
+        assert_eq!(row_chunk_ranges(5, 1), vec![(0, 5)]);
+        assert_eq!(row_chunk_ranges(5, 2), vec![(0, 3), (3, 5)]);
+        assert_eq!(
+            row_chunk_ranges(5, 8),
+            vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "sqlserver-bcp")]
+    fn test_bulk_parallel_bcp_chunk_fallback_preserves_binary_nul() {
+        let payload = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "blob".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: true,
+                max_len: 8,
+            }],
+            row_count: 3,
+            column_data: vec![BulkColumnData::Binary {
+                rows: vec![vec![1], vec![2, 0, 3], vec![4]],
+                max_len: 8,
+                null_bitmap: Some(vec![0]),
+            }],
+        };
+
+        let chunk = slice_payload_rows(&payload, 1, 2).unwrap();
+        assert_eq!(chunk.row_count, 1);
+        match &chunk.column_data[0] {
+            BulkColumnData::Binary { rows, .. } => assert_eq!(rows, &vec![vec![2, 0, 3]]),
+            other => panic!("unexpected chunk data: {other:?}"),
+        }
     }
 
     #[test]

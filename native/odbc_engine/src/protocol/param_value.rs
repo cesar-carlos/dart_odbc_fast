@@ -41,7 +41,24 @@ impl ParamValue {
     }
 
     pub fn try_serialize(&self) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.serialized_len()?);
+        self.write_to_vec(&mut out)?;
+        Ok(out)
+    }
+
+    fn serialized_len(&self) -> Result<usize> {
+        let payload_len = match self {
+            ParamValue::String(s) => checked_payload_len(s.len(), "ParamValue::String")? as usize,
+            ParamValue::Decimal(s) => checked_payload_len(s.len(), "ParamValue::Decimal")? as usize,
+            ParamValue::Binary(b) => checked_payload_len(b.len(), "ParamValue::Binary")? as usize,
+            ParamValue::Integer(_) => 4,
+            ParamValue::BigInt(_) => 8,
+            ParamValue::Null | ParamValue::RefCursorOut => 0,
+        };
+        Ok(5 + payload_len)
+    }
+
+    fn write_to_vec(&self, out: &mut Vec<u8>) -> Result<()> {
         match self {
             ParamValue::Null => {
                 out.push(TAG_NULL);
@@ -82,7 +99,7 @@ impl ParamValue {
                 out.extend_from_slice(&0u32.to_le_bytes());
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     pub fn deserialize(data: &[u8]) -> Result<(Self, usize)> {
@@ -196,9 +213,15 @@ pub fn try_serialize_params(params: &[ParamValue]) -> Result<Vec<u8>> {
             MAX_PARAM_COUNT
         )));
     }
-    let mut out = Vec::new();
+    let capacity = params.iter().try_fold(0usize, |acc, param| {
+        let len = param.serialized_len()?;
+        acc.checked_add(len).ok_or_else(|| {
+            OdbcError::ResourceLimitReached("parameter buffer size overflow".to_string())
+        })
+    })?;
+    let mut out = Vec::with_capacity(capacity);
     for p in params {
-        out.extend(p.try_serialize()?);
+        p.write_to_vec(&mut out)?;
     }
     Ok(out)
 }
@@ -213,9 +236,7 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<Strin
             ParamValue::BigInt(n) => out.push(Some(n.to_string())),
             ParamValue::Decimal(s) => out.push(Some(s.clone())),
             ParamValue::Binary(b) => {
-                out.push(Some(
-                    b.iter().map(|x| format!("{:02x}", x)).collect::<String>(),
-                ));
+                out.push(Some(bytes_to_lower_hex(b)));
             }
             ParamValue::RefCursorOut => {
                 return Err(OdbcError::ValidationError(
@@ -225,6 +246,16 @@ pub fn param_values_to_strings(params: &[ParamValue]) -> Result<Vec<Option<Strin
         }
     }
     Ok(out)
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 pub fn param_value_to_input_parameter(param: &ParamValue) -> Result<Box<dyn InputParameter>> {

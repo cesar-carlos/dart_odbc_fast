@@ -45,6 +45,8 @@ Creates a new ODBC connection and stores it in global state.
 
 - **Returns**: `conn_id > 0` on success; `0` on failure.
 - **Errors**: use `odbc_get_error(...)` / `odbc_get_structured_error(...)`.
+- **Locking**: global state is used to resolve/register handles; the ODBC
+  connection attempt runs outside the global mutex.
 
 ### `odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms: unsigned int) -> unsigned int`
 
@@ -60,6 +62,8 @@ Disconnects and removes the connection. Also rolls back any active transactions
 belonging to that connection.
 
 - **Returns**: `0` on success; non‑zero on failure.
+- **Locking**: transaction rollback and driver disconnect run outside the global
+  mutex after the connection is removed from state.
 
 ## Audit logging
 
@@ -207,7 +211,7 @@ Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
 
-**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. Current implementation caches prepared handles with explicit lifetime management; keep this feature opt-in until your workload benchmark confirms gains.
+**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. This feature remains disabled by default. Without the feature, the prepared-statement cache/state is metadata and metrics only; it does not retain reusable ODBC statement handles. Keep the feature opt-in until your workload benchmark confirms gains.
 
 ## Streaming (chunked copy-out over FFI)
 
@@ -220,6 +224,9 @@ allocating a huge buffer on the Dart side.
    result, then yields fixed-size chunks. Bounded memory on the Dart side.
    When `ODBC_STREAM_SPILL_THRESHOLD_MB` is set (>0), large results spill to
    temp file; engine reads in chunks without holding full result in memory.
+   The global FFI state lock is used only for connection lookup and stream
+   registration, not while `prepare`, `execute`, cursor reads, or spill encoding
+   are running.
 
 2. **Batched mode** (`odbc_stream_start_batched`): Cursor-based batching. Fetches
    `fetch_size` rows per batch, encodes each batch, and stores only the next
@@ -285,6 +292,10 @@ Fetches the next chunk. Works for both buffer and batched streams.
 - On success:
   - `out_written` is set to the bytes written for this chunk (may be `0` on EOF).
   - `out_has_more` is set to `1` if there is more, otherwise `0`.
+- If the function returns `-2`, the stream offset is not advanced; retry with a
+  larger buffer to receive the same chunk.
+- Chunks are copied directly into `out_buffer`; the FFI fetch path does not
+  allocate an intermediate chunk buffer.
 
 ### `odbc_stream_cancel(stream_id) -> int`
 
@@ -324,6 +335,8 @@ native.streamClose(streamId);
 
 Catalog functions use `INFORMATION_SCHEMA` (TABLES, COLUMNS) and return the same
 binary protocol as `odbc_exec_query`. Decode with `BinaryProtocolDecoder`.
+Connection lookup, cache lookup, and metrics/error writes use global state;
+metadata SQL execution runs outside the global mutex.
 
 ### Metadata cache controls
 
@@ -549,6 +562,8 @@ drive Phase 2 with `odbc_xa_commit_prepared` / `odbc_xa_rollback_prepared`.
 
 Savepoint operations run inside an active transaction and keep the transaction active.
 The SQL syntax depends on the `savepoint_dialect` passed to `odbc_transaction_begin`.
+The transaction handle is temporarily removed from global state while savepoint
+SQL executes, then reinserted after completion.
 
 ### `odbc_savepoint_create(txn_id, name) -> int`
 
@@ -581,6 +596,8 @@ Returns `pooled_conn_id > 0` on success; `0` on failure.
 Releases the checked-out pooled connection back to the pool. Before return, any active
 transaction is rolled back and autocommit is restored (RAII). Prepared statements for
 this connection are closed.
+Rollback/autocommit cleanup runs outside the global mutex; the pooled ID is
+recycled only after the wrapper is dropped back to r2d2.
 
 ### `odbc_pool_health_check(pool_id) -> int`
 
@@ -618,8 +635,9 @@ JSON format:
 
 Resizes the pool by recreating it with the new max size. All connections must be
 released before resize. Returns `0` on success; `-1` on error (invalid pool,
-connections checked out, or pool creation failed). r2d2 does not support in-place
-resize; the pool is recreated with the same connection string.
+connections checked out, active pooled FFI operations, or pool creation failed).
+r2d2 does not support in-place resize; the pool is recreated with the same
+connection string and the new pool is created outside the global mutex.
 
 ### `odbc_pool_close(pool_id) -> int`
 
@@ -627,6 +645,8 @@ Closes and removes the pool. Before close, any checked-out connections have thei
 active transactions rolled back and autocommit restored (RAII). Prepared statements
 for those connections are closed. Connections are then invalidated/removed from
 global state.
+Close is rejected while a pooled connection is temporarily busy in a long FFI
+call. Checked-out connection cleanup runs outside the global mutex.
 
 ## Bulk insert
 
@@ -639,6 +659,12 @@ Performs bulk insert on a regular connection. When feature `sqlserver-bcp` is en
 - **Data source**: current implementation reads table/columns/rows from `data_buffer`
   (serialized bulk payload); `table`/`columns`/`column_count`/`row_count` parameters are
   currently ignored by the Rust side.
+- **Wire format**: `data_buffer` may be legacy v1 or v2 (`BLK2`). v2 is the
+  Dart default and stores per-cell lengths for text/decimal/binary cells, so
+  binary values may contain embedded `0x00` bytes. Legacy v1 remains accepted
+  for compatibility.
+- **Locking**: connection lookup and error recording use global FFI state; ODBC
+  bulk execution runs outside the global mutex.
 
 ### `odbc_bulk_insert_parallel(pool_id, table, columns, column_count, data_buffer, buffer_len, parallelism, rows_inserted) -> int`
 
@@ -649,6 +675,10 @@ On partial failure, returns consolidated error with chunk indices and rows inser
 - **Returns**: `0` on success; `-1` on failure.
 - **parallelism** must be `>= 1`.
 - As above, table/column shape is taken from `data_buffer`.
+- **Chunking**: the default ArrayBinding path executes each worker over a row
+  range of the original payload to avoid cloning the chunk payload. With
+  `sqlserver-bcp`, the BCP executor still materializes an owned chunk per worker
+  because its API consumes a full `BulkInsertPayload`.
 
 ## Errors
 
@@ -797,5 +827,3 @@ if (caps != null && caps.driverName == 'PostgreSQL') {
   // Use SQL Server-specific patterns (e.g. TOP)
 }
 ```
-
-
