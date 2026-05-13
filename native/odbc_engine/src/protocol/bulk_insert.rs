@@ -13,6 +13,10 @@ pub const MAX_BULK_ROWS: usize = 10_000_000;
 /// VARCHAR/VARBINARY widths.
 pub const MAX_BULK_CELL_LEN: usize = 16 * 1024 * 1024;
 
+const BULK_V2_MAGIC: &[u8; 4] = b"BLK2";
+const BULK_V2_VERSION: u16 = 2;
+const BULK_V2_FLAGS_NONE: u16 = 0;
+
 const TAG_I32: u8 = 0;
 const TAG_I64: u8 = 1;
 const TAG_TEXT: u8 = 2;
@@ -127,6 +131,17 @@ fn read_u32_le(data: &[u8], offset: &mut usize) -> Result<u32> {
     Ok(v)
 }
 
+fn read_u16_le(data: &[u8], offset: &mut usize) -> Result<u16> {
+    if data.len().saturating_sub(*offset) < 2 {
+        return Err(OdbcError::ValidationError(
+            "Bulk insert payload truncated (u16)".to_string(),
+        ));
+    }
+    let v = u16::from_le_bytes([data[*offset], data[*offset + 1]]);
+    *offset += 2;
+    Ok(v)
+}
+
 fn read_bytes<'a>(data: &'a [u8], offset: &mut usize, len: usize) -> Result<&'a [u8]> {
     if data.len().saturating_sub(*offset) < len {
         return Err(OdbcError::ValidationError(
@@ -175,16 +190,54 @@ pub fn is_null_strict(bitmap: &[u8], row: usize, row_count: usize) -> Result<boo
 }
 
 pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
-    let mut o = 0usize;
+    if data.starts_with(BULK_V2_MAGIC) {
+        parse_bulk_insert_payload_v2(data)
+    } else {
+        parse_bulk_insert_payload_legacy(data)
+    }
+}
 
-    let table_len = read_u32_le(data, &mut o)? as usize;
-    let table_bytes = read_bytes(data, &mut o, table_len)?;
+fn parse_bulk_insert_payload_legacy(data: &[u8]) -> Result<BulkInsertPayload> {
+    let mut o = 0usize;
+    parse_bulk_insert_payload_body(data, &mut o, BulkPayloadWire::Legacy)
+}
+
+fn parse_bulk_insert_payload_v2(data: &[u8]) -> Result<BulkInsertPayload> {
+    let mut o = BULK_V2_MAGIC.len();
+    let version = read_u16_le(data, &mut o)?;
+    if version != BULK_V2_VERSION {
+        return Err(OdbcError::ValidationError(format!(
+            "Unsupported bulk insert payload version: {version}"
+        )));
+    }
+    let flags = read_u16_le(data, &mut o)?;
+    if flags != BULK_V2_FLAGS_NONE {
+        return Err(OdbcError::ValidationError(format!(
+            "Unsupported bulk insert payload flags: {flags}"
+        )));
+    }
+    parse_bulk_insert_payload_body(data, &mut o, BulkPayloadWire::V2)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BulkPayloadWire {
+    Legacy,
+    V2,
+}
+
+fn parse_bulk_insert_payload_body(
+    data: &[u8],
+    o: &mut usize,
+    wire: BulkPayloadWire,
+) -> Result<BulkInsertPayload> {
+    let table_len = read_u32_le(data, o)? as usize;
+    let table_bytes = read_bytes(data, o, table_len)?;
     let table = str::from_utf8(table_bytes).map_err(|_| {
         OdbcError::ValidationError("Bulk insert table name invalid UTF-8".to_string())
     })?;
     let table = table.to_string();
 
-    let col_count = read_u32_le(data, &mut o)? as usize;
+    let col_count = read_u32_le(data, o)? as usize;
     if col_count > MAX_BULK_COLUMNS {
         return Err(OdbcError::ResourceLimitReached(format!(
             "column count {col_count} exceeds MAX_BULK_COLUMNS={MAX_BULK_COLUMNS}"
@@ -192,28 +245,28 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
     }
     let mut columns = Vec::with_capacity(col_count);
     for _ in 0..col_count {
-        let name_len = read_u32_le(data, &mut o)? as usize;
-        let name_bytes = read_bytes(data, &mut o, name_len)?;
+        let name_len = read_u32_le(data, o)? as usize;
+        let name_bytes = read_bytes(data, o, name_len)?;
         let name = str::from_utf8(name_bytes).map_err(|_| {
             OdbcError::ValidationError("Bulk insert column name invalid UTF-8".to_string())
         })?;
         let name = name.to_string();
-        if data.len() <= o {
+        if data.len() <= *o {
             return Err(OdbcError::ValidationError(
                 "Bulk insert payload truncated (column spec)".to_string(),
             ));
         }
-        let type_tag = data[o];
-        o += 1;
-        let nullable = if data.len() <= o {
+        let type_tag = data[*o];
+        *o += 1;
+        let nullable = if data.len() <= *o {
             return Err(OdbcError::ValidationError(
                 "Bulk insert payload truncated (nullable)".to_string(),
             ));
         } else {
-            data[o] != 0
+            data[*o] != 0
         };
-        o += 1;
-        let max_len = read_u32_le(data, &mut o)? as usize;
+        *o += 1;
+        let max_len = read_u32_le(data, o)? as usize;
         if max_len > MAX_BULK_CELL_LEN {
             return Err(OdbcError::ResourceLimitReached(format!(
                 "max_len {max_len} exceeds MAX_BULK_CELL_LEN={MAX_BULK_CELL_LEN}"
@@ -228,7 +281,7 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
         });
     }
 
-    let row_count = read_u32_le(data, &mut o)? as usize;
+    let row_count = read_u32_le(data, o)? as usize;
     if row_count > MAX_BULK_ROWS {
         return Err(OdbcError::ResourceLimitReached(format!(
             "row count {row_count} exceeds MAX_BULK_ROWS={MAX_BULK_ROWS}"
@@ -237,12 +290,15 @@ pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
 
     let mut column_data = Vec::with_capacity(columns.len());
     for spec in &columns {
-        let (data_col, consumed) = parse_column_data(data, o, spec, row_count)?;
+        let (data_col, consumed) = match wire {
+            BulkPayloadWire::Legacy => parse_column_data(data, *o, spec, row_count)?,
+            BulkPayloadWire::V2 => parse_column_data_v2(data, *o, spec, row_count)?,
+        };
         column_data.push(data_col);
-        o += consumed;
+        *o += consumed;
     }
 
-    if o != data.len() {
+    if *o != data.len() {
         return Err(OdbcError::ValidationError(
             "Bulk insert payload length mismatch".to_string(),
         ));
@@ -413,6 +469,67 @@ fn parse_column_data(
     }
 }
 
+fn parse_column_data_v2(
+    data: &[u8],
+    start: usize,
+    spec: &BulkColumnSpec,
+    row_count: usize,
+) -> Result<(BulkColumnData, usize)> {
+    let mut o = start;
+
+    match &spec.col_type {
+        BulkColumnType::Text | BulkColumnType::Decimal => {
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
+            let mut rows = Vec::with_capacity(row_count);
+            for _ in 0..row_count {
+                let len = read_u32_le(data, &mut o)? as usize;
+                validate_variable_cell_len(len, spec.max_len)?;
+                rows.push(read_bytes(data, &mut o, len)?.to_vec());
+            }
+            Ok((
+                BulkColumnData::Text {
+                    rows,
+                    max_len: spec.max_len,
+                    null_bitmap,
+                },
+                o - start,
+            ))
+        }
+        BulkColumnType::Binary => {
+            let null_bitmap = read_null_bitmap(data, &mut o, spec.nullable, row_count)?;
+            let mut rows = Vec::with_capacity(row_count);
+            for _ in 0..row_count {
+                let len = read_u32_le(data, &mut o)? as usize;
+                validate_variable_cell_len(len, spec.max_len)?;
+                rows.push(read_bytes(data, &mut o, len)?.to_vec());
+            }
+            Ok((
+                BulkColumnData::Binary {
+                    rows,
+                    max_len: spec.max_len,
+                    null_bitmap,
+                },
+                o - start,
+            ))
+        }
+        _ => parse_column_data(data, start, spec, row_count),
+    }
+}
+
+fn validate_variable_cell_len(len: usize, max_len: usize) -> Result<()> {
+    if len > MAX_BULK_CELL_LEN {
+        return Err(OdbcError::ResourceLimitReached(format!(
+            "cell length {len} exceeds MAX_BULK_CELL_LEN={MAX_BULK_CELL_LEN}"
+        )));
+    }
+    if max_len > 0 && len > max_len {
+        return Err(OdbcError::MalformedPayload(format!(
+            "cell length {len} exceeds column max_len {max_len}"
+        )));
+    }
+    Ok(())
+}
+
 /// Convert `usize` to `u32` for wire-format length fields, returning a
 /// validation error instead of silently truncating.
 fn len_to_u32(n: usize, what: &str) -> Result<u32> {
@@ -425,6 +542,17 @@ fn len_to_u32(n: usize, what: &str) -> Result<u32> {
 }
 
 pub fn serialize_bulk_insert_payload(payload: &BulkInsertPayload) -> Result<Vec<u8>> {
+    serialize_bulk_insert_payload_with_wire(payload, BulkPayloadWire::Legacy)
+}
+
+pub fn serialize_bulk_insert_payload_v2(payload: &BulkInsertPayload) -> Result<Vec<u8>> {
+    serialize_bulk_insert_payload_with_wire(payload, BulkPayloadWire::V2)
+}
+
+fn serialize_bulk_insert_payload_with_wire(
+    payload: &BulkInsertPayload,
+    wire: BulkPayloadWire,
+) -> Result<Vec<u8>> {
     if payload.columns.len() > MAX_BULK_COLUMNS {
         return Err(OdbcError::ResourceLimitReached(format!(
             "column count {} exceeds MAX_BULK_COLUMNS={MAX_BULK_COLUMNS}",
@@ -438,6 +566,11 @@ pub fn serialize_bulk_insert_payload(payload: &BulkInsertPayload) -> Result<Vec<
         )));
     }
     let mut out = Vec::new();
+    if wire == BulkPayloadWire::V2 {
+        out.extend_from_slice(BULK_V2_MAGIC);
+        out.extend_from_slice(&BULK_V2_VERSION.to_le_bytes());
+        out.extend_from_slice(&BULK_V2_FLAGS_NONE.to_le_bytes());
+    }
     let table_b = payload.table.as_bytes();
     out.extend_from_slice(&len_to_u32(table_b.len(), "table name")?.to_le_bytes());
     out.extend_from_slice(table_b);
@@ -461,7 +594,14 @@ pub fn serialize_bulk_insert_payload(payload: &BulkInsertPayload) -> Result<Vec<
     out.extend_from_slice(&payload.row_count.to_le_bytes());
 
     for (spec, data) in payload.columns.iter().zip(payload.column_data.iter()) {
-        serialize_column_data(&mut out, spec, data, payload.row_count as usize)?;
+        match wire {
+            BulkPayloadWire::Legacy => {
+                serialize_column_data(&mut out, spec, data, payload.row_count as usize)?
+            }
+            BulkPayloadWire::V2 => {
+                serialize_column_data_v2(&mut out, spec, data, payload.row_count as usize)?
+            }
+        }
     }
 
     Ok(out)
@@ -577,6 +717,67 @@ fn serialize_column_data(
     Ok(())
 }
 
+fn serialize_column_data_v2(
+    out: &mut Vec<u8>,
+    spec: &BulkColumnSpec,
+    data: &BulkColumnData,
+    row_count: usize,
+) -> Result<()> {
+    match (data, &spec.col_type) {
+        (
+            BulkColumnData::Text {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Text,
+        )
+        | (
+            BulkColumnData::Text {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Decimal,
+        ) => {
+            write_null_bitmap(out, null_bitmap);
+            write_variable_rows_v2(out, rows, spec.max_len, row_count)
+        }
+        (
+            BulkColumnData::Binary {
+                rows, null_bitmap, ..
+            },
+            BulkColumnType::Binary,
+        ) => {
+            write_null_bitmap(out, null_bitmap);
+            write_variable_rows_v2(out, rows, spec.max_len, row_count)
+        }
+        _ => serialize_column_data(out, spec, data, row_count),
+    }
+}
+
+fn write_null_bitmap(out: &mut Vec<u8>, null_bitmap: &Option<Vec<u8>>) {
+    if let Some(bm) = null_bitmap {
+        out.extend_from_slice(bm);
+    }
+}
+
+fn write_variable_rows_v2(
+    out: &mut Vec<u8>,
+    rows: &[Vec<u8>],
+    max_len: usize,
+    row_count: usize,
+) -> Result<()> {
+    if rows.len() != row_count {
+        return Err(OdbcError::MalformedPayload(format!(
+            "row count mismatch: expected {row_count}, got {}",
+            rows.len()
+        )));
+    }
+    for row in rows {
+        validate_variable_cell_len(row.len(), max_len)?;
+        out.extend_from_slice(&len_to_u32(row.len(), "cell length")?.to_le_bytes());
+        out.extend_from_slice(row);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +876,111 @@ mod tests {
             }
             _ => panic!("expected Text"),
         }
+    }
+
+    #[test]
+    fn parse_v2_preserves_binary_nul_bytes() {
+        let payload = BulkInsertPayload {
+            table: "files".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "payload".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: false,
+                max_len: 8,
+            }],
+            row_count: 1,
+            column_data: vec![BulkColumnData::Binary {
+                rows: vec![vec![1, 0, 2, 0, 3]],
+                max_len: 8,
+                null_bitmap: None,
+            }],
+        };
+
+        let enc = serialize_bulk_insert_payload_v2(&payload).expect("serialize v2");
+        assert_eq!(&enc[..4], b"BLK2");
+        let dec = parse_bulk_insert_payload(&enc).expect("parse v2");
+
+        match &dec.column_data[0] {
+            BulkColumnData::Binary { rows, max_len, .. } => {
+                assert_eq!(*max_len, 8);
+                assert_eq!(rows[0], vec![1, 0, 2, 0, 3]);
+            }
+            _ => panic!("expected Binary"),
+        }
+    }
+
+    #[test]
+    fn parse_v2_accepts_variable_binary_when_max_len_zero() {
+        let payload = BulkInsertPayload {
+            table: "files".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "payload".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: 1,
+            column_data: vec![BulkColumnData::Binary {
+                rows: vec![vec![9, 8, 0, 7, 6]],
+                max_len: 0,
+                null_bitmap: None,
+            }],
+        };
+
+        let enc = serialize_bulk_insert_payload_v2(&payload).expect("serialize v2");
+        let dec = parse_bulk_insert_payload(&enc).expect("parse v2");
+
+        match &dec.column_data[0] {
+            BulkColumnData::Binary { rows, max_len, .. } => {
+                assert_eq!(*max_len, 0);
+                assert_eq!(rows[0], vec![9, 8, 0, 7, 6]);
+            }
+            _ => panic!("expected Binary"),
+        }
+    }
+
+    #[test]
+    fn parse_v2_rejects_cell_over_column_max_len() {
+        let mut enc = Vec::new();
+        enc.extend_from_slice(b"BLK2");
+        enc.extend_from_slice(&2u16.to_le_bytes());
+        enc.extend_from_slice(&0u16.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"t");
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"b");
+        enc.push(TAG_BINARY);
+        enc.push(0);
+        enc.extend_from_slice(&2u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&3u32.to_le_bytes());
+        enc.extend_from_slice(&[1, 2, 3]);
+
+        let e = parse_bulk_insert_payload(&enc).expect_err("max len");
+        assert!(e.to_string().contains("exceeds column max_len"));
+    }
+
+    #[test]
+    fn parse_v2_rejects_truncated_variable_cell() {
+        let mut enc = Vec::new();
+        enc.extend_from_slice(b"BLK2");
+        enc.extend_from_slice(&2u16.to_le_bytes());
+        enc.extend_from_slice(&0u16.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"t");
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"b");
+        enc.push(TAG_BINARY);
+        enc.push(0);
+        enc.extend_from_slice(&8u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&4u32.to_le_bytes());
+        enc.extend_from_slice(&[1, 2]);
+
+        let e = parse_bulk_insert_payload(&enc).expect_err("truncated");
+        assert!(e.to_string().contains("truncated"));
     }
 
     #[test]

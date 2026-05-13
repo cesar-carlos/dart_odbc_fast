@@ -41,7 +41,10 @@ xychart-beta
 **Recommendations:**
 
 - **Array binding**: Single connection, batch sizes 500–2000. Best when parallelism is not needed.
-- **Parallel bulk**: Use `ParallelBulkInsert` with 4+ workers for large datasets. Scales well with row count.
+- **Parallel bulk**: Use `ParallelBulkInsert`/`odbc_bulk_insert_parallel`
+  with 4+ workers for large datasets. The default ArrayBinding path executes
+  worker chunks by row range over the original payload, avoiding a full payload
+  clone per worker.
 
 ### BCP (Bulk Copy)
 
@@ -66,6 +69,9 @@ xychart-beta
 
 - Use **native BCP** when `sqlncli11.dll` is available and bulk insert volume is high (10k+ rows).
 - Fallback to **ArrayBinding** automatically when native BCP is unavailable or disabled.
+- In parallel mode with `sqlserver-bcp`, BCP still materializes an owned payload
+  per chunk because the BCP executor consumes `BulkInsertPayload`; this is the
+  documented fallback when range/view execution is unavailable.
 
 ---
 
@@ -119,13 +125,19 @@ xychart-beta
 **Recommendations:**
 
 - Use **streaming** for large result sets to reduce memory and improve latency.
+  `odbc_stream_start` no longer holds the global FFI state lock while executing
+  or encoding; for bounded Rust-side memory prefer batched streaming or set
+  `ODBC_STREAM_SPILL_THRESHOLD_MB` for file-backed buffer-mode streaming.
 - Cold vs warm difference is small; metadata cache helps repeated catalog queries more than simple SELECTs.
 
 ---
 
 ## Statement Reuse (Repetitive Queries)
 
-Feature flag `statement-handle-reuse` implements real prepared statement handle reuse using type-erased caching with explicit lifetime management.
+Feature flag `statement-handle-reuse` implements real prepared statement handle
+reuse using type-erased caching with explicit lifetime management. It is
+disabled by default; without the feature, cache counters/metadata do not
+represent reusable ODBC statement handles.
 
 **Status (2026-03-10):**
 - Implementation complete with unsafe lifetime extension and guaranteed drop order safety.

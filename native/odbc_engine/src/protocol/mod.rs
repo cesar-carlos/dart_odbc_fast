@@ -20,8 +20,8 @@ pub use bound_param::{
     deserialize_param_buffer, is_directed_param_buffer, BoundParam, ParamDirection, ParamList,
 };
 pub use bulk_insert::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData, BulkColumnSpec,
-    BulkColumnType, BulkInsertPayload, BulkTimestamp,
+    parse_bulk_insert_payload, serialize_bulk_insert_payload, serialize_bulk_insert_payload_v2,
+    BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp,
 };
 pub use columnar::{ColumnBlock, ColumnData, ColumnMetadata, CompressionType, RowBufferV2};
 pub use columnar_encoder::ColumnarEncoder;

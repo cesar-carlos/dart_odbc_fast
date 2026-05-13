@@ -207,7 +207,7 @@ Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
 
-**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. Current implementation caches prepared handles with explicit lifetime management; keep this feature opt-in until your workload benchmark confirms gains.
+**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. This feature remains disabled by default. Without the feature, the prepared-statement cache/state is metadata and metrics only; it does not retain reusable ODBC statement handles. Keep the feature opt-in until your workload benchmark confirms gains.
 
 ## Streaming (chunked copy-out over FFI)
 
@@ -220,6 +220,9 @@ allocating a huge buffer on the Dart side.
    result, then yields fixed-size chunks. Bounded memory on the Dart side.
    When `ODBC_STREAM_SPILL_THRESHOLD_MB` is set (>0), large results spill to
    temp file; engine reads in chunks without holding full result in memory.
+   The global FFI state lock is used only for connection lookup and stream
+   registration, not while `prepare`, `execute`, cursor reads, or spill encoding
+   are running.
 
 2. **Batched mode** (`odbc_stream_start_batched`): Cursor-based batching. Fetches
    `fetch_size` rows per batch, encodes each batch, and stores only the next
@@ -639,6 +642,12 @@ Performs bulk insert on a regular connection. When feature `sqlserver-bcp` is en
 - **Data source**: current implementation reads table/columns/rows from `data_buffer`
   (serialized bulk payload); `table`/`columns`/`column_count`/`row_count` parameters are
   currently ignored by the Rust side.
+- **Wire format**: `data_buffer` may be legacy v1 or v2 (`BLK2`). v2 is the
+  Dart default and stores per-cell lengths for text/decimal/binary cells, so
+  binary values may contain embedded `0x00` bytes. Legacy v1 remains accepted
+  for compatibility.
+- **Locking**: connection lookup and error recording use global FFI state; ODBC
+  bulk execution runs outside the global mutex.
 
 ### `odbc_bulk_insert_parallel(pool_id, table, columns, column_count, data_buffer, buffer_len, parallelism, rows_inserted) -> int`
 
@@ -649,6 +658,10 @@ On partial failure, returns consolidated error with chunk indices and rows inser
 - **Returns**: `0` on success; `-1` on failure.
 - **parallelism** must be `>= 1`.
 - As above, table/column shape is taken from `data_buffer`.
+- **Chunking**: the default ArrayBinding path executes each worker over a row
+  range of the original payload to avoid cloning the chunk payload. With
+  `sqlserver-bcp`, the BCP executor still materializes an owned chunk per worker
+  because its API consumes a full `BulkInsertPayload`.
 
 ## Errors
 
@@ -797,5 +810,4 @@ if (caps != null && caps.driverName == 'PostgreSQL') {
   // Use SQL Server-specific patterns (e.g. TOP)
 }
 ```
-
 

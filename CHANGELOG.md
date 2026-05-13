@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk payload v2:** Dart `BulkInsertBuilder.build()` now emits the `BLK2`
+  wire format by default and exposes `BulkPayloadVersion { legacy, v2 }`.
+  Rust auto-detects v1/v2 in `odbc_bulk_insert_array` and
+  `odbc_bulk_insert_parallel`, preserving compatibility with existing payloads.
+- **Regression coverage:** added Rust coverage for bulk v2 binary cells with
+  embedded `NUL`, variable-length binary cells, truncation and max-length
+  validation, pending-result replay, per-connection errors, parallel bulk
+  chunking, and streaming spill encoding. Dart coverage now verifies the v2
+  default, legacy format opt-in, binary `NUL` preservation, and `maxLen`
+  validation.
+
+### Fixed
+
+- **Binary bulk insert correctness:** v2 variable-width cells carry a per-cell
+  length, so binary values such as `Uint8List([1, 0, 2])` are no longer
+  truncated at the first `0x00`.
+- **FFI concurrency:** long ODBC calls in query, prepared execution, streaming,
+  and bulk insert paths no longer run while `GLOBAL_STATE` is locked. The global
+  mutex is now limited to lookup/registration, pending-buffer replay, metrics,
+  and error recording.
+
+### Changed
+
+- **Bulk/streaming performance:** pool-based parallel bulk insert uses row
+  ranges/views on the default ArrayBinding path to avoid cloning each chunk's
+  full payload. The `sqlserver-bcp` feature keeps a documented chunk
+  materialization fallback because the BCP executor consumes an owned payload.
+- **Statement reuse docs:** documentation now states that
+  `statement-handle-reuse` remains opt-in and that the default path keeps only
+  metrics/cache metadata, not reusable statement handles.
+
 ## [3.6.0] - 2026-05-02
 
 ### Added

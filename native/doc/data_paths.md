@@ -24,6 +24,10 @@ This is wired into `odbc_stream_start` when `ODBC_STREAM_SPILL_THRESHOLD_MB` is 
 buffer-mode streaming encodes via `DiskSpillWriter`; when data exceeds threshold,
 it spills to temp file and `StreamingStateFileBacked` reads in chunks.
 
+The FFI global state mutex is not held while streaming prepares, executes,
+reads cursor rows, or encodes/spills data. It is used only for lookup and stream
+registration.
+
 ### 1.2 Caches and protocol negotiation (supporting utilities)
 
 These are supporting utilities that impact performance/compatibility:
@@ -43,6 +47,8 @@ FFI streaming (`odbc_stream_*`) has two modes:
 - Executes the query
 - Encodes the full result set into a `Vec<u8>`
 - Lets the caller pull it in fixed-size chunks via `odbc_stream_fetch`
+- If `ODBC_STREAM_SPILL_THRESHOLD_MB` is set, encoding goes through
+  `DiskSpillWriter` and may return a file-backed stream
 
 Use when: you need **bounded memory on the Dart side**, but can tolerate the engine holding the full result in memory.
 
@@ -83,8 +89,18 @@ does not apply the `BatchParam` values (placeholder for future parameter binding
 
 - `bulk_insert_i32(...)`
 - `bulk_insert_i32_text(...)`
+- `bulk_insert_generic(...)`
+- `bulk_insert_generic_range(...)` for pool workers that should operate on a
+  row range without cloning the entire payload chunk
 
 It uses an internal `paramset_size` (default: 1000) and sends rows in chunks.
+
+Bulk payload formats:
+
+- Legacy v1 remains accepted by Rust for compatibility.
+- v2 starts with `BLK2`, is the Dart default, and stores per-cell lengths for
+  text, decimal, and binary cells. This preserves embedded `0x00` bytes and
+  supports variable-width binary rows without padding.
 
 ### 4.1 Parallel bulk insert (pool + rayon + array binding)
 
@@ -94,6 +110,11 @@ It uses an internal `paramset_size` (default: 1000) and sends rows in chunks.
 - runs chunk inserts in parallel using `rayon`
 - each worker checks out a connection from `pool::ConnectionPool`
 - inserts via `engine::core::ArrayBinding`
+
+The FFI `odbc_bulk_insert_parallel` path uses row ranges over the original
+payload for ArrayBinding. When compiled with `sqlserver-bcp`, native BCP keeps
+an owned-chunk fallback because the BCP executor consumes a full
+`BulkInsertPayload`.
 
 ## 5) Connection pooling
 
@@ -185,5 +206,4 @@ These are implemented in Rust and used by the engine/FFI:
   - E2E tests may self-skip when no DSN is configured. See:
     - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
     - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
-
 

@@ -8,6 +8,9 @@ const int _tagDecimal = 3;
 const int _tagBinary = 4;
 const int _tagTimestamp = 5;
 const Endian _littleEndian = Endian.little;
+const List<int> _bulkPayloadV2Magic = [0x42, 0x4C, 0x4B, 0x32]; // BLK2
+const int _bulkPayloadV2Version = 2;
+const int _bulkPayloadV2Flags = 0;
 
 int _nullBitmapSize(int rowCount) => (rowCount / 8).ceil();
 
@@ -40,6 +43,19 @@ void _validateTextColumn(String value, BulkColumnSpec spec, int rowNumber) {
     throw ArgumentError(
       'Column "${spec.name}" UTF-8 encoding exceeds max length ${spec.maxLen} '
       '(got ${utf8Bytes.length} bytes) at row $rowNumber.',
+    );
+  }
+}
+
+void _validateBinaryColumn(
+  List<int> value,
+  BulkColumnSpec spec,
+  int rowNumber,
+) {
+  if (spec.maxLen > 0 && value.length > spec.maxLen) {
+    throw ArgumentError(
+      'Column "${spec.name}" exceeds max length ${spec.maxLen} '
+      '(got ${value.length} bytes) at row $rowNumber.',
     );
   }
 }
@@ -86,6 +102,7 @@ void _validateValueForColumn(
           '(${value.runtimeType}) at row $rowNumber.',
         );
       }
+      _validateTextColumn('$value', spec, rowNumber);
     case BulkColumnType.binary:
       if (value is! List<int>) {
         throw ArgumentError(
@@ -93,6 +110,7 @@ void _validateValueForColumn(
           '(${value.runtimeType}) at row $rowNumber.',
         );
       }
+      _validateBinaryColumn(value, spec, rowNumber);
     case BulkColumnType.timestamp:
       if (value is! DateTime && value is! BulkTimestamp) {
         throw ArgumentError(
@@ -131,6 +149,15 @@ List<int> _i16Le(int v) {
   final buffer = Uint8List(2);
   ByteData.view(buffer.buffer).setInt16(0, v, _littleEndian);
   return buffer;
+}
+
+/// Bulk insert wire payload version.
+enum BulkPayloadVersion {
+  /// Legacy fixed-width wire format without a magic header.
+  legacy,
+
+  /// Versioned wire format that stores variable-width cell lengths.
+  v2,
 }
 
 /// Column data types for bulk insert operations.
@@ -333,12 +360,17 @@ class BulkInsertBuilder {
 
   /// Builds the binary data buffer for bulk insert.
   ///
+  /// Version [BulkPayloadVersion.v2] is the default and preserves
+  /// variable-width binary values, including embedded NUL bytes. Use
+  /// [BulkPayloadVersion.legacy] only when talking to native engines that do
+  /// not understand the versioned `BLK2` payload.
+  ///
   /// Validates that table name, columns, and at least one row are present.
   /// Returns a [Uint8List] containing the serialized bulk insert data.
   ///
   /// Throws [StateError] if table name is empty, no columns are defined,
   /// no rows have been added, or a non-nullable column contains null.
-  Uint8List build() {
+  Uint8List build({BulkPayloadVersion version = BulkPayloadVersion.v2}) {
     if (_table.isEmpty) {
       throw StateError('Table name required');
     }
@@ -364,6 +396,13 @@ class BulkInsertBuilder {
     }
 
     final out = <int>[];
+    if (version == BulkPayloadVersion.v2) {
+      out
+        ..addAll(_bulkPayloadV2Magic)
+        ..addAll(_u16Le(_bulkPayloadV2Version))
+        ..addAll(_u16Le(_bulkPayloadV2Flags));
+    }
+
     final tableBytes = utf8.encode(_table);
     out
       ..addAll(_u32Le(tableBytes.length))
@@ -385,13 +424,17 @@ class BulkInsertBuilder {
 
     for (var c = 0; c < _columns.length; c++) {
       final spec = _columns[c];
-      _serializeColumn(out, spec, c, rowCount);
+      if (version == BulkPayloadVersion.v2) {
+        _serializeColumnV2(out, spec, c, rowCount);
+      } else {
+        _serializeColumnLegacy(out, spec, c, rowCount);
+      }
     }
 
     return Uint8List.fromList(out);
   }
 
-  void _serializeColumn(
+  void _serializeColumnLegacy(
     List<int> out,
     BulkColumnSpec spec,
     int colIndex,
@@ -519,6 +562,56 @@ class BulkInsertBuilder {
             ..addAll(_u16Le(t.minute))
             ..addAll(_u16Le(t.second))
             ..addAll(_u32Le(t.fraction));
+        }
+    }
+  }
+
+  void _serializeColumnV2(
+    List<int> out,
+    BulkColumnSpec spec,
+    int colIndex,
+    int rowCount,
+  ) {
+    List<int>? nullBitmap;
+    if (spec.nullable) {
+      nullBitmap = List.filled(_nullBitmapSize(rowCount), 0);
+    }
+
+    switch (spec.colType) {
+      case BulkColumnType.i32:
+      case BulkColumnType.i64:
+      case BulkColumnType.timestamp:
+        _serializeColumnLegacy(out, spec, colIndex, rowCount);
+      case BulkColumnType.text:
+      case BulkColumnType.decimal:
+        if (nullBitmap != null) {
+          for (var r = 0; r < rowCount; r++) {
+            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+          }
+          out.addAll(nullBitmap);
+        }
+        for (var r = 0; r < rowCount; r++) {
+          final v = _rows[r][colIndex];
+          final raw = v == null ? <int>[] : utf8.encode('$v');
+          out
+            ..addAll(_u32Le(raw.length))
+            ..addAll(raw);
+        }
+      case BulkColumnType.binary:
+        if (nullBitmap != null) {
+          for (var r = 0; r < rowCount; r++) {
+            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+          }
+          out.addAll(nullBitmap);
+        }
+        for (var r = 0; r < rowCount; r++) {
+          final v = _rows[r][colIndex];
+          final raw = v == null
+              ? <int>[]
+              : (v is Uint8List ? v.toList() : (v as List<int>));
+          out
+            ..addAll(_u32Le(raw.length))
+            ..addAll(raw);
         }
     }
   }

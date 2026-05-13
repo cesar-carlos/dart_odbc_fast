@@ -185,7 +185,24 @@ impl ArrayBinding {
         conn: &Connection<'static>,
         payload: &BulkInsertPayload,
     ) -> Result<usize> {
-        let n_rows = payload.row_count as usize;
+        self.bulk_insert_generic_range(conn, payload, 0, payload.row_count as usize)
+    }
+
+    pub fn bulk_insert_generic_range(
+        &self,
+        conn: &Connection<'static>,
+        payload: &BulkInsertPayload,
+        start: usize,
+        end: usize,
+    ) -> Result<usize> {
+        let total_rows = payload.row_count as usize;
+        if start > end || end > total_rows {
+            return Err(OdbcError::ValidationError(
+                "Invalid bulk insert range".to_string(),
+            ));
+        }
+
+        let n_rows = end - start;
         if n_rows == 0 {
             return Ok(0);
         }
@@ -222,9 +239,9 @@ impl ArrayBinding {
             .map_err(OdbcError::from)?;
 
         let mut total = 0_usize;
-        for chunk_start in (0..n_rows).step_by(capacity) {
-            let end = (chunk_start + capacity).min(n_rows);
-            let chunk_len = end - chunk_start;
+        for chunk_start in (start..end).step_by(capacity) {
+            let chunk_end = (chunk_start + capacity).min(end);
+            let chunk_len = chunk_end - chunk_start;
             inserter.set_num_rows(chunk_len);
 
             for (buf_idx, (spec, data)) in payload
