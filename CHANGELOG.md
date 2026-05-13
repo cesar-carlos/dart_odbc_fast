@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validation, pending-result replay, per-connection errors, parallel bulk
   chunking, and streaming spill encoding. Dart coverage now verifies the v2
   default, legacy format opt-in, binary `NUL` preservation, and `maxLen`
-  validation.
+  validation. Opt-in Rust E2E coverage now exercises bulk v2 binary readback,
+  global-state availability during long FFI calls, pool close/resize busy
+  guards during in-flight pooled execution, and spill-backed streaming.
 
 ### Fixed
 

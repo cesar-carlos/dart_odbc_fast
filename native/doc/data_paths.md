@@ -216,6 +216,9 @@ These are implemented in Rust and used by the engine/FFI:
   - ID 0 is always reserved/invalid and indicates allocation failure.
   - See `ffi_conventions.md` for detailed ID allocation rules.
 - **E2E / coverage**:
-  - E2E tests may self-skip when no DSN is configured. See:
-    - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
-    - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
+  - E2E tests may self-skip when `ENABLE_E2E_TESTS=1` and a usable DSN are not
+    configured. The Rust FFI refactor coverage lives in
+    `native/odbc_engine/tests/e2e_ffi_refactor_regression_test.rs` and requires
+    SQL Server because it uses `WAITFOR DELAY`, `VARBINARY`, and `DATALENGTH`.
+  - Run the focused refactor E2E suite with:
+    `ENABLE_E2E_TESTS=1 ODBC_TEST_DSN="<connection string>" cargo test --test e2e_ffi_refactor_regression_test --all-features`.
