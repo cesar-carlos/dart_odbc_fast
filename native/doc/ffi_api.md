@@ -45,6 +45,8 @@ Creates a new ODBC connection and stores it in global state.
 
 - **Returns**: `conn_id > 0` on success; `0` on failure.
 - **Errors**: use `odbc_get_error(...)` / `odbc_get_structured_error(...)`.
+- **Locking**: global state is used to resolve/register handles; the ODBC
+  connection attempt runs outside the global mutex.
 
 ### `odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms: unsigned int) -> unsigned int`
 
@@ -60,6 +62,8 @@ Disconnects and removes the connection. Also rolls back any active transactions
 belonging to that connection.
 
 - **Returns**: `0` on success; non‑zero on failure.
+- **Locking**: transaction rollback and driver disconnect run outside the global
+  mutex after the connection is removed from state.
 
 ## Audit logging
 
@@ -327,6 +331,8 @@ native.streamClose(streamId);
 
 Catalog functions use `INFORMATION_SCHEMA` (TABLES, COLUMNS) and return the same
 binary protocol as `odbc_exec_query`. Decode with `BinaryProtocolDecoder`.
+Connection lookup, cache lookup, and metrics/error writes use global state;
+metadata SQL execution runs outside the global mutex.
 
 ### Metadata cache controls
 
@@ -552,6 +558,8 @@ drive Phase 2 with `odbc_xa_commit_prepared` / `odbc_xa_rollback_prepared`.
 
 Savepoint operations run inside an active transaction and keep the transaction active.
 The SQL syntax depends on the `savepoint_dialect` passed to `odbc_transaction_begin`.
+The transaction handle is temporarily removed from global state while savepoint
+SQL executes, then reinserted after completion.
 
 ### `odbc_savepoint_create(txn_id, name) -> int`
 
@@ -584,6 +592,8 @@ Returns `pooled_conn_id > 0` on success; `0` on failure.
 Releases the checked-out pooled connection back to the pool. Before return, any active
 transaction is rolled back and autocommit is restored (RAII). Prepared statements for
 this connection are closed.
+Rollback/autocommit cleanup runs outside the global mutex; the pooled ID is
+recycled only after the wrapper is dropped back to r2d2.
 
 ### `odbc_pool_health_check(pool_id) -> int`
 
@@ -621,8 +631,9 @@ JSON format:
 
 Resizes the pool by recreating it with the new max size. All connections must be
 released before resize. Returns `0` on success; `-1` on error (invalid pool,
-connections checked out, or pool creation failed). r2d2 does not support in-place
-resize; the pool is recreated with the same connection string.
+connections checked out, active pooled FFI operations, or pool creation failed).
+r2d2 does not support in-place resize; the pool is recreated with the same
+connection string and the new pool is created outside the global mutex.
 
 ### `odbc_pool_close(pool_id) -> int`
 
@@ -630,6 +641,8 @@ Closes and removes the pool. Before close, any checked-out connections have thei
 active transactions rolled back and autocommit restored (RAII). Prepared statements
 for those connections are closed. Connections are then invalidated/removed from
 global state.
+Close is rejected while a pooled connection is temporarily busy in a long FFI
+call. Checked-out connection cleanup runs outside the global mutex.
 
 ## Bulk insert
 
@@ -810,4 +823,3 @@ if (caps != null && caps.driverName == 'PostgreSQL') {
   // Use SQL Server-specific patterns (e.g. TOP)
 }
 ```
-

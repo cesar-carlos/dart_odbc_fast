@@ -174,15 +174,17 @@ These are implemented in Rust and used by the engine/FFI:
   - Compatibility notes: `native/doc/bcp_dll_compatibility.md`.
 - **FFI pooled connections**:
   - Pooled connections are tracked separately from `odbc_connect` connections.
-  - `odbc_exec_query` / `odbc_exec_query_params` / `odbc_exec_query_multi` still operate on
-    `conn_id` from `odbc_connect`.
-  - `odbc_prepare` / `odbc_execute` accept both regular `conn_id` and pooled connection IDs.
+  - Query, prepared execution, catalog, streaming buffer mode, and bulk array paths accept
+    both regular `conn_id` and pooled connection IDs where the public FFI contract permits.
+  - Pooled connections temporarily removed from `GlobalState` for long FFI calls are counted
+    as busy, so pool close/resize cannot race an in-flight operation.
   - **Lifecycle hardening**: `odbc_pool_release_connection` and `odbc_pool_close` remove all
     prepared statements for the released/closed connections to avoid orphaned statements and
     connection reuse hazards.
   - **RAII (rollback/autocommit restore)**: On release and pool close, any active transaction is
     rolled back and autocommit is restored before the connection returns to the pool or is
-    dropped. This ensures clean connection state regardless of `test_on_checkout`.
+    dropped. This cleanup runs outside the global state lock and ensures clean connection state
+    regardless of `test_on_checkout`.
 - **Lock poisoning recovery**:
   - Critical runtime locks (Tracer, BufferPool, PreparedStatementCache, Metrics) use
     `lock().unwrap_or_else(|e| e.into_inner())` to recover from poisoning instead of panicking.
@@ -206,4 +208,3 @@ These are implemented in Rust and used by the engine/FFI:
   - E2E tests may self-skip when no DSN is configured. See:
     - `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
     - `native/odbc_engine/MULTI_DATABASE_TESTING.md`
-

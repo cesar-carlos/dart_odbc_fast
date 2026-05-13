@@ -25,10 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary bulk insert correctness:** v2 variable-width cells carry a per-cell
   length, so binary values such as `Uint8List([1, 0, 2])` are no longer
   truncated at the first `0x00`.
-- **FFI concurrency:** long ODBC calls in query, prepared execution, streaming,
-  and bulk insert paths no longer run while `GLOBAL_STATE` is locked. The global
-  mutex is now limited to lookup/registration, pending-buffer replay, metrics,
-  and error recording.
+- **FFI concurrency:** long ODBC calls in connection lifecycle, query,
+  prepared execution, catalog metadata, savepoint/XA transitions, streaming,
+  pool release/close, and bulk insert paths no longer run while `GLOBAL_STATE`
+  is locked. The global mutex is now limited to lookup/registration,
+  pending-buffer replay, metrics, and error recording.
+- **Pool close/resize safety:** pooled connections temporarily removed from
+  global state for active FFI calls are tracked as busy, preventing pool close
+  or resize from racing an in-flight operation.
 
 ### Changed
 
