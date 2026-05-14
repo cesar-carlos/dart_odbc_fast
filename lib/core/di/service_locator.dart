@@ -77,7 +77,36 @@ class ServiceLocator {
   ///
   /// This method initializes logging, creates the native connection,
   /// repository, and service instances.
-  void initialize({bool useAsync = false}) {
+  void initialize({
+    bool useAsync = false,
+    int asyncWorkerCount = 1,
+    int? asyncMaxPendingRequests,
+    AsyncBackpressureMode asyncBackpressureMode =
+        AsyncBackpressureMode.failFast,
+    Duration? asyncBackpressureTimeout,
+  }) {
+    if (asyncWorkerCount < 1) {
+      throw ArgumentError.value(
+        asyncWorkerCount,
+        'asyncWorkerCount',
+        'must be greater than or equal to 1',
+      );
+    }
+    if (asyncMaxPendingRequests != null && asyncMaxPendingRequests < 1) {
+      throw ArgumentError.value(
+        asyncMaxPendingRequests,
+        'asyncMaxPendingRequests',
+        'must be null or greater than or equal to 1',
+      );
+    }
+    if (asyncBackpressureTimeout != null &&
+        asyncBackpressureTimeout < Duration.zero) {
+      throw ArgumentError.value(
+        asyncBackpressureTimeout,
+        'asyncBackpressureTimeout',
+        'must be null, zero, or greater than zero',
+      );
+    }
     _useAsync = useAsync;
     AppLogger.initialize();
 
@@ -86,12 +115,22 @@ class ServiceLocator {
     _service = OdbcService(_repository);
 
     if (useAsync) {
-      _asyncNativeConnection = AsyncNativeOdbcConnection();
+      _asyncNativeConnection = AsyncNativeOdbcConnection(
+        workerCount: asyncWorkerCount,
+        maxPendingRequests: asyncMaxPendingRequests,
+        backpressureMode: asyncBackpressureMode,
+        backpressureTimeout: asyncBackpressureTimeout,
+      );
       _asyncRepository = OdbcRepositoryImpl(_asyncNativeConnection);
       _asyncService = OdbcService(_asyncRepository);
     }
 
-    AppLogger.info('ServiceLocator initialized (async: $useAsync)');
+    AppLogger.info(
+      'ServiceLocator initialized '
+      '(async: $useAsync, asyncWorkerCount: $asyncWorkerCount, '
+      'asyncMaxPendingRequests: $asyncMaxPendingRequests, '
+      'asyncBackpressureMode: $asyncBackpressureMode)',
+    );
   }
 
   /// Gets the appropriate service based on initialization mode.

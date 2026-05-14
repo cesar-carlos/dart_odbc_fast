@@ -11,6 +11,32 @@ lazy_static::lazy_static! {
     static ref PIPELINE: Arc<QueryPipeline> = Arc::new(QueryPipeline::new(100));
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResultEncoding {
+    RowMajor,
+    Columnar,
+    ColumnarCompressed,
+}
+
+impl ResultEncoding {
+    pub fn from_wire(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(Self::RowMajor),
+            1 => Some(Self::Columnar),
+            2 => Some(Self::ColumnarCompressed),
+            _ => None,
+        }
+    }
+
+    fn pipeline(self) -> Arc<QueryPipeline> {
+        match self {
+            Self::RowMajor => Arc::clone(&PIPELINE),
+            Self::Columnar => Arc::new(QueryPipeline::with_columnar(100, false)),
+            Self::ColumnarCompressed => Arc::new(QueryPipeline::with_columnar(100, true)),
+        }
+    }
+}
+
 pub fn get_global_metrics() -> Arc<Metrics> {
     PIPELINE.get_metrics()
 }
@@ -42,7 +68,16 @@ pub fn execute_query_with_param_buffer(
     sql: &str,
     param_bytes: &[u8],
 ) -> Result<Vec<u8>> {
-    dispatch_param_buffer(conn, sql, param_bytes, None, None)
+    dispatch_param_buffer(conn, sql, param_bytes, None, None, ResultEncoding::RowMajor)
+}
+
+pub fn execute_query_with_param_buffer_encoding(
+    conn: &Connection<'static>,
+    sql: &str,
+    param_bytes: &[u8],
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>> {
+    dispatch_param_buffer(conn, sql, param_bytes, None, None, encoding)
 }
 
 fn dispatch_param_buffer(
@@ -51,18 +86,20 @@ fn dispatch_param_buffer(
     param_bytes: &[u8],
     timeout_sec: Option<usize>,
     fetch_size: Option<u32>,
+    encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
     let list = deserialize_param_buffer(param_bytes)?;
+    let pipeline = encoding.pipeline();
     match list {
         ParamList::Legacy(p) => {
-            PIPELINE.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
+            pipeline.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
         }
         ParamList::Directed(b) => {
             if b.iter().all(|x| x.direction == ParamDirection::Input) {
                 let p: Vec<ParamValue> = b.iter().map(|x| x.value.clone()).collect();
-                PIPELINE.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
+                pipeline.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
             } else {
-                PIPELINE.execute_with_bound_params_and_timeout(
+                pipeline.execute_with_bound_params_and_timeout(
                     conn,
                     sql,
                     &b,
@@ -92,7 +129,14 @@ pub fn execute_query_with_param_buffer_and_timeout(
     timeout_sec: Option<usize>,
     fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
-    dispatch_param_buffer(conn, sql, param_bytes, timeout_sec, fetch_size)
+    dispatch_param_buffer(
+        conn,
+        sql,
+        param_bytes,
+        timeout_sec,
+        fetch_size,
+        ResultEncoding::RowMajor,
+    )
 }
 
 pub fn execute_multi_result(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {

@@ -13,16 +13,17 @@ use crate::engine::BulkCopyExecutor;
 use crate::engine::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
     execute_query_with_connection, execute_query_with_param_buffer,
-    execute_query_with_param_buffer_and_timeout, get_global_metrics, get_type_info, list_columns,
-    list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
-    resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
-    DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
-    OdbcEnvironment, PreparedXa, PreparingXa, SavepointDialect, StatementHandle, StreamCopyResult,
-    StreamState, StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
+    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
+    get_global_metrics, get_type_info, list_columns, list_foreign_keys, list_indexes,
+    list_primary_keys, list_tables, recover_prepared_xids, resume_prepared, AsyncStreamStatus,
+    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
+    MetadataCache, OdbcConnection, OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding,
+    SavepointDialect, StatementHandle, StreamCopyResult, StreamState, StreamingExecutor,
+    Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
-use crate::handles::{SharedConnection, SharedHandleManager};
+use crate::handles::SharedConnection;
 use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, PooledConnectionWrapper};
@@ -201,23 +202,19 @@ impl AsyncRequestManager {
         None
     }
 
-    fn start_request(
-        &mut self,
-        handles: SharedHandleManager,
-        conn_id: u32,
-        sql: String,
-    ) -> Option<u32> {
+    fn start_request(&mut self, conn_id: u32, sql: String, params: Option<Vec<u8>>) -> Option<u32> {
         let request_id = self.allocate_request_id()?;
         let slot = Arc::new(AsyncRequestSlot::new(conn_id));
         let slot_for_worker = Arc::clone(&slot);
 
         let handle = match async_bridge::spawn_blocking_task(move || {
-            let result = std::panic::catch_unwind(|| run_async_query(handles, conn_id, &sql))
-                .unwrap_or_else(|_| {
-                    Err(OdbcError::InternalError(
-                        "Async request task panicked".to_string(),
-                    ))
-                });
+            let result =
+                std::panic::catch_unwind(|| run_async_query(conn_id, &sql, params.as_deref()))
+                    .unwrap_or_else(|_| {
+                        Err(OdbcError::InternalError(
+                            "Async request task panicked".to_string(),
+                        ))
+                    });
             let cancelled = slot_for_worker.cancelled.load(Ordering::SeqCst);
             if let Ok(mut outcome) = slot_for_worker.outcome.lock() {
                 *outcome = if cancelled {
@@ -329,16 +326,58 @@ impl AsyncRequestManager {
     }
 }
 
-fn run_async_query(handles: SharedHandleManager, conn_id: u32, sql: &str) -> Result<Vec<u8>> {
-    let handles_guard = handles
-        .lock()
-        .map_err(|_| OdbcError::InternalError("Failed to lock handles mutex".to_string()))?;
-    let conn_arc = handles_guard.get_connection(conn_id)?;
-    drop(handles_guard);
-    let mut conn_guard = conn_arc
-        .lock()
-        .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-    execute_query_with_cached_connection(&mut conn_guard, sql)
+fn run_async_query(conn_id: u32, sql: &str, params: Option<&[u8]>) -> Result<Vec<u8>> {
+    let Some(mut state) = try_lock_global_state() else {
+        return Err(OdbcError::InternalError(
+            "Failed to lock global state".to_string(),
+        ));
+    };
+
+    state.audit_logger.log_query(conn_id, sql);
+    let metrics = Arc::clone(&state.metrics);
+    let start = Instant::now();
+    let mut target = match take_runnable_connection(&mut state, conn_id) {
+        Ok(target) => target,
+        Err(e) => return Err(e),
+    };
+    drop(state);
+
+    let params = params.unwrap_or(&[]);
+    let result = match &mut target {
+        RunnableConnection::Regular(conn_arc) => match conn_arc.lock() {
+            Ok(mut conn_guard) => {
+                if params.is_empty() {
+                    execute_query_with_cached_connection(&mut conn_guard, sql)
+                } else {
+                    execute_query_with_param_buffer(conn_guard.connection(), sql, params)
+                }
+            }
+            Err(_) => Err(OdbcError::InternalError(
+                "Failed to lock connection".to_string(),
+            )),
+        },
+        RunnableConnection::Pooled { pooled, .. } => {
+            if params.is_empty() {
+                execute_query_with_connection(pooled.get_connection(), sql)
+            } else {
+                execute_query_with_param_buffer(pooled.get_connection(), sql, params)
+            }
+        }
+    };
+
+    let Some(mut state) = try_lock_global_state() else {
+        return Err(OdbcError::InternalError(
+            "Failed to lock global state".to_string(),
+        ));
+    };
+    restore_pooled_connection(&mut state, conn_id, target);
+
+    if result.is_ok() {
+        metrics.record_query(start.elapsed());
+    } else {
+        metrics.record_error();
+    }
+    result
 }
 
 enum RunnableConnection {
@@ -513,6 +552,7 @@ enum PendingResultKey {
         conn_id: u32,
         sql_hash: u64,
         params_hash: u64,
+        result_encoding: u32,
     },
     ExecQueryMulti {
         conn_id: u32,
@@ -553,6 +593,12 @@ fn set_out_written_zero(out_written: *mut c_uint) {
     }
 }
 
+fn set_out_written_needed(out_written: *mut c_uint, needed: usize) {
+    if !out_written.is_null() {
+        unsafe { *out_written = needed.min(c_uint::MAX as usize) as c_uint };
+    }
+}
+
 fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
@@ -580,6 +626,7 @@ fn try_write_pending_result(
     }
 
     if entry.data.len() > buffer_len as usize {
+        let needed = entry.data.len();
         state.pending_result_buffers.insert(key.clone(), entry);
         if let Some(conn_id) = conn_id_for_error {
             set_connection_error(
@@ -591,7 +638,7 @@ fn try_write_pending_result(
                         .pending_result_buffers
                         .get(key)
                         .map(|e| e.data.len())
-                        .unwrap_or(0),
+                        .unwrap_or(needed),
                     buffer_len
                 ),
             );
@@ -604,12 +651,12 @@ fn try_write_pending_result(
                         .pending_result_buffers
                         .get(key)
                         .map(|e| e.data.len())
-                        .unwrap_or(0),
+                        .unwrap_or(needed),
                     buffer_len
                 ),
             );
         }
-        set_out_written_zero(out_written);
+        set_out_written_needed(out_written, needed);
         return Some(-2);
     }
 
@@ -3083,7 +3130,7 @@ pub extern "C" fn odbc_exec_query(
                         conn_id,
                         format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
                     );
-                    set_out_written_zero(out_written);
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
 
@@ -3134,21 +3181,81 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
             return 0;
         };
 
-        let handles = match state.connections.get(&conn_id) {
-            Some(c) => c.get_handles(),
-            None => {
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
-                return 0;
-            }
-        };
+        if !state.connections.contains_key(&conn_id)
+            && !state.pooled_connections.contains_key(&conn_id)
+        {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
 
         state
             .async_requests
-            .start_request(handles, conn_id, sql_str)
+            .start_request(conn_id, sql_str, None)
+            .unwrap_or(0)
+    })
+}
+
+/// Starts non-blocking parameterized query execution.
+/// Returns request_id (>0) on success, 0 on failure or unavailable handle.
+#[no_mangle]
+pub extern "C" fn odbc_execute_async_params(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        if sql.is_null() {
+            return 0;
+        }
+
+        if params_buffer.is_null() && params_len > 0 {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                "params_buffer is null but params_len is greater than zero".to_string(),
+            );
+            return 0;
+        }
+
+        let c_str = unsafe { CStr::from_ptr(sql) };
+        let sql_str = match c_str.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return 0,
+        };
+
+        let params = if params_buffer.is_null() || params_len == 0 {
+            None
+        } else {
+            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+            Some(raw.to_vec())
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+
+        if !state.connections.contains_key(&conn_id)
+            && !state.pooled_connections.contains_key(&conn_id)
+        {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
+
+        state
+            .async_requests
+            .start_request(conn_id, sql_str, params)
             .unwrap_or(0)
     })
 }
@@ -3206,8 +3313,11 @@ pub extern "C" fn odbc_async_get_result(
         match result {
             Ok(data) => {
                 if data.len() > buffer_len as usize {
+                    let needed = data.len() as c_uint;
                     let _ = state.async_requests.restore_result(request_id, Ok(data));
-                    set_out_written_zero(out_written);
+                    unsafe {
+                        *out_written = needed;
+                    }
                     return -2;
                 }
 
@@ -3304,6 +3414,7 @@ pub extern "C" fn odbc_exec_query_params(
             conn_id,
             sql_hash: hash_bytes(sql_str.as_bytes()),
             params_hash,
+            result_encoding: 0,
         };
         if let Some(code) = try_write_pending_result(
             &mut state,
@@ -3385,6 +3496,162 @@ pub extern "C" fn odbc_exec_query_params(
                         ),
                     );
                     set_out_written_zero(out_written);
+                    return -2;
+                }
+
+                metrics.record_query(elapsed);
+
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+                    *out_written = data.len() as c_uint;
+                }
+
+                0
+            }
+            Err(e) => {
+                metrics.record_error();
+                let structured = e.to_structured();
+                set_connection_structured_error(&mut state, conn_id, structured);
+                set_out_written_zero(out_written);
+                -1
+            }
+        }
+    })
+}
+
+/// Execute parameterized query with an explicit result encoding.
+///
+/// result_encoding: 0=row-major v1, 1=columnar v2, 2=columnar v2 compressed.
+/// Older Dart runtimes use `odbc_exec_query_params`; this additive symbol is
+/// resolved dynamically by newer clients.
+#[no_mangle]
+pub extern "C" fn odbc_exec_query_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    result_encoding: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    crate::ffi_guard_int!({
+        if sql.is_null() || out_buffer.is_null() || out_written.is_null() {
+            return -1;
+        }
+
+        let encoding = match ResultEncoding::from_wire(result_encoding) {
+            Some(encoding) => encoding,
+            None => {
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+
+        let c_str = unsafe { CStr::from_ptr(sql) };
+        let sql_str = match c_str.to_str() {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+
+        let metrics = Arc::clone(&state.metrics);
+        let start = Instant::now();
+        let params_hash = if params_buffer.is_null() || params_len == 0 {
+            0
+        } else {
+            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+            hash_bytes(raw)
+        };
+        let pending_key = PendingResultKey::ExecQueryParams {
+            conn_id,
+            sql_hash: hash_bytes(sql_str.as_bytes()),
+            params_hash,
+            result_encoding,
+        };
+        if let Some(code) = try_write_pending_result(
+            &mut state,
+            &pending_key,
+            out_buffer,
+            buffer_len,
+            out_written,
+            Some(conn_id),
+        ) {
+            return code;
+        }
+
+        let mut target = match take_runnable_connection(&mut state, conn_id) {
+            Ok(target) => target,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                set_out_written_zero(out_written);
+                return -1;
+            }
+        };
+        drop(state);
+
+        let params_slice = if params_buffer.is_null() || params_len == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
+        };
+
+        let result = match &mut target {
+            RunnableConnection::Regular(conn_arc) => {
+                let conn_guard = match conn_arc.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        let Some(mut state) = try_lock_global_state() else {
+                            return -1;
+                        };
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            "Failed to lock connection".to_string(),
+                        );
+                        set_out_written_zero(out_written);
+                        return -1;
+                    }
+                };
+                execute_query_with_param_buffer_encoding(
+                    conn_guard.connection(),
+                    sql_str,
+                    params_slice,
+                    encoding,
+                )
+            }
+            RunnableConnection::Pooled { pooled, .. } => execute_query_with_param_buffer_encoding(
+                pooled.get_connection(),
+                sql_str,
+                params_slice,
+                encoding,
+            ),
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return -1;
+        };
+        restore_pooled_connection(&mut state, conn_id, target);
+
+        match result {
+            Ok(data) => {
+                let elapsed = start.elapsed();
+                let data_len = data.len();
+                if data.len() > buffer_len as usize {
+                    metrics.record_error();
+                    stash_pending_result(&mut state, pending_key, data);
+                    set_connection_error(
+                        &mut state,
+                        conn_id,
+                        format!(
+                            "Buffer too small: need {} bytes, got {}",
+                            data_len, buffer_len
+                        ),
+                    );
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
 
@@ -3607,6 +3874,7 @@ pub extern "C" fn odbc_exec_query_multi_params(
             conn_id,
             sql_hash: hash_bytes(sql_str.as_bytes()),
             params_hash,
+            result_encoding: 0,
         };
         if let Some(code) = try_write_pending_result(
             &mut state,
@@ -5946,7 +6214,7 @@ mod tests {
         );
 
         assert_eq!(code, Some(-2));
-        assert_eq!(written, 0);
+        assert_eq!(written, 4);
         assert!(state.pending_result_buffers.contains_key(&key));
         assert!(
             get_connection_error(&state, Some(11)).contains("Buffer too small"),
@@ -6497,6 +6765,48 @@ mod tests {
     }
 
     #[test]
+    fn test_ffi_execute_async_params_invalid_conn() {
+        odbc_init();
+
+        let sql = CString::new("SELECT ?").expect("sql");
+        let request_id =
+            odbc_execute_async_params(TEST_INVALID_ID, sql.as_ptr(), std::ptr::null(), 0);
+        assert_eq!(
+            request_id, 0,
+            "Invalid connection should return request_id=0 with null params"
+        );
+
+        let params = vec![1u8, 2, 3, 4];
+        let request_id = odbc_execute_async_params(
+            TEST_INVALID_ID,
+            sql.as_ptr(),
+            params.as_ptr(),
+            params.len() as c_uint,
+        );
+        assert_eq!(
+            request_id, 0,
+            "Invalid connection should return request_id=0 with params"
+        );
+    }
+
+    #[test]
+    fn test_ffi_execute_async_params_null_inputs() {
+        odbc_init();
+
+        let request_id =
+            odbc_execute_async_params(TEST_INVALID_ID, std::ptr::null(), std::ptr::null(), 0);
+        assert_eq!(request_id, 0, "Null SQL should return request_id=0");
+
+        let sql = CString::new("SELECT ?").expect("sql");
+        let request_id =
+            odbc_execute_async_params(TEST_INVALID_ID, sql.as_ptr(), std::ptr::null(), 4);
+        assert_eq!(
+            request_id, 0,
+            "Null params pointer with positive length should fail"
+        );
+    }
+
+    #[test]
     fn test_ffi_async_poll_null_out_status() {
         let result = odbc_async_poll(1, std::ptr::null_mut());
         assert_eq!(result, -1, "Null out_status should return -1");
@@ -6573,7 +6883,7 @@ mod tests {
             &mut written,
         );
         assert_eq!(first, -2, "First call should report buffer too small");
-        assert_eq!(written, 0);
+        assert_eq!(written as usize, payload.len());
 
         let mut big_buf = vec![0u8; 4096];
         let second = odbc_async_get_result(
@@ -8118,6 +8428,56 @@ mod tests {
         );
         assert_eq!(result, 0, "odbc_exec_query_params should succeed");
         assert!(written > 0);
+
+        let _ = odbc_disconnect(conn_id);
+    }
+
+    #[test]
+    fn test_ffi_exec_query_params_options_row_major_success() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("âš ï¸  Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
+
+        let params = vec![ParamValue::Integer(42)];
+        let params_bytes = serialize_params(&params);
+
+        let sql = CString::new("SELECT ? AS value").unwrap();
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+
+        let result = odbc_exec_query_params_options(
+            conn_id,
+            sql.as_ptr(),
+            params_bytes.as_ptr(),
+            params_bytes.len() as c_uint,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(
+            result, 0,
+            "odbc_exec_query_params_options row-major should succeed"
+        );
+        assert!(written > 0);
+
+        let invalid = odbc_exec_query_params_options(
+            conn_id,
+            sql.as_ptr(),
+            params_bytes.as_ptr(),
+            params_bytes.len() as c_uint,
+            99,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(invalid, -1, "invalid result encoding should fail");
 
         let _ = odbc_disconnect(conn_id);
     }

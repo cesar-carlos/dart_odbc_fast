@@ -9,6 +9,8 @@ alwaysApply: true
 ## Core Guardrails
 
 - Do not commit, push, or create documentation files unless explicitly asked.
+- Do not create or switch to a new Git branch unless the user explicitly asks
+  for branch creation; use the current branch by default.
 - Prefer self-explanatory code through naming, structure, and small units.
 - Do not suppress diagnostics unless allowed by `error_handling.mdc`.
 - Avoid duplicate rules: keep the detailed version only in the most specific

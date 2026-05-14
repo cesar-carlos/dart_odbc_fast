@@ -1,4 +1,7 @@
+import 'dart:isolate';
 import 'dart:typed_data';
+
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 
 /// Request types for worker isolate communication.
 ///
@@ -66,6 +69,7 @@ enum RequestType {
   auditGetStatus,
   auditClear,
   executeAsyncStart,
+  executeAsyncStartParams,
   asyncPoll,
   asyncGetResult,
   asyncCancel,
@@ -139,11 +143,13 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     this.sql,
     this.serializedParams, {
     this.maxResultBufferBytes,
+    this.resultEncoding = ResultEncoding.rowMajor,
   }) : super(requestId, RequestType.executeQueryParams);
   final int connectionId;
   final String sql;
   final Uint8List serializedParams;
   final int? maxResultBufferBytes;
+  final ResultEncoding resultEncoding;
 }
 
 /// Execute query returning multiple result sets.
@@ -647,6 +653,19 @@ class ExecuteAsyncStartRequest extends WorkerRequest {
   final String sql;
 }
 
+/// Start non-blocking async execution with serialized parameters.
+class ExecuteAsyncStartParamsRequest extends WorkerRequest {
+  const ExecuteAsyncStartParamsRequest(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    this.serializedParams,
+  ) : super(requestId, RequestType.executeAsyncStartParams);
+  final int connectionId;
+  final String sql;
+  final Uint8List serializedParams;
+}
+
 /// Poll async request status.
 class AsyncPollRequest extends WorkerRequest {
   const AsyncPollRequest(int requestId, this.asyncRequestId)
@@ -706,9 +725,29 @@ class BoolResponse extends WorkerResponse {
 
 /// Response for query/exec operations returning binary or error.
 class QueryResponse extends WorkerResponse {
-  const QueryResponse(super.requestId, {this.data, this.error});
-  final Uint8List? data;
+  QueryResponse(
+    super.requestId, {
+    Uint8List? data,
+    TransferableTypedData? transferableData,
+    this.error,
+  })  : _data = data,
+        _transferableData = transferableData;
+
+  Uint8List? _data;
+  final TransferableTypedData? _transferableData;
   final String? error;
+
+  Uint8List? get data {
+    final data = _data;
+    if (data != null) {
+      return data;
+    }
+    final transferableData = _transferableData;
+    if (transferableData == null) {
+      return null;
+    }
+    return _data = transferableData.materialize().asUint8List();
+  }
 }
 
 /// Response for operations returning int (stmtId, poolId, connId, rowCount).
@@ -830,15 +869,30 @@ class ValidateConnectionStringResponse extends WorkerResponse {
 
 /// Response for stream fetch operation.
 class StreamFetchResponse extends WorkerResponse {
-  const StreamFetchResponse(
+  StreamFetchResponse(
     super.requestId, {
     required this.success,
-    this.data,
+    Uint8List? data,
+    TransferableTypedData? transferableData,
     this.hasMore = false,
     this.error,
-  });
+  })  : _data = data,
+        _transferableData = transferableData;
   final bool success;
-  final Uint8List? data;
+  Uint8List? _data;
+  final TransferableTypedData? _transferableData;
   final bool hasMore;
   final String? error;
+
+  Uint8List? get data {
+    final data = _data;
+    if (data != null) {
+      return data;
+    }
+    final transferableData = _transferableData;
+    if (transferableData == null) {
+      return null;
+    }
+    return _data = transferableData.materialize().asUint8List();
+  }
 }

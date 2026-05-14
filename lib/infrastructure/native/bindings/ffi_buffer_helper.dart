@@ -45,7 +45,8 @@ Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
         return Uint8List.fromList(buf.asTypedList(n));
       }
       if (code == -2) {
-        size *= 2;
+        final requested = outWritten.value;
+        size = requested > size ? requested : size * 2;
         continue;
       }
       return null;

@@ -5,12 +5,15 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
+    show AsyncWorkerPoolStats;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
@@ -34,8 +37,9 @@ abstract class IOdbcService {
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
-    List<dynamic> params,
-  );
+    List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  });
 
   /// Like [executeQueryParams] for `OUT` / `INOUT` (DRT1 on the wire).
   Future<Result<QueryResult>> executeQueryDirectedParams(
@@ -281,6 +285,8 @@ abstract class IOdbcService {
 
   Future<Result<OdbcMetrics>> getMetrics();
 
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
+
   bool isInitialized();
 
   Future<Result<void>> clearStatementCache();
@@ -397,12 +403,14 @@ class OdbcService implements IOdbcService {
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
-    List<dynamic> params,
-  ) async {
+    List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     return _repository.executeQueryParams(
       connectionId,
       sql,
       params,
+      resultEncoding: resultEncoding,
     );
   }
 
@@ -917,6 +925,11 @@ class OdbcService implements IOdbcService {
   @override
   Future<Result<OdbcMetrics>> getMetrics() async {
     return _repository.getMetrics();
+  }
+
+  @override
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
+    return _repository.getAsyncWorkerPoolStats();
   }
 
   @override

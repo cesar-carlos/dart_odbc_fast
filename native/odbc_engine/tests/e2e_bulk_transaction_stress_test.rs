@@ -298,11 +298,13 @@ fn test_e2e_bulk_stress_transaction_rollback() {
                 .unwrap_or_else(|_| panic!("INSERT batch {}-{} failed", batch_start, batch_end));
         }
 
-        let update_sql = format!("UPDATE {} SET age = age + 1 WHERE id <= 1000", TABLE_NAME);
-        let h = handles.lock().expect("lock");
-        let conn_arc = h.get_connection(conn_id).expect("get_connection");
-        let c = conn_arc.lock().expect("lock");
-        execute_sql_on_conn(&c, &update_sql).expect("UPDATE failed");
+        {
+            let update_sql = format!("UPDATE {} SET age = age + 1 WHERE id <= 1000", TABLE_NAME);
+            let h = handles.lock().expect("lock");
+            let conn_arc = h.get_connection(conn_id).expect("get_connection");
+            let c = conn_arc.lock().expect("lock");
+            execute_sql_on_conn(&c, &update_sql).expect("UPDATE failed");
+        }
 
         txn.rollback().expect("rollback failed");
     }

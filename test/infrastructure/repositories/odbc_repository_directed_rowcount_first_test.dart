@@ -16,6 +16,7 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/query_result.dart'
     show DirectedResultItem, DirectedRowCountItem, QueryResult;
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -48,8 +49,10 @@ Uint8List _emptyOdbcBuf() {
 Uint8List _multBuf(List<(int, List<int>)> items) {
   final header = <int>[
     ..._le32(0x544C554D),
-    0x02, 0x00,
-    0x00, 0x00,
+    0x02,
+    0x00,
+    0x00,
+    0x00,
     ..._le32(items.length),
   ];
   final body = <int>[];
@@ -72,8 +75,7 @@ List<int> _out1(List<ParamValue> values) {
 // Fake async native stub
 
 class _FakeAsyncNative extends AsyncNativeOdbcConnection {
-  _FakeAsyncNative(this._responseBuffer)
-      : super(requestTimeout: Duration.zero);
+  _FakeAsyncNative(this._responseBuffer) : super(requestTimeout: Duration.zero);
 
   final Uint8List _responseBuffer;
 
@@ -107,6 +109,8 @@ class _FakeAsyncNative extends AsyncNativeOdbcConnection {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       _responseBuffer;
 

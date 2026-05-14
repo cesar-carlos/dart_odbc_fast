@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Async worker pool:** `AsyncNativeOdbcConnection(workerCount: ...)` and
+  `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: ...)` allow
+  opt-in parallel worker isolates while keeping the default at `1`.
+- **Async parameterized FFI:** added optional
+  `odbc_execute_async_params(conn_id, sql, params_buffer, params_len)` with
+  Dart capability fallback for older native binaries.
+- **High-concurrency examples:** added
+  `example/high_concurrency_worker_pool_demo.dart` and
+  `example/high_concurrency_pool_demo.dart`, documented in README,
+  `example/README.md`, `native/doc/async_api_guide.md`, and
+  `doc/PERFORMANCE.md`.
+- **Async backpressure and stats:** added
+  `AsyncNativeOdbcConnection(maxPendingRequests: ...)`,
+  `ServiceLocator.initialize(asyncMaxPendingRequests: ...)`,
+  `AsyncErrorCode.resourceExhausted`, and `getWorkerPoolStats()` for Dart-side
+  worker pool counters.
+- **Async backpressure wait mode:** added
+  `AsyncBackpressureMode.waitForSlot` and timeout configuration for FIFO
+  waiting when callers prefer short queueing over immediate failure.
+- **Per-worker diagnostics:** worker pool stats now include per-worker
+  routed/completed/failed/timeout/fallback/cancel counters and latency
+  aggregates.
+- **Service diagnostics:** `IOdbcService` and `IOdbcRepository` now expose
+  `getAsyncWorkerPoolStats()`.
+- **Async benchmark/check tooling:** added
+  `example/async_concurrency_benchmark.dart` and
+  `tool/check_ffi_exports.dart`.
+- **Opt-in result encoding:** added `ResultEncoding` on Dart parameterized query
+  paths and the additive FFI symbol `odbc_exec_query_params_options` for
+  row-major v1, columnar v2, and compressed columnar v2 selection with fallback
+  to row-major on older native runtimes.
+- **Opt-in concurrency validation:** added Dart real-DSN stress coverage for
+  multi-connection parallelism, same-connection serialization, and native pool
+  checkout/query/release with an explicit in-flight limit.
+- **Slow-test diagnostics:** added `tool/test_slow_report.dart` to run
+  `dart test --reporter json`, report the slowest tests, and optionally fail
+  when a configured slow-test budget is exceeded.
+- **Streaming benchmark:** added `example/streaming_performance_benchmark.dart`
+  to compare `streamQuery` and `streamQueryBatched` with text/json/csv output.
+- **Benchmark baseline comparison:** added
+  `tool/compare_benchmark_baseline.dart` for JSON benchmark regression checks.
+
+### Changed
+
+- Async worker routing now distributes independent calls by worker load and
+  preserves affinity for connection, statement, transaction, stream, and async
+  request handles.
+- Async result and stream fetch payloads use `TransferableTypedData` across
+  isolates when possible, and streaming frame assembly uses an incremental
+  accumulator to reduce avoidable copies.
+- FFI buffer growth can jump directly to `out_written` when a native call
+  reports the required size with `-2`.
+- Async worker crash/dispose paths now clear worker-handle affinities for the
+  discarded worker before recovery or shutdown.
+- Async worker-pool stress thresholds now compare parallel/concurrent timings
+  against a local serial baseline instead of fixed wall-clock limits.
+- Live `test/my_test` table scans are bounded by default via
+  `MY_TEST_ROW_LIMIT`, skipped unless `RUN_LIVE_TESTS=1`, and require
+  `MY_TEST_FULL_TABLE_SCAN=1` for deliberate full-table performance runs.
+- The Produto live streaming check now uses `streamQueryBatched` so the default
+  path exercises bounded streaming chunks instead of materializing as one large
+  stream unit.
+- Async responsiveness/concurrency unit tests now use deterministic fake worker
+  delays instead of SQL Server `WAITFOR`, keeping live slow-query coverage in
+  stress tests.
+
+### Fixed
+
+- Parameterized async execution now follows `start -> poll -> get_result ->
+  free` when supported, with best-effort cancel/free on timeout and fallback to
+  the existing blocking worker path on older runtimes.
+- Async stream cleanup now attempts `streamCancel` before `streamClose` when a
+  stream exits before normal completion.
+- Cancellation documentation now distinguishes best-effort async cancellation,
+  stream cancellation between batches, and statement cancellation that may be
+  unsupported by a runtime/driver path.
+
 ## [3.6.1] - 2026-05-13
 
 Patch release: Rust FFI and wire-format throughput, safer bulk v2 defaults, and

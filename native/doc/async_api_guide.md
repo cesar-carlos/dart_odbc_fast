@@ -38,6 +38,60 @@ O worker isolate **não bloqueia** durante a execução da query. O poll é ráp
 
 ---
 
+## Worker pool Dart
+
+`AsyncNativeOdbcConnection` aceita `workerCount` opcional. O default e `1`,
+preservando comportamento e consumo historicos. Com `workerCount > 1`, o
+backend cria multiplos worker isolates Dart e despacha chamadas independentes
+para o worker menos carregado.
+
+```dart
+final async = AsyncNativeOdbcConnection(
+  workerCount: 4,
+  maxPendingRequests: 16,
+);
+await async.initialize();
+```
+
+Via service locator:
+
+```dart
+final locator = ServiceLocator()
+  ..initialize(
+    useAsync: true,
+    asyncWorkerCount: 4,
+    asyncMaxPendingRequests: 16,
+  );
+```
+
+Regras de concorrencia:
+
+- `connect`, `poolGetConnection` e operacoes sem handle usam roteamento por carga.
+- Operacoes por connection, statement, transaction, stream e async request mantem afinidade com o worker que recebeu o handle.
+- Os IDs publicos continuam sendo os IDs nativos; nao existe ID virtual Dart.
+- Paralelismo real exige multiplas conexoes ou checkouts de pool. A mesma conexao continua serializada pelo mutex nativo da conexao.
+- `maxPendingRequests` / `asyncMaxPendingRequests` sao backpressure opt-in. Use um limite proximo de `poolSize * 2` ou `poolSize * 4` quando o workload usa pool nativo.
+- `backpressureMode` pode ser `failFast` (default) ou `waitForSlot`. `waitForSlot` aguarda vaga FIFO ate `backpressureTimeout`.
+- `getWorkerPoolStats()` retorna contadores Dart-side agregados e por worker, incluindo cancelamento e latencia.
+- Timeout de requests async tenta `asyncCancel`/`asyncFree`; streaming tenta `streamCancel` antes de `streamClose` quando a stream nao termina normalmente.
+- Cancelamento e best-effort quando o driver ODBC ja esta bloqueado dentro de uma chamada nativa.
+
+Tuning recomendado:
+
+- API web com pool: `workerCount = min(poolSize, cores)` e `maxPendingRequests = poolSize * 2..4`.
+- Batch: `workerCount = poolSize`; use streaming para resultados grandes.
+- Flutter/UI: mantenha `workerCount = 1`, salvo quando houver multiplas conexoes reais.
+
+Exemplos documentados:
+
+- `example/high_concurrency_worker_pool_demo.dart`
+- `example/high_concurrency_pool_demo.dart`
+- `example/async_concurrency_benchmark.dart` - compara worker pool, pool nativo,
+  streaming, `ResultEncoding.columnar`, `ResultEncoding.columnarCompressed` e
+  prepared reuse.
+
+---
+
 ## Uso básico
 
 ### `executeAsync` — query única
@@ -115,7 +169,7 @@ async.dispose();
 1. **Sempre dispose** `AsyncNativeOdbcConnection` quando não for mais usado.
 2. **Use `requestTimeout`** para evitar hangs se o worker travar.
 3. **`autoRecoverOnWorkerCrash`**: em produção, considere `true` para recuperar após crash do worker.
-4. **Cancelamento**: use `asyncCancel(requestId)` para cancelar requests longas; chame `asyncFree` após cancel ou get_result.
+4. **Cancelamento**: `asyncCancel(requestId)` e best-effort sobre request async Rust; chame `asyncFree` apos cancel ou get_result. `streamCancel` e efetivo entre batches/iteracoes. `cancelStatement` pode retornar unsupported dependendo do caminho e do driver.
 5. **Streaming**: para tabelas grandes, prefira `streamAsync` em vez de `executeAsync` para evitar OOM.
 
 ---
@@ -125,6 +179,7 @@ async.dispose();
 - **`executeAsync` retorna `null`**: verifique `getError()` ou `getStructuredError()`.
 - **Timeout**: `executeAsync` cancela automaticamente se `timeout` for excedido.
 - **Worker crash**: com `autoRecoverOnWorkerCrash: true`, o recovery invalida todas as conexões; reconecte após o crash.
+- **Queue cheia**: quando `maxPendingRequests` e excedido, a chamada falha com `AsyncErrorCode.resourceExhausted` antes de ser enviada para o worker.
 
 ---
 
@@ -190,9 +245,12 @@ async.dispose();
 - `example/async_demo.dart` — prepare/execute com async
 - `example/execute_async_demo.dart` — `executeAsync` e `streamAsync` diretos
 - `example/async_service_locator_demo.dart` — ServiceLocator com `useAsync: true`
+- `example/high_concurrency_worker_pool_demo.dart` - worker pool com multiplas conexoes
+- `example/high_concurrency_pool_demo.dart` - pool nativo com limite de tarefas em voo
+- `example/async_concurrency_benchmark.dart` - benchmark local de worker pool, pool nativo e streaming
 
 ---
 
 ## Referências
 
-- `ffi_api.md` — funções FFI `odbc_execute_async`, `odbc_async_poll`, `odbc_stream_start_async`
+- `ffi_api.md` - funcoes FFI `odbc_execute_async`, `odbc_execute_async_params`, `odbc_async_poll`, `odbc_stream_start_async`

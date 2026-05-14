@@ -29,6 +29,10 @@ enum AsyncErrorCode {
 
   /// Worker isolate terminated (disposed or crashed).
   workerTerminated,
+
+  /// Worker pool accepted no more queued work because a configured limit was
+  /// reached.
+  resourceExhausted,
 }
 
 /// Sendable error type that can cross isolate boundaries.
@@ -136,6 +140,9 @@ class AsyncError implements Exception {
       AsyncErrorCode.notInitialized => const EnvironmentNotInitializedError(),
       AsyncErrorCode.requestTimeout => QueryError(message: message),
       AsyncErrorCode.workerTerminated => QueryError(message: message),
+      AsyncErrorCode.resourceExhausted => ResourceLimitReachedError(
+          message: message,
+        ),
     };
   }
 }

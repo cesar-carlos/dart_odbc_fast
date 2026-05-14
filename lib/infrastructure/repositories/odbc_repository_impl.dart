@@ -14,6 +14,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart'
         DirectedRowCountItem,
         QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
@@ -1524,8 +1525,9 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
-    List<dynamic> params,
-  ) async {
+    List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResult, OdbcError>(
@@ -1537,18 +1539,22 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       try {
         final pv = _toParamValues(params);
         final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
         final buf = _isAsync
             ? await (_native as AsyncNativeOdbcConnection).executeQueryParams(
                 nativeId,
                 sql,
                 pv,
                 maxBufferBytes: maxBytes,
+                timeout: queryTimeout,
+                resultEncoding: resultEncoding,
               )
             : (_native as NativeOdbcConnection).executeQueryParams(
                 nativeId,
                 sql,
                 pv,
                 maxBufferBytes: maxBytes,
+                resultEncoding: resultEncoding,
               );
 
         final qr = _parseBufferToQueryResult(buf);
@@ -1605,8 +1611,9 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParamBuffer(
     String connectionId,
     String sql,
-    Uint8List? paramBuffer,
-  ) async {
+    Uint8List? paramBuffer, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     final nativeId = _connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResult, OdbcError>(
@@ -1617,6 +1624,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     Future<Result<QueryResult>> run() async {
       try {
         final maxBytes = _connectionOptions[connectionId]?.maxResultBufferBytes;
+        final queryTimeout = _connectionOptions[connectionId]?.queryTimeout;
         final buf = _isAsync
             ? await (_native as AsyncNativeOdbcConnection)
                 .executeQueryParamBuffer(
@@ -1624,12 +1632,15 @@ class OdbcRepositoryImpl implements IOdbcRepository {
                 sql,
                 paramBuffer,
                 maxBufferBytes: maxBytes,
+                timeout: queryTimeout,
+                resultEncoding: resultEncoding,
               )
             : (_native as NativeOdbcConnection).executeQueryParamsRaw(
                 nativeId,
                 sql,
                 paramBuffer,
                 maxBufferBytes: maxBytes,
+                resultEncoding: resultEncoding,
               );
 
         final qr = _parseBufferToQueryResult(buf);
@@ -2620,6 +2631,21 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         QueryError(message: e.toString()),
       );
     }
+  }
+
+  @override
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
+    if (!_isAsync) {
+      return const Failure(
+        UnsupportedFeatureError(
+          message: 'Async worker-pool stats require async native backend',
+        ),
+      );
+    }
+
+    return Success(
+      (_native as AsyncNativeOdbcConnection).getWorkerPoolStats(),
+    );
   }
 
   @override

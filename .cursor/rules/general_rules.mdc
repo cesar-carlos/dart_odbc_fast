@@ -56,6 +56,11 @@ alwaysApply: true
 - Follow `error_handling.mdc` for error propagation and diagnostic suppression.
 - Run the relevant analyzer and tests after meaningful structural changes.
 
+## Git Workflow
+
+- Do not create or switch to a new Git branch unless the user explicitly asks
+  for branch creation; keep work on the current branch by default.
+
 ## Review Checklist
 
 - [ ] Names communicate intent clearly.

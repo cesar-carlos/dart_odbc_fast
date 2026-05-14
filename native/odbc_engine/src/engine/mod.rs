@@ -36,8 +36,9 @@ pub use identifier::{
 pub use query::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
     execute_query_with_connection, execute_query_with_param_buffer,
-    execute_query_with_param_buffer_and_timeout, execute_query_with_params,
-    execute_query_with_params_and_timeout, get_global_metrics,
+    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
+    execute_query_with_params, execute_query_with_params_and_timeout, get_global_metrics,
+    ResultEncoding,
 };
 pub use sqlserver_json::{
     coalesce_for_json_rows, is_for_json_result, SQLSERVER_FOR_JSON_COLUMN_NAME,

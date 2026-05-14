@@ -124,6 +124,19 @@ Executes a **parameterized** query and writes the binary protocol into `out_buff
 - **Buffer contract**: same as `odbc_exec_query` for `out_buffer` / `buffer_len` / `out_written`.
 - **ParamValue format**: each parameter is `[tag: 1 byte][len: 4 bytes LE][payload]`. Tags: `0` Null, `1` String, `2` Integer (i32), `3` BigInt (i64), `4` Decimal (UTF‑8), `5` Binary. NULL parameters are not supported for binding yet.
 
+### `odbc_exec_query_params_options(conn_id, sql, params_buffer, params_len, result_encoding, out_buffer, buffer_len, out_written) -> int`
+
+Additive variant of `odbc_exec_query_params` that lets Dart request a result
+wire encoding.
+
+- **`result_encoding`**: `0` row-major v1 (default), `1` columnar v2,
+  `2` columnar v2 with per-column compression.
+- **Compatibility**: callers must resolve this symbol dynamically and fall back
+  to `odbc_exec_query_params` when unavailable.
+- **Buffer contract**: same as `odbc_exec_query_params`; on `-2`,
+  `out_written` is the required byte size so clients can retry with the exact
+  capacity.
+
 ### `odbc_exec_query_multi(conn_id, sql, out_buffer, buffer_len, out_written) -> int`
 
 Executes **batch SQL** (e.g. multiple statements, stored procedures) and returns a **multi-result** binary buffer.
@@ -138,6 +151,19 @@ Executes **batch SQL** (e.g. multiple statements, stored procedures) and returns
 Starts non-blocking execution and returns a `request_id`.
 
 - **Returns**: `request_id > 0` on success; `0` on failure.
+
+### `odbc_execute_async_params(conn_id, sql, params_buffer, params_len) -> unsigned int`
+
+Starts non-blocking parameterized execution and returns a `request_id`.
+
+- **Returns**: `request_id > 0` on success; `0` on failure.
+- **Parameters**:
+  - `params_buffer`: serialized `ParamValue` array. Use `NULL` or
+    `params_len == 0` for no parameters.
+  - `params_len`: length of `params_buffer` in bytes.
+- **Compatibility**: Dart treats this symbol as optional and falls back to
+  the existing worker execution path when an older native library does not
+  export it.
 
 ### `odbc_async_poll(request_id, out_status) -> int`
 
@@ -155,6 +181,8 @@ Polls request status.
 Retrieves the binary result for a completed async request.
 
 - **Returns**: `0` on success; `-1` on error/invalid request; `-2` if buffer too small.
+- On `-2`, the request result is preserved for retry. Newer builds set
+  `out_written` to the required size when it is known.
 
 ### `odbc_async_cancel(request_id) -> int`
 

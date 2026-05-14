@@ -28,6 +28,33 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [async_demo.dart](async_demo.dart): async API with `AsyncNativeOdbcConnection` (`requestTimeout` + `autoRecoverOnWorkerCrash`).
 - [execute_async_demo.dart](execute_async_demo.dart): raw `executeAsync` and `streamAsync` for non-blocking single-query and streaming.
 - [async_service_locator_demo.dart](async_service_locator_demo.dart): async mode using `ServiceLocator` (`useAsync: true`) and `OdbcService`.
+- [high_concurrency_worker_pool_demo.dart](high_concurrency_worker_pool_demo.dart): `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections and concurrent queries.
+- [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: 4)` with native pool checkout/query/release and an explicit in-flight task limit.
+- [async_concurrency_benchmark.dart](async_concurrency_benchmark.dart): Stopwatch benchmark comparing `workerCount: 1`, `workerCount: 4`, native pool with an in-flight limit, streaming, row-major vs columnar result encodings, and prepared reuse.
+- [streaming_performance_benchmark.dart](streaming_performance_benchmark.dart): focused streaming benchmark comparing `streamQuery` and `streamQueryBatched` with text/json/csv output.
+
+Run the high-concurrency demos from the project root:
+
+```bash
+dart run example/high_concurrency_worker_pool_demo.dart
+dart run example/high_concurrency_pool_demo.dart
+dart run example/async_concurrency_benchmark.dart
+dart run example/streaming_performance_benchmark.dart
+```
+
+The benchmark supports structured output:
+
+```bash
+ODBC_BENCH_OUTPUT=json ODBC_BENCH_OUT_FILE=bench_baselines/async.json dart run example/async_concurrency_benchmark.dart
+ODBC_BENCH_OUTPUT=csv ODBC_BENCH_OUT_FILE=bench_baselines/async.csv dart run example/async_concurrency_benchmark.dart
+ODBC_STREAM_BENCH_OUTPUT=json ODBC_STREAM_BENCH_OUT_FILE=bench_baselines/streaming.json dart run example/streaming_performance_benchmark.dart
+```
+
+Compare a saved streaming baseline with a new run:
+
+```bash
+dart run tool/compare_benchmark_baseline.dart --baseline bench_baselines/streaming.json --current bench_baselines/streaming-current.json --max-regression-percent 30
+```
 
 ### Queries / parameters
 
