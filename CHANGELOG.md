@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- None.
+
+### Changed
+
+- None.
+
+### Fixed
+
+- None.
+
+## [3.7.0] - 2026-05-14
+
+### Added
+
 - **Async worker pool:** `AsyncNativeOdbcConnection(workerCount: ...)` and
   `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: ...)` allow
   opt-in parallel worker isolates while keeping the default at `1`.
@@ -2047,7 +2061,9 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.7.0...HEAD
+[3.7.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.1...v3.7.0
+[3.6.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.4...v3.6.0
 [3.5.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.3...v3.5.4
 [3.5.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.2...v3.5.3

@@ -1,4 +1,5 @@
 .env
+.dart_tool/
 analysis_report.txt
 analysis_report_final.txt
 benchmarks/
@@ -8,5 +9,6 @@ tool/
 doc/m*.md
 build/
 coverage/
+target/
 test/my_test/
 lib/src/blobs/
