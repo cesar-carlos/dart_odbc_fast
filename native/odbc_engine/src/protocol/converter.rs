@@ -3,10 +3,10 @@ use crate::protocol::row_buffer::RowBuffer;
 use crate::protocol::types::OdbcType;
 
 pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> RowBufferV2 {
-    let mut v2 = RowBufferV2::new();
+    let col_count = buffer.column_count();
+    let mut v2 = RowBufferV2::with_capacity(col_count);
     v2.set_row_count(buffer.row_count());
 
-    let col_count = buffer.column_count();
     if col_count == 0 {
         return v2;
     }
@@ -49,6 +49,17 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> RowBufferV2 {
                     }
                 }
                 ColumnData::BigInt(bigint_data)
+            }
+            OdbcType::Binary => {
+                let mut binary_data = Vec::with_capacity(buffer.row_count());
+                for row in &buffer.rows {
+                    if let Some(cell) = row.get(col_idx) {
+                        binary_data.push(cell.clone());
+                    } else {
+                        binary_data.push(None);
+                    }
+                }
+                ColumnData::Binary(binary_data)
             }
             _ => {
                 let mut varchar_data = Vec::with_capacity(buffer.row_count());
@@ -152,6 +163,27 @@ mod tests {
     }
 
     #[test]
+    fn test_row_buffer_to_columnar_binary() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("payload".to_string(), OdbcType::Binary);
+        buffer.add_row(vec![Some(vec![0x01, 0x02, 0x03])]);
+        buffer.add_row(vec![None]);
+
+        let v2 = row_buffer_to_columnar(&buffer);
+        assert_eq!(v2.column_count(), 1);
+        assert_eq!(v2.row_count, 2);
+
+        match &v2.columns[0].data {
+            ColumnData::Binary(values) => {
+                assert_eq!(values.len(), 2);
+                assert_eq!(values[0], Some(vec![0x01, 0x02, 0x03]));
+                assert_eq!(values[1], None);
+            }
+            _ => panic!("Expected Binary column data"),
+        }
+    }
+
+    #[test]
     fn test_row_buffer_to_columnar_multiple_columns() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
@@ -201,6 +233,43 @@ mod tests {
                 assert_eq!(values[0], None); // Should be None due to invalid size
             }
             _ => panic!("Expected BigInt column data"),
+        }
+    }
+
+    #[test]
+    fn test_row_buffer_to_columnar_non_numeric_odbc_type_uses_varchar_storage() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("d".to_string(), OdbcType::Date);
+        buffer.add_row(vec![Some(b"2024-01-01".to_vec())]);
+
+        let v2 = row_buffer_to_columnar(&buffer);
+        match &v2.columns[0].data {
+            ColumnData::Varchar(values) => {
+                assert_eq!(values.len(), 1);
+                assert_eq!(values[0], Some(b"2024-01-01".to_vec()));
+            }
+            _ => panic!("Expected Varchar fallback column data"),
+        }
+    }
+
+    #[test]
+    fn test_row_buffer_to_columnar_short_row_treats_missing_cells_as_null() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("a".to_string(), OdbcType::Integer);
+        buffer.add_column("b".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![
+            Some(1i32.to_le_bytes().to_vec()),
+            Some(2i32.to_le_bytes().to_vec()),
+        ]);
+        buffer.add_row(vec![Some(3i32.to_le_bytes().to_vec())]);
+
+        let v2 = row_buffer_to_columnar(&buffer);
+        match (&v2.columns[0].data, &v2.columns[1].data) {
+            (ColumnData::Integer(a), ColumnData::Integer(b)) => {
+                assert_eq!(a, &vec![Some(1), Some(3)]);
+                assert_eq!(b, &vec![Some(2), None]);
+            }
+            _ => panic!("Expected two integer columns"),
         }
     }
 }

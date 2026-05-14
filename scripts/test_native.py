@@ -103,7 +103,7 @@ def main():
         print_header("Test coverage:")
         print_info("  - FFI Layer (20 tests)")
         print_info("  - Error Handling (10 tests)")
-        print_info("  - Protocol Types (16 tests)")
+        print_info("  - Protocol Types (24 tests)")
         print_info("  - Protocol Encoder (9 tests)")
         print_info("  - Security Buffer (13 tests)")
         print_info("  - Protocol Version (17 tests)")

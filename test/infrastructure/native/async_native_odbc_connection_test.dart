@@ -1004,8 +1004,7 @@ void main() {
         final connId2 = await async.connect('DSN=fake');
         final connId3 = await async.connect('DSN=fake');
 
-        final stopwatch = Stopwatch()..start();
-        await Future.wait([
+        final results = await Future.wait([
           async.executeQueryParams(
             connId1,
             'SELECT 1',
@@ -1022,12 +1021,15 @@ void main() {
             [],
           ),
         ]);
-        stopwatch.stop();
+        final stats = async.getWorkerPoolStats();
 
+        expect(results, everyElement(equals(Uint8List.fromList([1]))));
+        expect(stats.workers, hasLength(3));
         expect(
-          stopwatch.elapsedMilliseconds,
-          lessThan(2500),
-          reason: 'Three 1s fake queries should run on separate workers',
+          stats.workers.map((worker) => worker.totalRouted),
+          everyElement(greaterThanOrEqualTo(3)),
+          reason: 'Each fake query should keep connection affinity on a '
+              'different worker; wall-clock timing is covered by stress tests.',
         );
         await async.disconnect(connId1);
         await async.disconnect(connId2);
@@ -1206,6 +1208,40 @@ void main() {
       expect(
         async.getWorkerPoolStats().completedRequests,
         greaterThanOrEqualTo(3),
+      );
+      async.dispose();
+    });
+
+    test('waitForSlot reroutes queued independent requests after slot opens',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        workerCount: 2,
+        requestTimeout: const Duration(seconds: 5),
+        isolateEntry: _fakeWorkerPoolRoutingSupport,
+        maxPendingRequests: 2,
+        backpressureMode: AsyncBackpressureMode.waitForSlot,
+      );
+      await async.initialize();
+
+      final first = async.connect('DSN=slow_a');
+      final second = async.connect('DSN=fast_b');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final third = async.connect('DSN=fast_c');
+
+      final ids = await Future.wait([first, second, third]);
+      final routed = async
+          .getWorkerPoolStats()
+          .workers
+          .map((worker) => worker.totalRouted)
+          .toList(growable: false);
+
+      expect(ids.toSet(), hasLength(3));
+      expect(
+        routed,
+        equals([2, 3]),
+        reason: 'The queued third connect initially picks worker 0 while both '
+            'workers are busy, then should reroute to worker 1 when worker 1 '
+            'frees the first slot.',
       );
       async.dispose();
     });

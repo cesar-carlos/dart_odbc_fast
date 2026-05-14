@@ -40,3 +40,33 @@ impl Default for RowBuffer {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::types::OdbcType;
+
+    #[test]
+    fn new_buffer_has_zero_rows_and_columns() {
+        let b = RowBuffer::new();
+        assert_eq!(b.row_count(), 0);
+        assert_eq!(b.column_count(), 0);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        assert_eq!(
+            RowBuffer::default().column_count(),
+            RowBuffer::new().column_count()
+        );
+    }
+
+    #[test]
+    fn add_column_and_row_update_counts() {
+        let mut b = RowBuffer::new();
+        b.add_column("c".to_string(), OdbcType::Integer);
+        assert_eq!(b.column_count(), 1);
+        b.add_row(vec![None]);
+        assert_eq!(b.row_count(), 1);
+    }
+}

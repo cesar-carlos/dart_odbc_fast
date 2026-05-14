@@ -48,7 +48,8 @@ const int multiStreamItemTagRowCount = MultiResultParser.tagRowCount;
 class MultiResultStreamDecoder {
   static const int _frameHeaderSize = 5; // tag(1) + len(4)
 
-  final BytesBuilder _buffer = BytesBuilder(copy: false);
+  Uint8List _buffer = Uint8List(0);
+  int _offset = 0;
 
   /// Number of items decoded so far across all `feed` calls.
   int _itemsDecoded = 0;
@@ -56,7 +57,7 @@ class MultiResultStreamDecoder {
 
   /// Number of bytes currently held back inside the decoder waiting for the
   /// rest of a frame to arrive. Useful for backpressure / observability.
-  int get pendingBytes => _buffer.length;
+  int get pendingBytes => _buffer.length - _offset;
 
   /// Append [chunk] to the internal buffer and return any items that became
   /// fully available. The returned list may be empty if the chunk only
@@ -65,7 +66,7 @@ class MultiResultStreamDecoder {
   /// Throws [FormatException] if a frame declares an unknown tag.
   List<MultiResultItem> feed(Uint8List chunk) {
     if (chunk.isEmpty) return const [];
-    _buffer.add(chunk);
+    _addChunk(chunk);
     return _drainCompleteFrames();
   }
 
@@ -73,39 +74,49 @@ class MultiResultStreamDecoder {
   /// signalled end-of-stream. Throws [FormatException] when there are
   /// trailing bytes (always indicates a wire-format bug).
   void assertExhausted() {
-    if (_buffer.isNotEmpty) {
+    if (pendingBytes > 0) {
       throw FormatException(
-        'MultiResultStreamDecoder: ${_buffer.length} trailing bytes after '
+        'MultiResultStreamDecoder: $pendingBytes trailing bytes after '
         'end-of-stream',
       );
     }
   }
 
+  void _addChunk(Uint8List chunk) {
+    if (pendingBytes == 0) {
+      _buffer = chunk;
+      _offset = 0;
+      return;
+    }
+
+    final remaining = pendingBytes;
+    final next = Uint8List(remaining + chunk.length)
+      ..setRange(0, remaining, _buffer, _offset)
+      ..setAll(remaining, chunk);
+    _buffer = next;
+    _offset = 0;
+  }
+
   List<MultiResultItem> _drainCompleteFrames() {
     final items = <MultiResultItem>[];
 
-    // Snapshot the buffer once and walk it; rebuild only the leftover when
-    // we're done. This avoids quadratic slicing for chunky input.
-    final bytes = _buffer.toBytes();
-    var offset = 0;
-
     while (true) {
-      if (bytes.length - offset < _frameHeaderSize) break;
-      final tag = bytes[offset];
-      final len = ByteData.sublistView(bytes, offset + 1, offset + 5)
+      if (pendingBytes < _frameHeaderSize) break;
+      final tag = _buffer[_offset];
+      final len = ByteData.sublistView(_buffer, _offset + 1, _offset + 5)
           .getUint32(0, _littleEndian);
-      final frameEnd = offset + _frameHeaderSize + len;
-      if (frameEnd > bytes.length) break; // need more bytes
+      final frameEnd = _offset + _frameHeaderSize + len;
+      if (frameEnd > _buffer.length) break; // need more bytes
 
       final payload = Uint8List.sublistView(
-        bytes,
-        offset + _frameHeaderSize,
+        _buffer,
+        _offset + _frameHeaderSize,
         frameEnd,
       );
 
       switch (tag) {
         case multiStreamItemTagResultSet:
-          final rs = BinaryProtocolParser.parse(Uint8List.fromList(payload));
+          final rs = BinaryProtocolParser.parse(payload);
           items.add(MultiResultItemResultSet(rs));
 
         case multiStreamItemTagRowCount:
@@ -120,16 +131,15 @@ class MultiResultStreamDecoder {
 
         default:
           throw FormatException(
-            'Streaming multi-result: unknown frame tag $tag at offset $offset',
+            'Streaming multi-result: unknown frame tag $tag at offset $_offset',
           );
       }
-      offset = frameEnd;
+      _offset = frameEnd;
     }
 
-    // Rebuild the buffer with whatever was left over.
-    _buffer.clear();
-    if (offset < bytes.length) {
-      _buffer.add(bytes.sublist(offset));
+    if (_offset == _buffer.length) {
+      _buffer = Uint8List(0);
+      _offset = 0;
     }
 
     _itemsDecoded += items.length;

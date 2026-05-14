@@ -107,7 +107,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CI: "true"
       ENABLE_E2E_TESTS: "0"
@@ -136,11 +136,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 
-      - name: Rust coverage (lib)
+      - name: Rust coverage (lib + tests)
         run: |
           cd native
           cargo install --locked cargo-tarpaulin
-          cargo tarpaulin -p odbc_engine --lib --out Html --out Lcov --output-dir coverage
+          cargo tarpaulin -p odbc_engine --lib --tests --timeout 600 --out Html --out Lcov --output-dir coverage -- --test-threads=1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

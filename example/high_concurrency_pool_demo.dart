@@ -1,6 +1,8 @@
 // High-concurrency native pool demo through async ServiceLocator.
 // Run: dart run example/high_concurrency_pool_demo.dart
 
+import 'dart:io';
+
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -18,6 +20,7 @@ Future<void> main() async {
   const poolSize = 4;
   const taskCount = 24;
   const maxInFlight = 4;
+  final query = _envOr('ODBC_CONCURRENCY_QUERY', 'SELECT 1 AS value');
 
   final locator = ServiceLocator()
     ..initialize(
@@ -41,30 +44,36 @@ Future<void> main() async {
       'poolCreate',
     );
 
-    AppLogger.info(
+    _log(
       'Pool ready: poolId=$poolId, poolSize=$poolSize, '
       'workers=$workerCount, maxInFlight=$maxInFlight',
     );
+    _log(
+      'asyncWorkerCount=$workerCount starts Dart worker isolates; the native '
+      'pool supplies separate checkouts so tasks are not serialized on one '
+      'connection.',
+    );
+    _log('Query: $query');
 
     final elapsed = await _measure(() async {
       await _runLimited<void>(
         taskCount,
         maxInFlight,
-        (index) => _checkoutQueryRelease(service, poolId, index),
+        (index) => _checkoutQueryRelease(service, poolId, index, query),
       );
     });
 
     final state = await service.poolGetState(poolId);
     state.fold(
-      (s) => AppLogger.info('Final pool state: size=${s.size}, idle=${s.idle}'),
+      (s) => _log('Final pool state: size=${s.size}, idle=${s.idle}'),
       (e) => AppLogger.warning('poolGetState failed: $e'),
     );
 
-    AppLogger.info(
+    _log(
       'Completed $taskCount checkout/query/release tasks in '
       '${elapsed.inMilliseconds} ms',
     );
-    AppLogger.info(
+    _log(
       'The explicit maxInFlight limit keeps concurrent work aligned with '
       'pool size instead of queueing unbounded tasks inside the driver.',
     );
@@ -84,6 +93,7 @@ Future<void> _checkoutQueryRelease(
   OdbcService service,
   int poolId,
   int index,
+  String query,
 ) async {
   final pooled = _unwrap<Connection>(
     await service.poolGetConnection(poolId),
@@ -93,7 +103,7 @@ Future<void> _checkoutQueryRelease(
   try {
     final result = _unwrap<QueryResult>(
       await service.executeQuery(
-        'SELECT 1 AS value',
+        query,
         connectionId: pooled.id,
       ),
       'executeQuery[$index]',
@@ -108,6 +118,17 @@ Future<void> _checkoutQueryRelease(
       (e) => AppLogger.warning('poolReleaseConnection[$index] failed: $e'),
     );
   }
+}
+
+String _envOr(String name, String fallback) {
+  final value = Platform.environment[name];
+  if (value != null && value.isNotEmpty) return value;
+  return fallback;
+}
+
+void _log(String message) {
+  stdout.writeln(message);
+  AppLogger.info(message);
 }
 
 Future<Duration> _measure(Future<void> Function() action) async {

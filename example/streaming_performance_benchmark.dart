@@ -123,9 +123,9 @@ void _writeResults(List<_StreamingBenchmarkResult> results) {
 
   if (outFile != null && outFile.isNotEmpty) {
     File(outFile).writeAsStringSync(content);
-    AppLogger.info('Streaming benchmark results written to $outFile');
+    stdout.writeln('Streaming benchmark results written to $outFile');
   } else {
-    AppLogger.info(content);
+    stdout.writeln(content);
   }
 }
 

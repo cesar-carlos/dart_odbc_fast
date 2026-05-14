@@ -176,6 +176,23 @@ mod tests {
     use crate::test_helpers::load_dotenv;
 
     #[test]
+    fn wide_text_to_utf8_bytes_ascii() {
+        assert_eq!(wide_text_to_utf8_bytes(&[0x48, 0x69]), b"Hi");
+    }
+
+    #[test]
+    fn wide_text_to_utf8_bytes_cjk_round_trips_utf8() {
+        let wide: Vec<u16> = "你好".encode_utf16().collect();
+        assert_eq!(wide_text_to_utf8_bytes(&wide), "你好".as_bytes());
+    }
+
+    #[test]
+    fn wide_text_to_utf8_bytes_unpaired_surrogate_becomes_replacement_char() {
+        let out = wide_text_to_utf8_bytes(&[0xD800]);
+        assert_eq!(out, "\u{FFFD}".as_bytes());
+    }
+
+    #[test]
     fn test_text_bytes_to_i32_le_bytes_valid_number() {
         let out = text_bytes_to_i32_le_bytes(b"42");
         assert_eq!(out, 42i32.to_le_bytes());

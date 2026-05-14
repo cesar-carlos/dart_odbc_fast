@@ -383,6 +383,64 @@ mod tests {
     }
 
     #[test]
+    fn decode_multi_v2_rejects_unknown_item_tag() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.push(99u8); // not ResultSet nor RowCount
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown multi-result item tag"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn decode_multi_v2_rejects_row_count_with_wrong_payload_length() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.push(TAG_ROW_COUNT);
+        bytes.extend_from_slice(&4u32.to_le_bytes()); // not 8
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("RowCount item expected 8-byte"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn try_encode_multi_v1_empty_round_trips_decode() {
+        let items: Vec<MultiResultItem> = vec![];
+        let enc = try_encode_multi_v1(&items).unwrap();
+        let dec = decode_multi(&enc).unwrap();
+        assert_eq!(dec, items);
+    }
+
+    #[test]
+    fn decode_multi_v1_rejects_truncated_item_payload() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        bytes.push(TAG_RESULT_SET);
+        bytes.extend_from_slice(&10u32.to_le_bytes()); // claims 10 bytes
+        bytes.extend_from_slice(&[1, 2, 3]); // only 3
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("truncated at item payload"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
     fn decode_multi_v2_rejects_trailing_bytes() {
         let mut bytes = encode_multi(&[]);
         bytes.push(1);

@@ -20,4 +20,17 @@ mod tests {
         let bytes = COLUMNAR_V2_MAGIC.to_le_bytes();
         assert_eq!(&bytes, b"ODBC");
     }
+
+    #[test]
+    fn version_constant_matches_sketch() {
+        assert_eq!(COLUMNAR_V2_VERSION, 2);
+    }
+
+    #[test]
+    fn magic_round_trips_through_le_bytes() {
+        assert_eq!(
+            u32::from_le_bytes(COLUMNAR_V2_MAGIC.to_le_bytes()),
+            COLUMNAR_V2_MAGIC
+        );
+    }
 }

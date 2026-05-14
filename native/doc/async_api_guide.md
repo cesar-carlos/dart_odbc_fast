@@ -76,6 +76,12 @@ Regras de concorrencia:
 - Timeout de requests async tenta `asyncCancel`/`asyncFree`; streaming tenta `streamCancel` antes de `streamClose` quando a stream nao termina normalmente.
 - Cancelamento e best-effort quando o driver ODBC ja esta bloqueado dentro de uma chamada nativa.
 
+Sobre "threads": a API publica nao exige criar threads manualmente. Use
+`workerCount` ou `asyncWorkerCount`; cada worker isolate atende uma fila de
+FFI/ODBC e permite reduzir gargalo quando ha multiplas conexoes ou checkouts de
+pool. Abrir varios workers para a mesma conexao nao paraleliza SQL nessa
+conexao, porque o mutex nativo da conexao continua serializando o uso do handle.
+
 Tuning recomendado:
 
 - API web com pool: `workerCount = min(poolSize, cores)` e `maxPendingRequests = poolSize * 2..4`.
@@ -89,6 +95,9 @@ Exemplos documentados:
 - `example/async_concurrency_benchmark.dart` - compara worker pool, pool nativo,
   streaming, `ResultEncoding.columnar`, `ResultEncoding.columnarCompressed` e
   prepared reuse.
+
+Os dois exemplos de alta concorrencia aceitam `ODBC_CONCURRENCY_QUERY` para
+rodar uma query lenta ou maior sem editar codigo.
 
 ---
 

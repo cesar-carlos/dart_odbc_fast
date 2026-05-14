@@ -292,6 +292,90 @@ mod tests {
     }
 
     #[test]
+    fn checked_u16_len_rejects_overflow() {
+        let err = checked_u16_len(usize::from(u16::MAX) + 1, "column count").unwrap_err();
+
+        assert!(matches!(
+            err,
+            EncodeError::LengthTooLarge {
+                field: "column count",
+                target: "u16",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn try_append_output_footer_empty_is_noop() {
+        let base = vec![1u8, 2, 3];
+        let out = RowBufferEncoder::try_append_output_footer(base.clone(), &[]).unwrap();
+        assert_eq!(out, base);
+    }
+
+    #[test]
+    fn try_append_output_footer_inserts_out1_and_params() {
+        use crate::protocol::param_value::ParamValue;
+
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let out =
+            RowBufferEncoder::try_append_output_footer(base.clone(), &[ParamValue::Integer(7)])
+                .unwrap();
+        assert!(out.len() > base.len());
+        let off = base.len();
+        assert_eq!(&out[off..off + 4], &OUTPUT_FOOTER_MAGIC);
+        let cnt = u32::from_le_bytes([out[off + 4], out[off + 5], out[off + 6], out[off + 7]]);
+        assert_eq!(cnt, 1);
+    }
+
+    #[test]
+    fn try_append_ref_cursor_footer_empty_is_noop() {
+        let base = vec![9u8];
+        let out = RowBufferEncoder::try_append_ref_cursor_footer(base.clone(), &[]).unwrap();
+        assert_eq!(out, base);
+    }
+
+    #[test]
+    fn try_append_ref_cursor_footer_inserts_rc1_frame() {
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let out =
+            RowBufferEncoder::try_append_ref_cursor_footer(base.clone(), &[blob.clone()]).unwrap();
+        let off = base.len();
+        assert_eq!(&out[off..off + 4], &REF_CURSOR_FOOTER_MAGIC);
+        let cnt = u32::from_le_bytes([out[off + 4], out[off + 5], out[off + 6], out[off + 7]]);
+        assert_eq!(cnt, 1u32);
+        let blen =
+            u32::from_le_bytes([out[off + 8], out[off + 9], out[off + 10], out[off + 11]]) as usize;
+        assert_eq!(blen, blob.len());
+    }
+
+    #[test]
+    fn encode_to_writer_surfaces_io_errors() {
+        use std::io::{self, Write};
+
+        struct BrokenWriter;
+
+        impl Write for BrokenWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "simulated write failure",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("x".to_string(), OdbcType::Integer);
+        let mut w = BrokenWriter;
+        let err = RowBufferEncoder::encode_to_writer(&buffer, &mut w).unwrap_err();
+        assert!(matches!(err, EncodeError::Io(_)));
+    }
+
+    #[test]
     fn checked_payload_add_rejects_size_overflow() {
         let err = checked_payload_add(usize::MAX, 1, "cell data").unwrap_err();
 

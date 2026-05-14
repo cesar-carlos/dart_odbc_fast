@@ -31,11 +31,11 @@ String? loadExampleDsn() {
 String? requireExampleDsn() {
   final dsn = loadExampleDsn();
   if (dsn == null || dsn.isEmpty) {
-    AppLogger.warning(
-      'ODBC_TEST_DSN (or ODBC_DSN) not set. '
-      'Create .env with ODBC_TEST_DSN=... or set environment variable. '
-      'Skipping DB-dependent example.',
-    );
+    const message = 'ODBC_TEST_DSN (or ODBC_DSN) not set. '
+        'Create .env with ODBC_TEST_DSN=... or set environment variable. '
+        'Skipping DB-dependent example.';
+    stderr.writeln(message);
+    AppLogger.warning(message);
     return null;
   }
   return dsn;

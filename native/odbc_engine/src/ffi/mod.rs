@@ -482,7 +482,7 @@ where
                         buffer_len
                     ),
                 );
-                set_out_written_zero(out_written);
+                set_out_written_needed(out_written, data.len());
                 return -2;
             }
             unsafe {
@@ -939,7 +939,7 @@ pub extern "C" fn odbc_get_version(
         let bytes = json.as_bytes();
 
         if bytes.len() > buffer_len as usize {
-            unsafe { *out_written = 0 };
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
 
@@ -2177,7 +2177,7 @@ pub extern "C" fn odbc_get_structured_error(
         let error_data = structured_error.serialize();
 
         if error_data.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, error_data.len());
             return -2;
         }
 
@@ -2228,7 +2228,7 @@ pub extern "C" fn odbc_get_structured_error_for_connection(
         let error_data = structured_error.serialize();
 
         if error_data.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, error_data.len());
             return -2;
         }
 
@@ -2256,6 +2256,7 @@ pub extern "C" fn odbc_get_metrics(
             return -1;
         }
         if buffer_len < 40 {
+            set_out_written_needed(out_written, 40);
             return -2;
         }
         let Some(state) = try_lock_global_state() else {
@@ -2337,7 +2338,7 @@ pub extern "C" fn odbc_audit_get_events(
         };
 
         if data.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, data.len());
             return -2;
         }
 
@@ -2397,7 +2398,7 @@ pub extern "C" fn odbc_audit_get_status(
         drop(state);
 
         if data.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, data.len());
             return -2;
         }
 
@@ -2477,7 +2478,7 @@ pub extern "C" fn odbc_metadata_cache_stats(
         };
 
         if data.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, data.len());
             return -2;
         }
 
@@ -2523,6 +2524,7 @@ pub extern "C" fn odbc_get_cache_metrics(
             return -1;
         }
         if buffer_len < 64 {
+            set_out_written_needed(out_written, 64);
             return -2;
         }
         let _state = match try_lock_global_state() {
@@ -2650,7 +2652,7 @@ pub extern "C" fn odbc_get_driver_capabilities(
         };
         let bytes = json.as_bytes();
         if bytes.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
         unsafe {
@@ -2763,7 +2765,7 @@ pub extern "C" fn odbc_get_connection_dbms_info(
         };
         let bytes = json.as_bytes();
         if bytes.len() > buffer_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
         // SAFETY: `buffer` and `out_written` were checked non-null above; `buffer_len`
@@ -2852,7 +2854,7 @@ pub extern "C" fn odbc_build_upsert_sql(
         };
         let bytes = sql.as_bytes();
         if bytes.len() > buf_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
         // SAFETY: out_buf has buf_len capacity, verified above; out_written non-null.
@@ -2929,7 +2931,7 @@ pub extern "C" fn odbc_append_returning_sql(
         };
         let bytes = out_sql.as_bytes();
         if bytes.len() > buf_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
         unsafe {
@@ -3012,7 +3014,7 @@ pub extern "C" fn odbc_get_session_init_sql(
         };
         let bytes = json.as_bytes();
         if bytes.len() > buf_len as usize {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, bytes.len());
             return -2;
         }
         unsafe {
@@ -3495,7 +3497,7 @@ pub extern "C" fn odbc_exec_query_params(
                             data_len, buffer_len
                         ),
                     );
-                    set_out_written_zero(out_written);
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
 
@@ -3775,6 +3777,7 @@ pub extern "C" fn odbc_exec_query_multi(
                             data_len, buffer_len
                         ),
                     );
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
 
@@ -3941,7 +3944,7 @@ pub extern "C" fn odbc_exec_query_multi_params(
                             data_len, buffer_len
                         ),
                     );
-                    set_out_written_zero(out_written);
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
                 metrics.record_query(elapsed);
@@ -4029,7 +4032,7 @@ pub extern "C" fn odbc_catalog_columns(
                         buffer_len
                     ),
                 );
-                set_out_written_zero(out_written);
+                set_out_written_needed(out_written, cached_data.len());
                 return -2;
             }
             unsafe {
@@ -4094,7 +4097,7 @@ pub extern "C" fn odbc_catalog_columns(
                             buffer_len
                         ),
                     );
-                    set_out_written_zero(out_written);
+                    set_out_written_needed(out_written, data.len());
                     return -2;
                 }
                 unsafe {
@@ -4452,6 +4455,7 @@ pub extern "C" fn odbc_execute(
                             data_len, buffer_len
                         ),
                     );
+                    set_out_written_needed(out_written, data_len);
                     return -2;
                 }
                 metrics.record_query(elapsed);
@@ -5159,6 +5163,10 @@ pub extern "C" fn odbc_stream_fetch(
                         format!("Buffer too small: need {} bytes, got {}", needed, buf_len),
                     );
                 }
+                set_out_written_needed(out_written, needed);
+                unsafe {
+                    *has_more = 1;
+                }
                 -2
             }
             Ok(StreamCopyResult::End) => {
@@ -5592,7 +5600,7 @@ pub extern "C" fn odbc_pool_get_state_json(
         let needed = bytes.len() + 1;
 
         if (buffer_len as usize) < needed {
-            set_out_written_zero(out_written);
+            set_out_written_needed(out_written, needed);
             return -2;
         }
 
@@ -6352,6 +6360,7 @@ mod tests {
     #[serial]
     fn test_ffi_audit_get_events_buffer_too_small() {
         odbc_init();
+        assert_eq!(odbc_audit_clear(), 0);
         assert_eq!(odbc_audit_enable(1), 0);
         let Some(state) = try_lock_global_state() else {
             panic!("Failed to lock global state");
@@ -6369,7 +6378,10 @@ mod tests {
         );
 
         assert_eq!(result, -2, "Tiny buffer should return -2");
-        assert_eq!(written, 0, "written should be zero on buffer-too-small");
+        assert!(
+            written > tiny_buffer.len() as c_uint,
+            "written should report required size on buffer-too-small"
+        );
     }
 
     #[test]
@@ -6496,6 +6508,10 @@ mod tests {
         let result =
             odbc_metadata_cache_stats(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
         assert_eq!(result, -2, "Too small buffer should return -2");
+        assert!(
+            written > buffer.len() as c_uint,
+            "written should report required size on buffer-too-small"
+        );
     }
 
     #[test]
@@ -6538,6 +6554,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_ffi_get_driver_capabilities_buffer_too_small() {
         let conn_str = CString::new("Driver={SQL Server};Server=localhost;Database=test;").unwrap();
         let mut buffer = vec![0u8; 8];
@@ -6549,7 +6566,10 @@ mod tests {
             &mut written,
         );
         assert_eq!(result, -2, "Too small buffer should return -2");
-        assert_eq!(written, 0, "written should be reset on buffer-too-small");
+        assert!(
+            written > buffer.len() as c_uint,
+            "written should report required size on buffer-too-small"
+        );
     }
 
     #[test]
@@ -7801,6 +7821,7 @@ mod tests {
         let result = odbc_get_metrics(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
 
         assert_eq!(result, -2, "Buffer too small should return -2");
+        assert_eq!(written, 40, "Should report required metrics buffer size");
     }
 
     #[test]
@@ -8195,7 +8216,10 @@ mod tests {
         let mut small_out: c_uint = 0;
         let r_small = odbc_pool_get_state_json(pool_id, small_buf.as_mut_ptr(), 8, &mut small_out);
         assert_eq!(r_small, -2, "Buffer too small should return -2");
-        assert_eq!(small_out, 0);
+        assert!(
+            small_out > small_buf.len() as c_uint,
+            "Should report required JSON buffer size"
+        );
 
         let cr = odbc_pool_close(pool_id);
         assert_eq!(cr, 0);
@@ -9120,7 +9144,10 @@ mod tests {
             &mut written,
         );
         assert_eq!(first, -2, "First execute should report buffer too small");
-        assert_eq!(written, 0, "No bytes should be written on -2");
+        assert!(
+            written > small_buffer.len() as c_uint,
+            "Should report required size on -2"
+        );
 
         let mut larger_buffer = vec![0u8; 16 * 1024];
         let second = odbc_execute(

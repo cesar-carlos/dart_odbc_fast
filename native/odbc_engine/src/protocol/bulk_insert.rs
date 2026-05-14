@@ -1182,4 +1182,40 @@ mod tests {
         let e = parse_bulk_insert_payload(&w).expect_err("mismatch");
         assert!(e.to_string().contains("length mismatch"));
     }
+
+    #[test]
+    fn is_null_reads_packed_bits() {
+        let bmp = [0b101];
+        assert!(is_null(&bmp, 0));
+        assert!(!is_null(&bmp, 1));
+        assert!(is_null(&bmp, 2));
+    }
+
+    #[test]
+    fn is_null_returns_false_when_row_byte_index_outside_bitmap() {
+        let bmp = [0xFF];
+        assert!(!is_null(&bmp, 8));
+    }
+
+    #[test]
+    fn is_null_strict_reads_bit_within_row_count() {
+        let bmp = [0b100];
+        assert!(is_null_strict(&bmp, 2, 3).unwrap());
+        assert!(!is_null_strict(&bmp, 0, 3).unwrap());
+    }
+
+    #[test]
+    fn bulk_column_type_tag_roundtrip_all_variants() {
+        for t in [
+            BulkColumnType::I32,
+            BulkColumnType::I64,
+            BulkColumnType::Text,
+            BulkColumnType::Decimal,
+            BulkColumnType::Binary,
+            BulkColumnType::Timestamp,
+        ] {
+            let tag = t.to_tag();
+            assert_eq!(BulkColumnType::from_tag(tag).unwrap(), t);
+        }
+    }
 }

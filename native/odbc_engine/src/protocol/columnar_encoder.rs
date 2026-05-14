@@ -587,4 +587,67 @@ mod tests {
 
         assert_eq!(encoded, expected);
     }
+
+    #[test]
+    fn checked_u16_rejects_value_above_u16_max() {
+        let err = checked_u16(usize::from(u16::MAX) + 1, "column count").unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+    }
+
+    #[test]
+    fn checked_u32_rejects_value_above_u32_max() {
+        let err = checked_u32(usize::MAX, "row count").unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+    }
+
+    #[test]
+    fn checked_add_rejects_usize_overflow() {
+        let err = checked_add(usize::MAX, 1, "unit test").unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+    }
+
+    #[test]
+    fn encode_rejects_row_count_above_u32_wire_limit() {
+        if usize::MAX <= u32::MAX as usize {
+            return;
+        }
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count((u32::MAX as usize).saturating_add(1));
+        let err = ColumnarEncoder::encode(&buffer, false).unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+    }
+
+    #[test]
+    fn encode_rejects_column_name_byte_length_above_u16() {
+        let mut buffer = RowBufferV2::new();
+        let long_name = "n".repeat(usize::from(u16::MAX) + 1);
+        buffer.add_column(
+            ColumnMetadata {
+                name: long_name,
+                odbc_type: OdbcType::Varchar,
+            },
+            ColumnData::Varchar(vec![]),
+        );
+        let err = ColumnarEncoder::encode(&buffer, false).unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+    }
+
+    #[test]
+    fn encode_for_bulk_empty_row_buffer() {
+        let rb = crate::protocol::row_buffer::RowBuffer::new();
+        let out = ColumnarEncoder::encode_for_bulk(&rb).expect("empty bulk encode");
+        let magic = u32::from_le_bytes([out[0], out[1], out[2], out[3]]);
+        assert_eq!(magic, MAGIC);
+    }
+
+    #[test]
+    fn encode_for_bulk_single_integer_column() {
+        let mut rb = crate::protocol::row_buffer::RowBuffer::new();
+        rb.add_column("n".to_string(), OdbcType::Integer);
+        rb.add_row(vec![Some(42i32.to_le_bytes().to_vec())]);
+        let out = ColumnarEncoder::encode_for_bulk(&rb).expect("bulk");
+        assert!(out.len() > 19);
+        let b = 42i32.to_le_bytes();
+        assert!(out.windows(4).any(|w| w == b));
+    }
 }

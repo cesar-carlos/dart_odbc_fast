@@ -286,6 +286,18 @@ mod tests {
     }
 
     #[test]
+    fn compression_strategy_auto_select_at_one_mb_boundary() {
+        assert!(matches!(
+            CompressionStrategy::auto_select(1_000_000),
+            CompressionStrategy::None
+        ));
+        assert!(matches!(
+            CompressionStrategy::auto_select(1_000_001),
+            CompressionStrategy::Zstd(3)
+        ));
+    }
+
+    #[test]
     fn test_compression_strategy_compress_none() {
         let s = CompressionStrategy::None;
         let data = b"hello";
@@ -310,5 +322,35 @@ mod tests {
         let out = s.compress(data).unwrap();
         assert!(!out.is_empty());
         assert_ne!(out, data);
+    }
+
+    #[test]
+    fn compression_strategy_lz4_compress_and_decompress_roundtrip() {
+        let s = CompressionStrategy::Lz4;
+        let data = b"strategy lz4 payload";
+        let compressed = s.compress(data).unwrap();
+        let decompressed = decompress(&compressed, CompressionType::Lz4).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn compression_strategy_compress_owned_zstd() {
+        let s = CompressionStrategy::Zstd(3);
+        let data = vec![b'a'; 256];
+        let compressed = s.compress_owned(data).unwrap();
+        let decompressed = decompress(&compressed, CompressionType::Zstd).unwrap();
+        assert_eq!(decompressed, vec![b'a'; 256]);
+    }
+
+    #[test]
+    fn decompress_zstd_rejects_corrupt_payload() {
+        let err = decompress(b"not-valid-zstd-payload", CompressionType::Zstd).unwrap_err();
+        assert!(matches!(err, OdbcError::InternalError(_)));
+    }
+
+    #[test]
+    fn decompress_lz4_rejects_corrupt_payload() {
+        let err = decompress(b"\x00\x01\x02-not-lz4", CompressionType::Lz4).unwrap_err();
+        assert!(matches!(err, OdbcError::InternalError(_)));
     }
 }

@@ -105,6 +105,28 @@ mod tests {
         assert_eq!(OdbcType::Date as u16, 5);
         assert_eq!(OdbcType::Timestamp as u16, 6);
         assert_eq!(OdbcType::Binary as u16, 7);
+        assert_eq!(OdbcType::NVarchar as u16, 8);
+        assert_eq!(OdbcType::TimestampWithTz as u16, 9);
+        assert_eq!(OdbcType::DatetimeOffset as u16, 10);
+        assert_eq!(OdbcType::Time as u16, 11);
+        assert_eq!(OdbcType::SmallInt as u16, 12);
+        assert_eq!(OdbcType::Boolean as u16, 13);
+        assert_eq!(OdbcType::Float as u16, 14);
+        assert_eq!(OdbcType::Double as u16, 15);
+        assert_eq!(OdbcType::Json as u16, 16);
+        assert_eq!(OdbcType::Uuid as u16, 17);
+        assert_eq!(OdbcType::Money as u16, 18);
+        assert_eq!(OdbcType::Interval as u16, 19);
+    }
+
+    #[test]
+    fn test_from_protocol_discriminant_roundtrip_and_unknown() {
+        for code in 1_u16..=19 {
+            let t = OdbcType::from_protocol_discriminant(code);
+            assert_eq!(t as u16, code, "discriminant {code} should map to itself");
+        }
+        assert_eq!(OdbcType::from_protocol_discriminant(0), OdbcType::Varchar);
+        assert_eq!(OdbcType::from_protocol_discriminant(999), OdbcType::Varchar);
     }
 
     #[test]
@@ -140,6 +162,39 @@ mod tests {
     #[test]
     fn test_from_odbc_sql_type_binary() {
         assert_eq!(OdbcType::from_odbc_sql_type(-2), OdbcType::Binary);
+        assert_eq!(OdbcType::from_odbc_sql_type(-3), OdbcType::Binary);
+        assert_eq!(OdbcType::from_odbc_sql_type(-4), OdbcType::Binary);
+    }
+
+    #[test]
+    fn test_from_odbc_sql_type_type_date_and_timestamp() {
+        assert_eq!(OdbcType::from_odbc_sql_type(91), OdbcType::Date);
+        assert_eq!(OdbcType::from_odbc_sql_type(93), OdbcType::Timestamp);
+    }
+
+    #[test]
+    fn test_from_odbc_sql_type_nvarchar_range() {
+        assert_eq!(OdbcType::from_odbc_sql_type(-8), OdbcType::NVarchar);
+        assert_eq!(OdbcType::from_odbc_sql_type(-9), OdbcType::NVarchar);
+        assert_eq!(OdbcType::from_odbc_sql_type(-10), OdbcType::NVarchar);
+    }
+
+    #[test]
+    fn test_from_odbc_sql_type_smallint_tinyint_bit() {
+        assert_eq!(OdbcType::from_odbc_sql_type(5), OdbcType::SmallInt);
+        assert_eq!(OdbcType::from_odbc_sql_type(-6), OdbcType::SmallInt);
+        assert_eq!(OdbcType::from_odbc_sql_type(-7), OdbcType::Boolean);
+    }
+
+    #[test]
+    fn test_from_odbc_sql_type_float_double_numeric_time_uuid() {
+        assert_eq!(OdbcType::from_odbc_sql_type(7), OdbcType::Float);
+        assert_eq!(OdbcType::from_odbc_sql_type(6), OdbcType::Double);
+        assert_eq!(OdbcType::from_odbc_sql_type(8), OdbcType::Double);
+        assert_eq!(OdbcType::from_odbc_sql_type(2), OdbcType::Decimal);
+        assert_eq!(OdbcType::from_odbc_sql_type(10), OdbcType::Time);
+        assert_eq!(OdbcType::from_odbc_sql_type(92), OdbcType::Time);
+        assert_eq!(OdbcType::from_odbc_sql_type(-11), OdbcType::Uuid);
     }
 
     #[test]
@@ -256,6 +311,28 @@ mod tests {
             OdbcType::sql_type_code_from_data_type(&DataType::Char {
                 length: NonZero::new(10)
             }),
+            1
+        );
+    }
+
+    #[test]
+    fn test_sql_type_code_from_data_type_float_family_defaults_to_varchar_code() {
+        use odbc_api::DataType;
+
+        assert_eq!(OdbcType::sql_type_code_from_data_type(&DataType::Real), 1);
+        assert_eq!(OdbcType::sql_type_code_from_data_type(&DataType::Double), 1);
+        assert_eq!(
+            OdbcType::sql_type_code_from_data_type(&DataType::Float { precision: 53 }),
+            1
+        );
+    }
+
+    #[test]
+    fn test_sql_type_code_from_data_type_unknown_defaults_to_varchar_code() {
+        use odbc_api::DataType;
+
+        assert_eq!(
+            OdbcType::sql_type_code_from_data_type(&DataType::Unknown),
             1
         );
     }

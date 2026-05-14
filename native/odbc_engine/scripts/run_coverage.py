@@ -5,7 +5,12 @@ Runs cargo-tarpaulin to generate Rust code coverage (HTML + LCOV).
 
 Usage:
     python scripts/run_coverage.py
+    python scripts/run_coverage.py --lib-only
     python scripts/run_coverage.py --install-tools
+
+By default measures `odbc_engine` with `--lib` and `--tests` (matches doc/TESTING.md
+and reports the same scope developers use locally). Use `--lib-only` for library
+targets only (faster, lower percentage).
 
 Requires:
     cargo-tarpaulin (install manually or use --install-tools)
@@ -86,6 +91,11 @@ def main():
         action="store_true",
         help="Install cargo-tarpaulin if not found",
     )
+    parser.add_argument(
+        "--lib-only",
+        action="store_true",
+        help="Measure only --lib (omit integration tests under tests/)",
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).parent
@@ -93,9 +103,11 @@ def main():
     workspace_root = engine_dir.parent
     coverage_dir = workspace_root / "coverage"
 
+    scope = "lib + integration tests" if not args.lib_only else "lib only"
     print_header("=== Rust Code Coverage (cargo tarpaulin) ===")
     print_info(f"Workspace: {workspace_root}")
     print_info(f"Package:   odbc_engine")
+    print_info(f"Scope:     {scope}")
     print_info(f"Output:    {coverage_dir}")
     print()
 
@@ -117,7 +129,7 @@ def main():
     os.chdir(workspace_root)
     coverage_dir.mkdir(parents=True, exist_ok=True)
 
-    result = subprocess.run([
+    tarpaulin_args = [
         "cargo",
         "tarpaulin",
         "-p",
@@ -129,13 +141,18 @@ def main():
         "Lcov",
         "--output-dir",
         "coverage",
-    ])
+        "--timeout",
+        "600",
+    ]
+    if not args.lib_only:
+        tarpaulin_args.extend(["--tests", "--", "--test-threads=1"])
+    result = subprocess.run(tarpaulin_args)
 
     if result.returncode == 0:
         html_path = coverage_dir / "tarpaulin-report.html"
         print()
         print_success(f"Coverage report: {html_path}")
-        
+
         file_uri = html_path.as_uri()
         print_info(f"Open in browser: {file_uri}")
         return 0

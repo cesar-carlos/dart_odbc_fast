@@ -712,8 +712,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           final fetched =
               (_native as NativeOdbcConnection).streamFetch(streamId);
           ok = fetched.success;
-          final raw = fetched.data;
-          data = raw == null ? null : Uint8List.fromList(raw);
+          data = fetched.data;
           hasMore = fetched.hasMore;
           // `_native` was already narrowed by the `streamFetch` call above.
           // ignore: unnecessary_cast
@@ -727,7 +726,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
           return;
         }
         if (data != null && data.isNotEmpty) {
-          for (final item in decoder.feed(Uint8List.fromList(data))) {
+          for (final item in decoder.feed(data)) {
             yield Success<QueryResultMultiItem, OdbcError>(
               _toQueryResultMultiItem(item),
             );

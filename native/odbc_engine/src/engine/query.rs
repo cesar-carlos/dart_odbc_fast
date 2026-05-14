@@ -156,6 +156,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn result_encoding_from_wire_maps_stable_codes() {
+        assert_eq!(ResultEncoding::from_wire(0), Some(ResultEncoding::RowMajor));
+        assert_eq!(ResultEncoding::from_wire(1), Some(ResultEncoding::Columnar));
+        assert_eq!(
+            ResultEncoding::from_wire(2),
+            Some(ResultEncoding::ColumnarCompressed)
+        );
+    }
+
+    #[test]
+    fn result_encoding_from_wire_rejects_unknown() {
+        assert_eq!(ResultEncoding::from_wire(3), None);
+        assert_eq!(ResultEncoding::from_wire(u32::MAX), None);
+    }
+
+    #[test]
     fn test_get_global_metrics_returns_arc_metrics() {
         let metrics = get_global_metrics();
         assert!(std::sync::Arc::strong_count(&metrics) >= 1);

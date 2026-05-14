@@ -207,7 +207,7 @@ class MultiResultParser {
         );
       }
 
-      final payload = data.sublist(offset, offset + length);
+      final payload = Uint8List.sublistView(data, offset, offset + length);
 
       switch (tag) {
         case tagResultSet:
@@ -301,7 +301,7 @@ class MultiResultParser {
           'Multi-result buffer truncated at item payload',
         );
       }
-      final payload = data.sublist(offset, offset + length);
+      final payload = Uint8List.sublistView(data, offset, offset + length);
       switch (tag) {
         case tagResultSet:
           items.add(
@@ -326,8 +326,7 @@ class MultiResultParser {
     // inline: magic(4) + count(4) + repeated ParamValue payloads.
     final outputs = <ParamValue>[];
     if (offset + 8 <= data.length) {
-      final trailMagic =
-          byteData.getUint32(offset, _littleEndian);
+      final trailMagic = byteData.getUint32(offset, _littleEndian);
       if (trailMagic == BinaryProtocolParser.outputFooterMagic) {
         offset += 4;
         final n = byteData.getUint32(offset, _littleEndian);

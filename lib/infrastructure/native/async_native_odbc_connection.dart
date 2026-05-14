@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -29,6 +30,8 @@ class _BackpressureWaiter {
   final Completer<void> completer = Completer<void>();
 }
 
+enum _WorkerMetricSample { latency, queueWait, execution }
+
 class _WorkerChannel {
   _WorkerChannel({
     required this.index,
@@ -56,9 +59,18 @@ class _WorkerChannel {
   int queueWaitMaxMicros = 0;
   int executionTotalMicros = 0;
   int executionMaxMicros = 0;
-  final List<int> latencySamples = [];
-  final List<int> queueWaitSamples = [];
-  final List<int> executionSamples = [];
+  final Queue<int> latencySamples = Queue<int>();
+  final Queue<int> queueWaitSamples = Queue<int>();
+  final Queue<int> executionSamples = Queue<int>();
+  int _latencySamplesVersion = 0;
+  int _queueWaitSamplesVersion = 0;
+  int _executionSamplesVersion = 0;
+  int _cachedLatencyP95Version = -1;
+  int _cachedQueueWaitP95Version = -1;
+  int _cachedExecutionP95Version = -1;
+  int _cachedLatencyP95Micros = 0;
+  int _cachedQueueWaitP95Micros = 0;
+  int _cachedExecutionP95Micros = 0;
 
   bool get isReady => sendPort != null;
 
@@ -95,10 +107,11 @@ class _WorkerChannel {
     if (micros > latencyMaxMicros) {
       latencyMaxMicros = micros;
     }
-    latencySamples.add(micros);
+    latencySamples.addLast(micros);
     if (latencySamples.length > 256) {
-      latencySamples.removeAt(0);
+      latencySamples.removeFirst();
     }
+    _latencySamplesVersion++;
   }
 
   void recordQueueWait(int micros) {
@@ -106,10 +119,11 @@ class _WorkerChannel {
     if (micros > queueWaitMaxMicros) {
       queueWaitMaxMicros = micros;
     }
-    queueWaitSamples.add(micros);
+    queueWaitSamples.addLast(micros);
     if (queueWaitSamples.length > 256) {
-      queueWaitSamples.removeAt(0);
+      queueWaitSamples.removeFirst();
     }
+    _queueWaitSamplesVersion++;
   }
 
   void recordExecution(int micros) {
@@ -117,10 +131,57 @@ class _WorkerChannel {
     if (micros > executionMaxMicros) {
       executionMaxMicros = micros;
     }
-    executionSamples.add(micros);
+    executionSamples.addLast(micros);
     if (executionSamples.length > 256) {
-      executionSamples.removeAt(0);
+      executionSamples.removeFirst();
     }
+    _executionSamplesVersion++;
+  }
+
+  int percentileP95(_WorkerMetricSample sample) {
+    final (samples, version, cachedVersion, cachedValue) = switch (sample) {
+      _WorkerMetricSample.latency => (
+          latencySamples,
+          _latencySamplesVersion,
+          _cachedLatencyP95Version,
+          _cachedLatencyP95Micros,
+        ),
+      _WorkerMetricSample.queueWait => (
+          queueWaitSamples,
+          _queueWaitSamplesVersion,
+          _cachedQueueWaitP95Version,
+          _cachedQueueWaitP95Micros,
+        ),
+      _WorkerMetricSample.execution => (
+          executionSamples,
+          _executionSamplesVersion,
+          _cachedExecutionP95Version,
+          _cachedExecutionP95Micros,
+        ),
+    };
+    if (version == cachedVersion) {
+      return cachedValue;
+    }
+    final value = _percentile(samples, 95);
+    switch (sample) {
+      case _WorkerMetricSample.latency:
+        _cachedLatencyP95Version = version;
+        _cachedLatencyP95Micros = value;
+      case _WorkerMetricSample.queueWait:
+        _cachedQueueWaitP95Version = version;
+        _cachedQueueWaitP95Micros = value;
+      case _WorkerMetricSample.execution:
+        _cachedExecutionP95Version = version;
+        _cachedExecutionP95Micros = value;
+    }
+    return value;
+  }
+
+  static int _percentile(Iterable<int> samples, int percentile) {
+    final sorted = samples.toList(growable: false)..sort();
+    if (sorted.isEmpty) return 0;
+    final index = ((sorted.length - 1) * percentile / 100).ceil();
+    return sorted[index];
   }
 
   void failAll(AsyncError error) {
@@ -388,8 +449,15 @@ class AsyncNativeOdbcConnection {
   final Map<int, int> _transactionWorkerById = {};
   final Map<int, int> _streamWorkerById = {};
   final Map<int, int> _asyncRequestWorkerById = {};
-  final List<_BackpressureWaiter> _backpressureWaiters = [];
+  final Queue<_BackpressureWaiter> _backpressureWaiters =
+      Queue<_BackpressureWaiter>();
   int _backpressureSlotsReserved = 0;
+  int _cachedAggregateLatencyP95Version = -1;
+  int _cachedAggregateQueueWaitP95Version = -1;
+  int _cachedAggregateExecutionP95Version = -1;
+  int _cachedAggregateLatencyP95Micros = 0;
+  int _cachedAggregateQueueWaitP95Micros = 0;
+  int _cachedAggregateExecutionP95Micros = 0;
   Completer<void>? _recoveryInFlight;
 
   /// Initializes the worker isolate and ODBC environment.
@@ -489,19 +557,33 @@ class AsyncNativeOdbcConnection {
     if (_workers.isEmpty) {
       throw StateError('Worker not initialized');
     }
-    return _sendRequestOnWorker<T>(_resolveWorker(request), request);
+    return _sendRequestOnWorker<T>(
+      _resolveWorker(request),
+      request,
+      rerouteAfterBackpressure: _canRerouteAfterBackpressure(request),
+    );
   }
 
   Future<T> _sendRequestOnWorker<T extends WorkerResponse>(
     _WorkerChannel worker,
-    WorkerRequest request,
-  ) async {
+    WorkerRequest request, {
+    bool rerouteAfterBackpressure = false,
+  }) async {
     final queueStopwatch = Stopwatch()..start();
     final acquiredSlot = _acquireBackpressureSlot(request);
-    final reservedSlot =
-        acquiredSlot is Future<bool> ? await acquiredSlot : acquiredSlot;
-    queueStopwatch.stop();
-    worker.recordQueueWait(queueStopwatch.elapsedMicroseconds);
+    final bool waitedForSlot;
+    final bool reservedSlot;
+    if (acquiredSlot is Future<bool>) {
+      waitedForSlot = true;
+      reservedSlot = await acquiredSlot;
+    } else {
+      waitedForSlot = false;
+      reservedSlot = acquiredSlot;
+    }
+    final queueWaitMicros = (queueStopwatch..stop()).elapsedMicroseconds;
+    final targetWorker = waitedForSlot && rerouteAfterBackpressure
+        ? _resolveWorker(request)
+        : worker;
     final stopwatch = Stopwatch()..start();
     final executionStopwatch = Stopwatch()..start();
     Completer<WorkerResponse>? completer;
@@ -511,40 +593,43 @@ class AsyncNativeOdbcConnection {
         _releaseReservedBackpressureSlot();
         slotReleased = true;
       }
-      completer = worker.send(request);
-      _recordCancelAttempt(request, worker);
+      completer = (targetWorker..recordQueueWait(queueWaitMicros)).send(
+        request,
+      );
+      _recordCancelAttempt(request, targetWorker);
       final effectiveTimeout = _requestTimeout ?? _defaultRequestTimeout;
       final response = effectiveTimeout == Duration.zero
           ? await completer.future
           : await completer.future.timeout(
               effectiveTimeout,
               onTimeout: () {
-                worker.removePending(request.requestId);
-                worker.timeouts++;
+                targetWorker.removePending(request.requestId);
+                targetWorker.timeouts++;
                 throw AsyncError(
                   code: AsyncErrorCode.requestTimeout,
-                  message: 'Worker ${worker.index} did not respond within '
+                  message:
+                      'Worker ${targetWorker.index} did not respond within '
                       '${effectiveTimeout.inSeconds}s',
                 );
               },
             );
       if (_responseHasError(response)) {
-        worker.failedRequests++;
+        targetWorker.failedRequests++;
       } else {
-        worker.completedRequests++;
+        targetWorker.completedRequests++;
       }
-      _recordCancelResponse(request, response, worker);
-      _recordAffinity(request, response, worker);
+      _recordCancelResponse(request, response, targetWorker);
+      _recordAffinity(request, response, targetWorker);
       return response as T;
     } catch (_) {
-      worker.failedRequests++;
+      targetWorker.failedRequests++;
       rethrow;
     } finally {
       executionStopwatch.stop();
       if (reservedSlot && !slotReleased && completer == null) {
         _releaseReservedBackpressureSlot();
       }
-      worker
+      targetWorker
         ..recordLatency(stopwatch.elapsedMicroseconds)
         ..recordExecution(executionStopwatch.elapsedMicroseconds)
         ..finishRequest();
@@ -589,7 +674,7 @@ class AsyncNativeOdbcConnection {
     }
 
     final waiter = _BackpressureWaiter();
-    _backpressureWaiters.add(waiter);
+    _backpressureWaiters.addLast(waiter);
     _drainBackpressureWaiters();
 
     final timeout =
@@ -643,7 +728,7 @@ class AsyncNativeOdbcConnection {
 
     while (
         _backpressureWaiters.isNotEmpty && _pendingOrReservedRequests < limit) {
-      final waiter = _backpressureWaiters.removeAt(0);
+      final waiter = _backpressureWaiters.removeFirst();
       if (waiter.completer.isCompleted) continue;
       _backpressureSlotsReserved++;
       waiter.completer.complete();
@@ -741,6 +826,43 @@ class AsyncNativeOdbcConnection {
   _WorkerChannel _workerForAsyncRequest(int asyncRequestId) {
     return _workerByIndex(_asyncRequestWorkerById[asyncRequestId]) ??
         _leastLoadedWorker();
+  }
+
+  bool _canRerouteAfterBackpressure(WorkerRequest request) {
+    return switch (request) {
+      ConnectRequest() ||
+      ValidateConnectionStringRequest() ||
+      DetectDriverRequest() ||
+      GetDriverCapabilitiesRequest() ||
+      GetVersionRequest() ||
+      GetMetricsRequest() ||
+      GetCacheMetricsRequest() ||
+      ClearCacheRequest() ||
+      ClearAllStatementsRequest() ||
+      SetLogLevelRequest() ||
+      AuditEnableRequest() ||
+      AuditGetEventsRequest() ||
+      AuditGetStatusRequest() ||
+      AuditClearRequest() ||
+      MetadataCacheEnableRequest() ||
+      MetadataCacheStatsRequest() ||
+      MetadataCacheClearRequest() ||
+      PoolCreateRequest() ||
+      PoolGetConnectionRequest() ||
+      PoolHealthCheckRequest() ||
+      PoolGetStateRequest() ||
+      PoolGetStateJsonRequest() ||
+      PoolSetSizeRequest() ||
+      PoolCloseRequest() ||
+      BulkInsertParallelRequest() ||
+      CancelStatementRequest() ||
+      StreamCancelRequest() ||
+      AsyncCancelRequest() ||
+      GetErrorRequest() ||
+      GetStructuredErrorRequest() =>
+        true,
+      _ => false,
+    };
   }
 
   _WorkerChannel _resolveWorker(WorkerRequest request) {
@@ -1030,10 +1152,7 @@ class AsyncNativeOdbcConnection {
         (total, worker) => total + worker.cancelUnsupported,
       ),
       latencyAvgMicros: _weightedAverageLatency(),
-      latencyP95Micros: _percentileLatency(
-        _workers.expand((worker) => worker.latencySamples),
-        95,
-      ),
+      latencyP95Micros: _aggregateP95(_WorkerMetricSample.latency),
       latencyMaxMicros: workers.fold<int>(
         0,
         (max, worker) =>
@@ -1042,10 +1161,7 @@ class AsyncNativeOdbcConnection {
       queueWaitAvgMicros: _weightedAverage(
         (worker) => worker.queueWaitTotalMicros,
       ),
-      queueWaitP95Micros: _percentileLatency(
-        _workers.expand((worker) => worker.queueWaitSamples),
-        95,
-      ),
+      queueWaitP95Micros: _aggregateP95(_WorkerMetricSample.queueWait),
       queueWaitMaxMicros: workers.fold<int>(
         0,
         (max, worker) =>
@@ -1054,10 +1170,7 @@ class AsyncNativeOdbcConnection {
       executionAvgMicros: _weightedAverage(
         (worker) => worker.executionTotalMicros,
       ),
-      executionP95Micros: _percentileLatency(
-        _workers.expand((worker) => worker.executionSamples),
-        95,
-      ),
+      executionP95Micros: _aggregateP95(_WorkerMetricSample.execution),
       executionMaxMicros: workers.fold<int>(
         0,
         (max, worker) =>
@@ -1083,15 +1196,15 @@ class AsyncNativeOdbcConnection {
       cancelUnsupported: worker.cancelUnsupported,
       latencyAvgMicros:
           completed == 0 ? 0 : worker.latencyTotalMicros ~/ completed,
-      latencyP95Micros: _percentileLatency(worker.latencySamples, 95),
+      latencyP95Micros: worker.percentileP95(_WorkerMetricSample.latency),
       latencyMaxMicros: worker.latencyMaxMicros,
       queueWaitAvgMicros:
           completed == 0 ? 0 : worker.queueWaitTotalMicros ~/ completed,
-      queueWaitP95Micros: _percentileLatency(worker.queueWaitSamples, 95),
+      queueWaitP95Micros: worker.percentileP95(_WorkerMetricSample.queueWait),
       queueWaitMaxMicros: worker.queueWaitMaxMicros,
       executionAvgMicros:
           completed == 0 ? 0 : worker.executionTotalMicros ~/ completed,
-      executionP95Micros: _percentileLatency(worker.executionSamples, 95),
+      executionP95Micros: worker.percentileP95(_WorkerMetricSample.execution),
       executionMaxMicros: worker.executionMaxMicros,
     );
   }
@@ -1109,6 +1222,67 @@ class AsyncNativeOdbcConnection {
     }
     if (totalRequests == 0) return 0;
     return totalMicros ~/ totalRequests;
+  }
+
+  int _aggregateP95(_WorkerMetricSample sample) {
+    final version = switch (sample) {
+      _WorkerMetricSample.latency => _workers.fold<int>(
+          0,
+          (sum, worker) => sum + worker._latencySamplesVersion,
+        ),
+      _WorkerMetricSample.queueWait => _workers.fold<int>(
+          0,
+          (sum, worker) => sum + worker._queueWaitSamplesVersion,
+        ),
+      _WorkerMetricSample.execution => _workers.fold<int>(
+          0,
+          (sum, worker) => sum + worker._executionSamplesVersion,
+        ),
+    };
+    final cached = switch (sample) {
+      _WorkerMetricSample.latency => (
+          _cachedAggregateLatencyP95Version,
+          _cachedAggregateLatencyP95Micros,
+        ),
+      _WorkerMetricSample.queueWait => (
+          _cachedAggregateQueueWaitP95Version,
+          _cachedAggregateQueueWaitP95Micros,
+        ),
+      _WorkerMetricSample.execution => (
+          _cachedAggregateExecutionP95Version,
+          _cachedAggregateExecutionP95Micros,
+        ),
+    };
+    if (version == cached.$1) {
+      return cached.$2;
+    }
+
+    final value = _percentileLatency(
+      switch (sample) {
+        _WorkerMetricSample.latency => _workers.expand(
+            (worker) => worker.latencySamples,
+          ),
+        _WorkerMetricSample.queueWait => _workers.expand(
+            (worker) => worker.queueWaitSamples,
+          ),
+        _WorkerMetricSample.execution => _workers.expand(
+            (worker) => worker.executionSamples,
+          ),
+      },
+      95,
+    );
+    switch (sample) {
+      case _WorkerMetricSample.latency:
+        _cachedAggregateLatencyP95Version = version;
+        _cachedAggregateLatencyP95Micros = value;
+      case _WorkerMetricSample.queueWait:
+        _cachedAggregateQueueWaitP95Version = version;
+        _cachedAggregateQueueWaitP95Micros = value;
+      case _WorkerMetricSample.execution:
+        _cachedAggregateExecutionP95Version = version;
+        _cachedAggregateExecutionP95Micros = value;
+    }
+    return value;
   }
 
   int _percentileLatency(Iterable<int> samples, int percentile) {
@@ -1370,7 +1544,7 @@ class AsyncNativeOdbcConnection {
   }) async {
     final effectiveTimeout =
         timeout ?? _requestTimeout ?? _defaultRequestTimeout;
-    final deadline = DateTime.now().add(effectiveTimeout);
+    final timeoutStopwatch = Stopwatch()..start();
 
     try {
       while (true) {
@@ -1384,7 +1558,7 @@ class AsyncNativeOdbcConnection {
             );
           case 0: // pending
             if (effectiveTimeout > Duration.zero &&
-                DateTime.now().isAfter(deadline)) {
+                timeoutStopwatch.elapsed >= effectiveTimeout) {
               await asyncCancel(requestId);
               return null;
             }

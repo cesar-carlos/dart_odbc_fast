@@ -85,6 +85,17 @@ To enforce a local budget, add `--fail-threshold-ms`:
 dart run tool/test_slow_report.dart --top 20 --threshold-ms 500 --fail-threshold-ms 1500 -- test/infrastructure
 ```
 
+For deterministic protocol/parser micro-benchmarks that do not need a DSN, run:
+
+```powershell
+dart test test/performance/protocol_performance_test.dart
+```
+
+The `P4.1` case reports row-major parse, columnar parse, frame accumulation
+with small chunks, and streaming multi-result decoder timings. Use it as a
+local before/after signal when changing Dart binary protocol code; it is a
+sanity benchmark, not a cross-machine performance contract.
+
 Benchmark baselines can be compared with:
 
 ```powershell
@@ -140,6 +151,7 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 | Async Dart worker pool (`workerCount` / `asyncWorkerCount`) | Default remains `1`. Use `>1` when concurrent work uses multiple connections or pool checkouts; handle-affinity keeps same-connection work serialized. |
 | Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`) | Default remains unbounded (`null`). In services with native pools, set this to a small multiple of pool size to fail fast before the Dart worker queue hides saturation. |
 | Async backpressure mode | `failFast` remains the default. Use `waitForSlot` only when callers should queue briefly instead of failing immediately. |
+| Worker isolates instead of raw threads | Dart consumers should scale with `workerCount` / `asyncWorkerCount`, not hand-spawn raw isolates around one connection. More workers only reduce bottlenecks when work can be routed across multiple connections or native-pool checkouts. |
 
 ---
 
@@ -150,7 +162,12 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 | Many independent short/medium queries | `AsyncNativeOdbcConnection(workerCount: N)` | Open multiple connections. Same-connection calls remain serialized. See `example/high_concurrency_worker_pool_demo.dart`. |
 | Many request-style tasks with bounded DB capacity | Native pool + `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: N, asyncMaxPendingRequests: M)` | Keep an explicit in-flight limit close to pool size. Set `M` near `poolSize * 2` or `poolSize * 4`. See `example/high_concurrency_pool_demo.dart`. |
 | Large result sets | `streamQueryBatched` / `streamAsync` | Streaming controls memory pressure better than raising result-buffer limits. |
+| Many rows with stable column types | `ResultEncoding.columnar` | Columnar reduces repeated row framing and now avoids an extra Dart column-to-row materialization step during decode. Keep row-major as default for compatibility. |
 | One long query on one connection | Async execute lifecycle | Keeps Dart responsive, but does not make one native connection run multiple statements at once. |
+
+The high-concurrency examples accept `ODBC_CONCURRENCY_QUERY` so you can compare
+serial vs worker-pool behavior with a local slow query instead of the default
+`SELECT 1 AS value`.
 
 ---
 
@@ -163,6 +180,7 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 | `serialize_bulk_insert_payload` uses `try_into` for length casts | One branch per length field; returns `MalformedPayload` on overflow instead of silent truncation. |
 | `SecureBuffer::with_bytes` | Closure-based access avoids the heap copy required by `into_vec` for short-lived consumers. |
 | `SecretManager::with_secret` | Avoids the per-retrieve `Vec<u8>` clone when only read access is required. |
+| Reusable Dart FFI scratch buffer | Reuses the common result buffer and `out_written` pointer inside an isolate, with a reentrancy fallback to preserve safety. Native `-2` responses should report required size so Dart can grow directly. |
 
 ---
 

@@ -51,6 +51,14 @@ impl RowBufferV2 {
         }
     }
 
+    pub fn with_capacity(column_count: usize) -> Self {
+        Self {
+            columns: Vec::with_capacity(column_count),
+            row_count: 0,
+            flags: 0,
+        }
+    }
+
     pub fn add_column(&mut self, metadata: ColumnMetadata, data: ColumnData) {
         self.columns.push(ColumnBlock {
             metadata,
@@ -91,6 +99,15 @@ mod tests {
     fn test_row_buffer_v2_new() {
         let buffer = RowBufferV2::new();
         assert_eq!(buffer.columns.len(), 0);
+        assert_eq!(buffer.row_count, 0);
+        assert_eq!(buffer.flags, 0);
+    }
+
+    #[test]
+    fn test_row_buffer_v2_with_capacity() {
+        let buffer = RowBufferV2::with_capacity(4);
+        assert_eq!(buffer.columns.len(), 0);
+        assert!(buffer.columns.capacity() >= 4);
         assert_eq!(buffer.row_count, 0);
         assert_eq!(buffer.flags, 0);
     }

@@ -342,9 +342,9 @@ void _writeResults(List<_BenchmarkResult> results) {
 
   if (outFile != null && outFile.isNotEmpty) {
     File(outFile).writeAsStringSync(content);
-    AppLogger.info('Benchmark results written to $outFile');
+    stdout.writeln('Benchmark results written to $outFile');
   } else {
-    AppLogger.info(content);
+    stdout.writeln(content);
   }
 }
 

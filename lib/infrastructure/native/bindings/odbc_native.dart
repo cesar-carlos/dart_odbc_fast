@@ -492,7 +492,8 @@ class OdbcNative {
         if (code == 1) return null; // No structured error for this connection
         if (code == -1) return null; // FFI error
         if (code == -2) {
-          size *= 2;
+          final requested = outWritten.value;
+          size = requested > size ? requested : size * 2;
           continue;
         }
         if (code == 0) {
@@ -615,7 +616,8 @@ class OdbcNative {
           );
         }
         if (code == -2) {
-          size *= 2;
+          final requested = outWritten.value;
+          size = requested > size ? requested : size * 2;
           continue;
         }
         return StreamFetchResult(

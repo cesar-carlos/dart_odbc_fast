@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to compare `streamQuery` and `streamQueryBatched` with text/json/csv output.
 - **Benchmark baseline comparison:** added
   `tool/compare_benchmark_baseline.dart` for JSON benchmark regression checks.
+- **Protocol parser benchmark coverage:** expanded
+  `test/performance/protocol_performance_test.dart` with DSN-free row-major,
+  columnar, frame accumulator, and streaming multi-result decoder timings.
 
 ### Changed
 
@@ -74,6 +77,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Async responsiveness/concurrency unit tests now use deterministic fake worker
   delays instead of SQL Server `WAITFOR`, keeping live slow-query coverage in
   stress tests.
+- Columnar v2 Dart decoding now fills row-major output directly instead of
+  materializing a full intermediate column list before transposing.
+- Binary frame accumulation now keeps a chunk queue and only copies when a
+  complete frame spans multiple chunks.
+- Dart FFI buffer calls now reuse a per-isolate scratch buffer with a
+  reentrancy fallback, reducing repeated buffer and `out_written` allocations.
+- Async worker pool p95 latency snapshots are cached until new samples arrive.
+- Rust row-to-columnar conversion now preallocates the target column list and
+  keeps binary columns in the columnar binary representation.
+- High-concurrency examples now print directly to stdout, document the worker
+  isolate/threading model, and accept `ODBC_CONCURRENCY_QUERY`.
 
 ### Fixed
 
@@ -85,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cancellation documentation now distinguishes best-effort async cancellation,
   stream cancellation between batches, and statement cancellation that may be
   unsupported by a runtime/driver path.
+- Native FFI buffer-too-small (`-2`) paths now report the required byte count
+  through `out_written` consistently, including stream fetch and metadata
+  helpers.
 
 ## [3.6.1] - 2026-05-13
 

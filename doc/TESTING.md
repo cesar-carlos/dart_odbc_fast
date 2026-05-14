@@ -109,6 +109,8 @@ cargo tarpaulin --tests --lib `
 
 Open `coverage/tarpaulin-report.html` for the file-level drill-down.
 
+Equivalent wrapper (from repo root, writes under `native/coverage/`): `python native/odbc_engine/scripts/run_coverage.py` (use `--lib-only` for a faster run that omits integration tests and matches the historical lib-only metric).
+
 ---
 
 ## Coverage snapshot (v2.0.0 baseline — historical)

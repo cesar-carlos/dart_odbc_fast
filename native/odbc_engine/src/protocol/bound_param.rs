@@ -196,4 +196,66 @@ mod tests {
         let e = deserialize_param_buffer(&buf).expect_err("count");
         assert!(e.to_string().contains("exceeds available"));
     }
+
+    #[test]
+    fn is_directed_param_buffer_requires_magic_and_length() {
+        assert!(!is_directed_param_buffer(b""));
+        assert!(!is_directed_param_buffer(b"DRT"));
+        assert!(!is_directed_param_buffer(b"DRT1\x00\x00"));
+        assert!(!is_directed_param_buffer(b"XXXX\x00\x00\x00\x01"));
+        assert!(is_directed_param_buffer(b"DRT1\x01\x00\x00\x00"));
+    }
+
+    #[test]
+    fn deserialize_empty_is_legacy_empty() {
+        let list = deserialize_param_buffer(&[]).expect("empty");
+        assert_eq!(list, ParamList::Legacy(Vec::new()));
+    }
+
+    #[test]
+    fn drt1_rejects_parameter_count_over_limit() {
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        let over = (MAX_PARAM_COUNT as u32) + 1;
+        buf.extend_from_slice(&over.to_le_bytes());
+        let e = deserialize_param_buffer(&buf).expect_err("limit");
+        assert!(e.to_string().contains("exceeds limit"));
+    }
+
+    #[test]
+    fn drt1_in_out_direction() {
+        let vb = ParamValue::Integer(7).serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(2u8); // InOut
+        buf.extend_from_slice(&vb);
+        match deserialize_param_buffer(&buf).expect("drt1") {
+            ParamList::Directed(v) => {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0].direction, ParamDirection::InOut);
+                assert_eq!(v[0].value, ParamValue::Integer(7));
+            }
+            _ => panic!("expected directed"),
+        }
+    }
+
+    #[test]
+    fn drt1_rejects_truncated_mid_list_before_second_direction() {
+        let n = ParamValue::Null.serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.push(0u8);
+        buf.extend_from_slice(&n);
+        // Missing second parameter (count claims 2)
+        let e = deserialize_param_buffer(&buf).expect_err("trunc");
+        assert!(e.to_string().contains("truncated (direction)"));
+    }
+
+    #[test]
+    fn drt1_rejects_truncated_missing_value_payload() {
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(0u8); // direction only
+        let e = deserialize_param_buffer(&buf).expect_err("trunc");
+        assert!(e.to_string().contains("truncated (value)"));
+    }
 }

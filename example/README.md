@@ -42,6 +42,16 @@ dart run example/async_concurrency_benchmark.dart
 dart run example/streaming_performance_benchmark.dart
 ```
 
+`workerCount` / `asyncWorkerCount` is the supported way to open background
+Dart workers for high concurrency. Use multiple connections or native-pool
+checkouts; the same ODBC connection remains serialized by the native mutex.
+Both high-concurrency demos accept `ODBC_CONCURRENCY_QUERY` for a slower or
+larger workload:
+
+```bash
+ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_worker_pool_demo.dart
+```
+
 The benchmark supports structured output:
 
 ```bash
@@ -55,6 +65,16 @@ Compare a saved streaming baseline with a new run:
 ```bash
 dart run tool/compare_benchmark_baseline.dart --baseline bench_baselines/streaming.json --current bench_baselines/streaming-current.json --max-regression-percent 30
 ```
+
+For DSN-free protocol/parser performance smoke checks, run from the project
+root:
+
+```bash
+dart test test/performance/protocol_performance_test.dart
+```
+
+The `P4.1` benchmark covers row-major parsing, columnar parsing, frame
+accumulation with small chunks, and streaming multi-result decoding.
 
 ### Queries / parameters
 

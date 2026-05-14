@@ -98,7 +98,8 @@ impl DbmsInfo {
 mod tests {
     use super::*;
     use crate::engine::core::{
-        ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_POSTGRES, ENGINE_SQLSERVER, ENGINE_UNKNOWN,
+        ENGINE_DB2, ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_SNOWFLAKE,
+        ENGINE_SQLITE, ENGINE_SQLSERVER, ENGINE_UNKNOWN,
     };
 
     fn fake(dbms_name: &str) -> DbmsInfo {
@@ -141,11 +142,26 @@ mod tests {
     }
 
     #[test]
+    fn dbms_info_oracle_sqlite_snowflake_and_db2() {
+        assert_eq!(fake("Oracle Database").engine, ENGINE_ORACLE);
+        assert_eq!(fake("SQLite").engine, ENGINE_SQLITE);
+        assert_eq!(fake("Snowflake").engine, ENGINE_SNOWFLAKE);
+        assert_eq!(fake("IBM Db2").engine, ENGINE_DB2);
+    }
+
+    #[test]
     fn dbms_info_serializes_to_json_with_engine_field() {
         let info = fake("PostgreSQL");
         let json = info.to_json().expect("json");
         assert!(json.contains("\"dbms_name\":\"PostgreSQL\""));
         assert!(json.contains("\"engine\":\"postgres\""));
         assert!(json.contains("\"current_catalog\":\"main\""));
+    }
+
+    #[test]
+    fn dbms_info_json_includes_max_name_lengths() {
+        let json = fake("MySQL").to_json().expect("json");
+        assert!(json.contains("\"max_catalog_name_len\":128"));
+        assert!(json.contains("\"max_column_name_len\":128"));
     }
 }

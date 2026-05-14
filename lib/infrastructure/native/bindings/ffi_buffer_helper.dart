@@ -31,7 +31,24 @@ typedef BufferCallback = int Function(
 /// Returns the data as [Uint8List] on success, null on failure.
 Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
   final limit = maxSize ?? maxBufferSize;
-  var size = initialSize ?? initialBufferSize;
+  final size = initialSize ?? initialBufferSize;
+  final scratch = _sharedScratch.tryAcquire();
+  if (scratch == null) {
+    return _callWithTransientBuffer(fn, limit: limit, initialSize: size);
+  }
+  try {
+    return scratch.call(fn, limit: limit, initialSize: size);
+  } finally {
+    scratch.release();
+  }
+}
+
+Uint8List? _callWithTransientBuffer(
+  BufferCallback fn, {
+  required int limit,
+  required int initialSize,
+}) {
+  var size = initialSize;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
     final outWritten = malloc<ffi.Uint32>()..value = 0;
@@ -57,4 +74,62 @@ Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
     }
   }
   return null;
+}
+
+final _ReusableFfiScratch _sharedScratch = _ReusableFfiScratch();
+
+final class _ReusableFfiScratch {
+  ffi.Pointer<ffi.Uint8> _buffer = ffi.nullptr;
+  ffi.Pointer<ffi.Uint32> _outWritten = ffi.nullptr;
+  int _capacity = 0;
+  bool _isInUse = false;
+
+  _ReusableFfiScratch? tryAcquire() {
+    if (_isInUse) return null;
+    _isInUse = true;
+    return this;
+  }
+
+  Uint8List? call(
+    BufferCallback fn, {
+    required int limit,
+    required int initialSize,
+  }) {
+    var size = initialSize;
+    while (size <= limit) {
+      _ensureCapacity(size);
+      _outWritten.value = 0;
+      final code = fn(_buffer, size, _outWritten);
+      if (code == 0) {
+        final n = _outWritten.value;
+        if (n == 0) {
+          return Uint8List(0);
+        }
+        return Uint8List.fromList(_buffer.asTypedList(n));
+      }
+      if (code == -2) {
+        final requested = _outWritten.value;
+        size = requested > size ? requested : size * 2;
+        continue;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  void release() {
+    _isInUse = false;
+  }
+
+  void _ensureCapacity(int size) {
+    if (_outWritten == ffi.nullptr) {
+      _outWritten = malloc<ffi.Uint32>();
+    }
+    if (_capacity >= size) return;
+    if (_buffer != ffi.nullptr) {
+      malloc.free(_buffer);
+    }
+    _buffer = malloc<ffi.Uint8>(size);
+    _capacity = size;
+  }
 }

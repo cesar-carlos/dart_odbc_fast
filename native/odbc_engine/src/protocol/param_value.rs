@@ -934,4 +934,32 @@ mod tests {
         assert!(msg.contains("ParamValue::String"));
         assert!(msg.contains("exceeds limit"));
     }
+
+    #[test]
+    fn test_deserialize_ref_cursor_rejects_non_empty_payload() {
+        let mut data = vec![TAG_REF_CURSOR_OUT];
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.push(0);
+        let err = ParamValue::deserialize(&data).expect_err("non-empty ref cursor");
+        assert!(
+            err.to_string().contains("0-byte payload"),
+            "unexpected: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_deserialize_params_rejects_incomplete_second_param() {
+        let mut buf = ParamValue::Null.serialize();
+        buf.push(0xff);
+        let err = deserialize_params(&buf).expect_err("trailing/incomplete");
+        assert!(err.to_string().contains("too short"), "unexpected: {err:?}");
+    }
+
+    #[test]
+    fn test_param_values_to_strings_empty_binary_hex() {
+        let params = [ParamValue::Binary(vec![])];
+        let out = param_values_to_strings(&params).expect("strings");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0], Some(String::new()));
+    }
 }

@@ -562,4 +562,33 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("Cell data length"), "got {msg}");
     }
+
+    #[test]
+    fn test_decode_rejects_row_count_over_max_decoded_rows() {
+        let mut buffer = vec![0u8; HEADER_SIZE];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&0u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&((MAX_DECODED_ROWS as u32).saturating_add(1)).to_le_bytes());
+        buffer[12..16].copy_from_slice(&0u32.to_le_bytes());
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Row count"), "got {msg}");
+    }
+
+    #[test]
+    fn test_decode_rejects_trailing_bytes_when_payload_declares_extra() {
+        let mut buffer = vec![0u8; 21];
+        buffer[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buffer[4..6].copy_from_slice(&VERSION.to_le_bytes());
+        buffer[6..8].copy_from_slice(&0u16.to_le_bytes());
+        buffer[8..12].copy_from_slice(&0u32.to_le_bytes());
+        buffer[12..16].copy_from_slice(&5u32.to_le_bytes());
+        buffer[16..21].copy_from_slice(&[1, 2, 3, 4, 5]);
+
+        let err = BinaryProtocolDecoder::parse(&buffer).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("trailing bytes"), "got {msg}");
+    }
 }

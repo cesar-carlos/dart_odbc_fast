@@ -261,6 +261,8 @@ python native/odbc_engine/scripts/run_coverage.py --install-tools
 
 Output: `native/coverage/tarpaulin-report.html`, `native/coverage/lcov.info`.
 
+By default this runs **`--lib` and `--tests`** (single-threaded test harness). For a faster, library-only report (lower line %), use `--lib-only`.
+
 ## Debugging
 
 To see detailed output:

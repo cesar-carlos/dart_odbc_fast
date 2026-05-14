@@ -119,17 +119,31 @@ class BinaryProtocolParser {
   /// pre-date columnar and `OUT1`).
   static const int headerSize = headerSizeV1;
 
-  /// Returns total v1 **row-major** message length (header + payload) from
-  /// the first 16 bytes. [data] must have length >= 16. Payload size at
-  /// bytes 12..15 (LE). Not valid for v2 columnar buffers.
+  /// Returns total message length (header + payload) from the message header.
+  ///
+  /// Supports v1 row-major and v2 columnar headers. [data] must contain at
+  /// least the full header for the detected version.
   static int messageLengthFromHeader(Uint8List data) {
-    if (data.length < headerSizeV1) {
-      throw const FormatException('Buffer too small for header');
+    if (data.length < 6) {
+      throw const FormatException('Buffer too small for version');
     }
-    final base = data.offsetInBytes;
-    final payloadSize =
-        data.buffer.asByteData().getUint32(base + 12, _littleEndian);
-    return headerSizeV1 + payloadSize;
+    final byteData = ByteData.sublistView(data);
+    final version = byteData.getUint16(4, _littleEndian);
+    if (version == protocolVersionRowMajor) {
+      if (data.length < headerSizeV1) {
+        throw const FormatException('Buffer too small for header');
+      }
+      final payloadSize = byteData.getUint32(12, _littleEndian);
+      return headerSizeV1 + payloadSize;
+    }
+    if (version == protocolVersionColumnarV2) {
+      if (data.length < headerSizeColumnarV2) {
+        throw const FormatException('Buffer too small for columnar v2 header');
+      }
+      final payloadSize = byteData.getUint32(15, _littleEndian);
+      return headerSizeColumnarV2 + payloadSize;
+    }
+    throw FormatException('Unsupported protocol version: $version');
   }
 
   /// Parses a full buffer into rows/columns and optional `OUT1` outputs.
@@ -308,7 +322,11 @@ class BinaryProtocolParser {
     var off = headerSizeColumnarV2;
     final end = headerSizeColumnarV2 + paySize;
     final columnMetas = <ColumnMetadata>[];
-    final byCol = <List<dynamic>>[];
+    final rows = List<List<dynamic>>.generate(
+      rowCount,
+      (_) => List<dynamic>.filled(colCount, null),
+      growable: false,
+    );
 
     for (var c = 0; c < colCount; c++) {
       if (off + 4 > end) {
@@ -401,27 +419,15 @@ class BinaryProtocolParser {
         raw = Uint8List.sublistView(data, off, off + rawLen);
         off += rawLen;
       }
-      byCol.add(
-        _parseColumnarRaw(
-          odbcType: odbcType,
-          raw: raw,
-          rowCount: rowCount,
-        ),
+      _fillColumnarRows(
+        odbcType: odbcType,
+        raw: raw,
+        columnIndex: c,
+        rows: rows,
       );
     }
     if (off != end) {
       throw const FormatException('Columnar v2: extra bytes in column payload');
-    }
-    if (byCol.length != colCount) {
-      throw const FormatException('Columnar v2: column list mismatch');
-    }
-    final rows = <List<dynamic>>[];
-    for (var r = 0; r < rowCount; r++) {
-      final row = <dynamic>[];
-      for (var c = 0; c < colCount; c++) {
-        row.add(byCol[c][r]);
-      }
-      rows.add(row);
     }
     return ParsedRowBuffer(
       columns: columnMetas,
@@ -431,14 +437,15 @@ class BinaryProtocolParser {
     );
   }
 
-  static List<dynamic> _parseColumnarRaw({
+  static void _fillColumnarRows({
     required int odbcType,
     required Uint8List raw,
-    required int rowCount,
+    required int columnIndex,
+    required List<List<dynamic>> rows,
   }) {
     final odbc = OdbcType.fromDiscriminant(odbcType);
     var p = 0;
-    final out = <dynamic>[];
+    final rowCount = rows.length;
     for (var i = 0; i < rowCount; i++) {
       if (p >= raw.length) {
         throw const FormatException('Columnar v2: row cells truncated');
@@ -446,33 +453,31 @@ class BinaryProtocolParser {
       if (odbc == OdbcType.integer) {
         final n = raw[p++];
         if (n == 1) {
-          out.add(null);
+          rows[i][columnIndex] = null;
         } else {
           if (p + 4 > raw.length) {
             throw const FormatException('Columnar v2: int cell truncated');
           }
-          out.add(
-            ByteData.sublistView(raw, p, p + 4).getInt32(0, _littleEndian),
-          );
+          rows[i][columnIndex] =
+              ByteData.sublistView(raw, p, p + 4).getInt32(0, _littleEndian);
           p += 4;
         }
       } else if (odbc == OdbcType.bigInt) {
         final n = raw[p++];
         if (n == 1) {
-          out.add(null);
+          rows[i][columnIndex] = null;
         } else {
           if (p + 8 > raw.length) {
             throw const FormatException('Columnar v2: bigint cell truncated');
           }
-          out.add(
-            ByteData.sublistView(raw, p, p + 8).getInt64(0, _littleEndian),
-          );
+          rows[i][columnIndex] =
+              ByteData.sublistView(raw, p, p + 8).getInt64(0, _littleEndian);
           p += 8;
         }
       } else {
         final n = raw[p++];
         if (n == 1) {
-          out.add(null);
+          rows[i][columnIndex] = null;
         } else {
           if (p + 4 > raw.length) {
             throw const FormatException('Columnar v2: varchar len truncated');
@@ -488,17 +493,13 @@ class BinaryProtocolParser {
           }
           final bytes = Uint8List.sublistView(raw, p, p + bl);
           p += bl;
-          out.add(_convertData(bytes, odbcType));
+          rows[i][columnIndex] = _convertData(bytes, odbcType);
         }
       }
     }
     if (p != raw.length) {
       throw const FormatException('Columnar v2: raw not fully consumed');
     }
-    if (out.length != rowCount) {
-      throw const FormatException('Columnar v2: per-column row count mismatch');
-    }
-    return out;
   }
 
   /// Returns the next offset (unchanged if no `OUT1` at [start]).
@@ -634,9 +635,10 @@ class _BufferReader {
   /// Creates a new [_BufferReader] instance.
   ///
   /// The data parameter is the byte buffer to read from.
-  _BufferReader(this._data);
+  _BufferReader(this._data) : _byteData = ByteData.sublistView(_data);
 
   final Uint8List _data;
+  final ByteData _byteData;
   int _offset = 0;
 
   /// Reads a single unsigned 8-bit integer.
@@ -646,28 +648,28 @@ class _BufferReader {
 
   /// Reads an unsigned 16-bit integer in little-endian format.
   int readUint16() {
-    final value = _data.buffer.asByteData().getUint16(_offset, _littleEndian);
+    final value = _byteData.getUint16(_offset, _littleEndian);
     _offset += 2;
     return value;
   }
 
   /// Reads an unsigned 32-bit integer in little-endian format.
   int readUint32() {
-    final value = _data.buffer.asByteData().getUint32(_offset, _littleEndian);
+    final value = _byteData.getUint32(_offset, _littleEndian);
     _offset += 4;
     return value;
   }
 
   /// Reads a string of the specified [length] from the buffer.
   String readString(int length) {
-    final bytes = _data.sublist(_offset, _offset + length);
+    final bytes = Uint8List.sublistView(_data, _offset, _offset + length);
     _offset += length;
     return String.fromCharCodes(bytes);
   }
 
   /// Reads [length] bytes from the buffer as a [Uint8List].
   Uint8List readBytes(int length) {
-    final bytes = _data.sublist(_offset, _offset + length);
+    final bytes = Uint8List.sublistView(_data, _offset, _offset + length);
     _offset += length;
     return bytes;
   }

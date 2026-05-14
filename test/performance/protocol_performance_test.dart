@@ -1,7 +1,10 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/bulk_insert_builder.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:test/test.dart';
 
@@ -188,5 +191,178 @@ void main() {
 
       expect(bufferTotalLength, equals(legacyTotalLength));
     });
+
+    test('P4.1 parser and framing synthetic benchmark', () {
+      const rows = 2000;
+      const iterations = 30;
+      final rowMajor = _rowMajorBuffer(rows: rows);
+      final columnar = _columnarBuffer(rows: rows);
+
+      final rowMajorWatch = Stopwatch()..start();
+      var rowMajorCells = 0;
+      for (var i = 0; i < iterations; i++) {
+        rowMajorCells += BinaryProtocolParser.parse(rowMajor).rows.length;
+      }
+      rowMajorWatch.stop();
+
+      final columnarWatch = Stopwatch()..start();
+      var columnarCells = 0;
+      for (var i = 0; i < iterations; i++) {
+        columnarCells += BinaryProtocolParser.parse(columnar).rows.length;
+      }
+      columnarWatch.stop();
+
+      final framingWatch = Stopwatch()..start();
+      var framed = 0;
+      for (var i = 0; i < iterations; i++) {
+        final accumulator = BinaryFrameAccumulator();
+        for (var offset = 0; offset < columnar.length; offset += 13) {
+          final end =
+              offset + 13 < columnar.length ? offset + 13 : columnar.length;
+          accumulator.add(Uint8List.sublistView(columnar, offset, end));
+          framed += accumulator.drainFrames().length;
+        }
+      }
+      framingWatch.stop();
+
+      final multi = _multiResultFrames(rowMajor, columnar);
+      final multiWatch = Stopwatch()..start();
+      var decoded = 0;
+      for (var i = 0; i < iterations; i++) {
+        final decoder = MultiResultStreamDecoder();
+        for (var offset = 0; offset < multi.length; offset += 17) {
+          final end = offset + 17 < multi.length ? offset + 17 : multi.length;
+          decoded +=
+              decoder.feed(Uint8List.sublistView(multi, offset, end)).length;
+        }
+        decoder.assertExhausted();
+      }
+      multiWatch.stop();
+
+      print(
+        'P4.1 row-major parse: ${rowMajorWatch.elapsedMilliseconds}ms, '
+        'rows=$rowMajorCells',
+      );
+      print(
+        'P4.1 columnar parse: ${columnarWatch.elapsedMilliseconds}ms, '
+        'rows=$columnarCells',
+      );
+      print(
+        'P4.1 frame accumulator: ${framingWatch.elapsedMilliseconds}ms, '
+        'frames=$framed',
+      );
+      print(
+        'P4.1 multi-result decoder: ${multiWatch.elapsedMilliseconds}ms, '
+        'items=$decoded',
+      );
+
+      expect(rowMajorCells, equals(rows * iterations));
+      expect(columnarCells, equals(rows * iterations));
+      expect(framed, equals(iterations));
+      expect(decoded, equals(2 * iterations));
+    });
   });
+}
+
+Uint8List _rowMajorBuffer({required int rows}) {
+  final payload = <int>[];
+  const columns = [
+    (name: 'id', type: 2),
+    (name: 'name', type: 1),
+    (name: 'count', type: 3),
+  ];
+  for (final column in columns) {
+    payload
+      ..addAll(column.type.toBytes(2))
+      ..addAll(column.name.length.toBytes(2))
+      ..addAll(column.name.codeUnits);
+  }
+  for (var i = 0; i < rows; i++) {
+    final name = 'name_$i'.codeUnits;
+    payload
+      ..add(0)
+      ..addAll(4.toBytes(4))
+      ..addAll(i.toBytes(4))
+      ..add(0)
+      ..addAll(name.length.toBytes(4))
+      ..addAll(name)
+      ..add(0)
+      ..addAll(8.toBytes(4))
+      ..addAll((i * 10000000000).toBytes(8));
+  }
+  return Uint8List.fromList(
+    <int>[
+      ...BinaryProtocolParser.magic.toBytes(4),
+      ...BinaryProtocolParser.protocolVersionRowMajor.toBytes(2),
+      ...columns.length.toBytes(2),
+      ...rows.toBytes(4),
+      ...payload.length.toBytes(4),
+      ...payload,
+    ],
+  );
+}
+
+Uint8List _columnarBuffer({required int rows}) {
+  const columns = [
+    (name: 'id', type: 2),
+    (name: 'name', type: 1),
+    (name: 'count', type: 3),
+  ];
+  final payload = <int>[];
+  for (final column in columns) {
+    final raw = <int>[];
+    for (var i = 0; i < rows; i++) {
+      raw.add(0);
+      if (column.type == 2) {
+        raw.addAll(i.toBytes(4));
+      } else if (column.type == 3) {
+        raw.addAll((i * 10000000000).toBytes(8));
+      } else {
+        final bytes = 'name_$i'.codeUnits;
+        raw
+          ..addAll(bytes.length.toBytes(4))
+          ..addAll(bytes);
+      }
+    }
+    payload
+      ..addAll(column.type.toBytes(2))
+      ..addAll(column.name.length.toBytes(2))
+      ..addAll(column.name.codeUnits)
+      ..add(0)
+      ..addAll(raw.length.toBytes(4))
+      ..addAll(raw);
+  }
+  return Uint8List.fromList(
+    <int>[
+      ...BinaryProtocolParser.magic.toBytes(4),
+      ...BinaryProtocolParser.protocolVersionColumnarV2.toBytes(2),
+      ...0.toBytes(2),
+      ...columns.length.toBytes(2),
+      ...rows.toBytes(4),
+      0,
+      ...payload.length.toBytes(4),
+      ...payload,
+    ],
+  );
+}
+
+Uint8List _multiResultFrames(Uint8List first, Uint8List second) {
+  final bytes = <int>[];
+  for (final payload in [first, second]) {
+    bytes
+      ..add(multiStreamItemTagResultSet)
+      ..addAll(payload.length.toBytes(4))
+      ..addAll(payload);
+  }
+  return Uint8List.fromList(bytes);
+}
+
+extension _IntBytes on int {
+  List<int> toBytes(int length) {
+    final bytes = <int>[];
+    for (var i = 0; i < length; i++) {
+      bytes.add((this >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+  }
 }

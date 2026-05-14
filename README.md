@@ -450,6 +450,11 @@ isolates. Operations on the same connection, statement, transaction, stream, or
 async request keep worker affinity so handle usage stays serialized.
 `asyncMaxPendingRequests` is optional and opt-in; use it as backpressure for
 high-concurrency services, typically a small multiple of native pool size.
+This is the supported "thread opening" pattern for Dart consumers: configure
+workers with `workerCount` / `asyncWorkerCount` and open multiple real
+connections or pool checkouts. Do not spawn raw isolates around the same
+connection expecting parallel SQL execution; the native connection mutex still
+serializes one connection for ODBC safety.
 
 If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 
@@ -484,10 +489,12 @@ async.dispose();
 High-concurrency examples:
 
 - [`example/high_concurrency_worker_pool_demo.dart`](example/high_concurrency_worker_pool_demo.dart)
-  uses `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections.
+  uses `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections,
+  prints per-worker routing, and accepts `ODBC_CONCURRENCY_QUERY`.
 - [`example/high_concurrency_pool_demo.dart`](example/high_concurrency_pool_demo.dart)
   uses `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: 4)` with a
-  native pool and an explicit in-flight task limit.
+  native pool, separate checkouts, an explicit in-flight task limit, and
+  accepts `ODBC_CONCURRENCY_QUERY`.
 - [`example/async_concurrency_benchmark.dart`](example/async_concurrency_benchmark.dart)
   compares `workerCount: 1`, `workerCount: 4`, native pool with an in-flight
   limit, streaming, row-major vs columnar encodings, and prepared reuse.
@@ -504,6 +511,9 @@ Tuning defaults:
   sets.
 - Flutter/UI: keep `workerCount = 1` unless the app opens multiple real
   connections concurrently.
+- Same connection: keep calls logically serial. More workers reduce contention
+  only when there are multiple connections, native pool checkouts, or
+  independent non-handle operations to route.
 
 For high-level incremental consumption without materializing all rows:
 
@@ -614,6 +624,9 @@ dart run example/execute_async_demo.dart
 dart run example/high_concurrency_worker_pool_demo.dart
 dart run example/high_concurrency_pool_demo.dart
 dart run example/async_concurrency_benchmark.dart
+
+# Optional: override the demo query with a slower/larger workload
+ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_worker_pool_demo.dart
 
 # Queries / parameters
 dart run example/named_parameters_demo.dart

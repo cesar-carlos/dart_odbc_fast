@@ -34,6 +34,25 @@ void main() {
       expect(result.rows[0][0], equals(1));
     });
 
+    test('should parse row-major data from non-zero Uint8List view offset', () {
+      final buffer = _createTestBuffer(
+        columns: [
+          (name: 'id', type: 2),
+          (name: 'name', type: 1),
+        ],
+        rows: [
+          [42, 'Alice'],
+        ],
+      );
+      final padded = Uint8List.fromList([0xAA, 0xBB, ...buffer, 0xCC]);
+      final view = Uint8List.sublistView(padded, 2, padded.length - 1);
+
+      final result = BinaryProtocolParser.parse(view);
+
+      expect(result.columnNames, equals(['id', 'name']));
+      expect(result.rows.single, equals([42, 'Alice']));
+    });
+
     test('should handle null values', () {
       final buffer = _createTestBuffer(
         columns: [
@@ -143,6 +162,51 @@ void main() {
       expect(p.rowBuffer.rowCount, 1);
       expect(p.rowBuffer.columnCount, 1);
       expect(p.rowBuffer.rows[0][0], 42);
+    });
+
+    test('columnar v2 multiple columns fill row-major output directly', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'id', type: 2),
+          (name: 'name', type: 1),
+          (name: 'count', type: 3),
+        ],
+        rows: [
+          [1, 'Alice', 10000000000],
+          [2, null, 20000000000],
+          [3, 'Carol', null],
+        ],
+      );
+
+      final parsed = BinaryProtocolParser.parse(data);
+
+      expect(parsed.columnCount, equals(3));
+      expect(parsed.rowCount, equals(3));
+      expect(parsed.rows, [
+        [1, 'Alice', 10000000000],
+        [2, null, 20000000000],
+        [3, 'Carol', null],
+      ]);
+    });
+
+    test('columnar v2 binary cells decode as Uint8List', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'payload', type: 7),
+        ],
+        rows: [
+          [
+            [0x01, 0x02, 0x03],
+          ],
+          [null],
+        ],
+      );
+
+      final parsed = BinaryProtocolParser.parse(data);
+
+      expect(parsed.rows[0][0], isA<Uint8List>());
+      expect(parsed.rows[0][0], equals([0x01, 0x02, 0x03]));
+      expect(parsed.rows[1][0], isNull);
     });
 
     test('should parse multiple columns and rows', () {
@@ -281,6 +345,57 @@ void main() {
       expect(decoded, contains('\uFFFD'));
     });
   });
+}
+
+Uint8List _createColumnarV2Buffer({
+  required List<({String name, int type})> columns,
+  required List<List<dynamic>> rows,
+}) {
+  final payload = <int>[];
+  for (var c = 0; c < columns.length; c++) {
+    final column = columns[c];
+    payload
+      ..addAll(column.type.toBytes(2))
+      ..addAll(column.name.length.toBytes(2))
+      ..addAll(column.name.codeUnits)
+      ..add(0);
+
+    final raw = <int>[];
+    for (final row in rows) {
+      final cell = row[c];
+      if (cell == null) {
+        raw.add(1);
+        continue;
+      }
+      raw.add(0);
+      if (column.type == 2) {
+        raw.addAll((cell as int).toBytes(4));
+      } else if (column.type == 3) {
+        raw.addAll((cell as int).toBytes(8));
+      } else {
+        final bytes = _cellToBytes(cell);
+        raw
+          ..addAll(bytes.length.toBytes(4))
+          ..addAll(bytes);
+      }
+    }
+    payload
+      ..addAll(raw.length.toBytes(4))
+      ..addAll(raw);
+  }
+
+  final buffer = <int>[
+    ...BinaryProtocolParser.magic.toBytes(4),
+    ...BinaryProtocolParser.protocolVersionColumnarV2.toBytes(2),
+    ...0.toBytes(2),
+    ...columns.length.toBytes(2),
+    ...rows.length.toBytes(4),
+    0,
+    ...payload.length.toBytes(4),
+    ...payload,
+  ];
+
+  return Uint8List.fromList(buffer);
 }
 
 Uint8List _createTestBuffer({
