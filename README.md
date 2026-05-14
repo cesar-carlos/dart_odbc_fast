@@ -109,9 +109,19 @@ Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
   Dart `BinaryProtocolParser` decodes both **uncompressed** and
   **compressed** column blocks (zstd / LZ4) through the native
   `odbc_columnar_decompress` FFI path. [columnar sketch](doc/notes/columnar_protocol_sketch.md)
-  remains the long-form spec.
+  remains the long-form spec. Public query APIs keep row-major v1 as the
+  default; use `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`
+  on parameterized query paths only after validating the workload.
 
   Example: [`example/output_param_directions_demo.dart`](example/output_param_directions_demo.dart).
+
+- **Performance guardrails:** live table-scan tests under `test/my_test` are
+  skipped unless `RUN_LIVE_TESTS=1`, bounded by default (`MY_TEST_ROW_LIMIT`,
+  default `5000`), and require `MY_TEST_FULL_TABLE_SCAN=1` for full scans. Use
+  `dart run tool/test_slow_report.dart --top 20 --threshold-ms 500` to list the
+  slowest Dart tests, and
+  [`example/streaming_performance_benchmark.dart`](example/streaming_performance_benchmark.dart)
+  to compare `streamQuery` vs `streamQueryBatched` on the same workload.
 
 ## Why Rust + FFI
 
@@ -270,6 +280,10 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 - Current runtime contract returns unsupported feature for statement cancellation
   (SQLSTATE `0A000`) because active background cancellation is not yet wired
   end-to-end.
+- `asyncCancel` is best-effort for Rust async requests; it cannot guarantee an
+  immediate interrupt when an ODBC driver is already blocked in a native call.
+- `streamCancel` is effective between stream batches/iterations and is followed
+  by stream close during async cleanup.
 - Use query timeout as workaround (`ConnectionOptions.queryTimeout`,
   prepare/statement timeout options).
 
@@ -419,10 +433,34 @@ if (conn != null) {
 locator.shutdown();
 ```
 
+For high-concurrency workloads, async mode accepts an optional worker pool:
+
+```dart
+final locator = ServiceLocator()
+  ..initialize(
+    useAsync: true,
+    asyncWorkerCount: 4,
+    asyncMaxPendingRequests: 16,
+  );
+```
+
+`asyncWorkerCount` defaults to `1` for existing behavior. Values greater than
+`1` let independent connections or pool checkouts run on multiple Dart worker
+isolates. Operations on the same connection, statement, transaction, stream, or
+async request keep worker affinity so handle usage stays serialized.
+`asyncMaxPendingRequests` is optional and opt-in; use it as backpressure for
+high-concurrency services, typically a small multiple of native pool size.
+
 If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 
 - `requestTimeout` for worker response timeout
 - `autoRecoverOnWorkerCrash` for automatic worker re-initialization
+- `workerCount` for an optional worker isolate pool (`1` by default)
+- `maxPendingRequests` for a global pending-request cap (`null` by default)
+- `backpressureMode` as `failFast` (default) or `waitForSlot`
+- `backpressureTimeout` when `waitForSlot` is active
+- `getWorkerPoolStats()` for a Dart-side snapshot of routed, active, pending,
+  timeout, cancel, latency, per-worker, and blocking-fallback counters
 
 Direct async example (worker isolate, non-blocking):
 
@@ -443,9 +481,29 @@ await async.disconnect(connId);
 async.dispose();
 ```
 
+High-concurrency examples:
+
+- [`example/high_concurrency_worker_pool_demo.dart`](example/high_concurrency_worker_pool_demo.dart)
+  uses `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections.
+- [`example/high_concurrency_pool_demo.dart`](example/high_concurrency_pool_demo.dart)
+  uses `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: 4)` with a
+  native pool and an explicit in-flight task limit.
+- [`example/async_concurrency_benchmark.dart`](example/async_concurrency_benchmark.dart)
+  compares `workerCount: 1`, `workerCount: 4`, native pool with an in-flight
+  limit, streaming, row-major vs columnar encodings, and prepared reuse.
+
 Async streaming (`streamQuery` / `streamQueryBatched`) uses the native
 stream protocol through the worker isolate (`stream_start/fetch/close`),
 instead of fetching full result sets in a single call.
+
+Tuning defaults:
+
+- API/web with native pool: set `workerCount` near `min(poolSize, cores)` and
+  `maxPendingRequests` near `poolSize * 2` to `poolSize * 4`.
+- Batch jobs: set `workerCount = poolSize`; prefer streaming for large result
+  sets.
+- Flutter/UI: keep `workerCount = 1` unless the app opens multiple real
+  connections concurrently.
 
 For high-level incremental consumption without materializing all rows:
 
@@ -553,6 +611,9 @@ dart run example/pool_with_options_demo.dart           # NEW v3.0 (PoolOptions)
 dart run example/async_demo.dart
 dart run example/async_service_locator_demo.dart
 dart run example/execute_async_demo.dart
+dart run example/high_concurrency_worker_pool_demo.dart
+dart run example/high_concurrency_pool_demo.dart
+dart run example/async_concurrency_benchmark.dart
 
 # Queries / parameters
 dart run example/named_parameters_demo.dart
@@ -593,6 +654,11 @@ Coverage-oriented examples:
   `catalogPrimaryKeys`, `catalogForeignKeys`, and `catalogIndexes`.
 - `example/execute_async_demo.dart`: low-level async execution and streaming
   via worker isolate using raw payload parsing.
+- `example/high_concurrency_worker_pool_demo.dart` and
+  `example/high_concurrency_pool_demo.dart`: documented worker-pool and
+  native-pool patterns for high-concurrency scenarios.
+- `example/async_concurrency_benchmark.dart`: local Stopwatch-based benchmark
+  for worker pool, native pool and streaming choices.
 - `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
   telemetry service/buffer usage plus OTLP repository initialization.
 

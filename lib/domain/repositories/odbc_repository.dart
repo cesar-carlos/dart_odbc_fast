@@ -7,10 +7,13 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
+    show AsyncWorkerPoolStats;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
@@ -238,8 +241,9 @@ abstract class IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
-    List<dynamic> params,
-  );
+    List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  });
 
   /// Like [executeQueryParams] but the wire buffer is pre-serialised: legacy
   /// v0 (concatenated `ParamValue` wire tags) or DRT1
@@ -247,8 +251,9 @@ abstract class IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParamBuffer(
     String connectionId,
     String sql,
-    Uint8List? paramBuffer,
-  );
+    Uint8List? paramBuffer, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  });
 
   /// Executes a SQL query with named parameters.
   ///
@@ -431,6 +436,9 @@ abstract class IOdbcRepository {
   /// Returns [OdbcMetrics] containing query counts, error counts,
   /// uptime, and latency information.
   Future<Result<OdbcMetrics>> getMetrics();
+
+  /// Gets async worker-pool diagnostics when the backend is async.
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
 
   /// Checks if the ODBC environment has been initialized.
   ///

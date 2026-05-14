@@ -9,6 +9,7 @@ import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
 import 'package:odbc_fast/odbc_fast.dart'
     hide
         DatabaseEngineIds,
@@ -168,6 +169,15 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Whether the loaded native library supports async execute FFI endpoints.
   bool get supportsAsyncExecuteApi => _native.supportsAsyncExecuteApi;
 
+  /// Whether async execute also supports serialized parameter buffers.
+  bool get supportsAsyncExecuteParamsApi =>
+      _native.supportsAsyncExecuteParamsApi;
+
+  /// Whether parameterized query execution can request columnar result
+  /// encodings. When false, callers fall back to row-major v1.
+  bool get supportsResultEncodingOptions =>
+      _native.supportsResultEncodingOptions;
+
   /// Whether the loaded native library supports async stream FFI endpoints.
   bool get supportsAsyncStreamApi => _native.supportsAsyncStreamApi;
 
@@ -200,6 +210,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// Starts non-blocking query execution and returns async request ID.
   int? executeAsyncStart(int connectionId, String sql) =>
       _native.executeAsyncStart(connectionId, sql);
+
+  /// Starts non-blocking parameterized query execution.
+  int? executeAsyncStartParams(
+    int connectionId,
+    String sql,
+    Uint8List? serializedParams,
+  ) =>
+      _native.executeAsyncStartParams(connectionId, sql, serializedParams);
 
   /// Polls async request status:
   /// `0` pending, `1` ready, `-1` error, `-2` cancelled.
@@ -547,12 +565,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.execQueryParamsTyped(
         connectionId,
         sql,
         params,
         maxBufferBytes: maxBufferBytes,
+        resultEncoding: resultEncoding,
       );
 
   /// Executes a parameterized query with params already serialized (bytes).
@@ -565,12 +585,14 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     String sql,
     Uint8List? serializedParams, {
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.execQueryParams(
         connectionId,
         sql,
         serializedParams,
         maxBufferBytes: maxBufferBytes,
+        resultEncoding: resultEncoding,
       );
 
   /// Executes a SQL query that returns multiple result sets.
@@ -881,7 +903,7 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
       throw Exception('Failed to start batched stream: ${_native.getError()}');
     }
 
-    var pending = BytesBuilder(copy: false);
+    final pending = BinaryFrameAccumulator();
     try {
       while (true) {
         final result = _native.streamFetch(streamId);
@@ -896,17 +918,8 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
         }
         pending.add(data);
 
-        while (pending.length >= BinaryProtocolParser.headerSize) {
-          final all = pending.toBytes();
-          final msgLen = BinaryProtocolParser.messageLengthFromHeader(all);
-          if (all.length < msgLen) break;
-
-          final msg = all.sublist(0, msgLen);
+        for (final msg in pending.drainFrames()) {
           yield BinaryProtocolParser.parse(msg);
-
-          final remainder = all.sublist(msgLen);
-          pending = BytesBuilder(copy: false);
-          if (remainder.isNotEmpty) pending.add(remainder);
         }
 
         if (!result.hasMore) break;

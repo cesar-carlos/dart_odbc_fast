@@ -10,12 +10,15 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
+    show AsyncWorkerPoolStats;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
@@ -168,8 +171,9 @@ class MockOdbcRepository implements IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
-    List<dynamic> params,
-  ) async {
+    List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     executeQueryParamsCalled = true;
     _queryCount++;
     return const Success(
@@ -187,8 +191,9 @@ class MockOdbcRepository implements IOdbcRepository {
   Future<Result<QueryResult>> executeQueryParamBuffer(
     String connectionId,
     String sql,
-    Uint8List? paramBuffer,
-  ) async {
+    Uint8List? paramBuffer, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     executeQueryParamBufferCalled = true;
     _queryCount++;
     return const Success(
@@ -626,6 +631,15 @@ class MockOdbcRepository implements IOdbcRepository {
         uptimeSecs: 10,
         totalLatencyMillis: 100,
         avgLatencyMillis: 25,
+      ),
+    );
+  }
+
+  @override
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
+    return const Failure(
+      UnsupportedFeatureError(
+        message: 'Async worker-pool stats require async native backend',
       ),
     );
   }

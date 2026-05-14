@@ -60,6 +60,32 @@ bool get runSkippedTests {
   return parsed ?? false;
 }
 
+/// When true, live DSN-dependent tests run.
+///
+/// Set RUN_LIVE_TESTS=1 for local validation against a real database. These
+/// tests are skipped by default even when ODBC_TEST_DSN is configured so that
+/// `dart test` remains deterministic and fast.
+bool get runLiveTests {
+  final raw = getTestEnv('RUN_LIVE_TESTS');
+  final parsed = _parseEnvBool(raw);
+  return parsed ?? false;
+}
+
+/// When true, performance-oriented tests and local benchmarks may run.
+bool get runPerformanceTests {
+  final raw = getTestEnv('RUN_PERF_TESTS');
+  final parsed = _parseEnvBool(raw);
+  return parsed ?? false;
+}
+
+/// When true, stress tests may run. RUN_SKIPPED_TESTS remains supported as a
+/// broad compatibility switch for older test commands.
+bool get runStressTests {
+  final raw = getTestEnv('RUN_STRESS_TESTS');
+  final parsed = _parseEnvBool(raw);
+  return parsed ?? runSkippedTests;
+}
+
 bool? _parseEnvBool(String? raw) {
   if (raw == null) return null;
   final normalized = raw.trim().toLowerCase();

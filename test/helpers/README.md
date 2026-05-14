@@ -166,7 +166,21 @@ Returns true if end-to-end tests are enabled (`ENABLE_E2E_TESTS=1`).
 
 Returns true when `RUN_SKIPPED_TESTS=1` (or `true`/`yes`). When true, the 10 normally-skipped tests (slow integration, stress, native-assets) run. Use for CI or local validation: `RUN_SKIPPED_TESTS=1 dart test`.
 
+### `runLiveTests -> bool`
+
+Returns true when `RUN_LIVE_TESTS=1`. Use for DSN-dependent live database tests
+that should not run in the default `dart test` path.
+
+### `runStressTests -> bool`
+
+Returns true when `RUN_STRESS_TESTS=1`, or when legacy `RUN_SKIPPED_TESTS=1`
+is set. Use for high-concurrency or deliberately slow stress tests.
+
+### `runPerformanceTests -> bool`
+
+Returns true when `RUN_PERF_TESTS=1`. Use for benchmark-like tests with
+runtime-sensitive expectations.
+
 ### `kInvalidConnectionId`
 
 Constant for an invalid connection ID (999) used in tests.
-

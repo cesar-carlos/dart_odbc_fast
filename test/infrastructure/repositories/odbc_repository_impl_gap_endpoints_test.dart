@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show OdbcMetrics, PreparedStatementMetrics;
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
@@ -78,6 +79,8 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       null;
 
@@ -87,6 +90,8 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       null;
 

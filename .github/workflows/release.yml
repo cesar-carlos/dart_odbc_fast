@@ -109,6 +109,9 @@ jobs:
       - name: Dart analyze
         run: dart analyze
 
+      - name: Check FFI export surfaces
+        run: dart run tool/check_ffi_exports.dart
+
       - name: Dart tests (unit-only, no integration/e2e/stress)
         run: >
           dart test

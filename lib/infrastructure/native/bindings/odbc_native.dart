@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show callWithBuffer, initialBufferSize, maxBufferSize;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
@@ -60,6 +61,15 @@ class OdbcNative {
 
   /// True when the loaded native library exposes async execute FFI APIs.
   bool get supportsAsyncExecuteApi => _bindings.supportsAsyncExecuteApi;
+
+  /// True when async execute also supports serialized parameter buffers.
+  bool get supportsAsyncExecuteParamsApi =>
+      _bindings.supportsAsyncExecuteParamsApi;
+
+  /// True when the native library exposes result encoding options for direct
+  /// parameterized query execution.
+  bool get supportsResultEncodingOptions =>
+      _bindings.supportsExecQueryParamsOptions;
 
   /// True when the loaded native library exposes async stream FFI APIs.
   bool get supportsAsyncStreamApi => _bindings.supportsAsyncStreamApi;
@@ -166,6 +176,41 @@ class OdbcNative {
     } finally {
       malloc.free(sqlPtr);
     }
+  }
+
+  /// Starts non-blocking parameterized query execution.
+  ///
+  /// Returns `null` when API is unavailable. Returns `0` on native failure.
+  int? executeAsyncStartParams(
+    int connectionId,
+    String sql,
+    Uint8List? params,
+  ) {
+    if (!_bindings.supportsAsyncExecuteParamsApi) {
+      return null;
+    }
+    return _withSql(
+      sql,
+      (sqlPtr) {
+        if (params == null || params.isEmpty) {
+          return _bindings.odbc_execute_async_params(
+            connectionId,
+            sqlPtr,
+            ffi.nullptr.cast<ffi.Uint8>(),
+            0,
+          );
+        }
+        return _withParamsBuffer(
+          params,
+          (paramsPtr) => _bindings.odbc_execute_async_params(
+            connectionId,
+            sqlPtr,
+            paramsPtr,
+            params.length,
+          ),
+        );
+      },
+    );
   }
 
   /// Polls async request status.
@@ -565,7 +610,7 @@ class OdbcNative {
           final more = hasMore.value != 0;
           return StreamFetchResult(
             success: true,
-            data: data?.toList(),
+            data: data,
             hasMore: more,
           );
         }
@@ -649,24 +694,38 @@ class OdbcNative {
     String sql,
     Uint8List? params, {
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
     final paramsOrEmpty =
         (params == null || params.isEmpty) ? Uint8List(0) : params;
+    final useOptions = resultEncoding != ResultEncoding.rowMajor &&
+        _bindings.supportsExecQueryParamsOptions;
     return _withSql(
       sql,
       (sqlPtr) {
         return _withParamsBuffer(
           paramsOrEmpty,
           (paramsPtr) => callWithBuffer(
-            (buf, bufLen, outWritten) => _bindings.odbc_exec_query_params(
-              connectionId,
-              sqlPtr,
-              paramsPtr,
-              paramsOrEmpty.length,
-              buf,
-              bufLen,
-              outWritten,
-            ),
+            (buf, bufLen, outWritten) => useOptions
+                ? _bindings.odbc_exec_query_params_options(
+                    connectionId,
+                    sqlPtr,
+                    paramsPtr,
+                    paramsOrEmpty.length,
+                    resultEncoding.wireCode,
+                    buf,
+                    bufLen,
+                    outWritten,
+                  )
+                : _bindings.odbc_exec_query_params(
+                    connectionId,
+                    sqlPtr,
+                    paramsPtr,
+                    paramsOrEmpty.length,
+                    buf,
+                    bufLen,
+                    outWritten,
+                  ),
             maxSize: maxBufferBytes,
           ),
         );
@@ -688,6 +747,7 @@ class OdbcNative {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
     if (params.isEmpty) {
       return execQueryParams(
@@ -695,6 +755,7 @@ class OdbcNative {
         sql,
         null,
         maxBufferBytes: maxBufferBytes,
+        resultEncoding: resultEncoding,
       );
     }
     final buf = serializeParams(params);
@@ -703,6 +764,7 @@ class OdbcNative {
       sql,
       buf,
       maxBufferBytes: maxBufferBytes,
+      resultEncoding: resultEncoding,
     );
   }
 
@@ -1768,9 +1830,7 @@ class OdbcNative {
 extension on OdbcNative {
   ffi.Pointer<ffi.Uint8> _allocUint8List(Uint8List list) {
     final p = malloc<ffi.Uint8>(list.length);
-    for (var i = 0; i < list.length; i++) {
-      (p + i).value = list[i];
-    }
+    p.asTypedList(list.length).setAll(0, list);
     return p;
   }
 
@@ -1910,7 +1970,7 @@ class StreamFetchResult {
   final bool success;
 
   /// Fetched data, or null if no data or on failure.
-  final List<int>? data;
+  final Uint8List? data;
 
   /// Whether more data is available in the stream.
   final bool hasMore;

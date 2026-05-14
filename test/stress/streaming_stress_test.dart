@@ -42,7 +42,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: runSkippedTests ? null : 'Stress test - runs too long',
+      skip: runStressTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -71,7 +71,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      skip: runStressTests ? null : 'Extreme stress test - runs too long',
     );
 
     test(
@@ -105,7 +105,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: runSkippedTests ? null : 'Stress test - runs too long',
+      skip: runStressTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -139,7 +139,7 @@ void main() {
 
         await locator.service.disconnect(connection.id);
       },
-      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      skip: runStressTests ? null : 'Extreme stress test - runs too long',
       timeout: const Timeout(Duration(minutes: 2)),
     );
   });

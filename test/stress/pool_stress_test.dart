@@ -42,7 +42,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: runSkippedTests ? null : 'Stress test - runs too long',
+      skip: runStressTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -60,7 +60,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: runSkippedTests ? null : 'Stress test - runs too long',
+      skip: runStressTests ? null : 'Stress test - runs too long',
     );
 
     test(
@@ -89,7 +89,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      skip: runStressTests ? null : 'Extreme stress test - runs too long',
       timeout: const Timeout(Duration(minutes: 2)),
     );
 
@@ -108,7 +108,7 @@ void main() {
           expect(disconnectResult.isSuccess(), isTrue);
         }
       },
-      skip: runSkippedTests ? null : 'Extreme stress test - runs too long',
+      skip: runStressTests ? null : 'Extreme stress test - runs too long',
       timeout: const Timeout(Duration(minutes: 4)),
     );
   });

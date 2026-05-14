@@ -11,6 +11,7 @@ odbc_get_structured_error
 odbc_get_structured_error_for_connection
 odbc_exec_query
 odbc_execute_async
+odbc_execute_async_params
 odbc_async_poll
 odbc_async_get_result
 odbc_async_cancel
@@ -46,6 +47,7 @@ odbc_get_metrics
 odbc_get_cache_metrics
 odbc_clear_statement_cache
 odbc_exec_query_params
+odbc_exec_query_params_options
 odbc_exec_query_multi
 odbc_exec_query_multi_params
 odbc_catalog_tables

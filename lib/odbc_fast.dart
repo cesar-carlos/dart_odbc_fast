@@ -67,6 +67,7 @@ export 'domain/entities/pool_state.dart';
 export 'domain/entities/prepared_statement_config.dart';
 export 'domain/entities/query_result.dart';
 export 'domain/entities/query_result_multi.dart';
+export 'domain/entities/result_encoding.dart';
 export 'domain/entities/retry_options.dart';
 export 'domain/entities/savepoint_dialect.dart';
 export 'domain/entities/schema_info.dart';

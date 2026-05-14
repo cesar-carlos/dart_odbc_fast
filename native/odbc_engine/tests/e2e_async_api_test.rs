@@ -6,8 +6,9 @@
 use odbc_engine::engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
 use odbc_engine::ffi::{
     odbc_async_cancel, odbc_async_free, odbc_async_get_result, odbc_async_poll, odbc_connect,
-    odbc_disconnect, odbc_exec_query, odbc_execute_async, odbc_init,
+    odbc_disconnect, odbc_exec_query, odbc_execute_async, odbc_execute_async_params, odbc_init,
 };
+use odbc_engine::{serialize_params, ParamValue};
 use std::ffi::CString;
 use std::os::raw::{c_int, c_uint};
 use std::thread;
@@ -372,6 +373,203 @@ fn test_async_ffi_10_plus_concurrent_e2e() {
             "odbc_disconnect should succeed"
         );
     }
+}
+
+#[test]
+fn test_async_ffi_execute_params_null_valid_invalid_and_small_buffer_e2e() {
+    if !should_run_e2e_tests() {
+        eprintln!("Skipping E2E async params test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
+
+    let dsn = get_sqlserver_test_dsn().expect("ODBC_TEST_DSN or SQLSERVER_TEST_* not set");
+    assert_eq!(odbc_init(), 0, "odbc_init should succeed");
+
+    let dsn_c = CString::new(dsn).expect("dsn cstring");
+    let conn_id = odbc_connect(dsn_c.as_ptr());
+    assert!(conn_id > 0, "odbc_connect should return valid conn_id");
+
+    let invalid_sql = CString::new("SELECT CAST(? AS INT) AS value").expect("sql cstring");
+    let invalid_request =
+        odbc_execute_async_params(c_uint::MAX, invalid_sql.as_ptr(), std::ptr::null(), 0);
+    assert_eq!(
+        invalid_request, 0,
+        "Invalid connection should return request_id=0"
+    );
+
+    let no_params_sql = CString::new("SELECT 1 AS value").expect("sql cstring");
+    let no_params_request =
+        odbc_execute_async_params(conn_id, no_params_sql.as_ptr(), std::ptr::null(), 0);
+    assert!(
+        no_params_request > 0,
+        "Null params with params_len=0 should start"
+    );
+    _wait_ready(no_params_request);
+    let mut no_params_out = vec![0u8; 64 * 1024];
+    let mut no_params_written: c_uint = 0;
+    assert_eq!(
+        odbc_async_get_result(
+            no_params_request,
+            no_params_out.as_mut_ptr(),
+            no_params_out.len() as c_uint,
+            &mut no_params_written,
+        ),
+        0,
+        "no-params async result should succeed"
+    );
+    assert!(
+        no_params_written > 0,
+        "no-params result should be non-empty"
+    );
+    assert_eq!(odbc_async_free(no_params_request), 0);
+
+    let params = serialize_params(&[ParamValue::Integer(42)]);
+    let params_sql = CString::new("SELECT CAST(? AS INT) AS value").expect("sql cstring");
+    let params_request = odbc_execute_async_params(
+        conn_id,
+        params_sql.as_ptr(),
+        params.as_ptr(),
+        params.len() as c_uint,
+    );
+    assert!(params_request > 0, "valid params should start");
+    _wait_ready(params_request);
+
+    let mut small = vec![0u8; 4];
+    let mut written: c_uint = 0;
+    assert_eq!(
+        odbc_async_get_result(
+            params_request,
+            small.as_mut_ptr(),
+            small.len() as c_uint,
+            &mut written,
+        ),
+        -2,
+        "small buffer should preserve result and report required size"
+    );
+    assert!(written > small.len() as c_uint);
+
+    let mut full = vec![0u8; written as usize];
+    let mut full_written: c_uint = 0;
+    assert_eq!(
+        odbc_async_get_result(
+            params_request,
+            full.as_mut_ptr(),
+            full.len() as c_uint,
+            &mut full_written,
+        ),
+        0,
+        "retry with required buffer should succeed"
+    );
+    assert_eq!(full_written, written);
+    assert_eq!(odbc_async_free(params_request), 0);
+
+    let null_params = serialize_params(&[ParamValue::Null]);
+    let null_sql = CString::new("SELECT CAST(? AS INT) AS nullable_value").expect("sql cstring");
+    let null_request = odbc_execute_async_params(
+        conn_id,
+        null_sql.as_ptr(),
+        null_params.as_ptr(),
+        null_params.len() as c_uint,
+    );
+    assert!(null_request > 0, "NULL param should start");
+    _wait_ready(null_request);
+    let mut null_out = vec![0u8; 64 * 1024];
+    let mut null_written: c_uint = 0;
+    assert_eq!(
+        odbc_async_get_result(
+            null_request,
+            null_out.as_mut_ptr(),
+            null_out.len() as c_uint,
+            &mut null_written,
+        ),
+        0,
+        "NULL param async result should succeed"
+    );
+    assert!(null_written > 0, "NULL param result should be non-empty");
+    assert_eq!(odbc_async_free(null_request), 0);
+
+    assert_eq!(odbc_disconnect(conn_id), 0);
+}
+
+#[test]
+fn test_async_ffi_execute_params_cancel_free_e2e() {
+    if !should_run_e2e_tests() {
+        eprintln!("Skipping E2E async params cancel test: SQL Server not available");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
+        return;
+    }
+
+    let dsn = get_sqlserver_test_dsn().expect("ODBC_TEST_DSN or SQLSERVER_TEST_* not set");
+    assert_eq!(odbc_init(), 0, "odbc_init should succeed");
+
+    let dsn_c = CString::new(dsn).expect("dsn cstring");
+    let conn_id = odbc_connect(dsn_c.as_ptr());
+    assert!(conn_id > 0, "odbc_connect should return valid conn_id");
+
+    let params = serialize_params(&[ParamValue::Integer(1)]);
+    let sql = CString::new("WAITFOR DELAY '00:00:03'; SELECT CAST(? AS INT) AS value")
+        .expect("sql cstring");
+    let request_id = odbc_execute_async_params(
+        conn_id,
+        sql.as_ptr(),
+        params.as_ptr(),
+        params.len() as c_uint,
+    );
+    assert!(request_id > 0, "valid params should start");
+
+    assert_eq!(
+        odbc_async_cancel(request_id),
+        0,
+        "cancel for active request should succeed"
+    );
+
+    let mut status: c_int = 0;
+    let mut terminal = false;
+    for _ in 0..100 {
+        let poll_rc = odbc_async_poll(request_id, &mut status);
+        assert_eq!(poll_rc, 0, "poll after cancel should succeed");
+        if status == -2 || status == -1 || status == 1 {
+            terminal = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(terminal, "cancelled request should reach terminal status");
+
+    assert_eq!(
+        odbc_async_free(request_id),
+        0,
+        "free after cancel should succeed"
+    );
+    assert_eq!(
+        odbc_async_free(request_id),
+        -1,
+        "free after request removal should fail"
+    );
+    assert_eq!(odbc_disconnect(conn_id), 0);
+}
+
+fn _wait_ready(request_id: c_uint) {
+    let mut status: c_int = 0;
+    for _ in 0..300 {
+        let poll_rc = odbc_async_poll(request_id, &mut status);
+        assert_eq!(poll_rc, 0, "odbc_async_poll should succeed");
+        if status == 1 {
+            return;
+        }
+        assert!(
+            status == 0 || status == -1 || status == -2,
+            "Unexpected async status: {}",
+            status
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("Async request {} did not reach READY status", request_id);
 }
 
 /// E2E benchmark: compare async lifecycle overhead vs sync FFI calls.

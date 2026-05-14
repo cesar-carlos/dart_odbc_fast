@@ -25,13 +25,63 @@ void _fakeWorkerNoResponse(SendPort mainSendPort) {
   });
 }
 
-/// Fake worker: sends handshake but never responds to any request.
-void _fakeWorkerNeverResponds(SendPort mainSendPort) {
+/// Fake worker: delays query responses without touching a live DSN.
+void _fakeWorkerDelayedQuery(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) async {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ConnectRequest) {
+      mainSendPort
+          .send(ConnectResponse(message.requestId, 100000 + message.requestId));
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+    if (message is ExecuteQueryParamsRequest) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([1])),
+      );
+      return;
+    }
+    if (message is DisconnectRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+    }
+  });
+}
+
+/// Fake worker: creates affinities, then exits without replying to query.
+void _fakeWorkerControlledExit(SendPort mainSendPort) {
   final receivePort = ReceivePort();
   mainSendPort.send(receivePort.sendPort);
   receivePort.listen((message) {
     if (message == 'shutdown') {
       receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ConnectRequest) {
+      mainSendPort.send(ConnectResponse(message.requestId, 7001));
+      return;
+    }
+    if (message is PrepareRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 8001));
+      return;
+    }
+    if (message is ExecuteQueryParamsRequest) {
       return;
     }
   });
@@ -72,6 +122,10 @@ void _fakeWorkerNamedSupport(SendPort mainSendPort) {
           ),
         );
       }
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
       return;
     }
     if (message is ExecuteQueryParamsRequest) {
@@ -276,6 +330,10 @@ void _fakeWorkerFetchFailureRequiresClose(SendPort mainSendPort) {
       );
       return;
     }
+    if (message is StreamCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
     if (message is StreamCloseRequest) {
       streamOpen = false;
       mainSendPort.send(BoolResponse(message.requestId, value: true));
@@ -405,6 +463,123 @@ void _fakeWorkerAsyncExecuteSupport(SendPort mainSendPort) {
       return;
     }
     if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: supports async execute with serialized parameter buffers.
+void _fakeWorkerAsyncExecuteParamsSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  var paramsLength = 0;
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      paramsLength = message.serializedParams.length;
+      mainSendPort.send(IntResponse(message.requestId, 4321));
+      return;
+    }
+    if (message is AsyncPollRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 1));
+      return;
+    }
+    if (message is AsyncGetResultRequest) {
+      mainSendPort.send(
+        QueryResponse(
+          message.requestId,
+          data: Uint8List.fromList([paramsLength]),
+        ),
+      );
+      return;
+    }
+    if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AsyncCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
+/// Fake worker: reports async params unavailable so callers use fallback.
+void _fakeWorkerAsyncExecuteParamsFallback(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+    if (message is ExecuteQueryParamsRequest) {
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([9])),
+      );
+      return;
+    }
+  });
+}
+
+/// Fake worker: delayed connections for worker-pool routing tests.
+void _fakeWorkerPoolRoutingSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  final localConnections = <int>{};
+  receivePort.listen((message) async {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ConnectRequest) {
+      final delay = message.connectionString.contains('slow')
+          ? const Duration(milliseconds: 240)
+          : const Duration(milliseconds: 120);
+      await Future<void>.delayed(delay);
+      final connectionId = 1000 + message.requestId;
+      localConnections.add(connectionId);
+      mainSendPort.send(ConnectResponse(message.requestId, connectionId));
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 0));
+      return;
+    }
+    if (message is ExecuteQueryParamsRequest) {
+      if (localConnections.contains(message.connectionId)) {
+        mainSendPort.send(
+          QueryResponse(message.requestId, data: Uint8List.fromList([1])),
+        );
+      } else {
+        mainSendPort.send(
+          QueryResponse(message.requestId, error: 'wrong worker'),
+        );
+      }
+      return;
+    }
+    if (message is DisconnectRequest) {
+      localConnections.remove(message.connectionId);
       mainSendPort.send(BoolResponse(message.requestId, value: true));
       return;
     }
@@ -641,6 +816,18 @@ void main() {
       );
     });
 
+    test('should convert resourceExhausted to ResourceLimitReachedError', () {
+      const asyncError = AsyncError(
+        code: AsyncErrorCode.resourceExhausted,
+        message: 'Async worker pool queue is full',
+      );
+
+      final odbcError = asyncError.toOdbcError();
+
+      expect(odbcError, isA<ResourceLimitReachedError>());
+      expect(odbcError.message, equals('Async worker pool queue is full'));
+    });
+
     test('should provide readable toString', () {
       const asyncError = AsyncError(
         code: AsyncErrorCode.connectionFailed,
@@ -659,11 +846,59 @@ void main() {
     });
   });
 
+  group('Worker response payloads', () {
+    test('QueryResponse supports TransferableTypedData bytes', () {
+      final response = QueryResponse(
+        1,
+        transferableData: TransferableTypedData.fromList([
+          Uint8List.fromList([1, 2, 3]),
+        ]),
+      );
+
+      expect(response.data, equals(Uint8List.fromList([1, 2, 3])));
+    });
+
+    test('StreamFetchResponse supports Uint8List bytes', () {
+      final bytes = Uint8List.fromList([4, 5, 6]);
+      final response = StreamFetchResponse(
+        1,
+        success: true,
+        data: bytes,
+      );
+
+      expect(response.data, equals(bytes));
+    });
+  });
+
   group('AsyncNativeOdbcConnection', () {
     late AsyncNativeOdbcConnection async;
 
     setUp(() {
       async = AsyncNativeOdbcConnection();
+    });
+
+    test('workerCount defaults to one and rejects invalid values', () {
+      expect(async.workerCount, equals(1));
+      expect(
+        () => AsyncNativeOdbcConnection(workerCount: 0),
+        throwsArgumentError,
+      );
+    });
+
+    test('maxPendingRequests defaults to null and rejects invalid values', () {
+      expect(async.maxPendingRequests, isNull);
+      expect(async.backpressureMode, equals(AsyncBackpressureMode.failFast));
+      expect(async.backpressureTimeout, isNull);
+      expect(
+        () => AsyncNativeOdbcConnection(maxPendingRequests: 0),
+        throwsArgumentError,
+      );
+      expect(
+        () => AsyncNativeOdbcConnection(
+          backpressureTimeout: const Duration(milliseconds: -1),
+        ),
+        throwsArgumentError,
+      );
     });
 
     test('should initialize without blocking', () async {
@@ -728,20 +963,20 @@ void main() {
     );
 
     test(
-      'should NOT block main thread during long query',
+      'should NOT block main thread while a worker request is pending',
       () async {
-        final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) return;
-
+        async.dispose();
+        async =
+            AsyncNativeOdbcConnection(isolateEntry: _fakeWorkerDelayedQuery);
         await async.initialize();
-        final connId = await async.connect(dsn);
+        final connId = await async.connect('DSN=fake');
 
         final timerCompleted = Completer<void>();
         Timer(const Duration(milliseconds: 100), timerCompleted.complete);
 
         final queryFuture = async.executeQueryParams(
           connId,
-          "WAITFOR DELAY '00:00:05'; SELECT 1",
+          'SELECT 1',
           [],
         );
 
@@ -753,43 +988,52 @@ void main() {
         await queryFuture;
         await async.disconnect(connId);
       },
-      skip:
-          runSkippedTests ? null : 'Slow integration test - uses WAITFOR DELAY',
-      timeout: const Timeout(Duration(seconds: 10)),
+      timeout: const Timeout(Duration(seconds: 5)),
     );
 
     test(
-      'should execute multiple queries (all complete without deadlock)',
+      'should execute independent queries concurrently across workers',
       () async {
-        final dsn = getTestEnv('ODBC_TEST_DSN');
-        if (dsn == null) return;
-
+        async.dispose();
+        async = AsyncNativeOdbcConnection(
+          workerCount: 3,
+          isolateEntry: _fakeWorkerDelayedQuery,
+        );
         await async.initialize();
-        final connId1 = await async.connect(dsn);
-        final connId2 = await async.connect(dsn);
-        final connId3 = await async.connect(dsn);
+        final connId1 = await async.connect('DSN=fake');
+        final connId2 = await async.connect('DSN=fake');
+        final connId3 = await async.connect('DSN=fake');
 
         final stopwatch = Stopwatch()..start();
         await Future.wait([
-          async.executeQueryParams(connId1, "WAITFOR DELAY '00:00:02'", []),
-          async.executeQueryParams(connId2, "WAITFOR DELAY '00:00:02'", []),
-          async.executeQueryParams(connId3, "WAITFOR DELAY '00:00:02'", []),
+          async.executeQueryParams(
+            connId1,
+            'SELECT 1',
+            [],
+          ),
+          async.executeQueryParams(
+            connId2,
+            'SELECT 1',
+            [],
+          ),
+          async.executeQueryParams(
+            connId3,
+            'SELECT 1',
+            [],
+          ),
         ]);
         stopwatch.stop();
 
         expect(
           stopwatch.elapsedMilliseconds,
-          lessThan(10000),
-          reason: 'All three 2s queries should complete without deadlock',
+          lessThan(2500),
+          reason: 'Three 1s fake queries should run on separate workers',
         );
         await async.disconnect(connId1);
         await async.disconnect(connId2);
         await async.disconnect(connId3);
       },
-      skip: runSkippedTests
-          ? null
-          : 'Slow integration test - multiple concurrent queries with delays',
-      timeout: const Timeout(Duration(seconds: 15)),
+      timeout: const Timeout(Duration(seconds: 5)),
     );
 
     test('should handle errors gracefully', () async {
@@ -843,6 +1087,250 @@ void main() {
       expect(error!.message, equals('connection failure 77'));
       expect(error.sqlStateString, equals('08S01'));
       expect(error.nativeCode, equals(701));
+      async.dispose();
+    });
+  });
+
+  group('AsyncNativeOdbcConnection worker pool', () {
+    test('distributes independent connection requests across workers',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        workerCount: 2,
+        isolateEntry: _fakeWorkerPoolRoutingSupport,
+      );
+      await async.initialize();
+
+      final stopwatch = Stopwatch()..start();
+      await Future.wait([
+        async.connect('DSN=fast_a'),
+        async.connect('DSN=fast_b'),
+      ]);
+      stopwatch.stop();
+
+      expect(
+        stopwatch.elapsedMilliseconds,
+        lessThan(220),
+        reason: 'Two 120ms connect requests should run in parallel',
+      );
+      async.dispose();
+    });
+
+    test('spreads sequential connection affinities across workers', () async {
+      final async = AsyncNativeOdbcConnection(
+        workerCount: 3,
+        isolateEntry: _fakeWorkerPoolRoutingSupport,
+      );
+      await async.initialize();
+
+      final connections = <int>[];
+      try {
+        for (var i = 0; i < 3; i++) {
+          connections.add(await async.connect('DSN=fast_$i'));
+        }
+
+        final stats = async.getWorkerPoolStats();
+        expect(
+          stats.workers.map((worker) => worker.totalRouted),
+          everyElement(greaterThanOrEqualTo(2)),
+        );
+      } finally {
+        for (final connectionId in connections) {
+          await async.disconnect(connectionId);
+        }
+        async.dispose();
+      }
+    });
+
+    test('preserves connection affinity for subsequent operations', () async {
+      final async = AsyncNativeOdbcConnection(
+        workerCount: 2,
+        isolateEntry: _fakeWorkerPoolRoutingSupport,
+      );
+      await async.initialize();
+
+      final slow = async.connect('DSN=slow');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final fastConnectionId = await async.connect('DSN=fast');
+      await slow;
+
+      final data = await async.executeQueryParams(
+        fastConnectionId,
+        'SELECT ?',
+        [const ParamValueInt32(1)],
+      );
+
+      expect(data, equals(Uint8List.fromList([1])));
+      async.dispose();
+    });
+
+    test('fails deterministically when maxPendingRequests is exceeded',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(seconds: 60),
+        isolateEntry: _fakeWorkerNoResponse,
+        maxPendingRequests: 1,
+      );
+      await async.initialize();
+
+      final blocked = async.connect('DSN=blocked');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      try {
+        await async.connect('DSN=overflow');
+        fail('Expected resourceExhausted');
+      } on AsyncError catch (e) {
+        expect(e.code, equals(AsyncErrorCode.resourceExhausted));
+        expect(e.message, contains('queue is full'));
+      } finally {
+        async.dispose();
+      }
+
+      await expectLater(blocked, throwsA(isA<AsyncError>()));
+    });
+
+    test('waitForSlot releases queued requests in FIFO order', () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(seconds: 5),
+        isolateEntry: _fakeWorkerPoolRoutingSupport,
+        maxPendingRequests: 1,
+        backpressureMode: AsyncBackpressureMode.waitForSlot,
+      );
+      await async.initialize();
+
+      final first = async.connect('DSN=slow');
+      final second = async.connect('DSN=fast');
+      final ids = await Future.wait([first, second]);
+
+      expect(ids, hasLength(2));
+      expect(ids.first, isNot(equals(ids.last)));
+      expect(
+        async.getWorkerPoolStats().completedRequests,
+        greaterThanOrEqualTo(3),
+      );
+      async.dispose();
+    });
+
+    test('waitForSlot times out with resourceExhausted', () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(seconds: 60),
+        isolateEntry: _fakeWorkerNoResponse,
+        maxPendingRequests: 1,
+        backpressureMode: AsyncBackpressureMode.waitForSlot,
+        backpressureTimeout: const Duration(milliseconds: 30),
+      );
+      await async.initialize();
+
+      final blocked = async.connect('DSN=blocked');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      await expectLater(
+        async.connect('DSN=queued'),
+        throwsA(
+          isA<AsyncError>().having(
+            (e) => e.code,
+            'code',
+            AsyncErrorCode.resourceExhausted,
+          ),
+        ),
+      );
+      async.dispose();
+      await expectLater(blocked, throwsA(isA<AsyncError>()));
+    });
+
+    test('reports active, pending and routed worker pool stats', () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(seconds: 60),
+        isolateEntry: _fakeWorkerNoResponse,
+      );
+      await async.initialize();
+
+      final blocked = async.connect('DSN=blocked');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final stats = async.getWorkerPoolStats();
+
+      expect(stats.workerCount, equals(1));
+      expect(stats.activeRequests, equals(1));
+      expect(stats.pendingRequests, equals(1));
+      expect(stats.totalRouted, equals(2));
+      expect(stats.timeouts, equals(0));
+      expect(stats.workers, hasLength(1));
+      expect(stats.workers.single.pendingRequests, equals(1));
+      expect(stats.latencyMaxMicros, greaterThanOrEqualTo(0));
+
+      async.dispose();
+      await expectLater(blocked, throwsA(isA<AsyncError>()));
+    });
+
+    test('reports timeout counter', () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(milliseconds: 20),
+        isolateEntry: _fakeWorkerNoResponse,
+      );
+      await async.initialize();
+
+      await expectLater(async.connect('DSN=Test'), throwsA(isA<AsyncError>()));
+
+      final stats = async.getWorkerPoolStats();
+      expect(stats.timeouts, equals(1));
+      expect(stats.pendingRequests, equals(0));
+      async.dispose();
+    });
+
+    test('reports fallback to blocking query path', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncExecuteParamsFallback,
+      );
+      await async.initialize();
+
+      final data = await async.executeQueryParamBuffer(
+        10,
+        'SELECT ?',
+        Uint8List.fromList([1]),
+      );
+
+      expect(data, equals(Uint8List.fromList([9])));
+      expect(async.getWorkerPoolStats().fallbacksToBlocking, equals(1));
+      async.dispose();
+    });
+
+    test('reports cancel and latency metrics', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerCancelSupport,
+      );
+      await async.initialize();
+
+      final cancelled = await async.cancelStatement(42);
+
+      expect(cancelled, isFalse);
+      final stats = async.getWorkerPoolStats();
+      expect(stats.cancelAttempts, equals(1));
+      expect(stats.cancelUnsupported, equals(1));
+      expect(stats.workers.single.latencyMaxMicros, greaterThan(0));
+      async.dispose();
+    });
+
+    test('controlled worker exit fails pending and clears affinities',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        requestTimeout: const Duration(seconds: 5),
+        isolateEntry: _fakeWorkerControlledExit,
+      );
+      await async.initialize();
+
+      final connId = await async.connect('DSN=test');
+      final stmtId = await async.prepare(connId, 'SELECT 1');
+      expect(stmtId, equals(8001));
+      expect(async.affinityEntryCountForTesting, greaterThan(0));
+
+      final pending = async.executeQueryParams(
+        connId,
+        'SELECT 1',
+        const <ParamValue>[],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      async.failWorkerForTesting(0);
+      await expectLater(pending, throwsA(isA<AsyncError>()));
+      expect(async.affinityEntryCountForTesting, equals(0));
       async.dispose();
     });
   });
@@ -923,40 +1411,6 @@ void main() {
           expect(e.message, contains('Connection disposed'));
         }
       },
-    );
-  });
-
-  group('AsyncNativeOdbcConnection worker crash', () {
-    test(
-      'should complete pending requests with error when worker isolate dies',
-      () async {
-        final async = AsyncNativeOdbcConnection(
-          requestTimeout: const Duration(seconds: 3),
-          isolateEntry: _fakeWorkerNeverResponds,
-        );
-
-        final initFuture = async.initialize();
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        async.workerIsolateForTesting?.kill();
-
-        try {
-          await initFuture;
-          fail('Should have thrown AsyncError');
-        } on AsyncError catch (e) {
-          expect(
-            [AsyncErrorCode.workerTerminated, AsyncErrorCode.requestTimeout],
-            contains(e.code),
-            reason:
-                'Killed worker during init may surface as terminate or timeout',
-          );
-          expect(e.message, isNotEmpty);
-        }
-      },
-      skip: runSkippedTests
-          ? null
-          : 'Isolate.kill() onDone timing is platform-dependent; '
-              'dispose test covers _failAllPending path',
-      timeout: const Timeout(Duration(seconds: 30)),
     );
   });
 
@@ -1183,6 +1637,40 @@ void main() {
 
       expect(data, isNotNull);
       expect(data, equals(Uint8List.fromList([7, 8, 9])));
+      async.dispose();
+    });
+
+    test('executeQueryParamBuffer should use async params lifecycle', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncExecuteParamsSupport,
+      );
+      await async.initialize();
+
+      final data = await async.executeQueryParamBuffer(
+        1,
+        'SELECT ?',
+        Uint8List.fromList([1, 2, 3]),
+        timeout: const Duration(seconds: 1),
+      );
+
+      expect(data, equals(Uint8List.fromList([3])));
+      async.dispose();
+    });
+
+    test('executeQueryParamBuffer falls back when async params is unavailable',
+        () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerAsyncExecuteParamsFallback,
+      );
+      await async.initialize();
+
+      final data = await async.executeQueryParamBuffer(
+        1,
+        'SELECT ?',
+        Uint8List.fromList([1, 2, 3]),
+      );
+
+      expect(data, equals(Uint8List.fromList([9])));
       async.dispose();
     });
   });

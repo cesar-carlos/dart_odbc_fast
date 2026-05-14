@@ -6,6 +6,28 @@ import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
+QueryResponse _queryDataResponse(int requestId, Uint8List data) =>
+    QueryResponse(
+      requestId,
+      transferableData: TransferableTypedData.fromList([data]),
+    );
+
+StreamFetchResponse _streamDataResponse({
+  required int requestId,
+  required bool success,
+  required Uint8List? data,
+  required bool hasMore,
+  String? error,
+}) =>
+    StreamFetchResponse(
+      requestId,
+      success: success,
+      transferableData:
+          data == null ? null : TransferableTypedData.fromList([data]),
+      hasMore: hasMore,
+      error: error,
+    );
+
 /// Entry point for the worker isolate. Must be top-level or static.
 ///
 /// [mainSendPort] is the SendPort of the main isolate's ReceivePort.
@@ -133,9 +155,10 @@ void _handleRequest(
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
           maxBufferBytes: request.maxResultBufferBytes,
+          resultEncoding: request.resultEncoding,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -151,7 +174,7 @@ void _handleRequest(
           maxBufferBytes: request.maxResultBufferBytes,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -170,7 +193,7 @@ void _handleRequest(
           maxBufferBytes: request.maxResultBufferBytes,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -229,7 +252,7 @@ void _handleRequest(
           maxBufferBytes: request.maxResultBufferBytes,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -299,10 +322,10 @@ void _handleRequest(
       case StreamFetchRequest():
         final result = conn.streamFetch(request.streamId);
         sendPort.send(
-          StreamFetchResponse(
-            request.requestId,
+          _streamDataResponse(
+            requestId: request.requestId,
             success: result.success,
-            data: result.data == null ? null : Uint8List.fromList(result.data!),
+            data: result.data,
             hasMore: result.hasMore,
             error: result.success ? null : conn.getError(),
           ),
@@ -505,7 +528,7 @@ void _handleRequest(
           schema: request.schema,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -520,7 +543,7 @@ void _handleRequest(
           request.table,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -532,7 +555,7 @@ void _handleRequest(
       case CatalogTypeInfoRequest():
         final data = conn.catalogTypeInfo(request.connectionId);
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -547,7 +570,7 @@ void _handleRequest(
           request.table,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -562,7 +585,7 @@ void _handleRequest(
           request.table,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -577,7 +600,7 @@ void _handleRequest(
           request.table,
         );
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           final err = conn.getError();
           final message = err.isNotEmpty && err != 'No error'
@@ -669,6 +692,14 @@ void _handleRequest(
         );
         sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
 
+      case ExecuteAsyncStartParamsRequest():
+        final asyncRequestId = conn.executeAsyncStartParams(
+          request.connectionId,
+          request.sql,
+          request.serializedParams.isEmpty ? null : request.serializedParams,
+        );
+        sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
+
       case AsyncPollRequest():
         final status = conn.asyncPoll(request.asyncRequestId);
         sendPort.send(IntResponse(request.requestId, status ?? -1));
@@ -676,7 +707,7 @@ void _handleRequest(
       case AsyncGetResultRequest():
         final data = conn.asyncGetResult(request.asyncRequestId);
         if (data != null) {
-          sendPort.send(QueryResponse(request.requestId, data: data));
+          sendPort.send(_queryDataResponse(request.requestId, data));
         } else {
           sendPort.send(
             QueryResponse(request.requestId, error: conn.getError()),
@@ -757,6 +788,7 @@ WorkerResponse buildWorkerErrorResponse(WorkerRequest request, String error) {
     case StreamMultiStartAsyncRequest():
     case ClearAllStatementsRequest():
     case ExecuteAsyncStartRequest():
+    case ExecuteAsyncStartParamsRequest():
     case AsyncPollRequest():
     case StreamPollAsyncRequest():
       return IntResponse(id, 0);

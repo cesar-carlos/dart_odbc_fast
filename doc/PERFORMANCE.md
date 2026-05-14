@@ -23,6 +23,101 @@ cargo bench --bench columnar_v1_v2_encode
 cargo bench --bench columnar_v2_placeholder --features columnar-v2
 ```
 
+For Dart-side async concurrency comparisons, configure `ODBC_TEST_DSN` (or
+`ODBC_DSN`) and run:
+
+```powershell
+dart run example/async_concurrency_benchmark.dart
+dart run example/streaming_performance_benchmark.dart
+```
+
+The script uses `Stopwatch` and no extra packages. It compares:
+
+- `workerCount: 1`
+- `workerCount: 4`
+- `workerCount: 4` with `ResultEncoding.columnar`
+- `workerCount: 4` with `ResultEncoding.columnarCompressed`
+- native pool with explicit `maxInFlight`
+- streaming (`streamQueryBatched`)
+- prepared statement reuse
+
+Set `ODBC_BENCH_QUERY` or `ODBC_BENCH_STREAM_QUERY` to override the default
+`SELECT 1 AS value` workload with a driver-specific slow or large-result query.
+Use `ODBC_BENCH_PREPARED_QUERY` when the prepared-reuse scenario needs a
+separate SQL statement.
+Set `ODBC_BENCH_OUTPUT=json|csv` plus `ODBC_BENCH_OUT_FILE=...` to save a
+structured baseline, for example:
+
+```powershell
+$env:ODBC_BENCH_OUTPUT="json"
+$env:ODBC_BENCH_OUT_FILE="bench_baselines/async-worker-pool.json"
+dart run example/async_concurrency_benchmark.dart
+```
+
+For focused streaming comparisons, use:
+
+```powershell
+$env:ODBC_STREAM_BENCH_QUERY="SELECT TOP 50000 * FROM Produto"
+$env:ODBC_STREAM_BENCH_OUTPUT="json"
+$env:ODBC_STREAM_BENCH_OUT_FILE="bench_baselines/streaming.json"
+dart run example/streaming_performance_benchmark.dart
+```
+
+`streaming_performance_benchmark.dart` compares `streamQuery` and
+`streamQueryBatched` with the same query and reports elapsed time, rows, chunks,
+rows/s, `fetchSize`, and `chunkSize`.
+
+To find slow Dart tests before they become a CI problem, run:
+
+```powershell
+dart run tool/test_slow_report.dart --top 20 --threshold-ms 500
+```
+
+Pass extra `dart test` arguments after `--`, for example:
+
+```powershell
+dart run tool/test_slow_report.dart --top 10 -- test/my_test
+```
+
+To enforce a local budget, add `--fail-threshold-ms`:
+
+```powershell
+dart run tool/test_slow_report.dart --top 20 --threshold-ms 500 --fail-threshold-ms 1500 -- test/infrastructure
+```
+
+Benchmark baselines can be compared with:
+
+```powershell
+dart run tool/compare_benchmark_baseline.dart `
+  --baseline bench_baselines/streaming-baseline.json `
+  --current bench_baselines/streaming-current.json `
+  --max-regression-percent 30
+```
+
+Live `test/my_test` table scans are bounded by default with `SELECT TOP N`.
+Use `MY_TEST_ROW_LIMIT` to tune quick local coverage. Use
+`RUN_LIVE_TESTS=1` to enable these live tests, and
+`MY_TEST_FULL_TABLE_SCAN=1` only for deliberate full-table performance checks.
+
+### Test categories and flags
+
+| Category | Flag | Purpose |
+|---|---|---|
+| Unit/default | none | Deterministic tests that should run in normal `dart test` and CI. |
+| Live DB | `RUN_LIVE_TESTS=1` | Tests that need `ODBC_TEST_DSN` and may vary by local data volume. |
+| Stress | `RUN_STRESS_TESTS=1` or legacy `RUN_SKIPPED_TESTS=1` | High-concurrency, timeout, or long-running stress validation. |
+| Performance | `RUN_PERF_TESTS=1` | Benchmark-style tests or scripts with runtime-sensitive expectations. |
+
+Real-DSN async worker pool stress tests are deliberately gated separately from
+normal skipped tests because driver scheduling varies. Run them only when you
+want to validate local concurrency behavior:
+
+```powershell
+$env:RUN_SKIPPED_TESTS="1"
+$env:ODBC_ASYNC_WORKER_POOL_STRESS="1"
+dart test test/stress/async_worker_pool_real_dsn_stress_test.dart
+```
+
 To save a baseline before upgrading:
 
 ```powershell
@@ -42,6 +137,20 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 | `recv_timeout` + structured worker-disconnect error | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover. |
 | `read_exact` in disk-spill readback | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost. |
 | `Mutex<GlobalState>` granularity | Most critical path (`odbc_pool_get_connection`) is unblocked. Remaining FFI surface still serialises through the global state; granularising further is tracked as future work. |
+| Async Dart worker pool (`workerCount` / `asyncWorkerCount`) | Default remains `1`. Use `>1` when concurrent work uses multiple connections or pool checkouts; handle-affinity keeps same-connection work serialized. |
+| Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`) | Default remains unbounded (`null`). In services with native pools, set this to a small multiple of pool size to fail fast before the Dart worker queue hides saturation. |
+| Async backpressure mode | `failFast` remains the default. Use `waitForSlot` only when callers should queue briefly instead of failing immediately. |
+
+---
+
+## Choosing a concurrency path
+
+| Workload | Prefer | Notes |
+|---|---|---|
+| Many independent short/medium queries | `AsyncNativeOdbcConnection(workerCount: N)` | Open multiple connections. Same-connection calls remain serialized. See `example/high_concurrency_worker_pool_demo.dart`. |
+| Many request-style tasks with bounded DB capacity | Native pool + `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: N, asyncMaxPendingRequests: M)` | Keep an explicit in-flight limit close to pool size. Set `M` near `poolSize * 2` or `poolSize * 4`. See `example/high_concurrency_pool_demo.dart`. |
+| Large result sets | `streamQueryBatched` / `streamAsync` | Streaming controls memory pressure better than raising result-buffer limits. |
+| One long query on one connection | Async execute lifecycle | Keeps Dart responsive, but does not make one native connection run multiple statements at once. |
 
 ---
 

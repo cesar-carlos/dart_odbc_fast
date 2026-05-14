@@ -4,15 +4,259 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_isolate.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
+
+const _workerTerminatedSignal = '__odbc_fast_worker_terminated__';
+
+enum AsyncBackpressureMode {
+  failFast,
+  waitForSlot,
+}
+
+class _BackpressureWaiter {
+  _BackpressureWaiter();
+
+  final Completer<void> completer = Completer<void>();
+}
+
+class _WorkerChannel {
+  _WorkerChannel({
+    required this.index,
+    required this.receivePort,
+  });
+
+  final int index;
+  final ReceivePort receivePort;
+  final Map<int, Completer<WorkerResponse>> pendingRequests = {};
+
+  SendPort? sendPort;
+  Isolate? isolate;
+  int activeRequests = 0;
+  int totalRouted = 0;
+  int completedRequests = 0;
+  int failedRequests = 0;
+  int timeouts = 0;
+  int fallbacksToBlocking = 0;
+  int cancelAttempts = 0;
+  int cancelSucceeded = 0;
+  int cancelUnsupported = 0;
+  int latencyTotalMicros = 0;
+  int latencyMaxMicros = 0;
+  int queueWaitTotalMicros = 0;
+  int queueWaitMaxMicros = 0;
+  int executionTotalMicros = 0;
+  int executionMaxMicros = 0;
+  final List<int> latencySamples = [];
+  final List<int> queueWaitSamples = [];
+  final List<int> executionSamples = [];
+
+  bool get isReady => sendPort != null;
+
+  Completer<WorkerResponse> send(WorkerRequest request) {
+    final port = sendPort;
+    if (port == null) {
+      throw StateError('Worker $index not initialized');
+    }
+    final completer = Completer<WorkerResponse>();
+    pendingRequests[request.requestId] = completer;
+    activeRequests++;
+    totalRouted++;
+    port.send(request);
+    return completer;
+  }
+
+  void complete(WorkerResponse response) {
+    final completer = pendingRequests.remove(response.requestId);
+    completer?.complete(response);
+  }
+
+  void removePending(int requestId) {
+    pendingRequests.remove(requestId);
+  }
+
+  void finishRequest() {
+    if (activeRequests > 0) {
+      activeRequests--;
+    }
+  }
+
+  void recordLatency(int micros) {
+    latencyTotalMicros += micros;
+    if (micros > latencyMaxMicros) {
+      latencyMaxMicros = micros;
+    }
+    latencySamples.add(micros);
+    if (latencySamples.length > 256) {
+      latencySamples.removeAt(0);
+    }
+  }
+
+  void recordQueueWait(int micros) {
+    queueWaitTotalMicros += micros;
+    if (micros > queueWaitMaxMicros) {
+      queueWaitMaxMicros = micros;
+    }
+    queueWaitSamples.add(micros);
+    if (queueWaitSamples.length > 256) {
+      queueWaitSamples.removeAt(0);
+    }
+  }
+
+  void recordExecution(int micros) {
+    executionTotalMicros += micros;
+    if (micros > executionMaxMicros) {
+      executionMaxMicros = micros;
+    }
+    executionSamples.add(micros);
+    if (executionSamples.length > 256) {
+      executionSamples.removeAt(0);
+    }
+  }
+
+  void failAll(AsyncError error) {
+    final pending = Map<int, Completer<WorkerResponse>>.from(pendingRequests);
+    pendingRequests.clear();
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+    activeRequests = 0;
+  }
+
+  void dispose() {
+    sendPort?.send('shutdown');
+    isolate?.kill();
+    receivePort.close();
+    sendPort = null;
+    isolate = null;
+  }
+}
+
+final class AsyncWorkerStats {
+  const AsyncWorkerStats({
+    required this.index,
+    required this.activeRequests,
+    required this.pendingRequests,
+    required this.totalRouted,
+    required this.completedRequests,
+    required this.failedRequests,
+    required this.timeouts,
+    required this.fallbacksToBlocking,
+    required this.cancelAttempts,
+    required this.cancelSucceeded,
+    required this.cancelUnsupported,
+    required this.latencyAvgMicros,
+    required this.latencyP95Micros,
+    required this.latencyMaxMicros,
+    required this.queueWaitAvgMicros,
+    required this.queueWaitP95Micros,
+    required this.queueWaitMaxMicros,
+    required this.executionAvgMicros,
+    required this.executionP95Micros,
+    required this.executionMaxMicros,
+  });
+
+  final int index;
+  final int activeRequests;
+  final int pendingRequests;
+  final int totalRouted;
+  final int completedRequests;
+  final int failedRequests;
+  final int timeouts;
+  final int fallbacksToBlocking;
+  final int cancelAttempts;
+  final int cancelSucceeded;
+  final int cancelUnsupported;
+  final int latencyAvgMicros;
+  final int latencyP95Micros;
+  final int latencyMaxMicros;
+  final int queueWaitAvgMicros;
+  final int queueWaitP95Micros;
+  final int queueWaitMaxMicros;
+  final int executionAvgMicros;
+  final int executionP95Micros;
+  final int executionMaxMicros;
+}
+
+/// Snapshot of async worker pool counters.
+///
+/// Values are captured when
+/// [AsyncNativeOdbcConnection.getWorkerPoolStats] is called and are maintained
+/// entirely on the Dart side.
+final class AsyncWorkerPoolStats {
+  const AsyncWorkerPoolStats({
+    required this.workerCount,
+    required this.activeRequests,
+    required this.pendingRequests,
+    required this.totalRouted,
+    required this.completedRequests,
+    required this.failedRequests,
+    required this.timeouts,
+    required this.fallbacksToBlocking,
+    required this.cancelAttempts,
+    required this.cancelSucceeded,
+    required this.cancelUnsupported,
+    required this.latencyAvgMicros,
+    required this.latencyP95Micros,
+    required this.latencyMaxMicros,
+    required this.queueWaitAvgMicros,
+    required this.queueWaitP95Micros,
+    required this.queueWaitMaxMicros,
+    required this.executionAvgMicros,
+    required this.executionP95Micros,
+    required this.executionMaxMicros,
+    required this.workers,
+  });
+
+  /// Configured number of worker isolates.
+  final int workerCount;
+
+  /// Requests currently in flight across all workers.
+  final int activeRequests;
+
+  /// Requests awaiting a response across all workers.
+  final int pendingRequests;
+
+  /// Total requests routed to workers since initialization.
+  final int totalRouted;
+
+  /// Total requests completed without a response-level error.
+  final int completedRequests;
+
+  /// Total requests that timed out, threw, or returned a response-level error.
+  final int failedRequests;
+
+  /// Requests that timed out while waiting for a worker response.
+  final int timeouts;
+
+  /// Parameterized async starts that fell back to the blocking query path.
+  final int fallbacksToBlocking;
+
+  final int cancelAttempts;
+  final int cancelSucceeded;
+  final int cancelUnsupported;
+  final int latencyAvgMicros;
+  final int latencyP95Micros;
+  final int latencyMaxMicros;
+  final int queueWaitAvgMicros;
+  final int queueWaitP95Micros;
+  final int queueWaitMaxMicros;
+  final int executionAvgMicros;
+  final int executionP95Micros;
+  final int executionMaxMicros;
+  final List<AsyncWorkerStats> workers;
+}
 
 /// Non-blocking wrapper around ODBC using a long-lived worker isolate.
 ///
@@ -63,8 +307,36 @@ class AsyncNativeOdbcConnection {
     Duration? requestTimeout,
     void Function(SendPort)? isolateEntry,
     this.autoRecoverOnWorkerCrash = false,
+    this.workerCount = 1,
+    this.maxPendingRequests,
+    this.backpressureMode = AsyncBackpressureMode.failFast,
+    this.backpressureTimeout,
   })  : _requestTimeout = requestTimeout,
-        _isolateEntry = isolateEntry;
+        _isolateEntry = isolateEntry {
+    if (workerCount < 1) {
+      throw ArgumentError.value(
+        workerCount,
+        'workerCount',
+        'must be greater than or equal to 1',
+      );
+    }
+    final pendingLimit = maxPendingRequests;
+    if (pendingLimit != null && pendingLimit < 1) {
+      throw ArgumentError.value(
+        pendingLimit,
+        'maxPendingRequests',
+        'must be null or greater than or equal to 1',
+      );
+    }
+    final pendingTimeout = backpressureTimeout;
+    if (pendingTimeout != null && pendingTimeout < Duration.zero) {
+      throw ArgumentError.value(
+        pendingTimeout,
+        'backpressureTimeout',
+        'must be null, zero, or greater than zero',
+      );
+    }
+  }
 
   static const _defaultRequestTimeout = Duration(seconds: 30);
   static const _streamAsyncStatusPending = 0;
@@ -78,20 +350,46 @@ class AsyncNativeOdbcConnection {
   /// Test hook: custom isolate entry. When set, used instead of [workerEntry].
   final void Function(SendPort)? _isolateEntry;
 
+  /// Number of worker isolates used by this async connection.
+  ///
+  /// The default is 1 to preserve the historical behavior. Use values greater
+  /// than 1 only when concurrent work uses multiple connections or pool
+  /// checkouts; operations on the same connection are still serialized by the
+  /// native connection mutex.
+  final int workerCount;
+
+  /// Optional global limit for requests awaiting worker responses.
+  ///
+  /// `null` preserves the historical unbounded behavior. Use a small multiple
+  /// of native pool size for high-concurrency pool workloads.
+  final int? maxPendingRequests;
+
+  /// Behavior when [maxPendingRequests] has been reached.
+  final AsyncBackpressureMode backpressureMode;
+
+  /// Timeout while waiting for a queue slot in
+  /// [AsyncBackpressureMode.waitForSlot].
+  final Duration? backpressureTimeout;
+
   /// When true, on worker isolate error/done
   /// `WorkerCrashRecovery.handleWorkerCrash` is invoked after failing pending
   /// requests. All previous connection IDs are invalid after recovery; callers
   /// must reconnect.
   final bool autoRecoverOnWorkerCrash;
 
-  SendPort? _workerSendPort;
-  ReceivePort? _receivePort;
-  Isolate? _workerIsolate;
+  final List<_WorkerChannel> _workers = [];
   bool _isInitialized = false;
   bool _isShuttingDown = false;
   int _requestIdCounter = 0;
-  final Map<int, Completer<WorkerResponse>> _pendingRequests = {};
   final Map<int, List<String>> _namedParamOrderByStmtId = {};
+  final Map<int, int> _connectionWorkerById = {};
+  final Map<int, int> _statementWorkerById = {};
+  final Map<int, int> _statementConnectionById = {};
+  final Map<int, int> _transactionWorkerById = {};
+  final Map<int, int> _streamWorkerById = {};
+  final Map<int, int> _asyncRequestWorkerById = {};
+  final List<_BackpressureWaiter> _backpressureWaiters = [];
+  int _backpressureSlotsReserved = 0;
   Completer<void>? _recoveryInFlight;
 
   /// Initializes the worker isolate and ODBC environment.
@@ -109,98 +407,519 @@ class AsyncNativeOdbcConnection {
     if (_isInitialized) return true;
     _isShuttingDown = false;
 
+    _workers.clear();
+    for (var i = 0; i < workerCount; i++) {
+      _workers.add(await _spawnWorker(i));
+    }
+
+    var initialized = true;
+    for (final worker in _workers) {
+      final initResp = await _sendRequestOnWorker<InitializeResponse>(
+        worker,
+        InitializeRequest(_nextRequestId()),
+      );
+      initialized = initialized && initResp.success;
+    }
+    _isInitialized = initialized;
+    return initialized;
+  }
+
+  Future<_WorkerChannel> _spawnWorker(int index) async {
     final handshake = Completer<SendPort>();
-    _receivePort = ReceivePort();
-    _receivePort!.listen(
+    final receivePort = ReceivePort();
+    final worker = _WorkerChannel(index: index, receivePort: receivePort);
+
+    receivePort.listen(
       (message) {
         if (message is SendPort) {
           if (!handshake.isCompleted) handshake.complete(message);
         } else if (message is WorkerResponse) {
-          _handleResponse(message);
+          _handleResponse(message, worker);
+        } else if (message == _workerTerminatedSignal) {
+          worker.failAll(
+            const AsyncError(
+              code: AsyncErrorCode.workerTerminated,
+              message: 'Worker isolate terminated',
+            ),
+          );
+          _clearWorkerAffinity(worker.index);
+          _drainBackpressureWaiters();
         }
       },
       onError: (Object error, StackTrace stackTrace) async {
-        _failAllPending(
+        worker.failAll(
           AsyncError(
             code: AsyncErrorCode.workerTerminated,
-            message: 'Worker isolate error: $error',
+            message: 'Worker isolate ${worker.index} error: $error',
           ),
         );
+        _clearWorkerAffinity(worker.index);
         await _triggerAutoRecovery(
-          reason: 'Worker isolate crashed',
+          reason: 'Worker isolate ${worker.index} crashed',
           error: error,
           stackTrace: stackTrace,
         );
       },
       onDone: () async {
-        if (_pendingRequests.isNotEmpty) {
-          _failAllPending(
+        if (worker.pendingRequests.isNotEmpty) {
+          worker.failAll(
             const AsyncError(
               code: AsyncErrorCode.workerTerminated,
               message: 'Worker isolate terminated',
             ),
           );
         }
+        _clearWorkerAffinity(worker.index);
         await _triggerAutoRecovery(reason: 'Worker isolate terminated');
       },
     );
 
-    _workerIsolate = await Isolate.spawn(
-      _isolateEntry ?? workerEntry,
-      _receivePort!.sendPort,
-    );
-    _workerSendPort = await handshake.future;
-
-    final initResp = await _sendRequest<InitializeResponse>(
-      InitializeRequest(_nextRequestId()),
-    );
-    return _isInitialized = initResp.success;
+    worker
+      ..isolate = await Isolate.spawn(
+        _isolateEntry ?? workerEntry,
+        receivePort.sendPort,
+      )
+      ..sendPort = await handshake.future;
+    return worker;
   }
 
   Future<T> _sendRequest<T extends WorkerResponse>(
     WorkerRequest request,
   ) async {
-    if (_workerSendPort == null) {
+    if (_workers.isEmpty) {
       throw StateError('Worker not initialized');
     }
-    final completer = Completer<WorkerResponse>();
-    _pendingRequests[request.requestId] = completer;
-    _workerSendPort!.send(request);
+    return _sendRequestOnWorker<T>(_resolveWorker(request), request);
+  }
 
-    final effectiveTimeout = _requestTimeout ?? _defaultRequestTimeout;
-    if (effectiveTimeout == Duration.zero) {
-      return await completer.future as T;
+  Future<T> _sendRequestOnWorker<T extends WorkerResponse>(
+    _WorkerChannel worker,
+    WorkerRequest request,
+  ) async {
+    final queueStopwatch = Stopwatch()..start();
+    final acquiredSlot = _acquireBackpressureSlot(request);
+    final reservedSlot =
+        acquiredSlot is Future<bool> ? await acquiredSlot : acquiredSlot;
+    queueStopwatch.stop();
+    worker.recordQueueWait(queueStopwatch.elapsedMicroseconds);
+    final stopwatch = Stopwatch()..start();
+    final executionStopwatch = Stopwatch()..start();
+    Completer<WorkerResponse>? completer;
+    var slotReleased = false;
+    try {
+      if (reservedSlot) {
+        _releaseReservedBackpressureSlot();
+        slotReleased = true;
+      }
+      completer = worker.send(request);
+      _recordCancelAttempt(request, worker);
+      final effectiveTimeout = _requestTimeout ?? _defaultRequestTimeout;
+      final response = effectiveTimeout == Duration.zero
+          ? await completer.future
+          : await completer.future.timeout(
+              effectiveTimeout,
+              onTimeout: () {
+                worker.removePending(request.requestId);
+                worker.timeouts++;
+                throw AsyncError(
+                  code: AsyncErrorCode.requestTimeout,
+                  message: 'Worker ${worker.index} did not respond within '
+                      '${effectiveTimeout.inSeconds}s',
+                );
+              },
+            );
+      if (_responseHasError(response)) {
+        worker.failedRequests++;
+      } else {
+        worker.completedRequests++;
+      }
+      _recordCancelResponse(request, response, worker);
+      _recordAffinity(request, response, worker);
+      return response as T;
+    } catch (_) {
+      worker.failedRequests++;
+      rethrow;
+    } finally {
+      executionStopwatch.stop();
+      if (reservedSlot && !slotReleased && completer == null) {
+        _releaseReservedBackpressureSlot();
+      }
+      worker
+        ..recordLatency(stopwatch.elapsedMicroseconds)
+        ..recordExecution(executionStopwatch.elapsedMicroseconds)
+        ..finishRequest();
+      _drainBackpressureWaiters();
     }
-
-    return await completer.future.timeout(
-      effectiveTimeout,
-      onTimeout: () {
-        _pendingRequests.remove(request.requestId);
-        throw AsyncError(
-          code: AsyncErrorCode.requestTimeout,
-          message:
-              'Worker did not respond within ${effectiveTimeout.inSeconds}s',
-        );
-      },
-    ) as T;
   }
 
   void _failAllPending(AsyncError error) {
-    final pending = Map<int, Completer<WorkerResponse>>.from(_pendingRequests);
-    _pendingRequests.clear();
-    for (final completer in pending.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(error);
+    for (final worker in _workers) {
+      worker.failAll(error);
+    }
+    final waiters = List<_BackpressureWaiter>.from(_backpressureWaiters);
+    _backpressureWaiters.clear();
+    _backpressureSlotsReserved = 0;
+    for (final waiter in waiters) {
+      if (!waiter.completer.isCompleted) {
+        waiter.completer.completeError(error);
       }
     }
   }
 
-  void _handleResponse(WorkerResponse response) {
-    final completer = _pendingRequests.remove(response.requestId);
-    completer?.complete(response);
+  void _handleResponse(WorkerResponse response, _WorkerChannel worker) {
+    worker.complete(response);
+  }
+
+  FutureOr<bool> _acquireBackpressureSlot(WorkerRequest request) {
+    final limit = maxPendingRequests;
+    if (limit == null) return false;
+
+    if (backpressureMode == AsyncBackpressureMode.failFast) {
+      final pending = _pendingOrReservedRequests;
+      if (pending >= limit) {
+        throw _resourceExhausted(request, pending, limit);
+      }
+      _backpressureSlotsReserved++;
+      return true;
+    }
+
+    if (_pendingOrReservedRequests < limit && _backpressureWaiters.isEmpty) {
+      _backpressureSlotsReserved++;
+      return true;
+    }
+
+    final waiter = _BackpressureWaiter();
+    _backpressureWaiters.add(waiter);
+    _drainBackpressureWaiters();
+
+    final timeout =
+        backpressureTimeout ?? _requestTimeout ?? _defaultRequestTimeout;
+    final future = timeout == Duration.zero
+        ? waiter.completer.future
+        : waiter.completer.future.timeout(
+            timeout,
+            onTimeout: () {
+              _backpressureWaiters.remove(waiter);
+              throw _resourceExhausted(
+                request,
+                _pendingOrReservedRequests,
+                limit,
+              );
+            },
+          );
+    return future.then((_) => true);
+  }
+
+  int get _pendingOrReservedRequests {
+    return _workers.fold<int>(
+          0,
+          (total, worker) => total + worker.pendingRequests.length,
+        ) +
+        _backpressureSlotsReserved;
+  }
+
+  AsyncError _resourceExhausted(
+    WorkerRequest request,
+    int pending,
+    int limit,
+  ) {
+    return AsyncError(
+      code: AsyncErrorCode.resourceExhausted,
+      message: 'Async worker pool queue is full '
+          '($pending/$limit pending requests); request '
+          '${request.runtimeType} was not routed',
+    );
+  }
+
+  void _releaseReservedBackpressureSlot() {
+    if (_backpressureSlotsReserved > 0) {
+      _backpressureSlotsReserved--;
+    }
+  }
+
+  void _drainBackpressureWaiters() {
+    final limit = maxPendingRequests;
+    if (limit == null) return;
+
+    while (
+        _backpressureWaiters.isNotEmpty && _pendingOrReservedRequests < limit) {
+      final waiter = _backpressureWaiters.removeAt(0);
+      if (waiter.completer.isCompleted) continue;
+      _backpressureSlotsReserved++;
+      waiter.completer.complete();
+    }
+  }
+
+  void _recordFallbackToBlocking(int connectionId) {
+    _workerForConnection(connectionId).fallbacksToBlocking++;
+  }
+
+  bool _responseHasError(WorkerResponse response) {
+    return switch (response) {
+      ConnectResponse(:final error) => error != null && error.isNotEmpty,
+      QueryResponse(:final error) => error != null && error.isNotEmpty,
+      PoolStateResponse(:final error) => error != null && error.isNotEmpty,
+      MetricsResponse(:final error) => error != null && error.isNotEmpty,
+      CacheMetricsResponse(:final error) => error != null && error.isNotEmpty,
+      ClearCacheResponse(:final error) => error != null && error.isNotEmpty,
+      StructuredErrorResponse(:final error) =>
+        error != null && error.isNotEmpty,
+      AuditPayloadResponse(:final error) => error != null && error.isNotEmpty,
+      StreamFetchResponse(:final success, :final error) =>
+        !success || (error != null && error.isNotEmpty),
+      _ => false,
+    };
+  }
+
+  void _recordCancelAttempt(WorkerRequest request, _WorkerChannel worker) {
+    if (_isCancelRequest(request)) {
+      worker.cancelAttempts++;
+    }
+  }
+
+  void _recordCancelResponse(
+    WorkerRequest request,
+    WorkerResponse response,
+    _WorkerChannel worker,
+  ) {
+    if (!_isCancelRequest(request)) return;
+
+    if (response is BoolResponse && response.value) {
+      worker.cancelSucceeded++;
+    } else if (response is BoolResponse && !response.value) {
+      worker.cancelUnsupported++;
+    }
+  }
+
+  bool _isCancelRequest(WorkerRequest request) {
+    return request is AsyncCancelRequest ||
+        request is StreamCancelRequest ||
+        request is CancelStatementRequest;
   }
 
   int _nextRequestId() => _requestIdCounter++;
+
+  _WorkerChannel _leastLoadedWorker() {
+    return _workers.reduce((a, b) {
+      final activeComparison = a.activeRequests.compareTo(b.activeRequests);
+      if (activeComparison < 0) return a;
+      if (activeComparison > 0) return b;
+
+      final routedComparison = a.totalRouted.compareTo(b.totalRouted);
+      if (routedComparison < 0) return a;
+      if (routedComparison > 0) return b;
+
+      return a.index <= b.index ? a : b;
+    });
+  }
+
+  _WorkerChannel? _workerByIndex(int? index) {
+    if (index == null || index < 0 || index >= _workers.length) {
+      return null;
+    }
+    return _workers[index];
+  }
+
+  _WorkerChannel _workerForConnection(int connectionId) {
+    return _workerByIndex(_connectionWorkerById[connectionId]) ??
+        _leastLoadedWorker();
+  }
+
+  _WorkerChannel _workerForStatement(int stmtId) {
+    return _workerByIndex(_statementWorkerById[stmtId]) ?? _leastLoadedWorker();
+  }
+
+  _WorkerChannel _workerForTransaction(int txnId) {
+    return _workerByIndex(_transactionWorkerById[txnId]) ??
+        _leastLoadedWorker();
+  }
+
+  _WorkerChannel _workerForStream(int streamId) {
+    return _workerByIndex(_streamWorkerById[streamId]) ?? _leastLoadedWorker();
+  }
+
+  _WorkerChannel _workerForAsyncRequest(int asyncRequestId) {
+    return _workerByIndex(_asyncRequestWorkerById[asyncRequestId]) ??
+        _leastLoadedWorker();
+  }
+
+  _WorkerChannel _resolveWorker(WorkerRequest request) {
+    return switch (request) {
+      ConnectRequest() ||
+      ValidateConnectionStringRequest() ||
+      DetectDriverRequest() ||
+      GetDriverCapabilitiesRequest() ||
+      GetVersionRequest() ||
+      GetMetricsRequest() ||
+      GetCacheMetricsRequest() ||
+      ClearCacheRequest() ||
+      ClearAllStatementsRequest() ||
+      SetLogLevelRequest() ||
+      AuditEnableRequest() ||
+      AuditGetEventsRequest() ||
+      AuditGetStatusRequest() ||
+      AuditClearRequest() ||
+      MetadataCacheEnableRequest() ||
+      MetadataCacheStatsRequest() ||
+      MetadataCacheClearRequest() ||
+      PoolCreateRequest() ||
+      PoolGetConnectionRequest() ||
+      PoolHealthCheckRequest() ||
+      PoolGetStateRequest() ||
+      PoolGetStateJsonRequest() ||
+      PoolSetSizeRequest() ||
+      PoolCloseRequest() ||
+      BulkInsertParallelRequest() =>
+        _leastLoadedWorker(),
+      DisconnectRequest(:final connectionId) ||
+      GetConnectionDbmsInfoRequest(:final connectionId) ||
+      GetStructuredErrorForConnectionRequest(:final connectionId) ||
+      ExecuteQueryParamsRequest(:final connectionId) ||
+      ExecuteQueryMultiRequest(:final connectionId) ||
+      ExecuteQueryMultiParamsRequest(:final connectionId) ||
+      BeginTransactionRequest(:final connectionId) ||
+      PrepareRequest(:final connectionId) ||
+      CatalogTablesRequest(:final connectionId) ||
+      CatalogColumnsRequest(:final connectionId) ||
+      CatalogTypeInfoRequest(:final connectionId) ||
+      CatalogPrimaryKeysRequest(:final connectionId) ||
+      CatalogForeignKeysRequest(:final connectionId) ||
+      CatalogIndexesRequest(:final connectionId) ||
+      BulkInsertArrayRequest(:final connectionId) =>
+        _workerForConnection(connectionId),
+      ExecutePreparedRequest(:final stmtId) ||
+      CloseStatementRequest(:final stmtId) =>
+        _workerForStatement(stmtId),
+      CancelStatementRequest() => _leastLoadedWorker(),
+      CommitTransactionRequest(:final txnId) ||
+      RollbackTransactionRequest(:final txnId) ||
+      SavepointCreateRequest(:final txnId) ||
+      SavepointRollbackRequest(:final txnId) ||
+      SavepointReleaseRequest(:final txnId) =>
+        _workerForTransaction(txnId),
+      StreamStartRequest(:final connectionId) ||
+      StreamStartBatchedRequest(:final connectionId) ||
+      StreamStartAsyncRequest(:final connectionId) ||
+      StreamMultiStartBatchedRequest(:final connectionId) ||
+      StreamMultiStartAsyncRequest(:final connectionId) ||
+      ExecuteAsyncStartRequest(:final connectionId) ||
+      ExecuteAsyncStartParamsRequest(:final connectionId) =>
+        _workerForConnection(connectionId),
+      StreamFetchRequest(:final streamId) ||
+      StreamCloseRequest(:final streamId) ||
+      StreamPollAsyncRequest(:final streamId) =>
+        _workerForStream(streamId),
+      StreamCancelRequest() => _leastLoadedWorker(),
+      AsyncPollRequest(:final asyncRequestId) ||
+      AsyncGetResultRequest(:final asyncRequestId) ||
+      AsyncFreeRequest(:final asyncRequestId) =>
+        _workerForAsyncRequest(asyncRequestId),
+      AsyncCancelRequest() => _leastLoadedWorker(),
+      PoolReleaseConnectionRequest(:final connectionId) =>
+        _workerForConnection(connectionId),
+      GetErrorRequest() || GetStructuredErrorRequest() => _leastLoadedWorker(),
+      InitializeRequest() => _leastLoadedWorker(),
+    };
+  }
+
+  void _recordAffinity(
+    WorkerRequest request,
+    WorkerResponse response,
+    _WorkerChannel worker,
+  ) {
+    switch ((request, response)) {
+      case (ConnectRequest(), ConnectResponse(:final connectionId))
+          when connectionId > 0:
+      case (
+            PoolGetConnectionRequest(),
+            IntResponse(value: final connectionId),
+          )
+          when connectionId > 0:
+        _connectionWorkerById[connectionId] = worker.index;
+      case (DisconnectRequest(:final connectionId), BoolResponse(:final value))
+          when value:
+      case (
+            PoolReleaseConnectionRequest(:final connectionId),
+            BoolResponse(:final value),
+          )
+          when value:
+        _clearConnectionAffinity(connectionId);
+      case (PrepareRequest(:final connectionId), IntResponse(value: final id))
+          when id > 0:
+        _statementWorkerById[id] = worker.index;
+        _statementConnectionById[id] = connectionId;
+      case (CloseStatementRequest(:final stmtId), BoolResponse(:final value))
+          when value:
+        _statementWorkerById.remove(stmtId);
+        _statementConnectionById.remove(stmtId);
+      case (ClearAllStatementsRequest(), IntResponse(value: 0)):
+        _statementWorkerById.clear();
+        _statementConnectionById.clear();
+      case (BeginTransactionRequest(), IntResponse(value: final id))
+          when id > 0:
+        _transactionWorkerById[id] = worker.index;
+      case (
+            CommitTransactionRequest(:final txnId),
+            BoolResponse(:final value),
+          )
+          when value:
+      case (
+            RollbackTransactionRequest(:final txnId),
+            BoolResponse(:final value),
+          )
+          when value:
+        _transactionWorkerById.remove(txnId);
+      case (StreamStartRequest(), IntResponse(value: final id)) when id > 0:
+      case (StreamStartBatchedRequest(), IntResponse(value: final id))
+          when id > 0:
+      case (StreamStartAsyncRequest(), IntResponse(value: final id))
+          when id > 0:
+      case (StreamMultiStartBatchedRequest(), IntResponse(value: final id))
+          when id > 0:
+      case (StreamMultiStartAsyncRequest(), IntResponse(value: final id))
+          when id > 0:
+        _streamWorkerById[id] = worker.index;
+      case (StreamCloseRequest(:final streamId), BoolResponse(:final value))
+          when value:
+        _streamWorkerById.remove(streamId);
+      case (ExecuteAsyncStartRequest(), IntResponse(value: final id))
+          when id > 0:
+      case (ExecuteAsyncStartParamsRequest(), IntResponse(value: final id))
+          when id > 0:
+        _asyncRequestWorkerById[id] = worker.index;
+      case (AsyncFreeRequest(:final asyncRequestId), BoolResponse(:final value))
+          when value:
+        _asyncRequestWorkerById.remove(asyncRequestId);
+      default:
+        break;
+    }
+  }
+
+  void _clearConnectionAffinity(int connectionId) {
+    _connectionWorkerById.remove(connectionId);
+    final stmtIds = _statementConnectionById.entries
+        .where((entry) => entry.value == connectionId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final stmtId in stmtIds) {
+      _statementWorkerById.remove(stmtId);
+      _statementConnectionById.remove(stmtId);
+      _namedParamOrderByStmtId.remove(stmtId);
+    }
+  }
+
+  void _clearWorkerAffinity(int workerIndex) {
+    _connectionWorkerById.entries
+        .where((entry) => entry.value == workerIndex)
+        .map((entry) => entry.key)
+        .toList(growable: false)
+        .forEach(_clearConnectionAffinity);
+
+    _statementWorkerById.removeWhere((_, value) => value == workerIndex);
+    _transactionWorkerById.removeWhere((_, value) => value == workerIndex);
+    _streamWorkerById.removeWhere((_, value) => value == workerIndex);
+    _asyncRequestWorkerById.removeWhere((_, value) => value == workerIndex);
+  }
 
   Future<String?> _safeGetWorkerError() async {
     try {
@@ -265,8 +984,164 @@ class AsyncNativeOdbcConnection {
   /// Whether the worker isolate and ODBC environment are initialized.
   bool get isInitialized => _isInitialized;
 
+  /// Returns a Dart-side snapshot of worker pool routing and health counters.
+  AsyncWorkerPoolStats getWorkerPoolStats() {
+    final workers = _workers.map(_statsForWorker).toList(growable: false);
+    return AsyncWorkerPoolStats(
+      workerCount: workerCount,
+      activeRequests: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.activeRequests,
+      ),
+      pendingRequests: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.pendingRequests,
+      ),
+      totalRouted: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.totalRouted,
+      ),
+      completedRequests: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.completedRequests,
+      ),
+      failedRequests: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.failedRequests,
+      ),
+      timeouts: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.timeouts,
+      ),
+      fallbacksToBlocking: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.fallbacksToBlocking,
+      ),
+      cancelAttempts: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.cancelAttempts,
+      ),
+      cancelSucceeded: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.cancelSucceeded,
+      ),
+      cancelUnsupported: workers.fold<int>(
+        0,
+        (total, worker) => total + worker.cancelUnsupported,
+      ),
+      latencyAvgMicros: _weightedAverageLatency(),
+      latencyP95Micros: _percentileLatency(
+        _workers.expand((worker) => worker.latencySamples),
+        95,
+      ),
+      latencyMaxMicros: workers.fold<int>(
+        0,
+        (max, worker) =>
+            worker.latencyMaxMicros > max ? worker.latencyMaxMicros : max,
+      ),
+      queueWaitAvgMicros: _weightedAverage(
+        (worker) => worker.queueWaitTotalMicros,
+      ),
+      queueWaitP95Micros: _percentileLatency(
+        _workers.expand((worker) => worker.queueWaitSamples),
+        95,
+      ),
+      queueWaitMaxMicros: workers.fold<int>(
+        0,
+        (max, worker) =>
+            worker.queueWaitMaxMicros > max ? worker.queueWaitMaxMicros : max,
+      ),
+      executionAvgMicros: _weightedAverage(
+        (worker) => worker.executionTotalMicros,
+      ),
+      executionP95Micros: _percentileLatency(
+        _workers.expand((worker) => worker.executionSamples),
+        95,
+      ),
+      executionMaxMicros: workers.fold<int>(
+        0,
+        (max, worker) =>
+            worker.executionMaxMicros > max ? worker.executionMaxMicros : max,
+      ),
+      workers: workers,
+    );
+  }
+
+  AsyncWorkerStats _statsForWorker(_WorkerChannel worker) {
+    final completed = worker.completedRequests + worker.failedRequests;
+    return AsyncWorkerStats(
+      index: worker.index,
+      activeRequests: worker.activeRequests,
+      pendingRequests: worker.pendingRequests.length,
+      totalRouted: worker.totalRouted,
+      completedRequests: worker.completedRequests,
+      failedRequests: worker.failedRequests,
+      timeouts: worker.timeouts,
+      fallbacksToBlocking: worker.fallbacksToBlocking,
+      cancelAttempts: worker.cancelAttempts,
+      cancelSucceeded: worker.cancelSucceeded,
+      cancelUnsupported: worker.cancelUnsupported,
+      latencyAvgMicros:
+          completed == 0 ? 0 : worker.latencyTotalMicros ~/ completed,
+      latencyP95Micros: _percentileLatency(worker.latencySamples, 95),
+      latencyMaxMicros: worker.latencyMaxMicros,
+      queueWaitAvgMicros:
+          completed == 0 ? 0 : worker.queueWaitTotalMicros ~/ completed,
+      queueWaitP95Micros: _percentileLatency(worker.queueWaitSamples, 95),
+      queueWaitMaxMicros: worker.queueWaitMaxMicros,
+      executionAvgMicros:
+          completed == 0 ? 0 : worker.executionTotalMicros ~/ completed,
+      executionP95Micros: _percentileLatency(worker.executionSamples, 95),
+      executionMaxMicros: worker.executionMaxMicros,
+    );
+  }
+
+  int _weightedAverageLatency() {
+    return _weightedAverage((worker) => worker.latencyTotalMicros);
+  }
+
+  int _weightedAverage(int Function(_WorkerChannel worker) totalForWorker) {
+    var totalMicros = 0;
+    var totalRequests = 0;
+    for (final worker in _workers) {
+      totalMicros += totalForWorker(worker);
+      totalRequests += worker.completedRequests + worker.failedRequests;
+    }
+    if (totalRequests == 0) return 0;
+    return totalMicros ~/ totalRequests;
+  }
+
+  int _percentileLatency(Iterable<int> samples, int percentile) {
+    final sorted = samples.toList(growable: false)..sort();
+    if (sorted.isEmpty) return 0;
+    final index = ((sorted.length - 1) * percentile / 100).ceil();
+    return sorted[index];
+  }
+
+  int get affinityEntryCountForTesting =>
+      _connectionWorkerById.length +
+      _statementWorkerById.length +
+      _statementConnectionById.length +
+      _transactionWorkerById.length +
+      _streamWorkerById.length +
+      _asyncRequestWorkerById.length;
+
+  void failWorkerForTesting(int workerIndex) {
+    final worker = _workerByIndex(workerIndex);
+    if (worker == null) return;
+    worker.failAll(
+      const AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'Worker isolate terminated',
+      ),
+    );
+    _clearWorkerAffinity(worker.index);
+    _drainBackpressureWaiters();
+  }
+
   /// Worker isolate, exposed for testing (e.g., to simulate crash).
-  Isolate? get workerIsolateForTesting => _workerIsolate;
+  Isolate? get workerIsolateForTesting =>
+      _workers.isEmpty ? null : _workers.first.isolate;
 
   /// Opens a connection in the worker using [connectionString].
   ///
@@ -411,6 +1286,28 @@ class AsyncNativeOdbcConnection {
     return r.value;
   }
 
+  /// Starts non-blocking parameterized execution in native layer.
+  ///
+  /// Returns async request ID (>0) on success, or 0 on failure/API fallback.
+  Future<int> executeAsyncStartParams(
+    int connectionId,
+    String sql,
+    Uint8List? serializedParams,
+  ) async {
+    final bytes = serializedParams == null || serializedParams.isEmpty
+        ? Uint8List(0)
+        : serializedParams;
+    final r = await _sendRequest<IntResponse>(
+      ExecuteAsyncStartParamsRequest(
+        _nextRequestId(),
+        connectionId,
+        sql,
+        bytes,
+      ),
+    );
+    return r.value;
+  }
+
   /// Polls async request status.
   ///
   /// Status values: `0` pending, `1` ready, `-1` error, `-2` cancelled.
@@ -457,7 +1354,20 @@ class AsyncNativeOdbcConnection {
     if (requestId <= 0) {
       return null;
     }
+    return _waitForAsyncResult(
+      requestId,
+      pollInterval: pollInterval,
+      timeout: timeout,
+      maxBufferBytes: maxBufferBytes,
+    );
+  }
 
+  Future<Uint8List?> _waitForAsyncResult(
+    int requestId, {
+    Duration pollInterval = const Duration(milliseconds: 10),
+    Duration? timeout,
+    int? maxBufferBytes,
+  }) async {
     final effectiveTimeout =
         timeout ?? _requestTimeout ?? _defaultRequestTimeout;
     final deadline = DateTime.now().add(effectiveTimeout);
@@ -727,8 +1637,27 @@ class AsyncNativeOdbcConnection {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final bytes = params.isEmpty ? Uint8List(0) : serializeParams(params);
+    return executeQueryParamBuffer(
+      connectionId,
+      sql,
+      bytes,
+      maxBufferBytes: maxBufferBytes,
+      timeout: timeout,
+      resultEncoding: resultEncoding,
+    );
+  }
+
+  Future<Uint8List?> _executeQueryParamsBlocking(
+    int connectionId,
+    String sql,
+    Uint8List bytes, {
+    int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryParamsRequest(
         _nextRequestId(),
@@ -736,6 +1665,7 @@ class AsyncNativeOdbcConnection {
         sql,
         bytes,
         maxResultBufferBytes: maxBufferBytes,
+        resultEncoding: resultEncoding,
       ),
     );
     if (r.error != null) return null;
@@ -749,20 +1679,34 @@ class AsyncNativeOdbcConnection {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final bytes =
         paramBuffer == null || paramBuffer.isEmpty ? Uint8List(0) : paramBuffer;
-    final r = await _sendRequest<QueryResponse>(
-      ExecuteQueryParamsRequest(
-        _nextRequestId(),
+    if (resultEncoding == ResultEncoding.rowMajor) {
+      final asyncRequestId = await executeAsyncStartParams(
         connectionId,
         sql,
         bytes,
-        maxResultBufferBytes: maxBufferBytes,
-      ),
+      );
+      if (asyncRequestId > 0) {
+        return _waitForAsyncResult(
+          asyncRequestId,
+          maxBufferBytes: maxBufferBytes,
+          timeout: timeout,
+        );
+      }
+    }
+
+    _recordFallbackToBlocking(connectionId);
+    return _executeQueryParamsBlocking(
+      connectionId,
+      sql,
+      bytes,
+      maxBufferBytes: maxBufferBytes,
+      resultEncoding: resultEncoding,
     );
-    if (r.error != null) return null;
-    return r.data;
   }
 
   /// Executes [sql] on [connectionId] using named parameters.
@@ -1326,8 +2270,9 @@ class AsyncNativeOdbcConnection {
       );
     }
 
-    var pending = BytesBuilder(copy: false);
+    final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
+    var completed = false;
     try {
       while (true) {
         final fetched = await _streamFetch(streamId);
@@ -1349,21 +2294,8 @@ class AsyncNativeOdbcConnection {
             );
           }
 
-          while (pending.length >= BinaryProtocolParser.headerSize) {
-            final all = pending.toBytes();
-            final msgLen = BinaryProtocolParser.messageLengthFromHeader(all);
-            if (all.length < msgLen) {
-              break;
-            }
-
-            final msg = all.sublist(0, msgLen);
+          for (final msg in pending.drainFrames()) {
             yield BinaryProtocolParser.parse(msg);
-
-            final remainder = all.sublist(msgLen);
-            pending = BytesBuilder(copy: false);
-            if (remainder.isNotEmpty) {
-              pending.add(remainder);
-            }
           }
         }
 
@@ -1377,7 +2309,11 @@ class AsyncNativeOdbcConnection {
           'Leftover bytes after stream; expected complete protocol messages',
         );
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        await streamCancel(streamId);
+      }
       await _streamClose(streamId);
     }
   }
@@ -1408,6 +2344,7 @@ class AsyncNativeOdbcConnection {
 
     final buffer = BytesBuilder(copy: false);
     final limit = maxBufferBytes;
+    var completed = false;
     try {
       while (true) {
         final fetched = await _streamFetch(streamId);
@@ -1438,7 +2375,11 @@ class AsyncNativeOdbcConnection {
       if (buffer.length > 0) {
         yield BinaryProtocolParser.parse(buffer.toBytes());
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        await streamCancel(streamId);
+      }
       await _streamClose(streamId);
     }
   }
@@ -1470,8 +2411,9 @@ class AsyncNativeOdbcConnection {
       );
     }
 
-    var pending = BytesBuilder(copy: false);
+    final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
+    var completed = false;
     try {
       while (true) {
         final status = await _streamPollAsync(streamId);
@@ -1517,21 +2459,8 @@ class AsyncNativeOdbcConnection {
             );
           }
 
-          while (pending.length >= BinaryProtocolParser.headerSize) {
-            final all = pending.toBytes();
-            final msgLen = BinaryProtocolParser.messageLengthFromHeader(all);
-            if (all.length < msgLen) {
-              break;
-            }
-
-            final msg = all.sublist(0, msgLen);
+          for (final msg in pending.drainFrames()) {
             yield BinaryProtocolParser.parse(msg);
-
-            final remainder = all.sublist(msgLen);
-            pending = BytesBuilder(copy: false);
-            if (remainder.isNotEmpty) {
-              pending.add(remainder);
-            }
           }
         }
       }
@@ -1541,7 +2470,11 @@ class AsyncNativeOdbcConnection {
           'Leftover bytes after stream; expected complete protocol messages',
         );
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        await streamCancel(streamId);
+      }
       await _streamClose(streamId);
     }
   }
@@ -1571,12 +2504,16 @@ class AsyncNativeOdbcConnection {
       ),
     );
     _isInitialized = false;
-    _workerSendPort?.send('shutdown');
-    _workerIsolate?.kill();
-    _receivePort?.close();
+    for (final worker in _workers) {
+      worker.dispose();
+    }
+    _workers.clear();
     _namedParamOrderByStmtId.clear();
-    _workerSendPort = null;
-    _workerIsolate = null;
-    _receivePort = null;
+    _connectionWorkerById.clear();
+    _statementWorkerById.clear();
+    _statementConnectionById.clear();
+    _transactionWorkerById.clear();
+    _streamWorkerById.clear();
+    _asyncRequestWorkerById.clear();
   }
 }
