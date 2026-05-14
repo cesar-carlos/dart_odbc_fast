@@ -336,10 +336,7 @@ fn run_async_query(conn_id: u32, sql: &str, params: Option<&[u8]>) -> Result<Vec
     state.audit_logger.log_query(conn_id, sql);
     let metrics = Arc::clone(&state.metrics);
     let start = Instant::now();
-    let mut target = match take_runnable_connection(&mut state, conn_id) {
-        Ok(target) => target,
-        Err(e) => return Err(e),
-    };
+    let mut target = take_runnable_connection(&mut state, conn_id)?;
     drop(state);
 
     let params = params.unwrap_or(&[]);
@@ -6796,7 +6793,7 @@ mod tests {
             "Invalid connection should return request_id=0 with null params"
         );
 
-        let params = vec![1u8, 2, 3, 4];
+        let params = [1u8, 2, 3, 4];
         let request_id = odbc_execute_async_params(
             TEST_INVALID_ID,
             sql.as_ptr(),

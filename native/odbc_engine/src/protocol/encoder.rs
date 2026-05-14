@@ -338,8 +338,11 @@ mod tests {
     fn try_append_ref_cursor_footer_inserts_rc1_frame() {
         let base = RowBufferEncoder::encode(&RowBuffer::new());
         let blob = RowBufferEncoder::encode(&RowBuffer::new());
-        let out =
-            RowBufferEncoder::try_append_ref_cursor_footer(base.clone(), &[blob.clone()]).unwrap();
+        let out = RowBufferEncoder::try_append_ref_cursor_footer(
+            base.clone(),
+            std::slice::from_ref(&blob),
+        )
+        .unwrap();
         let off = base.len();
         assert_eq!(&out[off..off + 4], &REF_CURSOR_FOOTER_MAGIC);
         let cnt = u32::from_le_bytes([out[off + 4], out[off + 5], out[off + 6], out[off + 7]]);
@@ -357,10 +360,7 @@ mod tests {
 
         impl Write for BrokenWriter {
             fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "simulated write failure",
-                ))
+                Err(io::Error::other("simulated write failure"))
             }
 
             fn flush(&mut self) -> io::Result<()> {
