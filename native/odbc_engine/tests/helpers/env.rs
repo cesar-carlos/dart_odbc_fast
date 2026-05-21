@@ -8,6 +8,22 @@ pub fn get_test_dsn() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// True when `dsn` appears to target the given engine (driver keywords in the DSN).
+pub fn dsn_targets_engine(dsn: &str, lower_keywords: &[&str]) -> bool {
+    let lower = dsn.to_lowercase();
+    lower_keywords.iter().any(|k| lower.contains(k))
+}
+
+/// Returns `ODBC_TEST_DSN` only when it matches the engine under test.
+fn odbc_test_dsn_for_engine(lower_keywords: &[&str]) -> Option<String> {
+    let dsn = get_test_dsn()?;
+    if dsn_targets_engine(&dsn, lower_keywords) {
+        Some(dsn)
+    } else {
+        None
+    }
+}
+
 /// Build SQL Server connection string from components
 /// Returns None if required components are missing
 pub fn build_sqlserver_conn_str(
@@ -32,9 +48,20 @@ pub fn build_sqlserver_conn_str(
 /// Get SQL Server connection string for E2E tests
 /// Uses environment variables or provided defaults
 pub fn get_sqlserver_test_dsn() -> Option<String> {
-    // First, try environment variable
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["sql server", "sqlserver", "odbc driver 17"]) {
         return Some(dsn);
+    }
+    if let Some(dsn) = get_test_dsn() {
+        let lower = dsn.to_lowercase();
+        if lower.contains("server=")
+            && lower.contains("database=")
+            && !lower.contains("postgres")
+            && !lower.contains("mysql")
+            && !lower.contains("oracle")
+            && !lower.contains("sqlite")
+        {
+            return Some(dsn);
+        }
     }
 
     // Try individual environment variables
@@ -74,7 +101,7 @@ pub fn build_postgresql_conn_str(
 /// POSTGRES_TEST_PASSWORD, POSTGRES_TEST_PORT.
 /// Docker default: localhost:5432, odbc_test, postgres/postgres.
 pub fn get_postgresql_test_dsn() -> Option<String> {
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["postgres", "postgresql"]) {
         return Some(dsn);
     }
     let server = std::env::var("POSTGRES_TEST_SERVER").unwrap_or_else(|_| "localhost".to_string());
@@ -151,7 +178,7 @@ pub fn build_sybase_conn_str(
 /// Env vars: SQLITE_TEST_DATABASE (path to .db file).
 /// Default: /tmp/odbc_test.db (ephemeral for CI).
 pub fn get_sqlite_test_dsn() -> Option<String> {
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["sqlite"]) {
         return Some(dsn);
     }
     let path =
@@ -164,7 +191,7 @@ pub fn get_sqlite_test_dsn() -> Option<String> {
 /// MYSQL_TEST_PASSWORD, MYSQL_TEST_PORT.
 /// Docker default: localhost:3306, odbc_test, root/mysql.
 pub fn get_mysql_test_dsn() -> Option<String> {
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["mysql", "mariadb"]) {
         return Some(dsn);
     }
     let server = std::env::var("MYSQL_TEST_SERVER").unwrap_or_else(|_| "localhost".to_string());
@@ -188,7 +215,7 @@ pub fn get_mysql_test_dsn() -> Option<String> {
 /// ORACLE_TEST_PASSWORD, ORACLE_TEST_PORT.
 /// CI defaults: localhost:1521/FREEPDB1, system/OdbcTest123!
 pub fn get_oracle_test_dsn() -> Option<String> {
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["oracle"]) {
         return Some(dsn);
     }
     let server = std::env::var("ORACLE_TEST_SERVER").unwrap_or_else(|_| "localhost".to_string());
@@ -213,7 +240,7 @@ pub fn get_oracle_test_dsn() -> Option<String> {
 /// Env vars: SYBASE_TEST_SERVER_NAME, SYBASE_TEST_DATABASE, SYBASE_TEST_USER,
 /// SYBASE_TEST_PASSWORD.
 pub fn get_sybase_test_dsn() -> Option<String> {
-    if let Some(dsn) = get_test_dsn() {
+    if let Some(dsn) = odbc_test_dsn_for_engine(&["sql anywhere", "sybase", "servername="]) {
         return Some(dsn);
     }
     let server_name =
@@ -249,17 +276,6 @@ mod tests {
         assert!(s.contains("localhost"));
         assert!(s.contains("test"));
         assert!(s.contains("Port=3306"));
-    }
-
-    /// `get_*_test_dsn()` falls back to the global `ODBC_TEST_DSN` when no
-    /// per-engine env var is set; that env var typically points at the
-    /// developer's primary DB (e.g. SQL Server). In that case the assertion
-    /// "DSN string contains 'MySQL'" is meaningless, so we skip instead of
-    /// failing. When the user actually exports a per-engine env var (or
-    /// configures a multi-DB CI matrix), the test runs for real.
-    fn dsn_targets_engine(dsn: &str, lower_keywords: &[&str]) -> bool {
-        let lower = dsn.to_lowercase();
-        lower_keywords.iter().any(|k| lower.contains(k))
     }
 
     #[test]

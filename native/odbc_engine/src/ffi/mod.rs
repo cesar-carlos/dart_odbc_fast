@@ -8132,7 +8132,10 @@ mod tests {
             &mut has_more,
         );
         assert_eq!(small_result, -2, "Expected buffer-too-small on first fetch");
-        assert_eq!(written, 0);
+        assert!(
+            written > small_buffer.len() as c_uint,
+            "out_written must report required bytes on -2 (got {written})"
+        );
 
         let mut larger_buffer = vec![0u8; 8192];
         let retry_result = odbc_stream_fetch(

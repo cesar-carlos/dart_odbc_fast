@@ -61,7 +61,8 @@ final _directedOut = <DirectedParam>[
 void main() {
   loadTestEnv();
   final run = getTestEnv('E2E_PG_DIRECTED_OUT') == '1' &&
-      (getTestEnv('ODBC_TEST_DSN')?.isNotEmpty ?? false);
+      (getTestEnv('ODBC_TEST_DSN')?.isNotEmpty ?? false) &&
+      getTestDatabaseType() == DatabaseType.postgresql;
 
   group('PostgreSQL directed OUT (DRT1)', () {
     ServiceLocator? locator;
