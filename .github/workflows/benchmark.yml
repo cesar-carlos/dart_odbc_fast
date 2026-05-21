@@ -31,6 +31,11 @@ jobs:
           workspaces: |
             native -> target
 
+      - name: Install ODBC (base)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+
       - name: Run micro benchmarks (no DB)
         run: |
           cd native
