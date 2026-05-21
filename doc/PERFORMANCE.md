@@ -1,8 +1,28 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v3.5.3
+> **Last updated for:** v3.8 (usage profiles)
 
 This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload.
+
+---
+
+## Recommended usage profiles (Dart)
+
+[`OdbcUsageProfile`](../lib/domain/entities/odbc_usage_profile.dart) selects defaults
+for [`ServiceLocator.initialize`](../lib/core/di/service_locator.dart): async vs
+sync, worker count, backpressure, and the shape of
+`recommendedConnectionOptions` / `recommendedPoolOptions`.
+
+| Profile | When to use | Async | Workers | Pending cap |
+|---------|-------------|-------|---------|-------------|
+| `balanced` | Default; apps that may open a few connections | yes | 2 | 24 |
+| `balancedFlutter` | Mostly one connection, UI responsiveness | yes | 1 | 16 |
+| `balancedServer` | Native pool + concurrent checkouts | yes | 4 | 32 |
+| `legacy` | CLI, tests, or minimal isolate overhead | no | 1 | unbounded |
+
+`ResultEncoding.rowMajor` remains the safe default for query payloads; prefer
+columnar encodings only after benchmarking your workload (wide SQL Server rows
+often hit async **blocking fallbacks** with columnar modes).
 
 ---
 

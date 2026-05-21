@@ -1,4 +1,5 @@
 import 'package:odbc_fast/core/di/service_locator.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
@@ -16,6 +17,7 @@ void main() {
           asyncBackpressureTimeout: const Duration(milliseconds: 250),
         );
 
+      expect(locator.usageProfile, OdbcUsageProfile.balanced);
       expect(locator.auditLogger, isA<OdbcAuditLogger>());
       expect(locator.asyncAuditLogger, isA<AsyncOdbcAuditLogger>());
       expect(locator.asyncNativeConnection.workerCount, equals(4));
@@ -56,6 +58,33 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+
+    test('defaults to balanced async with recommended getters', () {
+      final locator = ServiceLocator()..initialize();
+      expect(locator.usageProfile, OdbcUsageProfile.balanced);
+      expect(locator.isAsyncMode, isTrue);
+      expect(
+        locator.recommendedConnectionOptions.queryTimeout,
+        const Duration(seconds: 120),
+      );
+      expect(locator.recommendedPoolMaxSize, 4);
+      expect(locator.recommendedPoolOptions.hasAnyOption, isTrue);
+      locator.shutdown();
+    });
+
+    test('useAsync false overrides balanced profile to sync', () {
+      final locator = ServiceLocator()
+        ..initialize(
+          useAsync: false,
+        );
+      expect(locator.usageProfile, OdbcUsageProfile.balanced);
+      expect(locator.isAsyncMode, isFalse);
+      expect(
+        locator.recommendedConnectionOptions.loginTimeout,
+        const Duration(seconds: 30),
+      );
+      locator.shutdown();
     });
   });
 }

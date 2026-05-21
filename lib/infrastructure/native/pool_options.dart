@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:meta/meta.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 
 /// Optional eviction/timeout knobs for a connection pool created via
@@ -15,6 +17,21 @@ class PoolOptions {
     this.maxLifetime,
     this.connectionTimeout,
   });
+
+  factory PoolOptions.fromUsageProfile(OdbcUsageProfile profile) {
+    switch (profile) {
+      case OdbcUsageProfile.legacy:
+        return const PoolOptions();
+      case OdbcUsageProfile.balanced:
+      case OdbcUsageProfile.balancedFlutter:
+      case OdbcUsageProfile.balancedServer:
+        return const PoolOptions(
+          idleTimeout: Duration(minutes: 5),
+          maxLifetime: Duration(minutes: 30),
+          connectionTimeout: Duration(seconds: 30),
+        );
+    }
+  }
 
   /// Connections idle for longer than this are closed by the background
   /// reaper. `null` disables idle eviction.

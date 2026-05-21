@@ -1,10 +1,14 @@
 import 'package:odbc_fast/application/services/odbc_service.dart';
+import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 
 /// Dependency injection container for ODBC Fast services.
@@ -12,25 +16,31 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 /// Provides a singleton instance that manages the lifecycle of core services
 /// including the native ODBC connection, repository, and service layers.
 ///
-/// ## Sync vs Async Mode
+/// ## Usage profiles
 ///
-/// By default, operates in sync mode (blocking operations). Set `useAsync`
-/// to true during initialization for non-blocking async operations, which is
-/// recommended for Flutter applications to prevent UI freezing.
+/// [initialize] defaults to [OdbcUsageProfile.balanced]: async mode, two
+/// workers, bounded backpressure, and [recommendedConnectionOptions] /
+/// [recommendedPoolOptions] tuned for reliability. Use
+/// [OdbcUsageProfile.legacy] for the historical sync-only defaults, or pass
+/// explicit `useAsync` / worker parameters to override profile defaults.
 ///
-/// ## Example (Sync Mode)
+/// ## Example (balanced default — async)
 /// ```dart
-/// final locator = ServiceLocator();
-/// locator.initialize();
+/// final locator = ServiceLocator()..initialize();
 /// final service = locator.service;
 /// await service.initialize();
+///
+/// final conn = await service.connect(
+///   dsn,
+///   options: locator.recommendedConnectionOptions,
+/// );
 /// ```
 ///
-/// ## Example (Async Mode - Recommended for Flutter)
+/// ## Example (Sync / CLI — legacy profile)
 /// ```dart
-/// final locator = ServiceLocator();
-/// locator.initialize(useAsync: true);
-/// final service = locator.asyncService;
+/// final locator = ServiceLocator()
+///   ..initialize(profile: OdbcUsageProfile.legacy);
+/// final service = locator.syncService;
 /// await service.initialize();
 /// ```
 ///
@@ -44,82 +54,106 @@ class ServiceLocator {
   static final ServiceLocator _instance = ServiceLocator._internal();
 
   // Sync dependencies (existing)
-  late final NativeOdbcConnection _nativeConnection;
-  late final IOdbcRepository _repository;
-  late final OdbcService _service;
+  late NativeOdbcConnection _nativeConnection;
+  late IOdbcRepository _repository;
+  late OdbcService _service;
 
   // Async dependencies (new)
-  late final AsyncNativeOdbcConnection _asyncNativeConnection;
-  late final IOdbcRepository _asyncRepository;
-  late final OdbcService _asyncService;
+  late AsyncNativeOdbcConnection _asyncNativeConnection;
+  late IOdbcRepository _asyncRepository;
+  late OdbcService _asyncService;
 
+  bool _locatorInitialized = false;
   bool _useAsync = false;
+  OdbcUsageProfile _activeProfile = OdbcUsageProfile.balanced;
+
+  /// Active profile from the last [initialize] call.
+  OdbcUsageProfile get usageProfile => _activeProfile;
+
+  /// Connection options aligned with [usageProfile] (timeouts, reconnect).
+  ConnectionOptions get recommendedConnectionOptions =>
+      ConnectionOptions.fromUsageProfile(_activeProfile);
+
+  /// Pool eviction / acquire timeouts aligned with [usageProfile].
+  PoolOptions get recommendedPoolOptions =>
+      PoolOptions.fromUsageProfile(_activeProfile);
+
+  /// Suggested native pool `maxSize` for [usageProfile].
+  int get recommendedPoolMaxSize => _activeProfile.recommendedPoolMaxSize;
 
   /// Initializes all services and dependencies.
   ///
   /// Must be called before accessing [service], [repository], or
   /// [nativeConnection].
   ///
-  /// Set `useAsync` to true for non-blocking operations (recommended for
-  /// Flutter). When `useAsync` is true, all database operations execute in
-  /// background isolates, preventing UI freezes during long-running queries.
+  /// Safe to call more than once (for example in tests): a previous async
+  /// worker pool is disposed before a new one is created. Call [shutdown] on
+  /// app exit when using async mode so isolates are released promptly.
   ///
-  /// ## Sync Mode (useAsync: false, default)
-  /// - Operations are blocking but slightly faster (no isolate overhead)
-  /// - Suitable for CLI tools, simple scripts, fast queries (<10ms)
-  /// - Use [service] or [syncService] to access
-  ///
-  /// ## Async Mode (useAsync: true)
-  /// - Operations are non-blocking (executed in isolates)
-  /// - Required for Flutter applications
-  /// - Recommended for queries >10ms or parallel operations
-  /// - Use [asyncService] to access
-  ///
-  /// This method initializes logging, creates the native connection,
-  /// repository, and service instances.
+  /// [profile] selects async worker counts, backpressure, and the shape of
+  /// [recommendedConnectionOptions] / [recommendedPoolOptions]. Omit
+  /// [useAsync], [asyncWorkerCount], [asyncMaxPendingRequests], and
+  /// [asyncBackpressureMode] to apply the profile defaults. Passing any of
+  /// those explicitly overrides the corresponding profile value.
   void initialize({
-    bool useAsync = false,
-    int asyncWorkerCount = 1,
+    OdbcUsageProfile profile = OdbcUsageProfile.balanced,
+    bool? useAsync,
+    int? asyncWorkerCount,
     int? asyncMaxPendingRequests,
-    AsyncBackpressureMode asyncBackpressureMode =
-        AsyncBackpressureMode.failFast,
+    AsyncBackpressureMode? asyncBackpressureMode,
     Duration? asyncBackpressureTimeout,
   }) {
-    if (asyncWorkerCount < 1) {
+    final preset = OdbcProfileAsyncDefaults.fromUsageProfile(profile);
+    final effectiveUseAsync = useAsync ?? preset.useAsync;
+    final effectiveWorkers = asyncWorkerCount ?? preset.workerCount;
+    final effectiveMaxPending =
+        asyncMaxPendingRequests ?? preset.maxPendingRequests;
+    final effectiveBackpressureMode =
+        asyncBackpressureMode ?? preset.backpressureMode;
+    final effectiveBackpressureTimeout =
+        asyncBackpressureTimeout ?? preset.backpressureTimeout;
+
+    if (effectiveWorkers < 1) {
       throw ArgumentError.value(
-        asyncWorkerCount,
+        effectiveWorkers,
         'asyncWorkerCount',
         'must be greater than or equal to 1',
       );
     }
-    if (asyncMaxPendingRequests != null && asyncMaxPendingRequests < 1) {
+    if (effectiveMaxPending != null && effectiveMaxPending < 1) {
       throw ArgumentError.value(
-        asyncMaxPendingRequests,
+        effectiveMaxPending,
         'asyncMaxPendingRequests',
         'must be null or greater than or equal to 1',
       );
     }
-    if (asyncBackpressureTimeout != null &&
-        asyncBackpressureTimeout < Duration.zero) {
+    if (effectiveBackpressureTimeout != null &&
+        effectiveBackpressureTimeout < Duration.zero) {
       throw ArgumentError.value(
-        asyncBackpressureTimeout,
+        effectiveBackpressureTimeout,
         'asyncBackpressureTimeout',
         'must be null, zero, or greater than zero',
       );
     }
-    _useAsync = useAsync;
+
+    if (_locatorInitialized && _useAsync) {
+      _asyncNativeConnection.dispose();
+    }
+
+    _activeProfile = profile;
+    _useAsync = effectiveUseAsync;
     AppLogger.initialize();
 
     _nativeConnection = NativeOdbcConnection();
     _repository = OdbcRepositoryImpl(_nativeConnection);
     _service = OdbcService(_repository);
 
-    if (useAsync) {
+    if (effectiveUseAsync) {
       _asyncNativeConnection = AsyncNativeOdbcConnection(
-        workerCount: asyncWorkerCount,
-        maxPendingRequests: asyncMaxPendingRequests,
-        backpressureMode: asyncBackpressureMode,
-        backpressureTimeout: asyncBackpressureTimeout,
+        workerCount: effectiveWorkers,
+        maxPendingRequests: effectiveMaxPending,
+        backpressureMode: effectiveBackpressureMode,
+        backpressureTimeout: effectiveBackpressureTimeout,
       );
       _asyncRepository = OdbcRepositoryImpl(_asyncNativeConnection);
       _asyncService = OdbcService(_asyncRepository);
@@ -127,15 +161,18 @@ class ServiceLocator {
 
     AppLogger.info(
       'ServiceLocator initialized '
-      '(async: $useAsync, asyncWorkerCount: $asyncWorkerCount, '
-      'asyncMaxPendingRequests: $asyncMaxPendingRequests, '
-      'asyncBackpressureMode: $asyncBackpressureMode)',
+      '(profile: $profile, async: $effectiveUseAsync, '
+      'asyncWorkerCount: $effectiveWorkers, '
+      'asyncMaxPendingRequests: $effectiveMaxPending, '
+      'asyncBackpressureMode: $effectiveBackpressureMode)',
     );
+
+    _locatorInitialized = true;
   }
 
   /// Gets the appropriate service based on initialization mode.
   ///
-  /// If [initialize] was called with `useAsync: true`, returns the async
+  /// If [initialize] was called with async mode, returns the async
   /// service. Otherwise returns the sync service.
   ///
   /// Throws if [initialize] has not been called.
@@ -148,7 +185,7 @@ class ServiceLocator {
 
   /// Gets the sync [OdbcService] instance.
   ///
-  /// Always available regardless of `useAsync` setting. Use this when you
+  /// Always available regardless of async mode. Use this when you
   /// explicitly want blocking operations (e.g., for fast queries or CLI
   /// tools).
   ///
@@ -157,16 +194,16 @@ class ServiceLocator {
 
   /// Gets the async [OdbcService] instance.
   ///
-  /// Only available if [initialize] was called with `useAsync: true`.
+  /// Only available if [initialize] enabled async mode.
   /// Use this for non-blocking database operations in Flutter apps.
   ///
-  /// Throws [StateError] if [initialize] was not called with
-  /// `useAsync: true`.
+  /// Throws [StateError] if [initialize] did not enable async.
   OdbcService get asyncService {
     if (!_useAsync) {
       throw StateError(
-        'ServiceLocator not initialized with useAsync: true. '
-        'Call locator.initialize(useAsync: true) first.',
+        'ServiceLocator not initialized with async mode. '
+        'Call locator.initialize() with a non-legacy profile, or '
+        'initialize(useAsync: true).',
       );
     }
     return _asyncService;
@@ -174,8 +211,8 @@ class ServiceLocator {
 
   /// Gets the appropriate repository based on initialization mode.
   ///
-  /// If [initialize] was called with `useAsync: true`, returns the async
-  /// repository. Otherwise returns the sync repository.
+  /// If async mode is on, returns the async repository. Otherwise returns the
+  /// sync repository.
   ///
   /// Throws if [initialize] has not been called.
   IOdbcRepository get repository => _useAsync ? _asyncRepository : _repository;
@@ -195,12 +232,12 @@ class ServiceLocator {
 
   /// Gets async typed audit logger wrapper.
   ///
-  /// Only available if [initialize] was called with `useAsync: true`.
+  /// Only available when async mode is enabled.
   AsyncOdbcAuditLogger get asyncAuditLogger {
     if (!_useAsync) {
       throw StateError(
-        'ServiceLocator not initialized with useAsync: true. '
-        'Call locator.initialize(useAsync: true) first.',
+        'ServiceLocator not initialized with async mode. '
+        'Use a non-legacy profile or initialize(useAsync: true).',
       );
     }
     return AsyncOdbcAuditLogger(_asyncNativeConnection);
@@ -208,32 +245,30 @@ class ServiceLocator {
 
   /// Gets the [AsyncNativeOdbcConnection] instance.
   ///
-  /// Only available if [initialize] was called with `useAsync: true`.
+  /// Only available when async mode is enabled.
   /// This provides direct access to the async wrapper for advanced use cases.
   ///
-  /// Throws [StateError] if [initialize] was not called with
-  /// `useAsync: true`.
+  /// Throws [StateError] if async mode was not enabled.
   AsyncNativeOdbcConnection get asyncNativeConnection {
     if (!_useAsync) {
       throw StateError(
-        'ServiceLocator not initialized with useAsync: true. '
-        'Call locator.initialize(useAsync: true) first.',
+        'ServiceLocator not initialized with async mode. '
+        'Use a non-legacy profile or initialize(useAsync: true).',
       );
     }
     return _asyncNativeConnection;
   }
 
   /// Whether the locator was initialized with async mode.
-  ///
-  /// Returns true if [initialize] was called with `useAsync: true`,
-  /// indicating that async operations are available.
   bool get isAsyncMode => _useAsync;
 
   /// Releases async resources (worker isolate). Call on app exit when using
-  /// async mode.
+  /// async mode. Safe to call multiple times; subsequent [initialize] calls
+  /// dispose any previous async worker automatically.
   void shutdown() {
-    if (_useAsync) {
+    if (_locatorInitialized && _useAsync) {
       _asyncNativeConnection.dispose();
+      _useAsync = false;
     }
   }
 }

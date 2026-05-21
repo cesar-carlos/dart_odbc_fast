@@ -8,6 +8,13 @@
 
 ## What's New (Unreleased)
 
+- **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` now
+  defaults to async with a **balanced** preset (workers, backpressure,
+  `recommendedConnectionOptions` / `recommendedPoolOptions`). Use
+  `profile: OdbcUsageProfile.legacy` for the previous sync-only defaults.
+  See [Quick Start](#quick-start-high-level-service) and
+  [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
+
 Highlights of the work currently on `main` ahead of the next tagged
 release. See the [CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
@@ -384,17 +391,28 @@ Native binary resolution order is documented in [doc/BUILD.md](doc/BUILD.md).
 
 `ServiceLocator` is exported by `package:odbc_fast/odbc_fast.dart`.
 
+By default, `initialize()` uses **[`OdbcUsageProfile.balanced`](lib/domain/entities/odbc_usage_profile.dart)**:
+async API, two worker isolates, bounded backpressure, and helpers
+`recommendedConnectionOptions`, `recommendedPoolOptions`, and
+`recommendedPoolMaxSize` for copy-paste-friendly timeouts and pool tuning.
+Use **`initialize(profile: OdbcUsageProfile.legacy)`** for the historical
+sync-only behavior, or pass explicit `useAsync` / worker parameters to
+override individual knobs.
+
 ```dart
 import 'package:odbc_fast/odbc_fast.dart';
 
 Future<void> main() async {
   final locator = ServiceLocator()..initialize();
-  final service = locator.syncService;
+  final service = locator.service;
 
   final init = await service.initialize();
   if (init.isError()) return;
 
-  final connResult = await service.connect('DSN=MyDsn');
+  final connResult = await service.connect(
+    'DSN=MyDsn',
+    options: locator.recommendedConnectionOptions,
+  );
   final conn = connResult.getOrNull();
   if (conn == null) return;
 
@@ -411,16 +429,51 @@ Future<void> main() async {
   } finally {
     await service.disconnect(conn.id);
   }
+
+  locator.shutdown();
 }
 ```
 
 ## Async API (non-blocking)
 
-Use async mode in UI apps (especially Flutter):
+Async mode is **on by default** (balanced profile). `locator.service` and
+`locator.asyncService` both refer to the high-level async service when async
+is enabled.
+
+For **Flutter**-heavy apps that mostly hold a single connection, you can start
+with a lighter worker footprint:
 
 ```dart
-final locator = ServiceLocator()..initialize(useAsync: true);
-final service = locator.asyncService;
+final locator = ServiceLocator()
+  ..initialize(profile: OdbcUsageProfile.balancedFlutter);
+final service = locator.service;
+```
+
+For **HTTP services** with a native pool and concurrent checkouts:
+
+```dart
+final locator = ServiceLocator()
+  ..initialize(profile: OdbcUsageProfile.balancedServer);
+```
+
+To opt out of async entirely (CLI scripts, tests, or minimal overhead):
+
+```dart
+final locator = ServiceLocator()
+  ..initialize(profile: OdbcUsageProfile.legacy);
+final service = locator.syncService;
+```
+
+Explicit overrides still work:
+
+```dart
+final locator = ServiceLocator()
+  ..initialize(
+    profile: OdbcUsageProfile.balancedFlutter,
+    asyncWorkerCount: 4,
+    asyncMaxPendingRequests: 16,
+  );
+final service = locator.service;
 
 await service.initialize();
 final connResult = await service.connect('DSN=MyDsn');
@@ -444,7 +497,9 @@ final locator = ServiceLocator()
   );
 ```
 
-`asyncWorkerCount` defaults to `1` for existing behavior. Values greater than
+`asyncWorkerCount` defaults from the active **[`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart)**
+(`2` for balanced, `1` for balancedFlutter, `4` for balancedServer, `1` for legacy).
+Values greater than
 `1` let independent connections or pool checkouts run on multiple Dart worker
 isolates. Operations on the same connection, statement, transaction, stream, or
 async request keep worker affinity so handle usage stays serialized.
@@ -460,9 +515,13 @@ If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 
 - `requestTimeout` for worker response timeout
 - `autoRecoverOnWorkerCrash` for automatic worker re-initialization
-- `workerCount` for an optional worker isolate pool (`1` by default)
-- `maxPendingRequests` for a global pending-request cap (`null` by default)
-- `backpressureMode` as `failFast` (default) or `waitForSlot`
+- `workerCount` for an optional worker isolate pool (`1` if you construct
+  `AsyncNativeOdbcConnection` with defaults; use `ServiceLocator.initialize` with
+  an `OdbcUsageProfile` for preset worker counts)
+- `maxPendingRequests` for a global pending-request cap (`null` with legacy
+  profile; bounded with balanced presets)
+- `backpressureMode` as `failFast` (legacy profile) or `waitForSlot` (balanced
+  presets)
 - `backpressureTimeout` when `waitForSlot` is active
 - `getWorkerPoolStats()` for a Dart-side snapshot of routed, active, pending,
   timeout, cancel, latency, per-worker, and blocking-fallback counters

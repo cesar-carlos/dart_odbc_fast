@@ -11,7 +11,7 @@ void main() {
     late String? connectionString;
 
     setUpAll(() async {
-      locator = ServiceLocator()..initialize();
+      locator = ServiceLocator()..initialize(profile: OdbcUsageProfile.legacy);
       await locator.service.initialize();
       connectionString = isE2eEnabled() ? getTestEnv('ODBC_TEST_DSN') : null;
     });

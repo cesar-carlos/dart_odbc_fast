@@ -9,11 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- None.
+- **`OdbcUsageProfile`** presets (`balanced`, `balancedFlutter`, `balancedServer`,
+  `legacy`) with documented defaults for async workers and backpressure.
+- **`ConnectionOptions.fromUsageProfile`** and **`PoolOptions.fromUsageProfile`**
+  for login/query timeouts, reconnect-on-drop, and pool eviction knobs aligned
+  with each profile.
+- **`OdbcProfileAsyncDefaults`** (internal resolution helper under
+  `lib/core/di/`) mapping profiles to async worker settings.
+- Example **[`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart)**.
 
 ### Changed
 
-- None.
+- **Breaking:** [`ServiceLocator.initialize`](lib/core/di/service_locator.dart)
+  now defaults to **`OdbcUsageProfile.balanced`**: async mode is on by default
+  with two workers, `waitForSlot` backpressure, and bounded pending requests.
+  Use **`initialize(profile: OdbcUsageProfile.legacy)`** (or `useAsync: false`)
+  for the previous sync-only defaults. Call **`locator.shutdown()`** on exit
+  when using async mode.
+- [`ServiceLocator`](lib/core/di/service_locator.dart) exposes
+  **`usageProfile`**, **`recommendedConnectionOptions`**,
+  **`recommendedPoolOptions`**, and **`recommendedPoolMaxSize`** derived from
+  the active profile.
 
 ### Fixed
 

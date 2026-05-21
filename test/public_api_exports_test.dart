@@ -30,6 +30,16 @@ void main() {
       expect(info.databaseType, DatabaseType.sqlite);
     });
 
+    test('exports usage profile and profile factories', () {
+      expect(OdbcUsageProfile.balanced.recommendedPoolMaxSize, 4);
+      expect(OdbcUsageProfile.balancedServer.recommendedPoolMaxSize, 8);
+      final conn =
+          ConnectionOptions.fromUsageProfile(OdbcUsageProfile.balanced);
+      expect(conn.queryTimeout, const Duration(seconds: 120));
+      final pool = PoolOptions.fromUsageProfile(OdbcUsageProfile.balanced);
+      expect(pool.hasAnyOption, isTrue);
+    });
+
     test('exports driver feature helper types', () {
       expect(DmlVerb.insert.code, equals(0));
       expect(const SessionOptions().toJson(), isEmpty);

@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""
+ODBC Fast - run Dart ODBC benchmarks and optional baseline compare.
+
+Requires ODBC_TEST_DSN or ODBC_DSN in .env or the environment.
+
+Usage:
+    python scripts/run_dart_benchmarks.py --smoke
+    python scripts/run_dart_benchmarks.py --heavy
+    python scripts/run_dart_benchmarks.py --heavy --rows 50000
+    python scripts/run_dart_benchmarks.py --smoke --compare
+    python scripts/run_dart_benchmarks.py --rust-micro
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+class Colors:
+    CYAN = "\033[96m"
+    YELLOW = "\033[93m"
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    GRAY = "\033[90m"
+    RESET = "\033[0m"
+
+    @staticmethod
+    def colorize(text: str, color: str) -> str:
+        if sys.stdout.isatty():
+            return f"{color}{text}{Colors.RESET}"
+        return text
+
+
+def print_header(text: str) -> None:
+    print(Colors.colorize(text, Colors.CYAN))
+
+
+def print_step(text: str) -> None:
+    print(Colors.colorize(text, Colors.YELLOW))
+
+
+def print_success(text: str) -> None:
+    print(Colors.colorize(text, Colors.GREEN))
+
+
+def print_error(text: str) -> None:
+    print(Colors.colorize(text, Colors.RED))
+
+
+def print_info(text: str) -> None:
+    print(Colors.colorize(text, Colors.GRAY))
+
+
+def load_dotenv(root: Path) -> None:
+    env_path = root / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+
+
+def resolve_dart() -> str | None:
+    return shutil.which("dart")
+
+
+def run(cmd: list[str], cwd: Path) -> int:
+    if cmd and cmd[0] == "dart":
+        dart = resolve_dart()
+        if dart is None:
+            print_error("dart not found on PATH")
+            return 1
+        cmd = [dart, *cmd[1:]]
+    return subprocess.run(cmd, cwd=cwd, check=False).returncode
+
+
+def has_dsn() -> bool:
+    for key in ("ODBC_TEST_DSN", "ODBC_DSN"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return True
+    return False
+
+
+def bench_out_dir(root: Path) -> Path:
+    out = root / "bench_baselines"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def run_streaming(root: Path, query: str, tag: str) -> int:
+    out = bench_out_dir(root) / f"streaming-{tag}.json"
+    os.environ["ODBC_STREAM_BENCH_QUERY"] = query
+    os.environ["ODBC_STREAM_BENCH_OUTPUT"] = "json"
+    os.environ["ODBC_STREAM_BENCH_OUT_FILE"] = str(out)
+    print_step(f"streaming -> {out.name}")
+    return run(["dart", "run", "example/streaming_performance_benchmark.dart"], root)
+
+
+def run_async(root: Path, query: str, tag: str) -> int:
+    out = bench_out_dir(root) / f"async-{tag}.json"
+    os.environ["ODBC_BENCH_QUERY"] = query
+    os.environ["ODBC_BENCH_STREAM_QUERY"] = query
+    os.environ["ODBC_BENCH_PREPARED_QUERY"] = query
+    os.environ["ODBC_BENCH_OUTPUT"] = "json"
+    os.environ["ODBC_BENCH_OUT_FILE"] = str(out)
+    print_step(f"async concurrency -> {out.name}")
+    return run(["dart", "run", "example/async_concurrency_benchmark.dart"], root)
+
+
+def compare(root: Path, tag: str, kind: str) -> int:
+    out_dir = bench_out_dir(root)
+    current = out_dir / f"{kind}-{tag}.json"
+    baseline = out_dir / f"{kind}-{tag}.baseline.json"
+    if not current.is_file():
+        print_error(f"Missing current file: {current}")
+        return 1
+    if not baseline.is_file():
+        print_info(f"No baseline at {baseline}; copying current as baseline.")
+        shutil.copy2(current, baseline)
+        return 0
+    print_step(f"compare {kind}-{tag}")
+    return run(
+        [
+            "dart",
+            "run",
+            "tool/compare_benchmark_baseline.dart",
+            "--baseline",
+            str(baseline),
+            "--current",
+            str(current),
+            "--max-regression-percent",
+            "30",
+        ],
+        root,
+    )
+
+
+def run_rust_micro(root: Path) -> int:
+    native = root / "native" / "odbc_engine"
+    if not shutil.which("cargo"):
+        print_error("cargo not found")
+        return 1
+    print_step("Rust micro benches (bulk, metadata, columnar)")
+    code = run(
+        [
+            "cargo",
+            "bench",
+            "--bench",
+            "bulk_operations_bench",
+            "--bench",
+            "metadata_cache_bench",
+            "--bench",
+            "columnar_v1_v2_encode",
+        ],
+        native,
+    )
+    if code != 0:
+        return code
+    print_step("Rust columnar_v2_placeholder (--features columnar-v2)")
+    return run(
+        ["cargo", "bench", "--bench", "columnar_v2_placeholder", "--features", "columnar-v2"],
+        native,
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run ODBC Fast benchmarks")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="SELECT 1 async + streaming benchmarks",
+    )
+    parser.add_argument(
+        "--heavy",
+        action="store_true",
+        help="SELECT TOP N * FROM Produto (default N=5000)",
+    )
+    parser.add_argument(
+        "--rows",
+        type=int,
+        default=5000,
+        metavar="N",
+        help="Row limit for --heavy (default 5000)",
+    )
+    parser.add_argument(
+        "--table",
+        default="Produto",
+        help="Table name for --heavy (default Produto)",
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="Compare JSON output to *.baseline.json (creates baseline if missing)",
+    )
+    parser.add_argument(
+        "--rust-micro",
+        action="store_true",
+        help="Run Rust Criterion micro benches (no DSN)",
+    )
+    parser.add_argument(
+        "--protocol",
+        action="store_true",
+        help="Run dart test test/performance/ (no DSN)",
+    )
+    args = parser.parse_args()
+
+    if not any(
+        (
+            args.smoke,
+            args.heavy,
+            args.rust_micro,
+            args.protocol,
+        )
+    ):
+        args.smoke = True
+
+    root = Path(__file__).resolve().parent.parent
+    os.chdir(root)
+    load_dotenv(root)
+
+    print_header("=== ODBC Fast benchmarks ===")
+    print()
+
+    if args.rust_micro:
+        code = run_rust_micro(root)
+        if code != 0:
+            return code
+        print()
+
+    if args.protocol:
+        print_step("Dart protocol/telemetry performance tests")
+        code = run(["dart", "test", "test/performance/", "--concurrency=1"], root)
+        if code != 0:
+            return code
+        print()
+
+    needs_dsn = args.smoke or args.heavy
+    if resolve_dart() is None:
+        print_error("dart not found on PATH")
+        return 1
+
+    if needs_dsn and not has_dsn():
+        print_error("ODBC_TEST_DSN or ODBC_DSN required for Dart ODBC benchmarks")
+        return 1
+
+    exit_code = 0
+    if args.smoke:
+        if run_streaming(root, "SELECT 1 AS value", "smoke") != 0:
+            exit_code = 1
+        if run_async(root, "SELECT 1 AS value", "smoke") != 0:
+            exit_code = 1
+        if args.compare and exit_code == 0:
+            if compare(root, "smoke", "streaming") != 0:
+                exit_code = 1
+            if compare(root, "smoke", "async") != 0:
+                exit_code = 1
+
+    if args.heavy:
+        query = f"SELECT TOP {args.rows} * FROM {args.table}"
+        tag = f"{args.table.lower()}-{args.rows}"
+        if run_streaming(root, query, tag) != 0:
+            exit_code = 1
+        if run_async(root, query, tag) != 0:
+            exit_code = 1
+        if args.compare and exit_code == 0:
+            if compare(root, tag, "streaming") != 0:
+                exit_code = 1
+            if compare(root, tag, "async") != 0:
+                exit_code = 1
+
+    print()
+    if exit_code == 0:
+        print_success("Benchmarks finished.")
+        print_info(f"JSON under: {bench_out_dir(root)}")
+    else:
+        print_error("One or more benchmark steps failed.")
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

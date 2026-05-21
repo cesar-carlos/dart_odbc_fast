@@ -1,0 +1,3 @@
+# Local benchmark outputs (machine-specific). Keep *.baseline.json for compare.
+*
+!.gitignore

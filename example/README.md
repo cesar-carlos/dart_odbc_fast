@@ -22,6 +22,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [service_api_coverage_demo.dart](service_api_coverage_demo.dart): service-level coverage for query params, prepare/execute/cancel/close, transactions/savepoint release, pooling (including detailed state), bulk insert, version/validation/capabilities, metadata cache, audit API, and async request/stream lifecycle.
 - [advanced_entities_demo.dart](advanced_entities_demo.dart): `RetryHelper`, `RetryOptions`, `PreparedStatementConfig`, `StatementOptions`, and schema metadata entities.
 - [simple_demo.dart](simple_demo.dart): low-level API with `connectWithTimeout`, structured errors, `TransactionHandle`, `CatalogQuery`, prepared statements, and result parsing.
+- [quick_start_balanced_demo.dart](quick_start_balanced_demo.dart): minimal `ServiceLocator` + `OdbcUsageProfile.balanced`, `recommendedConnectionOptions`, and optional pool hints.
 
 ### Async
 

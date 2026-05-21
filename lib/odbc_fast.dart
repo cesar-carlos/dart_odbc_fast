@@ -9,18 +9,22 @@
 /// - Automatic reconnect on connection-lost (configurable attempts/backoff)
 /// - Savepoints (nested transactions)
 ///
-/// ## Quick Start
+/// ## Quick Start (balanced default — async)
 ///
 /// ```dart
 /// import 'package:odbc_fast/core/di/service_locator.dart';
 /// import 'package:odbc_fast/odbc_fast.dart';
 ///
 /// void main() async {
+///   AppLogger.initialize();
 ///   final locator = ServiceLocator()..initialize();
-///   final service = locator.syncService;
+///   final service = locator.service;
 ///   await service.initialize();
 ///
-///   final connResult = await service.connect('MyDSN');
+///   final connResult = await service.connect(
+///     'MyDSN',
+///     options: locator.recommendedConnectionOptions,
+///   );
 ///   await connResult.fold((connection) async {
 ///     await service.executeQuery(
 ///       'SELECT * FROM users',
@@ -28,28 +32,21 @@
 ///     );
 ///     await service.disconnect(connection.id);
 ///   }, (error) {
-///     print('Error: $error');
+///     AppLogger.severe('Error: $error');
 ///   });
 ///
 ///   locator.shutdown();
 /// }
 /// ```
 ///
-/// ## Async API (Recommended for Flutter)
-///
-/// For non-blocking operations, use the async API:
+/// ## Sync / CLI (legacy profile)
 ///
 /// ```dart
-/// final locator = ServiceLocator();
-/// locator.initialize(useAsync: true);
-///
-/// final asyncService = locator.asyncService;
-/// await asyncService.initialize();
-///
-/// final connResult = await asyncService.connect('MyDSN');
-/// // ... use asyncService for all operations
-///
-/// locator.shutdown(); // Call on app exit
+/// final locator = ServiceLocator()
+///   ..initialize(profile: OdbcUsageProfile.legacy);
+/// final service = locator.syncService;
+/// await service.initialize();
+/// // ... use syncService; no shutdown workers unless you had enabled async
 /// ```
 ///
 /// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
@@ -63,6 +60,7 @@ export 'domain/entities/connection.dart';
 export 'domain/entities/connection_options.dart';
 export 'domain/entities/isolation_level.dart';
 export 'domain/entities/odbc_metrics.dart';
+export 'domain/entities/odbc_usage_profile.dart';
 export 'domain/entities/pool_state.dart';
 export 'domain/entities/prepared_statement_config.dart';
 export 'domain/entities/query_result.dart';
