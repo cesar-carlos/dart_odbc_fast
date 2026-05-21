@@ -490,4 +490,4 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 ---
 
-*Atualizado para v3.5.3. Para cada funcionalidade com "fix" há um teste de regressão correspondente em `native/odbc_engine/tests/regression/`.*
+*Atualizado para v3.8.0. Para cada funcionalidade com "fix" há um teste de regressão correspondente em `native/odbc_engine/tests/regression/`.*

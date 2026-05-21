@@ -2,14 +2,15 @@ import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 
 /// Preset tuning for `ServiceLocator.initialize` and related helpers.
 ///
-/// Use [OdbcUsageProfile.balanced] for a good default mix of responsiveness,
-/// throughput, and safety. Use [OdbcUsageProfile.legacy] to match pre-3.8
-/// defaults (sync-only, single worker, no pool/connection timeouts from
-/// presets). Use [OdbcUsageProfile.highThroughput] for heavier server workloads
-/// with more worker isolates and a larger recommended pool size. See
-/// `ConnectionOptions.fromUsageProfile` and `PoolOptions.fromUsageProfile`.
+/// Use [OdbcUsageProfile.balanced] for a recommended opt-in mix of
+/// responsiveness, throughput, and safety. [OdbcUsageProfile.legacy] preserves
+/// the package default behavior (sync-only, single worker, no pool/connection
+/// timeouts from presets). Use [OdbcUsageProfile.highThroughput] for heavier
+/// server workloads with more worker isolates and a larger recommended pool
+/// size. See `ConnectionOptions.fromUsageProfile` and
+/// `PoolOptions.fromUsageProfile`.
 enum OdbcUsageProfile {
-  /// Async, two workers, moderate backpressure; universal default.
+  /// Async, two workers, moderate backpressure; recommended general preset.
   balanced,
 
   /// Async, single worker; best when the app mostly uses one connection.

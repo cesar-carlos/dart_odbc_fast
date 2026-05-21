@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.8.0] - 2026-05-21
 
 ### Added
 
@@ -22,12 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** [`ServiceLocator.initialize`](lib/core/di/service_locator.dart)
-  now defaults to **`OdbcUsageProfile.balanced`**: async mode is on by default
-  with two workers, `waitForSlot` backpressure, and bounded pending requests.
-  Use **`initialize(profile: OdbcUsageProfile.legacy)`** (or `useAsync: false`)
-  for the previous sync-only defaults. Call **`locator.shutdown()`** on exit
-  when using async mode.
+- [`ServiceLocator.initialize`](lib/core/di/service_locator.dart) keeps the
+  historical **`OdbcUsageProfile.legacy`** default for SemVer compatibility.
+  Use **`initialize(profile: OdbcUsageProfile.balanced)`**,
+  **`balancedFlutter`**, **`balancedServer`**, or **`highThroughput`** to opt in
+  to the new async presets. Call **`locator.shutdown()`** on exit when using
+  async mode.
 - [`ServiceLocator`](lib/core/di/service_locator.dart) exposes
   **`usageProfile`**, **`recommendedConnectionOptions`**,
   **`recommendedPoolOptions`**, **`recommendedPoolMaxSize`**, and
@@ -2095,7 +2095,7 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.7.0...HEAD
+[3.8.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.5.4...v3.6.0

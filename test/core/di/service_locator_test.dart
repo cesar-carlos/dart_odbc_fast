@@ -17,12 +17,12 @@ void main() {
           asyncBackpressureTimeout: const Duration(milliseconds: 250),
         );
 
-      expect(locator.usageProfile, OdbcUsageProfile.balanced);
+      expect(locator.usageProfile, OdbcUsageProfile.legacy);
       expect(locator.auditLogger, isA<OdbcAuditLogger>());
       expect(locator.asyncAuditLogger, isA<AsyncOdbcAuditLogger>());
       expect(locator.asyncNativeConnection.workerCount, equals(4));
       expect(locator.asyncNativeConnection.maxPendingRequests, equals(16));
-      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.balanced);
+      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.legacy);
       expect(locator.resolvedUsageProfile.useAsync, isTrue);
       expect(locator.resolvedUsageProfile.workerCount, 4);
       expect(locator.resolvedUsageProfile.maxPendingRequests, 16);
@@ -72,29 +72,27 @@ void main() {
       );
     });
 
-    test('defaults to balanced async with recommended getters', () {
+    test('defaults to legacy sync with recommended getters', () {
       final locator = ServiceLocator()..initialize();
-      expect(locator.usageProfile, OdbcUsageProfile.balanced);
-      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.balanced);
-      expect(locator.isAsyncMode, isTrue);
-      expect(locator.resolvedUsageProfile.useAsync, isTrue);
-      expect(locator.resolvedUsageProfile.workerCount, 2);
-      expect(
-        locator.recommendedConnectionOptions.queryTimeout,
-        const Duration(seconds: 120),
-      );
+      expect(locator.usageProfile, OdbcUsageProfile.legacy);
+      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.legacy);
+      expect(locator.isAsyncMode, isFalse);
+      expect(locator.resolvedUsageProfile.useAsync, isFalse);
+      expect(locator.resolvedUsageProfile.workerCount, 1);
+      expect(locator.recommendedConnectionOptions.queryTimeout, isNull);
       expect(
         locator.resolvedUsageProfile.connectionOptions.queryTimeout,
-        const Duration(seconds: 120),
+        isNull,
       );
       expect(locator.recommendedPoolMaxSize, 4);
-      expect(locator.recommendedPoolOptions.hasAnyOption, isTrue);
+      expect(locator.recommendedPoolOptions.hasAnyOption, isFalse);
       locator.shutdown();
     });
 
     test('useAsync false overrides balanced profile to sync', () {
       final locator = ServiceLocator()
         ..initialize(
+          profile: OdbcUsageProfile.balanced,
           useAsync: false,
         );
       expect(locator.usageProfile, OdbcUsageProfile.balanced);

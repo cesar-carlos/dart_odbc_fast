@@ -9,7 +9,7 @@
 /// - Automatic reconnect on connection-lost (configurable attempts/backoff)
 /// - Savepoints (nested transactions)
 ///
-/// ## Quick Start (balanced default — async)
+/// ## Quick Start (opt-in balanced async)
 ///
 /// ```dart
 /// import 'package:odbc_fast/core/di/service_locator.dart';
@@ -17,7 +17,8 @@
 ///
 /// void main() async {
 ///   AppLogger.initialize();
-///   final locator = ServiceLocator()..initialize();
+///   final locator = ServiceLocator()
+///     ..initialize(profile: OdbcUsageProfile.balanced);
 ///   final service = locator.service;
 ///   final tuning = locator.resolvedUsageProfile;
 ///   await service.initialize();
@@ -40,11 +41,10 @@
 /// }
 /// ```
 ///
-/// ## Sync / CLI (legacy profile)
+/// ## Sync / CLI (default legacy profile)
 ///
 /// ```dart
-/// final locator = ServiceLocator()
-///   ..initialize(profile: OdbcUsageProfile.legacy);
+/// final locator = ServiceLocator()..initialize();
 /// final service = locator.syncService;
 /// await service.initialize();
 /// // ... use syncService; no shutdown workers unless you had enabled async

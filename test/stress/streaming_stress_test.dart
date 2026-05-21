@@ -1,5 +1,4 @@
 import 'package:odbc_fast/core/di/service_locator.dart';
-import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:test/test.dart';
 
@@ -13,7 +12,7 @@ void main() {
     late String? connectionString;
 
     setUpAll(() async {
-      locator = ServiceLocator()..initialize(profile: OdbcUsageProfile.legacy);
+      locator = ServiceLocator()..initialize();
       await locator.service.initialize();
       connectionString = getTestEnv('ODBC_TEST_DSN');
     });

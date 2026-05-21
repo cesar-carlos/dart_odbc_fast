@@ -19,15 +19,15 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 ///
 /// ## Usage profiles
 ///
-/// [initialize] defaults to [OdbcUsageProfile.balanced]: async mode, two
-/// workers, bounded backpressure, and [recommendedConnectionOptions] /
-/// [recommendedPoolOptions] tuned for reliability. Inspect
+/// [initialize] defaults to [OdbcUsageProfile.legacy] to preserve the
+/// historical sync-only behavior. Use [OdbcUsageProfile.balanced],
+/// [OdbcUsageProfile.balancedFlutter], [OdbcUsageProfile.balancedServer], or
+/// [OdbcUsageProfile.highThroughput] to opt in to async presets with bounded
+/// backpressure and recommended connection / pool options. Inspect
 /// [resolvedUsageProfile] to see the effective configuration after applying
-/// explicit overrides. Use
-/// [OdbcUsageProfile.legacy] for the historical sync-only defaults, or pass
-/// explicit `useAsync` / worker parameters to override profile defaults.
+/// explicit overrides.
 ///
-/// ## Example (balanced default — async)
+/// ## Example (default sync / legacy)
 /// ```dart
 /// final locator = ServiceLocator()..initialize();
 /// final service = locator.service;
@@ -39,11 +39,11 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 /// );
 /// ```
 ///
-/// ## Example (Sync / CLI — legacy profile)
+/// ## Example (balanced async profile)
 /// ```dart
 /// final locator = ServiceLocator()
-///   ..initialize(profile: OdbcUsageProfile.legacy);
-/// final service = locator.syncService;
+///   ..initialize(profile: OdbcUsageProfile.balanced);
+/// final service = locator.service;
 /// await service.initialize();
 /// ```
 ///
@@ -68,9 +68,9 @@ class ServiceLocator {
 
   bool _locatorInitialized = false;
   bool _useAsync = false;
-  OdbcUsageProfile _activeProfile = OdbcUsageProfile.balanced;
+  OdbcUsageProfile _activeProfile = OdbcUsageProfile.legacy;
   ResolvedOdbcUsageProfile _resolvedUsageProfile =
-      ResolvedOdbcUsageProfile.fromUsageProfile(OdbcUsageProfile.balanced);
+      ResolvedOdbcUsageProfile.fromUsageProfile(OdbcUsageProfile.legacy);
 
   /// Preset selected in the last [initialize] call.
   OdbcUsageProfile get usageProfile => _activeProfile;
@@ -105,7 +105,7 @@ class ServiceLocator {
   /// those explicitly overrides the corresponding async setting while
   /// [resolvedUsageProfile] keeps the effective result observable.
   void initialize({
-    OdbcUsageProfile profile = OdbcUsageProfile.balanced,
+    OdbcUsageProfile profile = OdbcUsageProfile.legacy,
     bool? useAsync,
     int? asyncWorkerCount,
     int? asyncMaxPendingRequests,

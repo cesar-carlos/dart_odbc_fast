@@ -6,18 +6,18 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New (Unreleased)
+## What's New in 3.8.0
 
-- **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` now
-  defaults to async with a **balanced** preset and also exposes
-  **`ResolvedOdbcUsageProfile`** for the effective config after overrides. The
-  preset family now includes **`highThroughput`** for heavier server workloads.
-  Use `profile: OdbcUsageProfile.legacy` for the previous sync-only defaults.
+- **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` keeps
+  the existing sync default for compatibility, and now offers opt-in presets
+  such as **`balanced`**, **`balancedServer`**, and **`highThroughput`**. It also
+  exposes **`ResolvedOdbcUsageProfile`** for the effective config after
+  overrides.
   See [Quick Start](#quick-start-high-level-service) and
   [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
 
-Highlights of the work currently on `main` ahead of the next tagged
-release. See the [CHANGELOG](CHANGELOG.md) for the complete list and
+Highlights of the current `3.8.0` release. See the
+[CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
 
@@ -387,7 +387,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.0.0
+  odbc_fast: ^3.8.0
 ```
 
 Then:
@@ -402,21 +402,22 @@ Native binary resolution order is documented in [doc/BUILD.md](doc/BUILD.md).
 
 `ServiceLocator` is exported by `package:odbc_fast/odbc_fast.dart`.
 
-By default, `initialize()` uses **[`OdbcUsageProfile.balanced`](lib/domain/entities/odbc_usage_profile.dart)**:
-async API, two worker isolates, bounded backpressure, and helpers
+By default, `initialize()` uses
+**[`OdbcUsageProfile.legacy`](lib/domain/entities/odbc_usage_profile.dart)** to
+preserve the historical sync-only behavior. Use
+**`initialize(profile: OdbcUsageProfile.balanced)`** for the recommended async
+preset: two worker isolates, bounded backpressure, and helpers
 `recommendedConnectionOptions`, `recommendedPoolOptions`, and
 `recommendedPoolMaxSize` for copy-paste-friendly timeouts and pool tuning.
 Use `locator.resolvedUsageProfile` when you want the effective config after
 explicit async overrides.
-Use **`initialize(profile: OdbcUsageProfile.legacy)`** for the historical
-sync-only behavior, or pass explicit `useAsync` / worker parameters to
-override individual knobs.
 
 ```dart
 import 'package:odbc_fast/odbc_fast.dart';
 
 Future<void> main() async {
-  final locator = ServiceLocator()..initialize();
+  final locator = ServiceLocator()
+    ..initialize(profile: OdbcUsageProfile.balanced);
   final service = locator.service;
   final tuning = locator.resolvedUsageProfile;
 
@@ -453,9 +454,9 @@ Future<void> main() async {
 
 ## Async API (non-blocking)
 
-Async mode is **on by default** (balanced profile). `locator.service` and
-`locator.asyncService` both refer to the high-level async service when async
-is enabled.
+Async mode is opt-in through an async profile or `useAsync: true`. When async is
+enabled, `locator.service` and `locator.asyncService` both refer to the
+high-level async service.
 
 For **Flutter**-heavy apps that mostly hold a single connection, you can start
 with a lighter worker footprint:
@@ -576,8 +577,8 @@ High-concurrency examples:
   uses `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections,
   prints per-worker routing, and accepts `ODBC_CONCURRENCY_QUERY`.
 - [`example/high_concurrency_pool_demo.dart`](example/high_concurrency_pool_demo.dart)
-  uses `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: 4)` with a
-  native pool, separate checkouts, an explicit in-flight task limit, and
+  uses `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)`
+  with a native pool, separate checkouts, an explicit in-flight task limit, and
   accepts `ODBC_CONCURRENCY_QUERY`.
 - [`example/async_concurrency_benchmark.dart`](example/async_concurrency_benchmark.dart)
   compares `workerCount: 1`, `workerCount: 4`, native pool with an in-flight
