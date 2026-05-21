@@ -21,6 +21,21 @@ function Write-Ok($msg)    { Write-Host "[docker_db_up] $msg" -ForegroundColor G
 function Write-Warn2($msg) { Write-Host "[docker_db_up] $msg" -ForegroundColor Yellow }
 function Write-Err2($msg)  { Write-Host "[docker_db_up] $msg" -ForegroundColor Red }
 
+function Test-Db2StaleBootstrapVolume {
+    $db2Exists = docker ps -a --filter "name=^odbc_test_db2$" --format '{{.Names}}' 2>$null
+    if (-not $db2Exists) {
+        return $false
+    }
+
+    try {
+        $log = docker cp odbc_test_db2:/tmp/db2icrt.log.999 - 2>$null | Out-String
+    }
+    catch {
+        return $false
+    }
+    return $log -like '*fencedid file*is invalid because it is not owned*'
+}
+
 # -- Sanity check ---------------------------------------------------------
 
 try {
@@ -47,6 +62,10 @@ if ($Down) {
 $services = @('postgres', 'mysql', 'mariadb', 'mssql', 'oracle')
 $composeArgs = @('compose')
 if ($IncludeDb2) {
+    if (Test-Db2StaleBootstrapVolume) {
+        Write-Warn2 "Detected a stale Db2 bootstrap volume (fencedid ownership mismatch). Resetting Db2 volumes before startup..."
+        docker compose --profile db2 down --volumes --remove-orphans
+    }
     $composeArgs += @('--profile', 'db2')
     $services += 'db2'
 }

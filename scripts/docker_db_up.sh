@@ -34,6 +34,14 @@ ok()    { printf '\033[32m[docker_db_up]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[33m[docker_db_up]\033[0m %s\n' "$*"; }
 fail()  { printf '\033[31m[docker_db_up]\033[0m %s\n' "$*" >&2; }
 
+db2_has_stale_bootstrap_volume() {
+    local exists log
+    exists=$(docker ps -a --filter 'name=^odbc_test_db2$' --format '{{.Names}}' 2>/dev/null || true)
+    [[ -n "$exists" ]] || return 1
+    log=$(docker cp odbc_test_db2:/tmp/db2icrt.log.999 - 2>/dev/null || true)
+    [[ "$log" == *"fencedid file"* && "$log" == *"is invalid because it is not owned"* ]]
+}
+
 if ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
     fail "Docker daemon is not reachable. Is Docker (Desktop) running?"
     exit 1
@@ -50,6 +58,10 @@ fi
 services=(postgres mysql mariadb mssql oracle)
 compose_args=(compose)
 if [[ $INCLUDE_DB2 -eq 1 ]]; then
+    if db2_has_stale_bootstrap_volume; then
+        warn "Detected a stale Db2 bootstrap volume (fencedid ownership mismatch). Resetting Db2 volumes before startup..."
+        docker compose --profile db2 down --volumes --remove-orphans
+    fi
     compose_args+=(--profile db2)
     services+=(db2)
 fi

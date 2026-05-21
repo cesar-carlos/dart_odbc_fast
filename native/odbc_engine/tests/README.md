@@ -88,15 +88,20 @@ python scripts/test_native.py --ffi-only
 ### From `native/odbc_engine`:
 
 ```powershell
-# All tests (serial to avoid FFI global state races)
-cargo test --all-targets -- --test-threads=1
+# All library + integration tests (serial to avoid FFI global state races)
+cargo test --lib --tests -- --test-threads=1
 
 # Only FFI unit tests (fast)
 cargo test --lib ffi::tests -- --test-threads=1
 
 # With output
-cargo test --all-targets -- --test-threads=1 --nocapture
+cargo test --lib --tests -- --test-threads=1 --nocapture
 ```
+
+`cargo test --all-targets` is intentionally avoided here because this crate
+also defines Criterion benches (`[[bench]] harness = false`), and Cargo forwards
+libtest arguments such as `--test-threads=1` to those binaries. Run benches
+separately with `cargo bench`.
 
 ### Lib unit tests that require ODBC (when DSN is set)
 

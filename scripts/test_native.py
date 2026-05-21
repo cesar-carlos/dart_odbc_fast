@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ODBC Fast - Run Native Rust Tests
-Runs Rust library tests (all module tests).
+Runs Rust library and integration tests without invoking Criterion benches.
 
 Usage:
     python scripts/test_native.py
@@ -83,13 +83,13 @@ def main():
         print_error("ERROR: Cargo not found. Install Rust from https://rustup.rs/")
         return 1
 
-    cmd = ["cargo", "test", "--lib", "--", "--test-threads=1"]
-
     if args.ffi_only:
-        cmd.insert(-2, "ffi::tests")  # before "--"
+        cmd = ["cargo", "test", "--lib", "ffi::tests", "--", "--test-threads=1"]
+    else:
+        cmd = ["cargo", "test", "--lib", "--tests", "--", "--test-threads=1"]
 
     if args.release:
-        cmd.insert(2, "--release")  # cargo test --release --lib
+        cmd.insert(2, "--release")  # cargo test --release ...
 
     cmd_str = " ".join(cmd)
     print_step(f"Running: {cmd_str}")
