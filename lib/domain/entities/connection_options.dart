@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 
 /// Default maximum result buffer size in bytes (16 MB).
 ///
@@ -40,20 +41,15 @@ class ConnectionOptions {
   /// [OdbcUsageProfile.legacy] matches the historical all-null constructor.
   /// Other profiles enable login/query timeouts and transient reconnect.
   factory ConnectionOptions.fromUsageProfile(OdbcUsageProfile profile) {
-    switch (profile) {
-      case OdbcUsageProfile.legacy:
-        return const ConnectionOptions();
-      case OdbcUsageProfile.balanced:
-      case OdbcUsageProfile.balancedFlutter:
-      case OdbcUsageProfile.balancedServer:
-        return const ConnectionOptions(
-          loginTimeout: Duration(seconds: 30),
-          queryTimeout: Duration(seconds: 120),
-          autoReconnectOnConnectionLost: true,
-          maxReconnectAttempts: 3,
-          reconnectBackoff: defaultReconnectBackoff,
-        );
-    }
+    final preset = resolveOdbcUsageProfilePreset(profile);
+    return ConnectionOptions(
+      connectionTimeout: preset.connectionTimeout,
+      loginTimeout: preset.loginTimeout,
+      queryTimeout: preset.queryTimeout,
+      autoReconnectOnConnectionLost: preset.autoReconnectOnConnectionLost,
+      maxReconnectAttempts: preset.maxReconnectAttempts,
+      reconnectBackoff: preset.reconnectBackoff,
+    );
   }
 
   /// Timeout for establishing the connection. When set, used as [loginTimeout]

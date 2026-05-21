@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
@@ -17,12 +18,9 @@ import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
-const _workerTerminatedSignal = '__odbc_fast_worker_terminated__';
+export 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 
-enum AsyncBackpressureMode {
-  failFast,
-  waitForSlot,
-}
+const _workerTerminatedSignal = '__odbc_fast_worker_terminated__';
 
 class _BackpressureWaiter {
   _BackpressureWaiter();

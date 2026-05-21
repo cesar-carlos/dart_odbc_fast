@@ -16,19 +16,15 @@ Future<void> main() async {
     return;
   }
 
-  const workerCount = 4;
-  const poolSize = 4;
+  const profile = OdbcUsageProfile.highThroughput;
   const taskCount = 24;
-  const maxInFlight = 4;
   final query = _envOr('ODBC_CONCURRENCY_QUERY', 'SELECT 1 AS value');
 
-  final locator = ServiceLocator()
-    ..initialize(
-      useAsync: true,
-      asyncWorkerCount: workerCount,
-      asyncMaxPendingRequests: poolSize * 4,
-    );
+  final locator = ServiceLocator()..initialize(profile: profile);
   final service = locator.asyncService;
+  final tuning = locator.resolvedUsageProfile;
+  final poolSize = tuning.recommendedPoolMaxSize;
+  final maxInFlight = poolSize;
 
   var poolId = 0;
   try {
@@ -46,12 +42,13 @@ Future<void> main() async {
 
     _log(
       'Pool ready: poolId=$poolId, poolSize=$poolSize, '
-      'workers=$workerCount, maxInFlight=$maxInFlight',
+      'profile=${tuning.profile.name}, workers=${tuning.workerCount}, '
+      'pendingCap=${tuning.maxPendingRequests}, maxInFlight=$maxInFlight',
     );
     _log(
-      'asyncWorkerCount=$workerCount starts Dart worker isolates; the native '
-      'pool supplies separate checkouts so tasks are not serialized on one '
-      'connection.',
+      'The ${tuning.profile.name} profile starts multiple Dart worker '
+      'isolates; the native pool supplies separate checkouts so tasks are not '
+      'serialized on one connection.',
     );
     _log('Query: $query');
 

@@ -19,6 +19,7 @@
 ///   AppLogger.initialize();
 ///   final locator = ServiceLocator()..initialize();
 ///   final service = locator.service;
+///   final tuning = locator.resolvedUsageProfile;
 ///   await service.initialize();
 ///
 ///   final connResult = await service.connect(
@@ -49,10 +50,15 @@
 /// // ... use syncService; no shutdown workers unless you had enabled async
 /// ```
 ///
+/// Use `OdbcUsageProfile.highThroughput` for heavier server workloads that want
+/// a larger async worker pool and a larger recommended native pool size.
+///
 /// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
 library;
 
 export 'application/services/odbc_service.dart';
+export 'core/di/async_backpressure_mode.dart';
+export 'core/di/resolved_odbc_usage_profile.dart';
 export 'core/di/service_locator.dart';
 export 'core/utils/logger.dart';
 export 'domain/builders/connection_string_builder.dart';

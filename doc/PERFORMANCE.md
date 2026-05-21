@@ -18,6 +18,7 @@ sync, worker count, backpressure, and the shape of
 | `balanced`        | Default; apps that may open a few connections | yes   | 2       | 24          |
 | `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          |
 | `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          |
+| `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          |
 | `legacy`          | CLI, tests, or minimal isolate overhead       | no    | 1       | unbounded   |
 
 `ResultEncoding.rowMajor` remains the safe default for query payloads; prefer
@@ -168,9 +169,9 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 | `recv_timeout` + structured worker-disconnect error                                           | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover.                                                                                                                                            |
 | `read_exact` in disk-spill readback                                                           | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost.                                                                                                                                               |
 | `Mutex<GlobalState>` granularity                                                              | Most critical path (`odbc_pool_get_connection`) is unblocked. Remaining FFI surface still serialises through the global state; granularising further is tracked as future work.                                                            |
-| Async Dart worker pool (`workerCount` / `asyncWorkerCount`)                                   | Default remains `1`. Use `>1` when concurrent work uses multiple connections or pool checkouts; handle-affinity keeps same-connection work serialized.                                                                                     |
-| Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | Default remains unbounded (`null`). In services with native pools, set this to a small multiple of pool size to fail fast before the Dart worker queue hides saturation.                                                                   |
-| Async backpressure mode                                                                       | `failFast` remains the default. Use `waitForSlot` only when callers should queue briefly instead of failing immediately.                                                                                                                   |
+| Async defaults via `ServiceLocator.initialize()`                                              | Default profile is `balanced`: `workerCount = 2`, `maxPendingRequests = 24`, `backpressureMode = waitForSlot`, `backpressureTimeout = 30s`. Use another `OdbcUsageProfile` when the app shape is clearer than one-size-fits-all defaults. |
+| Direct `AsyncNativeOdbcConnection(...)` defaults                                              | Constructor defaults remain `workerCount = 1`, `maxPendingRequests = null`, and `backpressureMode = failFast`. Use `ServiceLocator` presets when you want profile-guided tuning instead of raw constructor defaults.                      |
+| Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | In services with native pools, keep the pending cap near `poolSize * 2` to `poolSize * 4` so the Dart worker queue does not hide saturation.                                                                                              |
 | Worker isolates instead of raw threads                                                        | Dart consumers should scale with `workerCount` / `asyncWorkerCount`, not hand-spawn raw isolates around one connection. More workers only reduce bottlenecks when work can be routed across multiple connections or native-pool checkouts. |
 
 ---

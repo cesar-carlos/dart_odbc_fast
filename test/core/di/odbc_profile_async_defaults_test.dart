@@ -42,5 +42,15 @@ void main() {
       expect(d.maxPendingRequests, 32);
       expect(d.backpressureTimeout, const Duration(seconds: 60));
     });
+
+    test('highThroughput uses six workers and wider queue cap', () {
+      final d = OdbcProfileAsyncDefaults.fromUsageProfile(
+        OdbcUsageProfile.highThroughput,
+      );
+      expect(d.workerCount, 6);
+      expect(d.maxPendingRequests, 48);
+      expect(d.backpressureMode, AsyncBackpressureMode.waitForSlot);
+      expect(d.backpressureTimeout, const Duration(seconds: 60));
+    });
   });
 }

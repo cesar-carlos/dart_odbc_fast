@@ -22,7 +22,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [service_api_coverage_demo.dart](service_api_coverage_demo.dart): service-level coverage for query params, prepare/execute/cancel/close, transactions/savepoint release, pooling (including detailed state), bulk insert, version/validation/capabilities, metadata cache, audit API, and async request/stream lifecycle.
 - [advanced_entities_demo.dart](advanced_entities_demo.dart): `RetryHelper`, `RetryOptions`, `PreparedStatementConfig`, `StatementOptions`, and schema metadata entities.
 - [simple_demo.dart](simple_demo.dart): low-level API with `connectWithTimeout`, structured errors, `TransactionHandle`, `CatalogQuery`, prepared statements, and result parsing.
-- [quick_start_balanced_demo.dart](quick_start_balanced_demo.dart): minimal `ServiceLocator` + `OdbcUsageProfile.balanced`, `recommendedConnectionOptions`, and optional pool hints.
+- [quick_start_balanced_demo.dart](quick_start_balanced_demo.dart): minimal `ServiceLocator` + `OdbcUsageProfile.balanced`, `recommendedConnectionOptions`, optional pool hints, and `resolvedUsageProfile` inspection.
 
 ### Async
 
@@ -30,7 +30,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [execute_async_demo.dart](execute_async_demo.dart): raw `executeAsync` and `streamAsync` for non-blocking single-query and streaming.
 - [async_service_locator_demo.dart](async_service_locator_demo.dart): async mode using `ServiceLocator` (`useAsync: true`) and `OdbcService`.
 - [high_concurrency_worker_pool_demo.dart](high_concurrency_worker_pool_demo.dart): `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections and concurrent queries.
-- [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: 4)` with native pool checkout/query/release and an explicit in-flight task limit.
+- [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)` with native pool checkout/query/release and an explicit in-flight task limit from the resolved profile.
 - [async_concurrency_benchmark.dart](async_concurrency_benchmark.dart): Stopwatch benchmark comparing `workerCount: 1`, `workerCount: 4`, native pool with an in-flight limit, streaming, row-major vs columnar result encodings, and prepared reuse.
 - [streaming_performance_benchmark.dart](streaming_performance_benchmark.dart): focused streaming benchmark comparing `streamQuery` and `streamQueryBatched` with text/json/csv output.
 

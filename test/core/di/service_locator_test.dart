@@ -22,12 +22,24 @@ void main() {
       expect(locator.asyncAuditLogger, isA<AsyncOdbcAuditLogger>());
       expect(locator.asyncNativeConnection.workerCount, equals(4));
       expect(locator.asyncNativeConnection.maxPendingRequests, equals(16));
+      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.balanced);
+      expect(locator.resolvedUsageProfile.useAsync, isTrue);
+      expect(locator.resolvedUsageProfile.workerCount, 4);
+      expect(locator.resolvedUsageProfile.maxPendingRequests, 16);
       expect(
         locator.asyncNativeConnection.backpressureMode,
         equals(AsyncBackpressureMode.waitForSlot),
       );
       expect(
+        locator.resolvedUsageProfile.backpressureMode,
+        equals(AsyncBackpressureMode.waitForSlot),
+      );
+      expect(
         locator.asyncNativeConnection.backpressureTimeout,
+        equals(const Duration(milliseconds: 250)),
+      );
+      expect(
+        locator.resolvedUsageProfile.backpressureTimeout,
         equals(const Duration(milliseconds: 250)),
       );
       locator.shutdown();
@@ -63,9 +75,16 @@ void main() {
     test('defaults to balanced async with recommended getters', () {
       final locator = ServiceLocator()..initialize();
       expect(locator.usageProfile, OdbcUsageProfile.balanced);
+      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.balanced);
       expect(locator.isAsyncMode, isTrue);
+      expect(locator.resolvedUsageProfile.useAsync, isTrue);
+      expect(locator.resolvedUsageProfile.workerCount, 2);
       expect(
         locator.recommendedConnectionOptions.queryTimeout,
+        const Duration(seconds: 120),
+      );
+      expect(
+        locator.resolvedUsageProfile.connectionOptions.queryTimeout,
         const Duration(seconds: 120),
       );
       expect(locator.recommendedPoolMaxSize, 4);
@@ -79,11 +98,32 @@ void main() {
           useAsync: false,
         );
       expect(locator.usageProfile, OdbcUsageProfile.balanced);
+      expect(locator.resolvedUsageProfile.profile, OdbcUsageProfile.balanced);
       expect(locator.isAsyncMode, isFalse);
+      expect(locator.resolvedUsageProfile.useAsync, isFalse);
+      expect(locator.resolvedUsageProfile.workerCount, 2);
       expect(
         locator.recommendedConnectionOptions.loginTimeout,
         const Duration(seconds: 30),
       );
+      locator.shutdown();
+    });
+
+    test('should_expose_high_throughput_preset_when_selected', () {
+      final locator = ServiceLocator()
+        ..initialize(
+          profile: OdbcUsageProfile.highThroughput,
+        );
+
+      expect(locator.usageProfile, OdbcUsageProfile.highThroughput);
+      expect(
+        locator.resolvedUsageProfile.profile,
+        OdbcUsageProfile.highThroughput,
+      );
+      expect(locator.isAsyncMode, isTrue);
+      expect(locator.resolvedUsageProfile.workerCount, 6);
+      expect(locator.resolvedUsageProfile.maxPendingRequests, 48);
+      expect(locator.recommendedPoolMaxSize, 12);
       locator.shutdown();
     });
   });

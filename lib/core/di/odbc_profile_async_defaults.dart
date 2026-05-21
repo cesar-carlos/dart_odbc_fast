@@ -1,5 +1,6 @@
+import 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
-import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 
 /// Resolved async worker/backpressure defaults for a usage profile.
 final class OdbcProfileAsyncDefaults {
@@ -12,38 +13,16 @@ final class OdbcProfileAsyncDefaults {
   });
 
   factory OdbcProfileAsyncDefaults.fromUsageProfile(OdbcUsageProfile profile) {
-    switch (profile) {
-      case OdbcUsageProfile.legacy:
-        return const OdbcProfileAsyncDefaults(
-          useAsync: false,
-          workerCount: 1,
-          backpressureMode: AsyncBackpressureMode.failFast,
-        );
-      case OdbcUsageProfile.balanced:
-        return const OdbcProfileAsyncDefaults(
-          useAsync: true,
-          workerCount: 2,
-          maxPendingRequests: 24,
-          backpressureMode: AsyncBackpressureMode.waitForSlot,
-          backpressureTimeout: Duration(seconds: 30),
-        );
-      case OdbcUsageProfile.balancedFlutter:
-        return const OdbcProfileAsyncDefaults(
-          useAsync: true,
-          workerCount: 1,
-          maxPendingRequests: 16,
-          backpressureMode: AsyncBackpressureMode.waitForSlot,
-          backpressureTimeout: Duration(seconds: 30),
-        );
-      case OdbcUsageProfile.balancedServer:
-        return const OdbcProfileAsyncDefaults(
-          useAsync: true,
-          workerCount: 4,
-          maxPendingRequests: 32,
-          backpressureMode: AsyncBackpressureMode.waitForSlot,
-          backpressureTimeout: Duration(seconds: 60),
-        );
-    }
+    final preset = resolveOdbcUsageProfilePreset(profile);
+    return OdbcProfileAsyncDefaults(
+      useAsync: preset.useAsync,
+      workerCount: preset.workerCount,
+      maxPendingRequests: preset.maxPendingRequests,
+      backpressureMode: preset.usesWaitForSlotBackpressure
+          ? AsyncBackpressureMode.waitForSlot
+          : AsyncBackpressureMode.failFast,
+      backpressureTimeout: preset.backpressureTimeout,
+    );
   }
 
   final bool useAsync;

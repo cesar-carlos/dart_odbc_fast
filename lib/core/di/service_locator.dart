@@ -1,5 +1,6 @@
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
+import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
@@ -20,7 +21,9 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 ///
 /// [initialize] defaults to [OdbcUsageProfile.balanced]: async mode, two
 /// workers, bounded backpressure, and [recommendedConnectionOptions] /
-/// [recommendedPoolOptions] tuned for reliability. Use
+/// [recommendedPoolOptions] tuned for reliability. Inspect
+/// [resolvedUsageProfile] to see the effective configuration after applying
+/// explicit overrides. Use
 /// [OdbcUsageProfile.legacy] for the historical sync-only defaults, or pass
 /// explicit `useAsync` / worker parameters to override profile defaults.
 ///
@@ -66,20 +69,25 @@ class ServiceLocator {
   bool _locatorInitialized = false;
   bool _useAsync = false;
   OdbcUsageProfile _activeProfile = OdbcUsageProfile.balanced;
+  ResolvedOdbcUsageProfile _resolvedUsageProfile =
+      ResolvedOdbcUsageProfile.fromUsageProfile(OdbcUsageProfile.balanced);
 
-  /// Active profile from the last [initialize] call.
+  /// Preset selected in the last [initialize] call.
   OdbcUsageProfile get usageProfile => _activeProfile;
 
-  /// Connection options aligned with [usageProfile] (timeouts, reconnect).
+  /// Effective configuration after applying [initialize] overrides.
+  ResolvedOdbcUsageProfile get resolvedUsageProfile => _resolvedUsageProfile;
+
+  /// Connection options aligned with [resolvedUsageProfile].
   ConnectionOptions get recommendedConnectionOptions =>
-      ConnectionOptions.fromUsageProfile(_activeProfile);
+      _resolvedUsageProfile.connectionOptions;
 
-  /// Pool eviction / acquire timeouts aligned with [usageProfile].
-  PoolOptions get recommendedPoolOptions =>
-      PoolOptions.fromUsageProfile(_activeProfile);
+  /// Pool eviction / acquire timeouts aligned with [resolvedUsageProfile].
+  PoolOptions get recommendedPoolOptions => _resolvedUsageProfile.poolOptions;
 
-  /// Suggested native pool `maxSize` for [usageProfile].
-  int get recommendedPoolMaxSize => _activeProfile.recommendedPoolMaxSize;
+  /// Suggested native pool `maxSize` for [resolvedUsageProfile].
+  int get recommendedPoolMaxSize =>
+      _resolvedUsageProfile.recommendedPoolMaxSize;
 
   /// Initializes all services and dependencies.
   ///
@@ -90,11 +98,12 @@ class ServiceLocator {
   /// worker pool is disposed before a new one is created. Call [shutdown] on
   /// app exit when using async mode so isolates are released promptly.
   ///
-  /// [profile] selects async worker counts, backpressure, and the shape of
-  /// [recommendedConnectionOptions] / [recommendedPoolOptions]. Omit
-  /// [useAsync], [asyncWorkerCount], [asyncMaxPendingRequests], and
+  /// [profile] selects async worker counts, backpressure, and the shape of the
+  /// recommended connection and pool options. Omit [useAsync],
+  /// [asyncWorkerCount], [asyncMaxPendingRequests], and
   /// [asyncBackpressureMode] to apply the profile defaults. Passing any of
-  /// those explicitly overrides the corresponding profile value.
+  /// those explicitly overrides the corresponding async setting while
+  /// [resolvedUsageProfile] keeps the effective result observable.
   void initialize({
     OdbcUsageProfile profile = OdbcUsageProfile.balanced,
     bool? useAsync,
@@ -140,20 +149,33 @@ class ServiceLocator {
       _asyncNativeConnection.dispose();
     }
 
+    final resolvedUsageProfile = ResolvedOdbcUsageProfile(
+      profile: profile,
+      useAsync: effectiveUseAsync,
+      workerCount: effectiveWorkers,
+      maxPendingRequests: effectiveMaxPending,
+      backpressureMode: effectiveBackpressureMode,
+      backpressureTimeout: effectiveBackpressureTimeout,
+      connectionOptions: ConnectionOptions.fromUsageProfile(profile),
+      poolOptions: PoolOptions.fromUsageProfile(profile),
+      recommendedPoolMaxSize: profile.recommendedPoolMaxSize,
+    );
+
     _activeProfile = profile;
-    _useAsync = effectiveUseAsync;
+    _resolvedUsageProfile = resolvedUsageProfile;
+    _useAsync = resolvedUsageProfile.useAsync;
     AppLogger.initialize();
 
     _nativeConnection = NativeOdbcConnection();
     _repository = OdbcRepositoryImpl(_nativeConnection);
     _service = OdbcService(_repository);
 
-    if (effectiveUseAsync) {
+    if (resolvedUsageProfile.useAsync) {
       _asyncNativeConnection = AsyncNativeOdbcConnection(
-        workerCount: effectiveWorkers,
-        maxPendingRequests: effectiveMaxPending,
-        backpressureMode: effectiveBackpressureMode,
-        backpressureTimeout: effectiveBackpressureTimeout,
+        workerCount: resolvedUsageProfile.workerCount,
+        maxPendingRequests: resolvedUsageProfile.maxPendingRequests,
+        backpressureMode: resolvedUsageProfile.backpressureMode,
+        backpressureTimeout: resolvedUsageProfile.backpressureTimeout,
       );
       _asyncRepository = OdbcRepositoryImpl(_asyncNativeConnection);
       _asyncService = OdbcService(_asyncRepository);
@@ -161,10 +183,10 @@ class ServiceLocator {
 
     AppLogger.info(
       'ServiceLocator initialized '
-      '(profile: $profile, async: $effectiveUseAsync, '
-      'asyncWorkerCount: $effectiveWorkers, '
-      'asyncMaxPendingRequests: $effectiveMaxPending, '
-      'asyncBackpressureMode: $effectiveBackpressureMode)',
+      '(profile: $profile, async: ${resolvedUsageProfile.useAsync}, '
+      'asyncWorkerCount: ${resolvedUsageProfile.workerCount}, '
+      'asyncMaxPendingRequests: ${resolvedUsageProfile.maxPendingRequests}, '
+      'asyncBackpressureMode: ${resolvedUsageProfile.backpressureMode})',
     );
 
     _locatorInitialized = true;

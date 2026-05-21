@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 
@@ -19,18 +20,12 @@ class PoolOptions {
   });
 
   factory PoolOptions.fromUsageProfile(OdbcUsageProfile profile) {
-    switch (profile) {
-      case OdbcUsageProfile.legacy:
-        return const PoolOptions();
-      case OdbcUsageProfile.balanced:
-      case OdbcUsageProfile.balancedFlutter:
-      case OdbcUsageProfile.balancedServer:
-        return const PoolOptions(
-          idleTimeout: Duration(minutes: 5),
-          maxLifetime: Duration(minutes: 30),
-          connectionTimeout: Duration(seconds: 30),
-        );
-    }
+    final preset = resolveOdbcUsageProfilePreset(profile);
+    return PoolOptions(
+      idleTimeout: preset.poolIdleTimeout,
+      maxLifetime: preset.poolMaxLifetime,
+      connectionTimeout: preset.poolConnectionTimeout,
+    );
   }
 
   /// Connections idle for longer than this are closed by the background

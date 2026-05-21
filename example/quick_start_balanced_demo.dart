@@ -17,6 +17,11 @@ Future<void> main() async {
 
   final locator = ServiceLocator()..initialize();
   final service = locator.service;
+  final tuning = locator.resolvedUsageProfile;
+  AppLogger.info(
+    'Profile=${tuning.profile.name}, workers=${tuning.workerCount}, '
+    'pendingCap=${tuning.maxPendingRequests ?? "unbounded"}',
+  );
 
   final init = await service.initialize();
   if (init.isError()) {

@@ -33,11 +33,17 @@ void main() {
     test('exports usage profile and profile factories', () {
       expect(OdbcUsageProfile.balanced.recommendedPoolMaxSize, 4);
       expect(OdbcUsageProfile.balancedServer.recommendedPoolMaxSize, 8);
+      expect(OdbcUsageProfile.highThroughput.recommendedPoolMaxSize, 12);
       final conn =
           ConnectionOptions.fromUsageProfile(OdbcUsageProfile.balanced);
       expect(conn.queryTimeout, const Duration(seconds: 120));
       final pool = PoolOptions.fromUsageProfile(OdbcUsageProfile.balanced);
       expect(pool.hasAnyOption, isTrue);
+      final resolved = ResolvedOdbcUsageProfile.fromUsageProfile(
+        OdbcUsageProfile.highThroughput,
+      );
+      expect(resolved.workerCount, 6);
+      expect(resolved.maxPendingRequests, 48);
     });
 
     test('exports driver feature helper types', () {

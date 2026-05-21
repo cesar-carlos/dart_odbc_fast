@@ -486,6 +486,7 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 | Flags columnar v2 (detecção de cabeçalho) | `lib/infrastructure/native/protocol/columnar_v2_flags.dart` |
 | `OdbcDriverFeatures` (upsert/returning/session init) | `lib/infrastructure/native/driver_capabilities_v3.dart` |
 | `XaTransactionHandle` | `lib/infrastructure/native/wrappers/xa_transaction_handle.dart` |
+| `OdbcUsageProfile` / `ResolvedOdbcUsageProfile` | `lib/domain/entities/odbc_usage_profile.dart` and `lib/core/di/resolved_odbc_usage_profile.dart` |
 
 ---
 

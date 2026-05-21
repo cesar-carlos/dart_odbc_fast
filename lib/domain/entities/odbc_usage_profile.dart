@@ -1,10 +1,13 @@
+import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+
 /// Preset tuning for `ServiceLocator.initialize` and related helpers.
 ///
 /// Use [OdbcUsageProfile.balanced] for a good default mix of responsiveness,
 /// throughput, and safety. Use [OdbcUsageProfile.legacy] to match pre-3.8
 /// defaults (sync-only, single worker, no pool/connection timeouts from
-/// presets). See `ConnectionOptions.fromUsageProfile` and
-/// `PoolOptions.fromUsageProfile`.
+/// presets). Use [OdbcUsageProfile.highThroughput] for heavier server workloads
+/// with more worker isolates and a larger recommended pool size. See
+/// `ConnectionOptions.fromUsageProfile` and `PoolOptions.fromUsageProfile`.
 enum OdbcUsageProfile {
   /// Async, two workers, moderate backpressure; universal default.
   balanced,
@@ -15,19 +18,14 @@ enum OdbcUsageProfile {
   /// Async, four workers; for services with native pools and concurrency.
   balancedServer,
 
+  /// Async, six workers; for heavier server workloads with larger pools.
+  highThroughput,
+
   /// Historical defaults: sync API, single worker, no preset timeouts/reconnect.
   legacy,
   ;
 
   /// Suggested `maxSize` for `poolCreate` when using this profile.
-  int get recommendedPoolMaxSize {
-    switch (this) {
-      case OdbcUsageProfile.balancedServer:
-        return 8;
-      case OdbcUsageProfile.balanced:
-      case OdbcUsageProfile.balancedFlutter:
-      case OdbcUsageProfile.legacy:
-        return 4;
-    }
-  }
+  int get recommendedPoolMaxSize =>
+      resolveOdbcUsageProfilePreset(this).recommendedPoolMaxSize;
 }
