@@ -546,9 +546,13 @@ mod tests {
 
     #[test]
     fn recreate_with_max_size_preserves_resolved_pool_configuration() {
-        let dsn = match std::env::var("ODBC_TEST_DSN").or_else(|_| std::env::var("ODBC_DSN")) {
-            Ok(value) => value,
-            Err(_) => {
+        let dsn = match std::env::var("ODBC_TEST_DSN")
+            .ok()
+            .or_else(|| std::env::var("ODBC_DSN").ok())
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(value) => value,
+            None => {
                 eprintln!("Skipping: ODBC_TEST_DSN / ODBC_DSN not set");
                 return;
             }
