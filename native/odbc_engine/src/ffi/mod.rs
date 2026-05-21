@@ -428,7 +428,10 @@ fn take_runnable_connection(state: &mut GlobalState, conn_id: u32) -> Result<Run
 
     if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
         *state.pooled_busy_counts.entry(entry.pool_id).or_insert(0) += 1;
-        *state.pooled_connection_busy_counts.entry(conn_id).or_insert(0) += 1;
+        *state
+            .pooled_connection_busy_counts
+            .entry(conn_id)
+            .or_insert(0) += 1;
         return Ok(RunnableConnection::Pooled {
             pool_id: entry.pool_id,
             pooled: entry.pooled,
@@ -456,10 +459,16 @@ fn restore_pooled_connection(state: &mut GlobalState, conn_id: u32, target: Runn
 }
 
 fn has_active_transaction_for_connection(state: &GlobalState, conn_id: u32) -> bool {
-    state.transactions.values().any(|txn| txn.conn_id() == conn_id)
+    state
+        .transactions
+        .values()
+        .any(|txn| txn.conn_id() == conn_id)
 }
 
-fn take_transactions_for_connection(state: &mut GlobalState, conn_id: u32) -> Vec<(u32, Transaction)> {
+fn take_transactions_for_connection(
+    state: &mut GlobalState,
+    conn_id: u32,
+) -> Vec<(u32, Transaction)> {
     let txn_ids: Vec<u32> = state
         .transactions
         .iter()
@@ -522,11 +531,7 @@ where
                 let Some(mut state) = try_lock_global_state() else {
                     return -1;
                 };
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    "Failed to lock connection".to_string(),
-                );
+                set_connection_error(&mut state, conn_id, "Failed to lock connection".to_string());
                 return -1;
             }
         };
@@ -592,10 +597,10 @@ struct GlobalState {
     pending_result_buffers: HashMap<PendingResultKey, PendingResultBuffer>,
     pools: HashMap<u32, Arc<ConnectionPool>>,
     pooled_connections: HashMap<u32, PooledConnectionState>, // pooled_conn_id -> pooled state
-    pooled_busy_counts: HashMap<u32, usize>, // pool_id -> active pooled FFI calls
-    pooled_connection_busy_counts: HashMap<u32, usize>, // pooled_conn_id -> active FFI calls
-    transaction_begins_in_progress: HashSet<u32>,       // conn_id -> transaction begin reserved
-    pooled_free_ids: HashMap<u32, Vec<u32>>, // pool_id -> reusable pooled connection IDs
+    pooled_busy_counts: HashMap<u32, usize>,                 // pool_id -> active pooled FFI calls
+    pooled_connection_busy_counts: HashMap<u32, usize>,      // pooled_conn_id -> active FFI calls
+    transaction_begins_in_progress: HashSet<u32>, // conn_id -> transaction begin reserved
+    pooled_free_ids: HashMap<u32, Vec<u32>>,      // pool_id -> reusable pooled connection IDs
     next_stream_id: u32,
     next_pool_id: u32,
     next_pooled_conn_id: u32,
@@ -1284,10 +1289,11 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
         }
 
         if let Some(conn) = state.connections.remove(&conn_id) {
-            let transactions: Vec<Transaction> = take_transactions_for_connection(&mut state, conn_id)
-                .into_iter()
-                .map(|(_, txn)| txn)
-                .collect();
+            let transactions: Vec<Transaction> =
+                take_transactions_for_connection(&mut state, conn_id)
+                    .into_iter()
+                    .map(|(_, txn)| txn)
+                    .collect();
             let stmts_to_drop: Vec<u32> = state
                 .statements
                 .iter()
@@ -2874,14 +2880,12 @@ pub extern "C" fn odbc_get_connection_dbms_info(
                 };
                 DbmsInfo::detect(conn_guard.connection())
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => DbmsInfo::detect(conn_guard.get_connection()),
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
-                }
-            }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => DbmsInfo::detect(conn_guard.get_connection()),
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3251,16 +3255,14 @@ pub extern "C" fn odbc_exec_query(
                 };
                 execute_query_with_cached_connection(&mut conn_guard, sql_str)
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => {
-                        execute_query_with_connection(conn_guard.get_connection(), sql_str)
-                    }
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => {
+                    execute_query_with_connection(conn_guard.get_connection(), sql_str)
                 }
-            }
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3617,24 +3619,22 @@ pub extern "C" fn odbc_exec_query_params(
                     execute_query_with_param_buffer(conn_guard.connection(), sql_str, params_slice)
                 }
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => {
-                        if params_slice.is_empty() {
-                            execute_query_with_connection(conn_guard.get_connection(), sql_str)
-                        } else {
-                            execute_query_with_param_buffer(
-                                conn_guard.get_connection(),
-                                sql_str,
-                                params_slice,
-                            )
-                        }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => {
+                    if params_slice.is_empty() {
+                        execute_query_with_connection(conn_guard.get_connection(), sql_str)
+                    } else {
+                        execute_query_with_param_buffer(
+                            conn_guard.get_connection(),
+                            sql_str,
+                            params_slice,
+                        )
                     }
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
                 }
-            }
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3795,7 +3795,7 @@ pub extern "C" fn odbc_exec_query_params_options(
                 Err(_) => Err(OdbcError::InternalError(
                     "Failed to lock pooled connection".to_string(),
                 )),
-            }
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3917,14 +3917,12 @@ pub extern "C" fn odbc_exec_query_multi(
                 };
                 execute_multi_result(conn_guard.connection(), sql_str)
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => execute_multi_result(conn_guard.get_connection(), sql_str),
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
-                }
-            }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => execute_multi_result(conn_guard.get_connection(), sql_str),
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -4089,18 +4087,14 @@ pub extern "C" fn odbc_exec_query_multi_params(
                 };
                 execute_multi_result_with_params(conn_guard.connection(), sql_str, &params)
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => execute_multi_result_with_params(
-                        conn_guard.get_connection(),
-                        sql_str,
-                        &params,
-                    ),
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => {
+                    execute_multi_result_with_params(conn_guard.get_connection(), sql_str, &params)
                 }
-            }
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -4251,14 +4245,12 @@ pub extern "C" fn odbc_catalog_columns(
                 };
                 list_columns(conn_guard.connection(), table_str)
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => list_columns(conn_guard.get_connection(), table_str),
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
-                }
-            }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => list_columns(conn_guard.get_connection(), table_str),
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -4608,20 +4600,18 @@ pub extern "C" fn odbc_execute(
                     fetch_size_opt,
                 )
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => execute_query_with_param_buffer_and_timeout(
-                        conn_guard.get_connection(),
-                        &sql_str,
-                        params_slice,
-                        timeout_sec,
-                        fetch_size_opt,
-                    ),
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
-                }
-            }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => execute_query_with_param_buffer_and_timeout(
+                    conn_guard.get_connection(),
+                    &sql_str,
+                    params_slice,
+                    timeout_sec,
+                    fetch_size_opt,
+                ),
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -4819,26 +4809,24 @@ pub extern "C" fn odbc_stream_start(
                         .map(crate::engine::StreamState::InMemory)
                 }
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => {
-                        if let Some(threshold) = spill_threshold_mb {
-                            executor.execute_streaming_with_spill(
-                                conn_guard.get_connection(),
-                                sql_str,
-                                Some(threshold),
-                            )
-                        } else {
-                            executor
-                                .execute_streaming(conn_guard.get_connection(), sql_str)
-                                .map(crate::engine::StreamState::InMemory)
-                        }
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => {
+                    if let Some(threshold) = spill_threshold_mb {
+                        executor.execute_streaming_with_spill(
+                            conn_guard.get_connection(),
+                            sql_str,
+                            Some(threshold),
+                        )
+                    } else {
+                        executor
+                            .execute_streaming(conn_guard.get_connection(), sql_str)
+                            .map(crate::engine::StreamState::InMemory)
                     }
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
                 }
-            }
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -5611,15 +5599,13 @@ pub extern "C" fn odbc_pool_get_connection(pool_id: c_uint) -> c_uint {
                     return 0;
                 };
 
-                state
-                    .pooled_connections
-                    .insert(
-                        conn_id,
-                        PooledConnectionState {
-                            pool_id,
-                            pooled: Arc::new(Mutex::new(pooled_wrapper)),
-                        },
-                    );
+                state.pooled_connections.insert(
+                    conn_id,
+                    PooledConnectionState {
+                        pool_id,
+                        pooled: Arc::new(Mutex::new(pooled_wrapper)),
+                    },
+                );
                 conn_id
             }
             Err(e) => {
@@ -5651,7 +5637,10 @@ pub extern "C" fn odbc_pool_release_connection(connection_id: c_uint) -> c_int {
             );
             return 1;
         }
-        if state.transaction_begins_in_progress.contains(&connection_id) {
+        if state
+            .transaction_begins_in_progress
+            .contains(&connection_id)
+        {
             set_connection_error(
                 &mut state,
                 connection_id,
@@ -5691,9 +5680,7 @@ pub extern "C" fn odbc_pool_release_connection(connection_id: c_uint) -> c_int {
             let _ = conn.rollback();
             let _ = conn.set_autocommit(true);
         } else {
-            log::warn!(
-                "Failed to lock pooled connection {connection_id} during release cleanup"
-            );
+            log::warn!("Failed to lock pooled connection {connection_id} during release cleanup");
         }
 
         let Some(mut state) = try_lock_global_state() else {
@@ -6091,16 +6078,14 @@ pub extern "C" fn odbc_bulk_insert_array(
                 };
                 bulk_insert_payload(conn_guard.connection(), &payload, conn_str)
             }
-            RunnableConnection::Pooled { pooled, .. } => {
-                match pooled.lock() {
-                    Ok(conn_guard) => {
-                        bulk_insert_payload(conn_guard.get_connection(), &payload, conn_str)
-                    }
-                    Err(_) => Err(OdbcError::InternalError(
-                        "Failed to lock pooled connection".to_string(),
-                    )),
+            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                Ok(conn_guard) => {
+                    bulk_insert_payload(conn_guard.get_connection(), &payload, conn_str)
                 }
-            }
+                Err(_) => Err(OdbcError::InternalError(
+                    "Failed to lock pooled connection".to_string(),
+                )),
+            },
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -8557,7 +8542,10 @@ mod tests {
             TransactionAccessMode::ReadWrite as c_uint,
             0,
         );
-        assert!(txn_id > 0, "begin transaction on pooled connection should work");
+        assert!(
+            txn_id > 0,
+            "begin transaction on pooled connection should work"
+        );
 
         let commit = odbc_transaction_commit(txn_id);
         assert_eq!(commit, 0, "commit on pooled transaction should succeed");
@@ -8598,7 +8586,10 @@ mod tests {
         assert_eq!(release, 0, "release should cleanup the active transaction");
 
         let commit = odbc_transaction_commit(txn_id);
-        assert_eq!(commit, 1, "stale transaction id must be invalid after release");
+        assert_eq!(
+            commit, 1,
+            "stale transaction id must be invalid after release"
+        );
 
         let close = odbc_pool_close(pool_id);
         assert_eq!(close, 0);
@@ -8645,7 +8636,10 @@ mod tests {
         assert_eq!(failure_count, 1, "exactly one begin should fail");
 
         let rollback = odbc_transaction_rollback(success_ids[0]);
-        assert_eq!(rollback, 0, "winning transaction should be rolled back cleanly");
+        assert_eq!(
+            rollback, 0,
+            "winning transaction should be rolled back cleanly"
+        );
 
         let disconnect = odbc_disconnect(conn_id);
         assert_eq!(disconnect, 0);

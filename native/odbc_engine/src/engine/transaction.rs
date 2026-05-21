@@ -351,22 +351,21 @@ impl TransactionConnection {
             SavepointDialect::SqlServer => {
                 (ENGINE_SQLSERVER.to_string(), SavepointDialect::SqlServer)
             }
-            SavepointDialect::Auto => match self.with_connection(
-                conn_id,
-                "detect transaction dialect",
-                DbmsInfo::detect,
-            ) {
-                Ok(info) => {
-                    let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
-                    (info.engine, dialect)
-                }
-                Err(e) => {
-                    log::warn!(
+            SavepointDialect::Auto => {
+                match self.with_connection(conn_id, "detect transaction dialect", DbmsInfo::detect)
+                {
+                    Ok(info) => {
+                        let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
+                        (info.engine, dialect)
+                    }
+                    Err(e) => {
+                        log::warn!(
                         "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); falling back to Sql92"
                     );
-                    (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
+                        (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
+                    }
                 }
-            },
+            }
         }
     }
 
@@ -763,14 +762,14 @@ impl Transaction {
             )));
         }
 
-        let (commit_result, autocommit_result) = self
-            .connection
-            .with_connection_mut(self.conn_id, "commit transaction", |conn| {
-                Ok((
-                    conn.commit().map_err(OdbcError::from),
-                    conn.set_autocommit(true),
-                ))
-            })?;
+        let (commit_result, autocommit_result) =
+            self.connection
+                .with_connection_mut(self.conn_id, "commit transaction", |conn| {
+                    Ok((
+                        conn.commit().map_err(OdbcError::from),
+                        conn.set_autocommit(true),
+                    ))
+                })?;
         // ALWAYS try to restore autocommit, regardless of commit outcome (B7 fix).
         // If commit failed the driver may already have rolled back and reset
         // autocommit; the call is a best-effort safety net so the connection
@@ -808,14 +807,14 @@ impl Transaction {
             )));
         }
 
-        let (rollback_result, autocommit_result) = self
-            .connection
-            .with_connection_mut(self.conn_id, "rollback transaction", |conn| {
-                Ok((
-                    conn.rollback().map_err(OdbcError::from),
-                    conn.set_autocommit(true),
-                ))
-            })?;
+        let (rollback_result, autocommit_result) =
+            self.connection
+                .with_connection_mut(self.conn_id, "rollback transaction", |conn| {
+                    Ok((
+                        conn.rollback().map_err(OdbcError::from),
+                        conn.set_autocommit(true),
+                    ))
+                })?;
         // ALWAYS restore autocommit (B7 fix), same rationale as `commit`.
         if let Err(e) = autocommit_result {
             log::error!(
@@ -1130,23 +1129,23 @@ impl Drop for Transaction {
             "Transaction on conn_id {} dropped without commit - auto-rollback",
             self.conn_id
         );
-        if let Err(e) = self
-            .connection
-            .with_connection_mut(self.conn_id, "drop transaction", |conn| {
-                if let Err(e) = conn.rollback() {
-                    log::error!(
-                        "Transaction Drop: rollback failed on conn_id {}: {e}",
-                        self.conn_id
-                    );
-                }
-                if let Err(e) = conn.set_autocommit(true) {
-                    log::error!(
-                        "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
-                        self.conn_id
-                    );
-                }
-                Ok(())
-            })
+        if let Err(e) =
+            self.connection
+                .with_connection_mut(self.conn_id, "drop transaction", |conn| {
+                    if let Err(e) = conn.rollback() {
+                        log::error!(
+                            "Transaction Drop: rollback failed on conn_id {}: {e}",
+                            self.conn_id
+                        );
+                    }
+                    if let Err(e) = conn.set_autocommit(true) {
+                        log::error!(
+                            "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
+                            self.conn_id
+                        );
+                    }
+                    Ok(())
+                })
         {
             log::error!(
                 "Transaction Drop: failed to cleanup conn_id {}: {e}",

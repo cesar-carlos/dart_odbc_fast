@@ -273,10 +273,8 @@ impl ConnectionPool {
     }
 
     fn from_runtime_config(config: PoolRuntimeConfig, max_size: u32) -> Result<Self> {
-        let manager = OdbcConnectionManager::new(
-            &config.connection_string,
-            &config.health_check_query,
-        )?;
+        let manager =
+            OdbcConnectionManager::new(&config.connection_string, &config.health_check_query)?;
         let connection_timeout = config
             .options
             .connection_timeout
