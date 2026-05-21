@@ -3,7 +3,7 @@ use odbc_engine::{
     OdbcConnection, OdbcEnvironment, ParamValue,
 };
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 
 /// Helper to decode integer values from binary data
@@ -29,7 +29,7 @@ fn decode_string(data: &[u8]) -> String {
 
 #[test]
 fn test_execution_engine_basic_query() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -86,7 +86,7 @@ fn test_execution_engine_basic_query() {
 
 #[test]
 fn test_execution_engine_prepared_cache() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -135,7 +135,7 @@ fn test_execution_engine_prepared_cache() {
 
 #[test]
 fn test_execution_engine_plugin_optimization() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -184,7 +184,7 @@ fn test_execution_engine_plugin_optimization() {
 
 #[test]
 fn test_execution_engine_row_based_encoding() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -227,7 +227,7 @@ fn test_execution_engine_row_based_encoding() {
 
 #[test]
 fn test_execution_engine_columnar_encoding() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -281,7 +281,7 @@ fn test_execution_engine_columnar_encoding() {
 
 #[test]
 fn test_execution_engine_columnar_with_compression() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -343,7 +343,7 @@ fn test_execution_engine_columnar_with_compression() {
 
 #[test]
 fn test_execution_engine_metrics_recording() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -396,7 +396,7 @@ fn test_execution_engine_metrics_recording() {
 
 #[test]
 fn test_execution_engine_tracing() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -438,7 +438,7 @@ fn test_execution_engine_tracing() {
 
 #[test]
 fn test_execution_engine_multiple_rows() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -489,7 +489,7 @@ fn test_execution_engine_multiple_rows() {
 
 #[test]
 fn test_execution_engine_null_values() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -544,7 +544,7 @@ fn test_execution_engine_null_values() {
 
 #[test]
 fn test_execution_engine_empty_result_set() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -587,7 +587,7 @@ fn test_execution_engine_empty_result_set() {
 
 #[test]
 fn test_execution_engine_mixed_data_types() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -642,7 +642,7 @@ fn test_execution_engine_mixed_data_types() {
 
 #[test]
 fn test_execution_engine_invalid_sql_returns_error() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -678,7 +678,7 @@ fn test_execution_engine_invalid_sql_returns_error() {
 
 #[test]
 fn test_exec_query_with_params_integer() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -728,7 +728,7 @@ fn test_exec_query_with_params_integer() {
 
 #[test]
 fn test_exec_query_with_params_null() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -769,7 +769,7 @@ fn test_exec_query_with_params_null() {
 
 #[test]
 fn test_exec_query_with_params_mixed_types() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -831,7 +831,7 @@ fn test_exec_query_with_params_mixed_types() {
 
 #[test]
 fn test_exec_query_with_params_more_than_five() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -892,7 +892,7 @@ fn test_exec_query_with_params_more_than_five() {
 
 #[test]
 fn test_exec_query_with_params_more_than_five_with_null() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -952,7 +952,7 @@ fn test_exec_query_with_params_more_than_five_with_null() {
 
 #[test]
 fn test_execute_multi_result_single_select() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -1004,7 +1004,7 @@ fn test_execute_multi_result_single_select() {
 
 #[test]
 fn test_execute_multi_result_multiple_result_sets() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -1065,7 +1065,7 @@ fn test_execute_multi_result_multiple_result_sets() {
 
 #[test]
 fn test_execute_multi_result_with_params_more_than_five() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -1156,7 +1156,7 @@ fn test_execute_multi_result_with_params_more_than_five() {
 
 #[test]
 fn test_execute_multi_result_with_params_more_than_five_with_null() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -1247,7 +1247,7 @@ fn test_execute_multi_result_with_params_more_than_five_with_null() {
 
 #[test]
 fn test_execution_engine_execute_query_no_plugin_uses_raw_sql() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

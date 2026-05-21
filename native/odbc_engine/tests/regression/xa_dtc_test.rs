@@ -18,7 +18,7 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, PreparedXa, XaTransac
 
 #[path = "../helpers/mod.rs"]
 mod helpers;
-use helpers::e2e::{should_run_e2e_tests, should_run_msdtc_xa_tests};
+use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_msdtc_xa_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
@@ -30,7 +30,7 @@ fn xa_dtc_sqlserver_lifecycle_smoke() {
         );
         return;
     }
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping: ENABLE_E2E_TESTS not set or DSN unavailable");
         return;
     }
@@ -69,7 +69,7 @@ fn xa_dtc_sqlserver_prepare_commit_smoke() {
         );
         return;
     }
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping: ENABLE_E2E_TESTS not set or DSN unavailable");
         return;
     }

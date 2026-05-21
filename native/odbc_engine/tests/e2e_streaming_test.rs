@@ -3,12 +3,12 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, StreamingExecutor};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
+use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
 fn test_streaming_small_result_set() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -92,7 +92,7 @@ fn test_streaming_small_result_set() {
 
 #[test]
 fn test_streaming_large_result_set() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -178,7 +178,7 @@ fn test_streaming_large_result_set() {
 
 #[test]
 fn test_streaming_multiple_columns() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -272,7 +272,7 @@ fn test_streaming_multiple_columns() {
 
 #[test]
 fn test_streaming_with_nulls() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -358,7 +358,7 @@ fn test_streaming_with_nulls() {
 
 #[test]
 fn test_streaming_different_chunk_sizes() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -425,7 +425,7 @@ fn test_streaming_different_chunk_sizes() {
 
 #[test]
 fn test_streaming_has_more() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -495,7 +495,7 @@ fn test_streaming_has_more() {
 /// one batch instead of loading the full result set.
 #[test]
 fn test_streaming_batched_lazy() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -564,7 +564,7 @@ fn test_streaming_batched_lazy() {
 /// Exercises bounded-memory path; 50k rows would use fetch_size=1000 for stress.
 #[test]
 fn test_streaming_batched_large_result() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -635,7 +635,7 @@ fn test_streaming_batched_large_result() {
 
 #[test]
 fn test_streaming_invalid_sql_returns_error() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -667,7 +667,7 @@ fn test_streaming_invalid_sql_returns_error() {
 
 #[test]
 fn test_streaming_batched_empty_result() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -713,7 +713,7 @@ fn test_streaming_batched_empty_result() {
 
 #[test]
 fn test_streaming_batched_callback_error_propagates() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -765,7 +765,7 @@ fn test_streaming_batched_callback_error_propagates() {
 /// Run with: `ODBC_STREAM_SPILL_THRESHOLD_MB=1 cargo test --test e2e_streaming_test test_streaming_spill_to_disk -- --nocapture`
 #[test]
 fn test_streaming_spill_to_disk() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -846,7 +846,7 @@ fn test_streaming_spill_to_disk() {
 #[ignore = "Long-running: 50k rows; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_streaming_50k_rows_memory_validation() {
     if !should_run_slow_e2e_tests() {
-        if !should_run_e2e_tests() {
+        if !should_run_sqlserver_e2e_tests() {
             eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
         } else {
             eprintln!("⚠️  Skipping slow streaming validation: set ENABLE_SLOW_E2E_TESTS=1");

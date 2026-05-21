@@ -24,7 +24,7 @@
 # Tests:  docker compose --profile test run --rm test-runner \
 #             cargo test --features ffi-tests -- --include-ignored
 
-ARG RUST_VERSION=1.86
+ARG RUST_VERSION=1.93
 ARG INCLUDE_ORACLE=false
 
 FROM rust:${RUST_VERSION}-bookworm
@@ -187,6 +187,14 @@ RUN if [ "$INCLUDE_ORACLE" = "true" ] || [ "$INCLUDE_ORACLE" = "1" ]; then \
 #         > /etc/apt/sources.list.d/dart_stable.list \
 #     && apt-get update && apt-get install -y dart \
 #     && rm -rf /var/lib/apt/lists/*
+
+# Pre-install the repo toolchain so `cargo test` does not re-download rustc on
+# every `docker compose run` (rust-toolchain.toml uses profile "minimal").
+COPY rust-toolchain.toml /workspace/rust-toolchain.toml
+RUN rustup toolchain install 1.93.0 --profile minimal \
+    && rustup component add rustfmt clippy rust-std rustc cargo --toolchain 1.93.0
+
+ENV RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu
 
 # Default workdir is mounted by docker-compose; nothing to copy here.
 WORKDIR /workspace

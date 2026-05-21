@@ -11,12 +11,12 @@ use odbc_engine::engine::{execute_query_with_cached_connection, OdbcConnection, 
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
+use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
 fn test_statement_reuse_infrastructure() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -75,7 +75,7 @@ fn test_statement_reuse_infrastructure() {
 #[ignore = "E2E benchmark; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_statement_reuse_repetitive_benchmark() {
     if !should_run_slow_e2e_tests() {
-        if !should_run_e2e_tests() {
+        if !should_run_sqlserver_e2e_tests() {
             eprintln!("⚠️  Skipping E2E benchmark: SQL Server not available");
         } else {
             eprintln!("⚠️  Skipping slow E2E benchmark: set ENABLE_SLOW_E2E_TESTS=1");

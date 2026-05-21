@@ -4,12 +4,12 @@ use odbc_engine::engine::{execute_query_with_connection, OdbcConnection, OdbcEnv
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
 fn test_basic_connection() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -42,7 +42,7 @@ fn test_basic_connection() {
 
 #[test]
 fn test_basic_select_one() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -102,7 +102,7 @@ fn test_basic_select_one() {
 
 #[test]
 fn test_multiple_queries_same_connection() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -160,7 +160,7 @@ fn test_multiple_queries_same_connection() {
 
 #[test]
 fn test_reconnect() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -243,7 +243,7 @@ fn test_reconnect() {
 
 #[test]
 fn test_database_info() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;

@@ -1,5 +1,5 @@
 mod helpers;
-use helpers::e2e::{detect_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{detect_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::{
     engine::{IsolationLevel, Savepoint},
@@ -24,7 +24,7 @@ fn decode_integer(data: &[u8]) -> i32 {
 #[test]
 #[ignore]
 fn test_transaction_commit() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -93,7 +93,7 @@ fn test_transaction_commit() {
 #[test]
 #[ignore]
 fn test_transaction_rollback() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -158,7 +158,7 @@ fn test_transaction_rollback() {
 #[test]
 #[ignore]
 fn test_transaction_auto_rollback_on_error() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -224,7 +224,7 @@ fn test_transaction_auto_rollback_on_error() {
 #[test]
 #[ignore]
 fn test_savepoint() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -324,7 +324,7 @@ fn test_savepoint() {
 
 #[test]
 fn test_with_transaction_commit_on_success() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -385,7 +385,7 @@ fn test_with_transaction_commit_on_success() {
 
 #[test]
 fn test_with_transaction_rollback_on_error() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -453,7 +453,7 @@ fn test_with_transaction_rollback_on_error() {
 
 #[test]
 fn test_begin_transaction_all_isolation_levels() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

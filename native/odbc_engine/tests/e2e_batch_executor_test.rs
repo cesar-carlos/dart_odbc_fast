@@ -4,14 +4,20 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::should_run_sqlserver_e2e_tests;
 use helpers::env::get_sqlserver_test_dsn;
+
+fn skip_unless_sqlserver_e2e() -> bool {
+    if !should_run_sqlserver_e2e_tests() {
+        eprintln!("Skipping: SQL Server E2E DSN not available (set ODBC_TEST_DSN or SQLSERVER_TEST_*)");
+        return true;
+    }
+    false
+}
 
 #[test]
 fn test_execute_batch_single_query() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -67,9 +73,7 @@ fn test_execute_batch_single_query() {
 
 #[test]
 fn test_execute_batch_multiple_queries() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -131,9 +135,7 @@ fn test_execute_batch_multiple_queries() {
 
 #[test]
 fn test_execute_batch_different_result_types() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -200,9 +202,7 @@ fn test_execute_batch_different_result_types() {
 
 #[test]
 fn test_execute_batch_empty_result() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -254,9 +254,7 @@ fn test_execute_batch_empty_result() {
 
 #[test]
 fn test_execute_batch_optimized_single_execution() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -312,9 +310,7 @@ fn test_execute_batch_optimized_single_execution() {
 
 #[test]
 fn test_execute_batch_optimized_multiple_executions() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -372,9 +368,7 @@ fn test_execute_batch_optimized_multiple_executions() {
 
 #[test]
 fn test_execute_batch_optimized_with_batch_size_chunking() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -437,9 +431,7 @@ fn test_execute_batch_optimized_with_batch_size_chunking() {
 
 #[test]
 fn test_execute_batch_optimized_multiple_columns() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -499,9 +491,7 @@ fn test_execute_batch_optimized_multiple_columns() {
 
 #[test]
 fn test_execute_batch_optimized_more_than_five_params() {
-    if !should_run_e2e_tests() {
-        eprintln!("âš ï¸  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -557,9 +547,7 @@ fn test_execute_batch_optimized_more_than_five_params() {
 
 #[test]
 fn test_execute_batch_optimized_more_than_five_params_with_null() {
-    if !should_run_e2e_tests() {
-        eprintln!("âš ï¸  Skipping E2E test: SQL Server not available");
-        eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");
@@ -616,8 +604,7 @@ fn test_execute_batch_optimized_more_than_five_params_with_null() {
 
 #[test]
 fn test_execute_batch_query_fails_midway() {
-    if !should_run_e2e_tests() {
-        eprintln!("⚠️  Skipping E2E test: SQL Server not available");
+    if skip_unless_sqlserver_e2e() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("Failed to build SQL Server connection string");

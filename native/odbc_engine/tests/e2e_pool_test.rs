@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod helpers;
-use helpers::e2e::{should_run_e2e_tests, should_run_slow_e2e_tests};
+use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_slow_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 /// When the DSN is wrong or the server is cold, r2d2's default 30s acquire
@@ -18,7 +18,7 @@ fn e2e_pool_options() -> PoolOptions {
 
 #[test]
 fn test_pool_creation() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -42,7 +42,7 @@ fn test_pool_creation() {
 
 #[test]
 fn test_pool_get_connection() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -75,7 +75,7 @@ fn test_pool_get_connection() {
 
 #[test]
 fn test_pool_health_check() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -95,7 +95,7 @@ fn test_pool_health_check() {
 
 #[test]
 fn test_pool_state_initial() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -123,7 +123,7 @@ fn test_pool_state_initial() {
 
 #[test]
 fn test_pool_state_after_get() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -196,7 +196,7 @@ fn test_pool_state_after_get() {
 
 #[test]
 fn test_pool_multiple_connections() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -271,7 +271,7 @@ fn test_pool_multiple_connections() {
 
 #[test]
 fn test_pool_connection_reuse() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -325,7 +325,7 @@ fn test_pool_connection_reuse() {
 
 #[test]
 fn test_pool_max_size_limit() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -379,7 +379,7 @@ fn test_pool_max_size_limit() {
 
 #[test]
 fn test_pool_concurrent_access() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -453,7 +453,7 @@ fn test_pool_concurrent_access() {
 /// Connection held past max_lifetime is evicted on return; next get() creates fresh connection.
 #[test]
 fn test_pool_eviction_max_lifetime() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -498,7 +498,7 @@ fn test_pool_eviction_max_lifetime() {
 #[ignore = "Long-running stress; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_checkout_release() {
     if !should_run_slow_e2e_tests() {
-        if !should_run_e2e_tests() {
+        if !should_run_sqlserver_e2e_tests() {
             eprintln!("⚠️  Skipping: ENABLE_E2E_TESTS not set or SQL Server unavailable");
         } else {
             eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");
@@ -568,7 +568,7 @@ fn test_pool_stress_checkout_release() {
 /// This ensures connections are in a clean state for reuse.
 #[test]
 fn test_pool_transaction_reset_state() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -606,7 +606,7 @@ fn test_pool_transaction_reset_state() {
 #[ignore = "Stress test; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_high_contention() {
     if !should_run_slow_e2e_tests() {
-        if !should_run_e2e_tests() {
+        if !should_run_sqlserver_e2e_tests() {
             eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         } else {
             eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");
@@ -680,7 +680,7 @@ fn test_pool_stress_high_contention() {
 /// Validates that get() returns error when no connections available within timeout.
 #[test]
 fn test_pool_timeout_when_exhausted() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -732,7 +732,7 @@ fn test_pool_timeout_when_exhausted() {
 #[ignore = "Stress test; set ENABLE_SLOW_E2E_TESTS=1 + --ignored"]
 fn test_pool_stress_rapid_churn() {
     if !should_run_slow_e2e_tests() {
-        if !should_run_e2e_tests() {
+        if !should_run_sqlserver_e2e_tests() {
             eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         } else {
             eprintln!("⚠️  Skipping slow pool stress test: set ENABLE_SLOW_E2E_TESTS=1");

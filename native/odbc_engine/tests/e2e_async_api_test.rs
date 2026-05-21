@@ -15,12 +15,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
 fn test_async_query_returns_same_as_sync() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set ODBC_TEST_DSN or SQLSERVER_TEST_* environment variables");
         return;
@@ -64,7 +64,7 @@ fn test_async_query_returns_same_as_sync() {
 
 #[test]
 fn test_async_connection_lifecycle() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set ODBC_TEST_DSN or SQLSERVER_TEST_* environment variables");
         return;
@@ -114,7 +114,7 @@ fn test_async_error_propagation() {
 
 #[test]
 fn test_async_parallel_operations() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set ODBC_TEST_DSN or SQLSERVER_TEST_* environment variables");
         return;
@@ -151,7 +151,7 @@ fn test_async_parallel_operations() {
 
 #[test]
 fn test_async_ffi_execute_poll_get_result_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -219,7 +219,7 @@ fn test_async_ffi_execute_poll_get_result_e2e() {
 
 #[test]
 fn test_async_ffi_cancel_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -276,7 +276,7 @@ fn test_async_ffi_cancel_e2e() {
 /// Validates status/result/free lifecycle for all requests.
 #[test]
 fn test_async_ffi_10_plus_concurrent_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -377,7 +377,7 @@ fn test_async_ffi_10_plus_concurrent_e2e() {
 
 #[test]
 fn test_async_ffi_execute_params_null_valid_invalid_and_small_buffer_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping E2E async params test: SQL Server not available");
         return;
     }
@@ -496,7 +496,7 @@ fn test_async_ffi_execute_params_null_valid_invalid_and_small_buffer_e2e() {
 
 #[test]
 fn test_async_ffi_execute_params_cancel_free_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping E2E async params cancel test: SQL Server not available");
         return;
     }
@@ -575,7 +575,7 @@ fn _wait_ready(request_id: c_uint) {
 /// E2E benchmark: compare async lifecycle overhead vs sync FFI calls.
 #[test]
 fn test_async_vs_sync_overhead_e2e() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping E2E benchmark: SQL Server not available");
         return;
     }

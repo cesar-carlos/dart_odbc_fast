@@ -12,7 +12,7 @@ use odbc_engine::protocol::BinaryProtocolDecoder;
 use std::ffi::CString;
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 fn decode_int(buf: &[u8]) -> i32 {
@@ -24,7 +24,7 @@ fn decode_int(buf: &[u8]) -> i32 {
 
 #[test]
 fn test_savepoint_create_and_rollback() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: no DSN available");
         return;
     }
@@ -115,7 +115,7 @@ fn test_savepoint_create_and_rollback() {
 
 #[test]
 fn test_savepoint_release() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("DSN not set");

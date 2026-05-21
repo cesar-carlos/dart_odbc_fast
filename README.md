@@ -1003,7 +1003,7 @@ dart test test/stress/
 # validation
 dart test test/validation/
 
-# benchmarks
+# benchmarks (or: python scripts/run_dart_benchmarks.py --smoke --harness)
 dart run benchmarks/m1_baseline.dart
 dart run benchmarks/m2_performance.dart
 

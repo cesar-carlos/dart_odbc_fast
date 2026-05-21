@@ -9,7 +9,8 @@
 #   pwsh scripts/docker_e2e.ps1 -Engine mssql
 #   pwsh scripts/docker_e2e.ps1 -Engine db2        # (starts Db2 profile; use test_multi_db_ filter for smoke)
 #   pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_pg_
-#   pwsh scripts/docker_e2e.ps1 -Quick              # same DBs, no --include-ignored (skips long #[ignore] stress)
+#   pwsh scripts/docker_e2e.ps1 -Quick              # no --include-ignored (skips long #[ignore] stress)
+#   pwsh scripts/docker_e2e.ps1 -Full               # entire cargo test matrix (~10-15 min, single-threaded)
 
 [CmdletBinding()]
 param(
@@ -31,9 +32,12 @@ param(
     [switch]$SmokeOnly,
 
     # Run `cargo test` without `--include-ignored` so `#[ignore]` cases (e.g.
-    # 10k-row bulk transaction stress) stay skipped. Full matrix parity for
-    # CI remains the default when this switch is not set.
-    [switch]$Quick
+    # 10k-row bulk transaction stress) stay skipped.
+    [switch]$Quick,
+
+    # Run the full `cargo test --features ffi-tests` matrix with
+    # `--include-ignored --test-threads=1` (slow; local default uses CI filters).
+    [switch]$Full
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,11 +85,36 @@ if (-not $NoBuild) {
 
 # -- Compose run --------------------------------------------------------
 
+# CI uses focused filters per engine; the old unfiltered default ran 1200+ lib
+# tests plus every integration target serially (~10-15 min).
+$filterByEngine = @{
+    postgres = 'test_e2e_xa_postgresql'
+    mysql    = 'test_e2e_xa_mysql'
+    mariadb  = 'test_e2e_xa_mysql'
+    mssql    = 'test_e2e_transaction_access_mode'
+    db2      = 'test_multi_db_'
+    oracle   = 'test_e2e_xa_oracle'
+}
+
 if ($SmokeOnly) {
     $cargoCmd = 'cargo test --lib --features ' + $Features + ' transaction -- --test-threads=1'
 } else {
-    $filterArg = if ($TestFilter) { " $TestFilter" } else { '' }
-    $extraArgs = if ($Quick) { '--test-threads=1' } else { '--include-ignored --test-threads=1' }
+    $effectiveFilter = $TestFilter
+    if (-not $effectiveFilter -and -not $Full) {
+        $effectiveFilter = $filterByEngine[$Engine]
+        Write-Step "Filter: $effectiveFilter (CI scope; use -Full for entire suite, -TestFilter to override)"
+    } elseif ($Full) {
+        Write-Step 'Mode: Full suite (all integration targets, --include-ignored, --test-threads=1)'
+    }
+
+    $filterArg = if ($effectiveFilter) { " $effectiveFilter" } else { '' }
+    if ($Full) {
+        $extraArgs = '--include-ignored --test-threads=1'
+    } elseif ($Quick) {
+        $extraArgs = '--test-threads=1'
+    } else {
+        $extraArgs = '--test-threads=4'
+    }
     $cargoCmd = "cargo test --features $Features$filterArg -- $extraArgs"
 }
 
@@ -94,6 +123,7 @@ Write-Step "Inside container: $cargoCmd"
 docker compose --profile $composeProfile run --rm `
     -e "ODBC_TEST_DSN=$dsn" `
     -e 'ENABLE_E2E_TESTS=1' `
+    -e 'RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu' `
     $runnerService bash -c $cargoCmd
 
 $exit = $LASTEXITCODE

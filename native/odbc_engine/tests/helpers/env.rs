@@ -48,7 +48,9 @@ pub fn build_sqlserver_conn_str(
 /// Get SQL Server connection string for E2E tests
 /// Uses environment variables or provided defaults
 pub fn get_sqlserver_test_dsn() -> Option<String> {
-    if let Some(dsn) = odbc_test_dsn_for_engine(&["sql server", "sqlserver", "odbc driver 17"]) {
+    if let Some(dsn) =
+        odbc_test_dsn_for_engine(&["sql server", "sqlserver", "odbc driver 17", "odbc driver 18"])
+    {
         return Some(dsn);
     }
     if let Some(dsn) = get_test_dsn() {
@@ -62,6 +64,8 @@ pub fn get_sqlserver_test_dsn() -> Option<String> {
         {
             return Some(dsn);
         }
+        // Active ODBC_TEST_DSN targets another engine; do not fall back to SQL Server defaults.
+        return None;
     }
 
     // Try individual environment variables

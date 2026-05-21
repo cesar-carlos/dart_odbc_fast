@@ -166,6 +166,9 @@ services:
       # complete XA / 2PC grammar exercised by the v3.4.0 tests. Override
       # by passing `-e ODBC_TEST_DSN=...` on the docker compose run line.
       ODBC_TEST_DSN: "Driver={PostgreSQL Unicode};Server=postgres;Port=5432;Database=odbc_test;UID=postgres;PWD=postgres;"
+      # Use the image toolchain; do not let rust-toolchain.toml "minimal" trigger
+      # a multi-minute rustc download on each ephemeral `compose run`.
+      RUSTUP_TOOLCHAIN: "1.93.0-x86_64-unknown-linux-gnu"
       RUST_BACKTRACE: "1"
     depends_on:
       postgres:

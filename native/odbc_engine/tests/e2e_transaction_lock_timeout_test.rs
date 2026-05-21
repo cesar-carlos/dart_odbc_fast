@@ -10,7 +10,7 @@
 //! - **Sub-second values are honoured** (no silent rounding to 1s on
 //!   engines that natively express ms).
 //!
-//! All tests are gated by `should_run_e2e_tests()`; without a DSN they
+//! All tests are gated by `should_run_sqlserver_e2e_tests()`; without a DSN they
 //! early-return and the suite stays green on machines without ODBC
 //! configured. Engines outside the SQL Server matrix exercise this path
 //! through the unit tests in `transaction.rs::tests`.
@@ -21,7 +21,7 @@ use odbc_engine::engine::{
 };
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 /// `LockTimeout::engine_default()` must NOT emit any `SET` and the
@@ -30,7 +30,7 @@ use helpers::env::get_sqlserver_test_dsn;
 /// `apply_lock_timeout` can't silently introduce a redundant SQL.
 #[test]
 fn test_e2e_lock_timeout_engine_default_is_pure_noop_on_sqlserver() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -70,7 +70,7 @@ fn test_e2e_lock_timeout_engine_default_is_pure_noop_on_sqlserver() {
 /// regression test of the wire format.
 #[test]
 fn test_e2e_lock_timeout_explicit_value_is_accepted_by_sqlserver() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -118,7 +118,7 @@ fn test_e2e_lock_timeout_explicit_value_is_accepted_by_sqlserver() {
 /// granular, so we just verify the round trip.
 #[test]
 fn test_e2e_lock_timeout_one_millisecond_round_trip_on_sqlserver() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -158,7 +158,7 @@ fn test_e2e_lock_timeout_one_millisecond_round_trip_on_sqlserver() {
 /// helper is fully backwards compatible.
 #[test]
 fn test_e2e_lock_timeout_v33_path_still_works_unchanged() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }

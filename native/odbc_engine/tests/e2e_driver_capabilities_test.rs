@@ -3,12 +3,12 @@ use odbc_engine::engine::core::DriverCapabilities;
 use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
 fn test_driver_capabilities_detect() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         eprintln!("   Set SQLSERVER_TEST_* environment variables or ODBC_TEST_DSN");
         return;
@@ -90,7 +90,7 @@ fn test_driver_capabilities_detect() {
 
 #[test]
 fn test_driver_capabilities_detect_multiple_times() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -161,7 +161,7 @@ fn test_driver_capabilities_detect_multiple_times() {
 
 #[test]
 fn test_driver_capabilities_clone() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -213,7 +213,7 @@ fn test_driver_capabilities_clone() {
 
 #[test]
 fn test_driver_capabilities_debug() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -282,7 +282,7 @@ fn test_driver_capabilities_debug() {
 
 #[test]
 fn test_driver_capabilities_with_different_connections() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

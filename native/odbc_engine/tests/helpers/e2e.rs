@@ -209,6 +209,15 @@ fn env_flag_enabled(key: &str) -> bool {
     std::env::var(key).ok().as_deref().and_then(parse_env_bool) == Some(true)
 }
 
+/// True when E2E is enabled and the active DSN targets SQL Server.
+#[allow(dead_code)]
+pub fn should_run_sqlserver_e2e_tests() -> bool {
+    if !env_flag_enabled("ENABLE_E2E_TESTS") {
+        return false;
+    }
+    is_database_type(DatabaseType::SqlServer) && get_sqlserver_test_dsn().is_some()
+}
+
 /// Checks whether E2E tests should run.
 /// Runs only when ENABLE_E2E_TESTS is explicitly enabled.
 #[allow(dead_code)] // Test helper API; used by e2e tests when ENABLE_E2E_TESTS is set

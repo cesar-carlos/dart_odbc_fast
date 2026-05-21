@@ -10,6 +10,7 @@ Usage:
     python scripts/run_dart_benchmarks.py --heavy --rows 50000
     python scripts/run_dart_benchmarks.py --smoke --compare
     python scripts/run_dart_benchmarks.py --rust-micro
+    python scripts/run_dart_benchmarks.py --harness
 """
 
 from __future__ import annotations
@@ -217,6 +218,11 @@ def main() -> int:
         action="store_true",
         help="Run dart test test/performance/ (no DSN)",
     )
+    parser.add_argument(
+        "--harness",
+        action="store_true",
+        help="Run benchmarks/m1_baseline.dart and m2_performance.dart (DSN for m2)",
+    )
     args = parser.parse_args()
 
     if not any(
@@ -225,6 +231,7 @@ def main() -> int:
             args.heavy,
             args.rust_micro,
             args.protocol,
+            args.harness,
         )
     ):
         args.smoke = True
@@ -249,7 +256,7 @@ def main() -> int:
             return code
         print()
 
-    needs_dsn = args.smoke or args.heavy
+    needs_dsn = args.smoke or args.heavy or args.harness
     if resolve_dart() is None:
         print_error("dart not found on PATH")
         return 1
@@ -259,6 +266,14 @@ def main() -> int:
         return 1
 
     exit_code = 0
+    if args.harness:
+        print_step("benchmark_harness m1_baseline")
+        if run(["dart", "run", "benchmarks/m1_baseline.dart"], root) != 0:
+            exit_code = 1
+        print_step("benchmark_harness m2_performance")
+        if run(["dart", "run", "benchmarks/m2_performance.dart"], root) != 0:
+            exit_code = 1
+
     if args.smoke:
         if run_streaming(root, "SELECT 1 AS value", "smoke") != 0:
             exit_code = 1

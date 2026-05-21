@@ -1,55 +1,16 @@
 import 'dart:io';
 
-import 'package:benchmark_harness/benchmark_harness.dart';
-import 'package:meta/meta.dart';
-import 'package:odbc_fast/odbc_fast.dart';
+import 'odbc_async_benchmarks.dart';
 
-class InitBenchmark extends BenchmarkBase {
-  InitBenchmark() : super('ODBC Init');
-  late ServiceLocator locator;
-
-  @override
-  void setup() {
-    locator = ServiceLocator();
-    locator.initialize();
-  }
-
-  @override
-  void run() {
-    unawaited(locator.service.initialize());
-  }
-
-  @override
-  void teardown() {}
-}
-
-class ConnectBenchmark extends BenchmarkBase {
-  ConnectBenchmark(this.connectionString) : super('ODBC Connect');
-  late ServiceLocator locator;
-  final String connectionString;
-
-  @override
-  void setup() {
-    locator = ServiceLocator();
-    locator.initialize();
-    locator.service.initialize();
-  }
-
-  @override
-  void run() {
-    unawaited(locator.service.connect(connectionString));
-  }
-}
-
-void main() {
-  final initBench = InitBenchmark();
+Future<void> main() async {
+  final initBench = OdbcInitBenchmark();
   print('Init benchmark:');
-  initBench.report();
+  await initBench.report();
 
   final connString = Platform.environment['ODBC_TEST_DSN'] ?? '';
   if (connString.isNotEmpty) {
-    final connectBench = ConnectBenchmark(connString);
+    final connectBench = OdbcConnectBenchmark(connString);
     print('Connect benchmark:');
-    connectBench.report();
+    await connectBench.report();
   }
 }

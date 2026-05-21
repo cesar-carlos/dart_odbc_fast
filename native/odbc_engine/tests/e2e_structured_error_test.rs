@@ -1,12 +1,15 @@
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{
+    get_connection_and_db_type, should_run_e2e_tests, should_run_sqlserver_e2e_tests,
+    DatabaseType,
+};
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};
 
 #[test]
 #[ignore]
 fn test_structured_error_preserves_sqlstate() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -66,7 +69,18 @@ fn test_structured_error_preserves_sqlstate() {
 #[test]
 #[ignore]
 fn test_structured_error_connection_failure() {
-    let invalid_conn_str = "Driver={SQL Server};Server=invalid_host_12345;Database=test;";
+    if !should_run_e2e_tests() {
+        eprintln!("Skipping: E2E not enabled");
+        return;
+    }
+
+    let invalid_conn_str = match get_connection_and_db_type() {
+        Some((_, DatabaseType::PostgreSQL)) => {
+            "Driver={PostgreSQL Unicode};Server=invalid_host_12345;Port=5432;Database=odbc_test;UID=postgres;PWD=postgres;"
+        }
+        _ => "Driver={SQL Server};Server=invalid_host_12345;Database=test;",
+    };
+
     let env = OdbcEnvironment::new();
     env.init().expect("init");
     let handles = env.get_handles();
@@ -85,17 +99,22 @@ fn test_structured_error_connection_failure() {
             !structured.message.is_empty(),
             "connection error message must be non-empty"
         );
-        assert!(
-            structured.native_code != 0,
-            "native error code should be set"
-        );
+        // unixODBC driver-manager errors may report native_code 0 (SQLSTATE 01000).
+        if structured.native_code == 0 {
+            assert!(
+                structured.sqlstate != [0u8; 5],
+                "when native_code is 0, SQLSTATE must still be populated"
+            );
+        } else {
+            assert_ne!(structured.native_code, 0, "native error code should be set");
+        }
     }
 }
 
 #[test]
 #[ignore]
 fn test_structured_error_syntax_error() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -137,7 +156,7 @@ fn test_structured_error_syntax_error() {
 #[test]
 #[ignore]
 fn test_structured_error_table_not_found() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -174,7 +193,7 @@ fn test_structured_error_table_not_found() {
 #[test]
 #[ignore]
 fn test_structured_error_column_not_found() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -225,7 +244,7 @@ fn test_structured_error_column_not_found() {
 #[test]
 #[ignore]
 fn test_structured_error_type_mismatch() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -279,7 +298,7 @@ fn test_structured_error_type_mismatch() {
 #[test]
 #[ignore]
 fn test_structured_error_null_constraint_violation() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

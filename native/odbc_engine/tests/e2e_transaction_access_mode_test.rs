@@ -16,7 +16,7 @@
 //!   is exercised against a live DB in CI, but the cross-engine matrix
 //!   is documented inline so the gap is visible.
 //!
-//! All tests are gated by `should_run_e2e_tests()`; without a DSN they
+//! All tests are gated by `should_run_sqlserver_e2e_tests()`; without a DSN they
 //! early-return and the suite stays green on machines without ODBC
 //! configured.
 
@@ -27,7 +27,7 @@ use odbc_engine::engine::{
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 
 /// Helper: pull a single i32 cell out of a binary protocol buffer.
@@ -50,7 +50,7 @@ fn read_single_i32(buffer: &[u8]) -> i32 {
 /// argument (i.e. the v1 entry point).
 #[test]
 fn test_e2e_access_mode_default_read_write_preserves_v1_behaviour() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -91,7 +91,7 @@ fn test_e2e_access_mode_default_read_write_preserves_v1_behaviour() {
 /// responsible for not issuing DML when it asked for read-only mode.
 #[test]
 fn test_e2e_access_mode_read_only_is_noop_on_sqlserver() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -145,7 +145,7 @@ fn test_e2e_access_mode_read_only_is_noop_on_sqlserver() {
 /// callers never had a way to opt into read-only mode.
 #[test]
 fn test_e2e_access_mode_v1_path_defaults_to_read_write() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }
@@ -182,7 +182,7 @@ fn test_e2e_access_mode_v1_path_defaults_to_read_write() {
 /// in the future is a one-line `cargo test` away.
 #[test]
 fn test_e2e_access_mode_read_only_on_engines_with_native_hint() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping: no DSN");
         return;
     }

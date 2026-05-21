@@ -1,6 +1,6 @@
 /// Concurrency tests: pool access and query execution from multiple threads.
 mod helpers;
-use helpers::e2e::should_run_e2e_tests;
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::env::get_sqlserver_test_dsn;
 use odbc_engine::pool::ConnectionPool;
 use std::sync::Arc;
@@ -11,8 +11,11 @@ const NUM_THREADS: usize = 4;
 #[test]
 #[ignore]
 fn test_concurrent_pool_access() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping: no ODBC DSN configured");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("DSN");
@@ -38,8 +41,11 @@ fn test_concurrent_pool_access() {
 #[test]
 #[ignore]
 fn test_concurrent_query_execution() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("Skipping: no ODBC DSN configured");
+        return;
+    }
+    if !is_database_type(DatabaseType::SqlServer) {
         return;
     }
     let conn_str = get_sqlserver_test_dsn().expect("DSN");

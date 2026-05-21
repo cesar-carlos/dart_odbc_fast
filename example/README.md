@@ -74,6 +74,17 @@ root:
 dart test test/performance/protocol_performance_test.dart
 ```
 
+`benchmark_harness` init/connect micro-benches (shared
+`benchmarks/odbc_async_benchmarks.dart`):
+
+```bash
+python scripts/run_dart_benchmarks.py --protocol --smoke --harness
+dart run benchmarks/m1_baseline.dart
+dart run benchmarks/m2_performance.dart
+```
+
+See [doc/PERFORMANCE.md](../doc/PERFORMANCE.md) for the full benchmark matrix.
+
 The `P4.1` benchmark covers row-major parsing, columnar parsing, frame
 accumulation with small chunks, and streaming multi-result decoding.
 

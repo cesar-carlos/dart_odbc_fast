@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pool resize config loss:** `poolSetSize(...)` now recreates the native pool
   from the resolved runtime config snapshot, preserving `PoolOptions`, checkout
   validation, and any configured health-check query after resize.
+- **`benchmark_harness` m1/m2 scripts:** restored compilation and meaningful
+  timings by using `AsyncBenchmarkBase`, shared `benchmarks/odbc_async_benchmarks.dart`,
+  connect/disconnect per iteration, and `scripts/run_dart_benchmarks.py --harness`.
 
 ## [3.7.0] - 2026-05-14
 

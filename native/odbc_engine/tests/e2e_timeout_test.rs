@@ -9,12 +9,12 @@
 use odbc_engine::engine::{execute_query_with_params_and_timeout, OdbcConnection, OdbcEnvironment};
 
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 
 #[test]
 fn test_timeout_enforcement_short_timeout_fails() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -56,7 +56,7 @@ fn test_timeout_enforcement_short_timeout_fails() {
 
 #[test]
 fn test_timeout_success_sufficient_timeout_succeeds() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

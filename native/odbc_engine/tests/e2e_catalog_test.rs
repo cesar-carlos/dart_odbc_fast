@@ -1,5 +1,5 @@
 mod helpers;
-use helpers::e2e::{is_database_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{is_database_type, should_run_sqlserver_e2e_tests, DatabaseType};
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::engine::{
     execute_query_with_connection, get_type_info, list_columns, list_tables, OdbcConnection,
@@ -9,7 +9,7 @@ use odbc_engine::BinaryProtocolDecoder;
 
 #[test]
 fn test_catalog_list_tables() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -39,7 +39,7 @@ fn test_catalog_list_tables() {
 
 #[test]
 fn test_catalog_list_tables_schema_filter() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -69,7 +69,7 @@ fn test_catalog_list_tables_schema_filter() {
 
 #[test]
 fn test_catalog_list_columns() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -121,7 +121,7 @@ fn test_catalog_list_columns() {
 
 #[test]
 fn test_catalog_list_columns_table_only() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }
@@ -150,7 +150,7 @@ fn test_catalog_list_columns_table_only() {
 
 #[test]
 fn test_catalog_get_type_info() {
-    if !should_run_e2e_tests() {
+    if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");
         return;
     }

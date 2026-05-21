@@ -44,6 +44,29 @@ cargo bench --bench columnar_v1_v2_encode
 cargo bench --bench columnar_v2_placeholder --features columnar-v2
 ```
 
+Orchestrated Dart benches (loads `.env`, optional compare):
+
+```powershell
+python scripts/run_dart_benchmarks.py --protocol --smoke
+python scripts/run_dart_benchmarks.py --heavy --rows 5000
+python scripts/run_dart_benchmarks.py --rust-micro
+python scripts/run_dart_benchmarks.py --harness
+```
+
+`benchmarks/m1_baseline.dart` and `benchmarks/m2_performance.dart` use
+`benchmark_harness` [`AsyncBenchmarkBase`](https://pub.dev/packages/benchmark_harness)
+via shared `benchmarks/odbc_async_benchmarks.dart`:
+
+- **ODBC Init** — repeated `initialize()` after locator setup (later runs are
+  often idempotent; local smoke only).
+- **ODBC Connect** — one connect + disconnect per iteration (`m2` requires
+  `ODBC_TEST_DSN`; `m1` skips connect when DSN is unset).
+
+```powershell
+dart run benchmarks/m1_baseline.dart
+dart run benchmarks/m2_performance.dart
+```
+
 For Dart-side async concurrency comparisons, configure `ODBC_TEST_DSN` (or
 `ODBC_DSN`) and run:
 

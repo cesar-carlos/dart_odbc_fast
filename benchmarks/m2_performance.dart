@@ -1,44 +1,8 @@
 import 'dart:io';
 
-import 'package:benchmark_harness/benchmark_harness.dart';
-import 'package:meta/meta.dart';
-import 'package:odbc_fast/odbc_fast.dart';
+import 'odbc_async_benchmarks.dart';
 
-class InitBenchmark extends BenchmarkBase {
-  InitBenchmark() : super('ODBC Init');
-  late ServiceLocator locator;
-
-  @override
-  void setup() {
-    locator = ServiceLocator();
-    locator.initialize();
-  }
-
-  @override
-  void run() {
-    unawaited(locator.service.initialize());
-  }
-}
-
-class ConnectBenchmark extends BenchmarkBase {
-  ConnectBenchmark(this.connectionString) : super('ODBC Connect');
-  late ServiceLocator locator;
-  final String connectionString;
-
-  @override
-  void setup() {
-    locator = ServiceLocator();
-    locator.initialize();
-    locator.service.initialize();
-  }
-
-  @override
-  void run() {
-    unawaited(locator.service.connect(connectionString));
-  }
-}
-
-void main() {
+Future<void> main() async {
   final connString = Platform.environment['ODBC_TEST_DSN'] ?? '';
   if (connString.isEmpty) {
     print('Skipping benchmarks: ODBC_TEST_DSN not set');
@@ -49,13 +13,13 @@ void main() {
 
   print('=== M2 Performance Benchmarks ===\n');
 
-  final initBench = InitBenchmark();
+  final initBench = OdbcInitBenchmark();
   print('Init benchmark:');
-  initBench.report();
+  await initBench.report();
 
-  final connectBench = ConnectBenchmark(connString);
+  final connectBench = OdbcConnectBenchmark(connString);
   print('\nConnect benchmark:');
-  connectBench.report();
+  await connectBench.report();
 
   print('\nNote: Streaming and pool benchmarks require async setup');
   print('See test/stress/ for full stress testing');
