@@ -1679,7 +1679,7 @@ where
         return 1;
     };
     let conn_id = txn.conn_id();
-    let result = action(&txn, name_str);
+    let result = action(txn, name_str);
 
     match result {
         Ok(()) => 0,
