@@ -327,6 +327,25 @@ class _FakePoolReleaseConnectionFails extends _FakeAsyncNativeForGapErrors {
   Future<bool> poolReleaseConnection(int connectionId) async => false;
 }
 
+class _FakePoolBeginTransactionSucceeds extends _FakeAsyncNativeForGapErrors {
+  int? lastBeginConnectionId;
+
+  @override
+  Future<int> poolGetConnection(int poolId) async => 200;
+
+  @override
+  Future<int> beginTransaction(
+    int connectionId,
+    int isolationLevel, {
+    int savepointDialect = 0,
+    int accessMode = 0,
+    int lockTimeoutMs = 0,
+  }) async {
+    lastBeginConnectionId = connectionId;
+    return 300;
+  }
+}
+
 void main() {
   group('OdbcRepositoryImpl new endpoint error paths', () {
     late _FakeAsyncNativeForGapErrors asyncNative;
@@ -1487,6 +1506,29 @@ void main() {
   });
 
   group('OdbcRepositoryImpl pool release', () {
+    test(
+      'beginTransaction accepts connection obtained from poolGetConnection',
+      () async {
+        final native = _FakePoolBeginTransactionSucceeds();
+        addTearDown(native.dispose);
+        final repo = OdbcRepositoryImpl(native);
+        await repo.initialize();
+
+        final pooled = await repo.poolGetConnection(1);
+        expect(pooled.isSuccess(), isTrue);
+        final connectionId = pooled.getOrNull()!.id;
+
+        final txn = await repo.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
+
+        expect(txn.isSuccess(), isTrue);
+        expect(txn.getOrNull(), 300);
+        expect(native.lastBeginConnectionId, 200);
+      },
+    );
+
     test(
       'poolReleaseConnection returns ConnectionError when native returns '
       'false',

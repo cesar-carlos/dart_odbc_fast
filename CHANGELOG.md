@@ -33,7 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- None.
+- **Transaction begin race on the same connection:** native `odbc_transaction_begin*`
+  now serializes `begin` per `conn_id`, preventing two concurrent callers from
+  opening overlapping local transactions on the same connection.
+- **Pooled checkout transaction support:** `conn_id` values returned by
+  `odbc_pool_get_connection` now work across the full local transaction
+  lifecycle (`begin`, `commit`, `rollback`, savepoints) instead of failing when
+  passed to `beginTransaction`.
+- **`TransactionHandle.runWithBegin` false-success path:** the Dart helper now
+  throws `StateError` when commit fails, so callers never receive a successful
+  action result for a transaction that did not commit.
+- **Pool resize config loss:** `poolSetSize(...)` now recreates the native pool
+  from the resolved runtime config snapshot, preserving `PoolOptions`, checkout
+  validation, and any configured health-check query after resize.
 
 ## [3.7.0] - 2026-05-14
 

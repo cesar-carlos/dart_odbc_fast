@@ -141,7 +141,9 @@ class TransactionHandle implements ffi.Finalizable {
     }
     try {
       final result = await action(txn);
-      txn.commit();
+      if (!txn.commit()) {
+        throw StateError('Failed to commit transaction ${txn.txnId}');
+      }
       return result;
     } on Object {
       if (txn.isActive) {

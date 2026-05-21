@@ -13,12 +13,12 @@ for [`ServiceLocator.initialize`](../lib/core/di/service_locator.dart): async vs
 sync, worker count, backpressure, and the shape of
 `recommendedConnectionOptions` / `recommendedPoolOptions`.
 
-| Profile | When to use | Async | Workers | Pending cap |
-|---------|-------------|-------|---------|-------------|
-| `balanced` | Default; apps that may open a few connections | yes | 2 | 24 |
-| `balancedFlutter` | Mostly one connection, UI responsiveness | yes | 1 | 16 |
-| `balancedServer` | Native pool + concurrent checkouts | yes | 4 | 32 |
-| `legacy` | CLI, tests, or minimal isolate overhead | no | 1 | unbounded |
+| Profile           | When to use                                   | Async | Workers | Pending cap |
+| ----------------- | --------------------------------------------- | ----- | ------- | ----------- |
+| `balanced`        | Default; apps that may open a few connections | yes   | 2       | 24          |
+| `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          |
+| `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          |
+| `legacy`          | CLI, tests, or minimal isolate overhead       | no    | 1       | unbounded   |
 
 `ResultEncoding.rowMajor` remains the safe default for query payloads; prefer
 columnar encodings only after benchmarking your workload (wide SQL Server rows
@@ -132,12 +132,12 @@ Use `MY_TEST_ROW_LIMIT` to tune quick local coverage. Use
 
 ### Test categories and flags
 
-| Category | Flag | Purpose |
-|---|---|---|
-| Unit/default | none | Deterministic tests that should run in normal `dart test` and CI. |
-| Live DB | `RUN_LIVE_TESTS=1` | Tests that need `ODBC_TEST_DSN` and may vary by local data volume. |
-| Stress | `RUN_STRESS_TESTS=1` or legacy `RUN_SKIPPED_TESTS=1` | High-concurrency, timeout, or long-running stress validation. |
-| Performance | `RUN_PERF_TESTS=1` | Benchmark-style tests or scripts with runtime-sensitive expectations. |
+| Category     | Flag                                                 | Purpose                                                               |
+| ------------ | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| Unit/default | none                                                 | Deterministic tests that should run in normal `dart test` and CI.     |
+| Live DB      | `RUN_LIVE_TESTS=1`                                   | Tests that need `ODBC_TEST_DSN` and may vary by local data volume.    |
+| Stress       | `RUN_STRESS_TESTS=1` or legacy `RUN_SKIPPED_TESTS=1` | High-concurrency, timeout, or long-running stress validation.         |
+| Performance  | `RUN_PERF_TESTS=1`                                   | Benchmark-style tests or scripts with runtime-sensitive expectations. |
 
 Real-DSN async worker pool stress tests are deliberately gated separately from
 normal skipped tests because driver scheduling varies. Run them only when you
@@ -160,30 +160,30 @@ cargo bench --bench bulk_operations_bench --bench comparative_bench --bench meta
 
 ## Concurrency
 
-| Design decision | Reasoning |
-|---|---|
-| `odbc_pool_get_connection` releases the global state mutex before calling `r2d2::Pool::get()` | Without this, every concurrent FFI call serialised behind slow pool checkouts (up to 30 s). Throughput under contention now scales close to `r2d2.max_size`. |
-| `odbc_pool_close` drains live checkouts before removing the pool entry | Prevents a deadlock when other threads still hold pooled connections at shutdown. |
-| `PoolAutocommitCustomizer` sets `autocommit(true)` on every checkout | One extra ODBC call per checkout; eliminates the worst case where a connection returned mid-transaction silently affected the next caller. |
-| `recv_timeout` + structured worker-disconnect error | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover. |
-| `read_exact` in disk-spill readback | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost. |
-| `Mutex<GlobalState>` granularity | Most critical path (`odbc_pool_get_connection`) is unblocked. Remaining FFI surface still serialises through the global state; granularising further is tracked as future work. |
-| Async Dart worker pool (`workerCount` / `asyncWorkerCount`) | Default remains `1`. Use `>1` when concurrent work uses multiple connections or pool checkouts; handle-affinity keeps same-connection work serialized. |
-| Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`) | Default remains unbounded (`null`). In services with native pools, set this to a small multiple of pool size to fail fast before the Dart worker queue hides saturation. |
-| Async backpressure mode | `failFast` remains the default. Use `waitForSlot` only when callers should queue briefly instead of failing immediately. |
-| Worker isolates instead of raw threads | Dart consumers should scale with `workerCount` / `asyncWorkerCount`, not hand-spawn raw isolates around one connection. More workers only reduce bottlenecks when work can be routed across multiple connections or native-pool checkouts. |
+| Design decision                                                                               | Reasoning                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `odbc_pool_get_connection` releases the global state mutex before calling `r2d2::Pool::get()` | Without this, every concurrent FFI call serialised behind slow pool checkouts (up to 30 s). Throughput under contention now scales close to `r2d2.max_size`.                                                                               |
+| `odbc_pool_close` drains live checkouts before removing the pool entry                        | Prevents a deadlock when other threads still hold pooled connections at shutdown.                                                                                                                                                          |
+| `PoolAutocommitCustomizer` sets `autocommit(true)` on every checkout                          | One extra ODBC call per checkout; eliminates the worst case where a connection returned mid-transaction silently affected the next caller.                                                                                                 |
+| `recv_timeout` + structured worker-disconnect error                                           | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover.                                                                                                                                            |
+| `read_exact` in disk-spill readback                                                           | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost.                                                                                                                                               |
+| `Mutex<GlobalState>` granularity                                                              | Most critical path (`odbc_pool_get_connection`) is unblocked. Remaining FFI surface still serialises through the global state; granularising further is tracked as future work.                                                            |
+| Async Dart worker pool (`workerCount` / `asyncWorkerCount`)                                   | Default remains `1`. Use `>1` when concurrent work uses multiple connections or pool checkouts; handle-affinity keeps same-connection work serialized.                                                                                     |
+| Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | Default remains unbounded (`null`). In services with native pools, set this to a small multiple of pool size to fail fast before the Dart worker queue hides saturation.                                                                   |
+| Async backpressure mode                                                                       | `failFast` remains the default. Use `waitForSlot` only when callers should queue briefly instead of failing immediately.                                                                                                                   |
+| Worker isolates instead of raw threads                                                        | Dart consumers should scale with `workerCount` / `asyncWorkerCount`, not hand-spawn raw isolates around one connection. More workers only reduce bottlenecks when work can be routed across multiple connections or native-pool checkouts. |
 
 ---
 
 ## Choosing a concurrency path
 
-| Workload | Prefer | Notes |
-|---|---|---|
-| Many independent short/medium queries | `AsyncNativeOdbcConnection(workerCount: N)` | Open multiple connections. Same-connection calls remain serialized. See `example/high_concurrency_worker_pool_demo.dart`. |
-| Many request-style tasks with bounded DB capacity | Native pool + `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: N, asyncMaxPendingRequests: M)` | Keep an explicit in-flight limit close to pool size. Set `M` near `poolSize * 2` or `poolSize * 4`. See `example/high_concurrency_pool_demo.dart`. |
-| Large result sets | `streamQueryBatched` / `streamAsync` | Streaming controls memory pressure better than raising result-buffer limits. |
-| Many rows with stable column types | `ResultEncoding.columnar` | Columnar reduces repeated row framing and now avoids an extra Dart column-to-row materialization step during decode. Keep row-major as default for compatibility. |
-| One long query on one connection | Async execute lifecycle | Keeps Dart responsive, but does not make one native connection run multiple statements at once. |
+| Workload                                          | Prefer                                                                                                     | Notes                                                                                                                                                             |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Many independent short/medium queries             | `AsyncNativeOdbcConnection(workerCount: N)`                                                                | Open multiple connections. Same-connection calls remain serialized. See `example/high_concurrency_worker_pool_demo.dart`.                                         |
+| Many request-style tasks with bounded DB capacity | Native pool + `ServiceLocator.initialize(useAsync: true, asyncWorkerCount: N, asyncMaxPendingRequests: M)` | Keep an explicit in-flight limit close to pool size. Set `M` near `poolSize * 2` or `poolSize * 4`. See `example/high_concurrency_pool_demo.dart`.                |
+| Large result sets                                 | `streamQueryBatched` / `streamAsync`                                                                       | Streaming controls memory pressure better than raising result-buffer limits.                                                                                      |
+| Many rows with stable column types                | `ResultEncoding.columnar`                                                                                  | Columnar reduces repeated row framing and now avoids an extra Dart column-to-row materialization step during decode. Keep row-major as default for compatibility. |
+| One long query on one connection                  | Async execute lifecycle                                                                                    | Keeps Dart responsive, but does not make one native connection run multiple statements at once.                                                                   |
 
 The high-concurrency examples accept `ODBC_CONCURRENCY_QUERY` so you can compare
 serial vs worker-pool behavior with a local slow query instead of the default
@@ -193,32 +193,32 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 ## Memory and bounds
 
-| Design decision | Reasoning |
-|---|---|
-| `parse_bulk_insert_payload` validates null-bitmap length up-front | Single `len()` check per nullable column; prevents corrupted writes. |
-| `MAX_BULK_COLUMNS` / `MAX_BULK_ROWS` / `MAX_BULK_CELL_LEN` caps | Three integer comparisons per payload header; prevents allocation-bomb DoS. |
-| `serialize_bulk_insert_payload` uses `try_into` for length casts | One branch per length field; returns `MalformedPayload` on overflow instead of silent truncation. |
-| `SecureBuffer::with_bytes` | Closure-based access avoids the heap copy required by `into_vec` for short-lived consumers. |
-| `SecretManager::with_secret` | Avoids the per-retrieve `Vec<u8>` clone when only read access is required. |
-| Reusable Dart FFI scratch buffer | Reuses the common result buffer and `out_written` pointer inside an isolate, with a reentrancy fallback to preserve safety. Native `-2` responses should report required size so Dart can grow directly. |
+| Design decision                                                   | Reasoning                                                                                                                                                                                                |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parse_bulk_insert_payload` validates null-bitmap length up-front | Single `len()` check per nullable column; prevents corrupted writes.                                                                                                                                     |
+| `MAX_BULK_COLUMNS` / `MAX_BULK_ROWS` / `MAX_BULK_CELL_LEN` caps   | Three integer comparisons per payload header; prevents allocation-bomb DoS.                                                                                                                              |
+| `serialize_bulk_insert_payload` uses `try_into` for length casts  | One branch per length field; returns `MalformedPayload` on overflow instead of silent truncation.                                                                                                        |
+| `SecureBuffer::with_bytes`                                        | Closure-based access avoids the heap copy required by `into_vec` for short-lived consumers.                                                                                                              |
+| `SecretManager::with_secret`                                      | Avoids the per-retrieve `Vec<u8>` clone when only read access is required.                                                                                                                               |
+| Reusable Dart FFI scratch buffer                                  | Reuses the common result buffer and `out_written` pointer inside an isolate, with a reentrancy fallback to preserve safety. Native `-2` responses should report required size so Dart can grow directly. |
 
 ---
 
 ## Observability overhead
 
-| Decision | Reasoning |
-|---|---|
-| `SpanGuard` RAII | Same nominal cost as manual `start/finish`; eliminates leaks of `QuerySpan` (with full SQL text) on every error path, reducing long-running memory growth. |
+| Decision               | Reasoning                                                                                                                                                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SpanGuard` RAII       | Same nominal cost as manual `start/finish`; eliminates leaks of `QuerySpan` (with full SQL text) on every error path, reducing long-running memory growth.                                                       |
 | `sanitize_sql_for_log` | Linear scan of the SQL string per log call. The default INFO-level path is gated behind `if !self.enabled { return }`; sanitisation only runs when the logger is enabled. Bypass with `ODBC_FAST_LOG_RAW_SQL=1`. |
 
 ---
 
 ## Safety / correctness
 
-| Decision | Reasoning |
-|---|---|
+| Decision                                                            | Reasoning                                                                                                                              |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `ffi::guard::call_int*` / `call_id*` / `call_ptr*` + `catch_unwind` | Single `catch_unwind` per FFI call (~tens of ns); converts Rust panics into stable error codes (`FfiError::Panic = -4`) instead of UB. |
-| `quote_identifier_default` in `Savepoint` and `ArrayBinding` | One validation per identifier, allocation-free; prevents SQL injection via identifiers. |
+| `quote_identifier_default` in `Savepoint` and `ArrayBinding`        | One validation per identifier, allocation-free; prevents SQL injection via identifiers.                                                |
 
 ---
 

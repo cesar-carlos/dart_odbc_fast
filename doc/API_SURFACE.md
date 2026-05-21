@@ -47,26 +47,32 @@ Convenção geral:
 |---|---|
 | `odbc_pool_create(conn_str, max_size) -> pool_id` | Cria pool com `PoolAutocommitCustomizer`. |
 | `odbc_pool_create_with_options(conn_str, max_size, idle_timeout_ms, max_lifetime_ms, connection_timeout_ms) -> pool_id` | Cria pool com opções de ciclo de vida (v3.4+). |
-| `odbc_pool_get_connection(pool_id) -> conn_id` | Checkout sem segurar mutex global. |
-| `odbc_pool_release_connection(conn_id) -> c_int` | Devolve ao pool com rollback + autocommit. |
+| `odbc_pool_get_connection(pool_id) -> conn_id` | Checkout sem segurar mutex global; o `conn_id` pode ser usado diretamente em `odbc_transaction_begin*`. |
+| `odbc_pool_release_connection(conn_id) -> c_int` | Devolve ao pool com rollback best-effort + restore de autocommit; invalida transações locais restantes. |
 | `odbc_pool_health_check(pool_id) -> c_int` | 1=saudável, 0=falha. |
 | `odbc_pool_get_state(pool_id, ...)` | Métricas binárias do pool (size, idle, wait). |
 | `odbc_pool_get_state_json(pool_id, ...)` | Mesmo conteúdo em JSON estruturado. |
-| `odbc_pool_set_size(pool_id, new_max) -> c_int` | Resize dinâmico. |
-| `odbc_pool_close(pool_id) -> c_int` | Drena checkouts antes de remover. |
+| `odbc_pool_set_size(pool_id, new_max) -> c_int` | Resize dinâmico preservando a config resolvida do pool; bloqueia com checkout, busy ou `begin` em andamento. |
+| `odbc_pool_close(pool_id) -> c_int` | Drena checkouts e rollbacka transações locais pendentes antes de remover. |
 
 ### 1.4 Transações & savepoints (8)
 
 | Função | Propósito |
 |---|---|
-| `odbc_transaction_begin(conn_id, isolation, dialect) -> txn_id` | Inicia transação (v1 — sem access mode / lock timeout). |
-| `odbc_transaction_begin_v2(conn_id, isolation, dialect, access_mode) -> txn_id` | Idem com `TransactionAccessMode` (v3.1+). |
-| `odbc_transaction_begin_v3(conn_id, isolation, dialect, access_mode, lock_timeout_ms) -> txn_id` | Idem com `LockTimeout` (v3.4+). |
+| `odbc_transaction_begin(conn_id, isolation, dialect) -> txn_id` | Inicia transação (v1 — sem access mode / lock timeout), inclusive em `conn_id` vindo de `odbc_pool_get_connection`. |
+| `odbc_transaction_begin_v2(conn_id, isolation, dialect, access_mode) -> txn_id` | Idem com `TransactionAccessMode` (v3.1+), também para conexões pooled checked-out. |
+| `odbc_transaction_begin_v3(conn_id, isolation, dialect, access_mode, lock_timeout_ms) -> txn_id` | Idem com `LockTimeout` (v3.4+), com serialização de `begin` por conexão. |
 | `odbc_transaction_commit(txn_id) -> c_int` | Commit. |
 | `odbc_transaction_rollback(txn_id) -> c_int` | Rollback. |
 | `odbc_savepoint_create(txn_id, name) -> c_int` | Nome validado/quotado. |
 | `odbc_savepoint_rollback(txn_id, name) -> c_int` | Rollback para savepoint nomeado. |
 | `odbc_savepoint_release(txn_id, name) -> c_int` | SQL-92 `RELEASE`; no-op em SQL Server. |
+
+Contrato atual:
+- `conn_id` emitido por `odbc_pool_get_connection` participa normalmente de
+  `odbc_transaction_begin*`, `commit`, `rollback` e savepoints.
+- `odbc_transaction_begin_v3` serializa `begin` por conexão para evitar
+  transações locais concorrentes no mesmo handle.
 
 ### 1.5 X/Open XA — 2PC (10)
 
@@ -342,7 +348,7 @@ Métodos: `sqlstate()`, `native_code()`, `message()`, `is_retryable()`,
 
 | Item | Descrição |
 |---|---|
-| `ConnectionPool` | Wrapper r2d2 com `PoolAutocommitCustomizer`. |
+| `ConnectionPool` | Wrapper r2d2 com `PoolAutocommitCustomizer` e snapshot da config resolvida para resize seguro. |
 | `PoolOptions` | `{idle_timeout, max_lifetime, connection_timeout}`. |
 | `PooledConnectionWrapper` | Acessores `get_connection`/`get_connection_mut`. |
 

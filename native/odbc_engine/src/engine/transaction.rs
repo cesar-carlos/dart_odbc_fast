@@ -5,7 +5,8 @@ use crate::engine::core::{
 use crate::engine::dbms_info::DbmsInfo;
 use crate::engine::identifier::{quote_identifier, validate_identifier, IdentifierQuoting};
 use crate::error::{OdbcError, Result};
-use crate::handles::SharedHandleManager;
+use crate::handles::{HandleManager, SharedHandleManager};
+use crate::pool::SharedPooledConnection;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -281,8 +282,104 @@ pub(crate) fn resolve_savepoint_dialect_for_engine(engine: &str) -> SavepointDia
     }
 }
 
+#[derive(Clone)]
+enum TransactionConnection {
+    Regular(SharedHandleManager),
+    Pooled(SharedPooledConnection),
+}
+
+impl TransactionConnection {
+    fn with_connection<F, T>(&self, conn_id: u32, op: &str, f: F) -> Result<T>
+    where
+        F: FnOnce(&odbc_api::Connection<'static>) -> Result<T>,
+    {
+        match self {
+            Self::Regular(handles) => {
+                let conn_arc = {
+                    let h = handles.lock().map_err(|_| {
+                        OdbcError::InternalError(format!("Failed to lock handles for {op}"))
+                    })?;
+                    h.get_connection(conn_id)?
+                };
+                let conn = conn_arc.lock().map_err(|_| {
+                    OdbcError::InternalError("Failed to lock connection".to_string())
+                })?;
+                f(conn.connection())
+            }
+            Self::Pooled(pooled) => {
+                let conn = pooled.lock().map_err(|_| {
+                    OdbcError::InternalError("Failed to lock pooled connection".to_string())
+                })?;
+                f(conn.get_connection())
+            }
+        }
+    }
+
+    fn with_connection_mut<F, T>(&self, conn_id: u32, op: &str, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut odbc_api::Connection<'static>) -> Result<T>,
+    {
+        match self {
+            Self::Regular(handles) => {
+                let conn_arc = {
+                    let h = handles.lock().map_err(|_| {
+                        OdbcError::InternalError(format!("Failed to lock handles for {op}"))
+                    })?;
+                    h.get_connection(conn_id)?
+                };
+                let mut conn = conn_arc.lock().map_err(|_| {
+                    OdbcError::InternalError("Failed to lock connection".to_string())
+                })?;
+                f(conn.connection_mut())
+            }
+            Self::Pooled(pooled) => {
+                let mut conn = pooled.lock().map_err(|_| {
+                    OdbcError::InternalError("Failed to lock pooled connection".to_string())
+                })?;
+                f(conn.get_connection_mut())
+            }
+        }
+    }
+
+    fn detect_engine_and_dialect(
+        &self,
+        conn_id: u32,
+        requested: SavepointDialect,
+    ) -> (String, SavepointDialect) {
+        match requested {
+            SavepointDialect::Sql92 => (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92),
+            SavepointDialect::SqlServer => {
+                (ENGINE_SQLSERVER.to_string(), SavepointDialect::SqlServer)
+            }
+            SavepointDialect::Auto => match self.with_connection(
+                conn_id,
+                "detect transaction dialect",
+                DbmsInfo::detect,
+            ) {
+                Ok(info) => {
+                    let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
+                    (info.engine, dialect)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); falling back to Sql92"
+                    );
+                    (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
+                }
+            },
+        }
+    }
+
+    fn handles(&self) -> Option<SharedHandleManager> {
+        match self {
+            Self::Regular(handles) => Some(handles.clone()),
+            Self::Pooled(_) => None,
+        }
+    }
+}
+
 pub struct Transaction {
-    handles: SharedHandleManager,
+    connection: TransactionConnection,
     conn_id: u32,
     state: Arc<Mutex<TransactionState>>,
     isolation_level: IsolationLevel,
@@ -353,47 +450,70 @@ impl Transaction {
         access_mode: TransactionAccessMode,
         lock_timeout: LockTimeout,
     ) -> Result<Self> {
-        // Resolve `Auto` ahead of time so the rest of the lifecycle is
-        // dialect-agnostic. Best-effort: if `SQLGetInfo` fails we fall back to
-        // `Sql92` (the safe default for unknown engines).
+        Self::begin_with_connection(
+            TransactionConnection::Regular(handles),
+            conn_id,
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
+            lock_timeout,
+        )
+    }
+
+    pub(crate) fn begin_on_pooled_with_lock_timeout(
+        pooled: SharedPooledConnection,
+        conn_id: u32,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+    ) -> Result<Self> {
+        Self::begin_with_connection(
+            TransactionConnection::Pooled(pooled),
+            conn_id,
+            isolation_level,
+            savepoint_dialect,
+            access_mode,
+            lock_timeout,
+        )
+    }
+
+    fn begin_with_connection(
+        connection: TransactionConnection,
+        conn_id: u32,
+        isolation_level: IsolationLevel,
+        savepoint_dialect: SavepointDialect,
+        access_mode: TransactionAccessMode,
+        lock_timeout: LockTimeout,
+    ) -> Result<Self> {
         let (engine_id, resolved_dialect) =
-            Self::detect_engine_and_dialect(&handles, conn_id, savepoint_dialect);
-
+            connection.detect_engine_and_dialect(conn_id, savepoint_dialect);
         let state = Arc::new(Mutex::new(TransactionState::Active));
-        let conn_arc = {
-            let h = handles
-                .lock()
-                .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
-            h.get_connection(conn_id)?
-        };
-        let mut conn = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
 
-        // Apply isolation level using a dialect-aware strategy. Must run BEFORE
-        // `set_autocommit(false)` because some engines (notably SQL Server)
-        // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
-        Self::apply_isolation(conn.connection_mut(), &engine_id, isolation_level)?;
+        connection.with_connection_mut(conn_id, "begin transaction", |conn| {
+            // Apply isolation level using a dialect-aware strategy. Must run BEFORE
+            // `set_autocommit(false)` because some engines (notably SQL Server)
+            // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
+            Self::apply_isolation(conn, &engine_id, isolation_level)?;
 
-        // Access mode must follow isolation. Oracle is special-cased inside
-        // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
-        // the previous isolation choice on that engine.
-        Self::apply_access_mode(conn.connection_mut(), &engine_id, access_mode)?;
+            // Access mode must follow isolation. Oracle is special-cased inside
+            // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
+            // the previous isolation choice on that engine.
+            Self::apply_access_mode(conn, &engine_id, access_mode)?;
 
-        // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
-        // (so it auto-resets on commit/rollback); other engines apply
-        // session-wide. The override is best-effort: failure here would
-        // prevent the transaction from starting, which is too coarse,
-        // so we surface the engine error verbatim and let the caller
-        // decide.
-        Self::apply_lock_timeout(conn.connection_mut(), &engine_id, lock_timeout)?;
+            // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
+            // (so it auto-resets on commit/rollback); other engines apply
+            // session-wide. The override is best-effort: failure here would
+            // prevent the transaction from starting, which is too coarse,
+            // so we surface the engine error verbatim and let the caller
+            // decide.
+            Self::apply_lock_timeout(conn, &engine_id, lock_timeout)?;
 
-        conn.connection_mut()
-            .set_autocommit(false)
-            .map_err(OdbcError::from)?;
+            conn.set_autocommit(false).map_err(OdbcError::from)
+        })?;
 
         Ok(Self {
-            handles,
+            connection,
             conn_id,
             state,
             isolation_level,
@@ -401,35 +521,6 @@ impl Transaction {
             access_mode,
             lock_timeout,
         })
-    }
-
-    /// Returns `(engine_id, resolved_dialect)`. Best-effort:
-    /// - When the caller passed `Sql92` or `SqlServer` we keep it.
-    /// - When `Auto`, we ask `DbmsInfo::detect_for_conn_id`. On failure we fall
-    ///   back to `Sql92` and `engine = ENGINE_UNKNOWN`.
-    fn detect_engine_and_dialect(
-        handles: &SharedHandleManager,
-        conn_id: u32,
-        requested: SavepointDialect,
-    ) -> (String, SavepointDialect) {
-        match requested {
-            SavepointDialect::Sql92 => (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92),
-            SavepointDialect::SqlServer => {
-                (ENGINE_SQLSERVER.to_string(), SavepointDialect::SqlServer)
-            }
-            SavepointDialect::Auto => match DbmsInfo::detect_for_conn_id(handles, conn_id) {
-                Ok(info) => {
-                    let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
-                    (info.engine, dialect)
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); falling back to Sql92"
-                    );
-                    (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
-                }
-            },
-        }
     }
 
     /// Vendor-aware isolation-level setter.
@@ -672,21 +763,19 @@ impl Transaction {
             )));
         }
 
-        let conn_arc = {
-            let h = self.handles.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock handles for commit".to_string())
+        let (commit_result, autocommit_result) = self
+            .connection
+            .with_connection_mut(self.conn_id, "commit transaction", |conn| {
+                Ok((
+                    conn.commit().map_err(OdbcError::from),
+                    conn.set_autocommit(true),
+                ))
             })?;
-            h.get_connection(self.conn_id)?
-        };
-        let mut conn = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        let commit_result = conn.connection_mut().commit().map_err(OdbcError::from);
         // ALWAYS try to restore autocommit, regardless of commit outcome (B7 fix).
         // If commit failed the driver may already have rolled back and reset
         // autocommit; the call is a best-effort safety net so the connection
         // is never returned to the caller / pool stuck in autocommit=off.
-        if let Err(e) = conn.connection_mut().set_autocommit(true) {
+        if let Err(e) = autocommit_result {
             log::error!(
                 "Transaction::commit: failed to restore autocommit on conn_id {}: {e}",
                 self.conn_id
@@ -719,18 +808,16 @@ impl Transaction {
             )));
         }
 
-        let conn_arc = {
-            let h = self.handles.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock handles for rollback".to_string())
+        let (rollback_result, autocommit_result) = self
+            .connection
+            .with_connection_mut(self.conn_id, "rollback transaction", |conn| {
+                Ok((
+                    conn.rollback().map_err(OdbcError::from),
+                    conn.set_autocommit(true),
+                ))
             })?;
-            h.get_connection(self.conn_id)?
-        };
-        let mut conn = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        let rollback_result = conn.connection_mut().rollback().map_err(OdbcError::from);
         // ALWAYS restore autocommit (B7 fix), same rationale as `commit`.
-        if let Err(e) = conn.connection_mut().set_autocommit(true) {
+        if let Err(e) = autocommit_result {
             log::error!(
                 "Transaction::rollback: failed to restore autocommit on conn_id {}: {e}",
                 self.conn_id
@@ -840,19 +927,12 @@ impl Transaction {
     }
 
     pub fn execute_sql(&self, sql: &str) -> Result<()> {
-        let conn_arc = {
-            let h = self.handles.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock handles for execute_sql".to_string())
-            })?;
-            h.get_connection(self.conn_id)?
-        };
-        let conn = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        conn.connection()
-            .execute(sql, (), None)
-            .map(|_| ())
-            .map_err(OdbcError::from)
+        self.connection
+            .with_connection(self.conn_id, "execute_sql", |conn| {
+                conn.execute(sql, (), None)
+                    .map(|_| ())
+                    .map_err(OdbcError::from)
+            })
     }
 
     /// Validate, quote and execute a `SAVEPOINT` (or `SAVE TRANSACTION` on
@@ -915,7 +995,9 @@ impl Transaction {
     }
 
     pub fn handles(&self) -> SharedHandleManager {
-        self.handles.clone()
+        self.connection
+            .handles()
+            .unwrap_or_else(|| Arc::new(Mutex::new(HandleManager::new())))
     }
 
     /// Test-only constructor. Builds a `Transaction` value without touching the
@@ -930,7 +1012,7 @@ impl Transaction {
         isolation_level: IsolationLevel,
     ) -> Self {
         Self {
-            handles,
+            connection: TransactionConnection::Regular(handles),
             conn_id,
             state: Arc::new(Mutex::new(state)),
             isolation_level,
@@ -951,7 +1033,7 @@ impl Transaction {
         savepoint_dialect: SavepointDialect,
     ) -> Self {
         Self {
-            handles,
+            connection: TransactionConnection::Regular(handles),
             conn_id,
             state: Arc::new(Mutex::new(state)),
             isolation_level,
@@ -973,7 +1055,7 @@ impl Transaction {
         access_mode: TransactionAccessMode,
     ) -> Self {
         Self {
-            handles,
+            connection: TransactionConnection::Regular(handles),
             conn_id,
             state: Arc::new(Mutex::new(state)),
             isolation_level,
@@ -997,7 +1079,7 @@ impl Transaction {
         lock_timeout: LockTimeout,
     ) -> Self {
         Self {
-            handles,
+            connection: TransactionConnection::Regular(handles),
             conn_id,
             state: Arc::new(Mutex::new(state)),
             isolation_level,
@@ -1020,7 +1102,7 @@ impl Transaction {
         let handles: SharedHandleManager =
             Arc::new(Mutex::new(crate::handles::HandleManager::new()));
         Self {
-            handles,
+            connection: TransactionConnection::Regular(handles),
             // u32::MAX is guaranteed not to collide with a real connection id;
             // identifier validation runs BEFORE any handle lookup so this is
             // safe for tests that only exercise `savepoint_*` validation paths.
@@ -1048,45 +1130,26 @@ impl Drop for Transaction {
             "Transaction on conn_id {} dropped without commit - auto-rollback",
             self.conn_id
         );
-        let h = match self.handles.lock() {
-            Ok(h) => h,
-            Err(e) => {
-                log::error!(
-                    "Transaction Drop: failed to lock handles for conn_id {}: {e}",
-                    self.conn_id
-                );
-                return;
-            }
-        };
-        let conn_arc = match h.get_connection(self.conn_id) {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!(
-                    "Transaction Drop: connection {} not found: {e}",
-                    self.conn_id
-                );
-                return;
-            }
-        };
-        let mut conn = match conn_arc.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!(
-                    "Transaction Drop: failed to lock connection {}: {e}",
-                    self.conn_id
-                );
-                return;
-            }
-        };
-        if let Err(e) = conn.connection_mut().rollback() {
+        if let Err(e) = self
+            .connection
+            .with_connection_mut(self.conn_id, "drop transaction", |conn| {
+                if let Err(e) = conn.rollback() {
+                    log::error!(
+                        "Transaction Drop: rollback failed on conn_id {}: {e}",
+                        self.conn_id
+                    );
+                }
+                if let Err(e) = conn.set_autocommit(true) {
+                    log::error!(
+                        "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
+                        self.conn_id
+                    );
+                }
+                Ok(())
+            })
+        {
             log::error!(
-                "Transaction Drop: rollback failed on conn_id {}: {e}",
-                self.conn_id
-            );
-        }
-        if let Err(e) = conn.connection_mut().set_autocommit(true) {
-            log::error!(
-                "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
+                "Transaction Drop: failed to cleanup conn_id {}: {e}",
                 self.conn_id
             );
         }

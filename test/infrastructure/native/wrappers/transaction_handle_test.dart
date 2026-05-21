@@ -109,6 +109,30 @@ void main() {
       expect(txn.isActive, isFalse);
     });
 
+    test('runWithBegin throws when commit fails', () async {
+      final countingBackend = _CountingBackend()
+        ..commitTransactionResult = false;
+      final txn = TransactionHandle(countingBackend, 10);
+
+      await expectLater(
+        TransactionHandle.runWithBegin<int>(
+          () => txn,
+          (_) async => 7,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Failed to commit transaction'),
+          ),
+        ),
+      );
+
+      expect(countingBackend.commitCalls, 1);
+      expect(countingBackend.rollbackCalls, 0);
+      expect(txn.isActive, isFalse);
+    });
+
     test('runWithBegin rolls back active transaction and rethrows', () async {
       final countingBackend = _CountingBackend();
       final txn = TransactionHandle(countingBackend, 10);

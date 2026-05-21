@@ -57,6 +57,11 @@ for the remaining backlog.
   swallowed so they never overwrite the original cause. See
   [`example/run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart).
 
+- **`TransactionHandle.runWithBegin<T>`** (low-level wrapper) - the
+  helper now returns only after commit succeeds. If commit fails it
+  throws `StateError`, so the success path can no longer mask a
+  failed unit of work.
+
 - **X/Open XA / 2PC** (Sprint 4.3 / 4.3c) — strongly-typed `Xid`
   value class + `XaTransactionHandle` state machine
   (Active → Idle → Prepared → Committed/RolledBack). Engine matrix:
@@ -273,7 +278,7 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`, `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
 - Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
-- Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolGetStateDetailed`, `poolClose`
+- Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolGetStateDetailed`, `poolSetSize`, `poolClose`
 - Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with fallback when `parallelism <= 1`)
 - Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`, `getVersion`, `validateConnectionString`, `getDriverCapabilities`
 - Metadata cache: `metadataCacheEnable`, `metadataCacheStats`, `clearMetadataCache`
@@ -364,6 +369,11 @@ Falls back to the legacy `poolCreate` (no options) when either:
 - `options` is `null` or has no field set, OR
 - the loaded native library does not expose the v3.0 entry point
   (use `factory.supportsApi` to check beforehand).
+
+`poolSetSize(...)` preserves the resolved pool configuration when it
+recreates the pool: `idleTimeout`, `maxLifetime`,
+`connectionTimeout`, checkout validation, and any configured
+health-check query stay intact after resize.
 
 ## Requirements
 
@@ -694,6 +704,7 @@ dart run example/streaming_demo.dart
 
 # Transactions / savepoints
 dart run example/savepoint_demo.dart
+dart run example/transaction_helpers_demo.dart
 
 # Schema introspection
 dart run example/catalog_reflection_demo.dart
@@ -854,6 +865,10 @@ Primary keys, foreign keys, and indexes
 - 📊 Pool state monitoring and metrics
 - 🎯 Built-in health check on checkout
 
+Checked-out pooled connections can start local transactions directly,
+and `poolReleaseConnection(...)` rolls back leftover local work before
+the connection is reused.
+
 #### Streaming Queries
 
 **[streaming_demo.dart](example/streaming_demo.dart)** - Incremental data streaming
@@ -889,6 +904,14 @@ Primary keys, foreign keys, and indexes
 - 📝 Clean transaction management patterns
 - 🔄 Granular control over transaction boundaries
 
+**[transaction_helpers_demo.dart](example/transaction_helpers_demo.dart)** -
+Fluent transaction helpers on top of `TransactionHandle`
+
+- `TransactionHandle.runWithBegin(...)`
+- `TransactionHandle.withSavepoint(...)`
+- Success only returns after commit succeeds
+- Commit failure throws instead of returning a false success path
+
 #### Pool with options (v3.0)
 
 **[pool_with_options_demo.dart](example/pool_with_options_demo.dart)** -
@@ -898,6 +921,7 @@ Configurable pool eviction/timeouts
 - ✅ `OdbcPoolFactory.createPool(...)` with automatic legacy fallback
 - ✅ Supports detection of `supportsApi` for old native libraries
 - ✅ JSON-encoded options sent through `odbc_pool_create_with_options`
+- `poolSetSize(...)` preserves resolved pool options after resize.
 
 #### Live DBMS introspection (v2.1)
 

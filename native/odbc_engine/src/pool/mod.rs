@@ -1,7 +1,7 @@
 use crate::error::{OdbcError, Result};
 use odbc_api::{Connection, ConnectionOptions, Environment};
 use r2d2::{Pool, PooledConnection};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 static GLOBAL_POOL_ENV: OnceLock<std::result::Result<Environment, String>> = OnceLock::new();
@@ -213,13 +213,12 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
 #[derive(Clone)]
 pub struct ConnectionPool {
     pool: Pool<OdbcConnectionManager>,
-    connection_string: String,
+    config: PoolRuntimeConfig,
     max_size: u32,
-    test_on_check_out: bool,
 }
 
 /// Options for pool creation (eviction, timeouts).
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PoolOptions {
     /// Idle connections are closed after this duration.
     pub idle_timeout: Option<Duration>,
@@ -228,6 +227,14 @@ pub struct PoolOptions {
     /// Maximum time `get()` will wait for an available connection.
     /// Defaults to 30 s when `None`. (A9)
     pub connection_timeout: Option<Duration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolRuntimeConfig {
+    pub connection_string: String,
+    pub test_on_check_out: bool,
+    pub health_check_query: String,
+    pub options: PoolOptions,
 }
 
 /// A14 fix: customizer that forces `set_autocommit(true)` on every checkout
@@ -256,11 +263,22 @@ impl ConnectionPool {
         options: PoolOptions,
     ) -> Result<Self> {
         let config = PoolConfig::from_connection_string(connection_string);
+        let runtime = PoolRuntimeConfig {
+            connection_string: config.sanitized_connection_string,
+            test_on_check_out: config.test_on_check_out,
+            health_check_query: config.health_check_query,
+            options,
+        };
+        Self::from_runtime_config(runtime, max_size)
+    }
+
+    fn from_runtime_config(config: PoolRuntimeConfig, max_size: u32) -> Result<Self> {
         let manager = OdbcConnectionManager::new(
-            &config.sanitized_connection_string,
+            &config.connection_string,
             &config.health_check_query,
         )?;
-        let connection_timeout = options
+        let connection_timeout = config
+            .options
             .connection_timeout
             .unwrap_or_else(|| Duration::from_secs(30));
         let mut builder = Pool::builder()
@@ -268,10 +286,10 @@ impl ConnectionPool {
             .connection_timeout(connection_timeout)
             .test_on_check_out(config.test_on_check_out)
             .connection_customizer(Box::new(PoolAutocommitCustomizer));
-        if let Some(d) = options.idle_timeout {
+        if let Some(d) = config.options.idle_timeout {
             builder = builder.idle_timeout(Some(d));
         }
-        if let Some(d) = options.max_lifetime {
+        if let Some(d) = config.options.max_lifetime {
             builder = builder.max_lifetime(Some(d));
         }
         let pool = builder
@@ -280,10 +298,17 @@ impl ConnectionPool {
 
         Ok(Self {
             pool,
-            connection_string: config.sanitized_connection_string,
+            config,
             max_size,
-            test_on_check_out: config.test_on_check_out,
         })
+    }
+
+    pub fn recreate_with_max_size(&self, max_size: u32) -> Result<Self> {
+        Self::from_runtime_config(self.config.clone(), max_size)
+    }
+
+    pub fn config_snapshot(&self) -> PoolRuntimeConfig {
+        self.config.clone()
     }
 
     pub fn get(&self) -> Result<PooledConnectionWrapper> {
@@ -302,11 +327,11 @@ impl ConnectionPool {
     }
 
     pub fn connection_string(&self) -> &str {
-        &self.connection_string
+        &self.config.connection_string
     }
 
     pub fn test_on_check_out(&self) -> bool {
-        self.test_on_check_out
+        self.config.test_on_check_out
     }
 
     pub fn state(&self) -> PoolState {
@@ -319,7 +344,7 @@ impl ConnectionPool {
     /// Pool ID per ODBC spec: server:port:user. Database excluded so connections
     /// can be reused when only database changes.
     pub fn get_pool_id(&self) -> String {
-        Self::extract_pool_components(&self.connection_string)
+        Self::extract_pool_components(self.connection_string())
     }
 
     pub(crate) fn extract_pool_components(conn_str: &str) -> String {
@@ -361,6 +386,8 @@ impl ConnectionPool {
 pub struct PooledConnectionWrapper {
     pooled: PooledConnection<OdbcConnectionManager>,
 }
+
+pub type SharedPooledConnection = Arc<Mutex<PooledConnectionWrapper>>;
 
 impl PooledConnectionWrapper {
     pub fn get_connection(&self) -> &Connection<'static> {
@@ -517,5 +544,45 @@ mod tests {
     fn should_split_connection_string_parts_inside_braces() {
         let parts = split_connection_string_parts("PWD={a;b};DSN=x");
         assert_eq!(parts, vec!["PWD={a;b}", "DSN=x"]);
+    }
+
+    #[test]
+    fn recreate_with_max_size_preserves_resolved_pool_configuration() {
+        let dsn = match std::env::var("ODBC_TEST_DSN").or_else(|_| std::env::var("ODBC_DSN")) {
+            Ok(value) => value,
+            Err(_) => {
+                eprintln!("Skipping: ODBC_TEST_DSN / ODBC_DSN not set");
+                return;
+            }
+        };
+        let pool = ConnectionPool::new_with_options(
+            &format!(
+                "{dsn};Pool_Test_On_Checkout=false;Health_Check_Query=SELECT CURRENT_TIMESTAMP;"
+            ),
+            2,
+            PoolOptions {
+                idle_timeout: Some(Duration::from_secs(5)),
+                max_lifetime: Some(Duration::from_secs(7)),
+                connection_timeout: Some(Duration::from_secs(11)),
+            },
+        )
+        .expect("pool should build with the configured test DSN");
+
+        let resized = pool
+            .recreate_with_max_size(5)
+            .expect("resize recreation should preserve config");
+
+        let snapshot = resized.config_snapshot();
+        assert_eq!(resized.max_size(), 5);
+        assert!(!snapshot.connection_string.contains("Pool_Test_On_Checkout"));
+        assert!(!snapshot.connection_string.contains("Health_Check_Query"));
+        assert!(!snapshot.test_on_check_out);
+        assert_eq!(snapshot.health_check_query, "SELECT CURRENT_TIMESTAMP");
+        assert_eq!(snapshot.options.idle_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(snapshot.options.max_lifetime, Some(Duration::from_secs(7)));
+        assert_eq!(
+            snapshot.options.connection_timeout,
+            Some(Duration::from_secs(11))
+        );
     }
 }

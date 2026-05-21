@@ -88,14 +88,14 @@ accumulation with small chunks, and streaming multi-result decoding.
 ### Connection / pool
 
 - [connection_string_builder_demo.dart](connection_string_builder_demo.dart): fluent connection string creation for **all 7 builders** (SQL Server, PostgreSQL, MySQL, plus v3.0 MariaDB / SQLite / Db2 / Snowflake).
-- [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, state/health checks, and parallel bulk insert.
-- **[pool_with_options_demo.dart](pool_with_options_demo.dart)** *(NEW v3.0)*: typed `PoolOptions` (`idleTimeout`, `maxLifetime`, `connectionTimeout`) with `OdbcPoolFactory` and automatic legacy fallback.
+- [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, pooled checkout -> local transaction -> release flow, state/health checks, and parallel bulk insert.
+- **[pool_with_options_demo.dart](pool_with_options_demo.dart)** *(NEW v3.0)*: typed `PoolOptions` (`idleTimeout`, `maxLifetime`, `connectionTimeout`) with `OdbcPoolFactory`, automatic legacy fallback, and resize-safe config preservation.
 
 ### Transactions / savepoints
 
 - [run_in_transaction_demo.dart](run_in_transaction_demo.dart): high-level `runInTransaction<T>` helper covering success, failure, throw-to-rollback, and transaction options.
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit. Uses the high-level `OdbcService` API.
-- **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(NEW v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
+- **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(NEW v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. `runWithBegin` now throws on commit failure instead of returning a false success path. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
 - **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA, in v3.4.2 with the `runWithStart` helper)*: full X/Open XA / 2PC lifecycle via `XaTransactionHandle` + `Xid`. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`), a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch — and a final section showing the exception-safe helper `XaTransactionHandle.runWithStart<T>` (mirror of `TransactionHandle.runWithBegin` for local transactions: drives end → prepare → commit_prepared on success, or the appropriate rollback path on any throw, without manual chaining). Works against PostgreSQL, MySQL/MariaDB, DB2 and **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL); skips with a friendly message when the loaded native library predates Sprint 4.3.
 
 ### Schema introspection
