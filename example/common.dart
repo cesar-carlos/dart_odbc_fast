@@ -9,6 +9,12 @@ String _exampleEnvPath() =>
     '${Directory.current.path}${Platform.pathSeparator}$_envPath';
 
 String? loadExampleDsn() {
+  final fromEnv =
+      Platform.environment['ODBC_TEST_DSN'] ?? Platform.environment['ODBC_DSN'];
+  if (fromEnv != null && fromEnv.isNotEmpty) {
+    return fromEnv;
+  }
+
   final path = _exampleEnvPath();
   final file = File(path);
 
@@ -19,13 +25,7 @@ String? loadExampleDsn() {
       return fromFile;
     }
   }
-
-  final fromEnv =
-      Platform.environment['ODBC_TEST_DSN'] ?? Platform.environment['ODBC_DSN'];
-  if (fromEnv == null || fromEnv.isEmpty) {
-    return null;
-  }
-  return fromEnv;
+  return null;
 }
 
 String? requireExampleDsn() {

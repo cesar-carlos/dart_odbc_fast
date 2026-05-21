@@ -56,22 +56,22 @@ DynamicLibrary loadOdbcLibrary() {
   final cwd = Directory.current.path;
   final sep = Platform.pathSeparator;
 
-  // 1. CWD-relative (e.g. when running from project root)
-  final fromCwd = _tryLoadFromRoot(cwd, name, sep);
-  if (fromCwd != null) return fromCwd;
-
-  // 2. Package root-relative (e.g. when dart test runs from test/subdir)
-  final root = _findPackageRoot();
-  if (root != null) {
-    final fromRoot = _tryLoadFromRoot(root, name, sep);
-    if (fromRoot != null) return fromRoot;
-  }
-
-  // 3. Native Assets (production) - package:odbc_fast/
+  // 1. Native Assets (production) - package:odbc_fast/
   try {
     return DynamicLibrary.open('package:odbc_fast/$name');
   } on Object catch (_) {
     // Native Assets not available, continue to next option
+  }
+
+  // 2. CWD-relative (e.g. when running from project root)
+  final fromCwd = _tryLoadFromRoot(cwd, name, sep);
+  if (fromCwd != null) return fromCwd;
+
+  // 3. Package root-relative (e.g. when dart test runs from test/subdir)
+  final root = _findPackageRoot();
+  if (root != null) {
+    final fromRoot = _tryLoadFromRoot(root, name, sep);
+    if (fromRoot != null) return fromRoot;
   }
 
   // 4. Sistema - PATH/LD_LIBRARY_PATH

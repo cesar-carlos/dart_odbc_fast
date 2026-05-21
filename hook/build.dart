@@ -65,6 +65,16 @@ bool _shouldSkipDownload() {
   return false;
 }
 
+/// Whether the build hook should prefer a locally built native library.
+///
+/// This is useful while iterating on Rust source locally, but the default stays
+/// `false` so benchmark/test commands don't accidentally bundle a stale
+/// `native/target/release` artifact produced by other cargo workflows.
+bool _shouldPreferLocalBuild() {
+  final preferLocal = Platform.environment['ODBC_FAST_PREFER_LOCAL_BUILD'];
+  return preferLocal == 'true';
+}
+
 String _getLibraryName(OS os) {
   switch (os) {
     case OS.windows:
@@ -79,9 +89,9 @@ String _getLibraryName(OS os) {
 /// Returns native library path.
 ///
 /// Search strategy in priority order:
-/// 1. Development build output (native/target/release/)
-/// 2. Local cache (~/.cache/odbc_fast/)
-/// 3. Automatic GitHub Release download (skipped in CI/pub.dev)
+/// 1. Local cache (~/.cache/odbc_fast/)
+/// 2. Automatic GitHub Release download (skipped in CI/pub.dev)
+/// 3. Development build output (native/target/release/) when explicitly opted in
 /// 4. null (allows tests without native library)
 Future<Uri?> _getLibraryPath(
   OS os,
@@ -94,26 +104,14 @@ Future<Uri?> _getLibraryPath(
     File.fromUri(packageRoot.resolve('pubspec.yaml')),
   );
 
-  // 1. Development: native/target/release/ (workspace target)
-  final devPath = packageRoot.resolve('native/target/release/$libName');
-  if (File.fromUri(devPath).existsSync()) {
-    return devPath;
-  }
-
-  // 2. Fallback: native/odbc_engine/target/release/ (crate-local target)
-  final devPathLocal =
-      packageRoot.resolve('native/odbc_engine/target/release/$libName');
-  if (File.fromUri(devPathLocal).existsSync()) {
-    return devPathLocal;
-  }
-
-  // 3. Check local cache after workspace builds to avoid stale dev binaries.
+  // 1. Check local cache first. This keeps Dart commands stable even when
+  // cargo bench/build leaves a transient local release artifact behind.
   final cachedLib = _getCachedLibrary(os, arch, libName, version);
   if (cachedLib != null) {
     return cachedLib;
   }
 
-  // 4. Download from GitHub Release (production/build only, skipped in CI/pub.dev)
+  // 2. Download from GitHub Release (production/build only, skipped in CI/pub.dev)
   final downloaded = await _downloadFromGitHub(
     os,
     arch,
@@ -126,8 +124,24 @@ Future<Uri?> _getLibraryPath(
     return downloaded;
   }
 
-  // Library not found: return null instead of throwing
-  // This allows tests to continue without native library
+  // 3. Development: native/target/release/ (workspace target) or
+  // native/odbc_engine/target/release/ (crate-local target), but only when
+  // the caller explicitly prefers local Rust artifacts.
+  if (_shouldPreferLocalBuild()) {
+    final devPath = packageRoot.resolve('native/target/release/$libName');
+    if (File.fromUri(devPath).existsSync()) {
+      return devPath;
+    }
+
+    final devPathLocal =
+        packageRoot.resolve('native/odbc_engine/target/release/$libName');
+    if (File.fromUri(devPathLocal).existsSync()) {
+      return devPathLocal;
+    }
+  }
+
+  // Library not found: return null instead of throwing. This allows tests to
+  // continue without a native library.
   return null;
 }
 

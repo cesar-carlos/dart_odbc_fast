@@ -35,13 +35,14 @@ void loadTestEnv() {
 }
 
 String? getTestEnv(String key) {
-  final v = _testEnv?.map[key];
-  if (v != null && v.isNotEmpty) {
-    return v;
-  }
   final platformValue = Platform.environment[key];
   if (platformValue != null && platformValue.isNotEmpty) {
     return platformValue;
+  }
+
+  final v = _testEnv?.map[key];
+  if (v != null && v.isNotEmpty) {
+    return v;
   }
   return null;
 }
