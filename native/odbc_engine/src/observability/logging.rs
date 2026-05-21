@@ -218,4 +218,28 @@ mod tests {
         logger.log_query(Level::Debug, "SELECT * FROM users", &metadata);
         logger.log_query(Level::Trace, "SELECT * FROM users", &metadata);
     }
+
+    #[test]
+    fn sanitize_sql_replaces_string_and_numeric_literals() {
+        let sql = "SELECT * FROM users WHERE name = 'alice' AND id = 42";
+        assert_eq!(
+            sanitize_sql_for_log(sql),
+            "SELECT * FROM users WHERE name = ? AND id = ?"
+        );
+    }
+
+    #[test]
+    fn sanitize_sql_preserves_double_quoted_identifiers() {
+        let sql = r#"SELECT "userId" FROM "Users" WHERE "status" = 'open'"#;
+        assert_eq!(
+            sanitize_sql_for_log(sql),
+            r#"SELECT "userId" FROM "Users" WHERE "status" = ?"#
+        );
+    }
+
+    #[test]
+    fn sanitize_sql_handles_escaped_single_quotes_in_literals() {
+        let sql = "WHERE note = 'it''s fine' AND qty = 1.5e2";
+        assert_eq!(sanitize_sql_for_log(sql), "WHERE note = ? AND qty = ?");
+    }
 }

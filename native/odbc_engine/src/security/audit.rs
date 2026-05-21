@@ -225,4 +225,37 @@ mod tests {
         logger.log_connection(1, "default");
         assert_eq!(logger.get_events(5).len(), 1);
     }
+
+    #[test]
+    fn should_redact_password_in_connection_audit() {
+        let logger = AuditLogger::new(true);
+        logger.log_connection(7, "DSN=x;PWD=secret;UID=u");
+        let events = logger.get_events(1);
+        let cs = events[0]
+            .metadata
+            .get("connection_string")
+            .expect("connection_string");
+        assert!(cs.contains("PWD=***"));
+        assert!(!cs.contains("secret"));
+    }
+
+    #[test]
+    fn should_set_enabled_toggle_logging() {
+        let logger = AuditLogger::new(true);
+        logger.set_enabled(false);
+        logger.log_query(1, "SELECT 1");
+        assert!(logger.get_events(10).is_empty());
+        logger.set_enabled(true);
+        logger.log_query(1, "SELECT 2");
+        assert_eq!(logger.event_count(), 1);
+    }
+
+    #[test]
+    fn should_clear_events_reset_count() {
+        let logger = AuditLogger::new(true);
+        logger.log_error(None, "e");
+        assert_eq!(logger.event_count(), 1);
+        logger.clear_events();
+        assert_eq!(logger.event_count(), 0);
+    }
 }

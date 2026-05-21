@@ -168,4 +168,17 @@ mod tests {
         manager.clear();
         assert!(manager.retrieve("a").is_err());
     }
+
+    #[test]
+    fn should_with_secret_read_without_cloning_value() {
+        let manager = SecretManager::new();
+        manager
+            .store("k".to_string(), Secret::from_string("peek".to_string()))
+            .unwrap();
+        let seen = manager
+            .with_secret("k", |bytes| String::from_utf8_lossy(bytes).to_string())
+            .expect("with_secret");
+        assert_eq!(seen, "peek");
+        assert!(manager.retrieve("k").is_ok());
+    }
 }

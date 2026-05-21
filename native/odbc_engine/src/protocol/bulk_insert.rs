@@ -1218,4 +1218,138 @@ mod tests {
             assert_eq!(BulkColumnType::from_tag(tag).unwrap(), t);
         }
     }
+
+    #[test]
+    fn should_roundtrip_i64_when_legacy_wire() {
+        let payload = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "n".to_string(),
+                col_type: BulkColumnType::I64,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: 2,
+            column_data: vec![BulkColumnData::I64 {
+                values: vec![i64::MIN, i64::MAX],
+                null_bitmap: None,
+            }],
+        };
+        let enc = serialize_bulk_insert_payload(&payload).expect("serialize");
+        let dec = parse_bulk_insert_payload(&enc).expect("parse");
+        match &dec.column_data[0] {
+            BulkColumnData::I64 { values, .. } => {
+                assert_eq!(values.as_slice(), &[i64::MIN, i64::MAX]);
+            }
+            _ => panic!("expected I64"),
+        }
+    }
+
+    #[test]
+    fn should_roundtrip_timestamp_when_v2_wire() {
+        let ts = BulkTimestamp {
+            year: 2024,
+            month: 6,
+            day: 15,
+            hour: 10,
+            minute: 30,
+            second: 45,
+            fraction: 123_456,
+        };
+        let payload = BulkInsertPayload {
+            table: "events".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "at".to_string(),
+                col_type: BulkColumnType::Timestamp,
+                nullable: true,
+                max_len: 0,
+            }],
+            row_count: 1,
+            column_data: vec![BulkColumnData::Timestamp {
+                values: vec![ts],
+                null_bitmap: Some(vec![0]),
+            }],
+        };
+        let enc = serialize_bulk_insert_payload_v2(&payload).expect("serialize v2");
+        let dec = parse_bulk_insert_payload(&enc).expect("parse v2");
+        match &dec.column_data[0] {
+            BulkColumnData::Timestamp { values, .. } => assert_eq!(values[0], ts),
+            _ => panic!("expected Timestamp"),
+        }
+    }
+
+    #[test]
+    fn should_reject_v2_when_version_not_two() {
+        let mut enc = Vec::new();
+        enc.extend_from_slice(b"BLK2");
+        enc.extend_from_slice(&1u16.to_le_bytes());
+        enc.extend_from_slice(&0u16.to_le_bytes());
+        let err = parse_bulk_insert_payload(&enc).expect_err("bad version");
+        assert!(err
+            .to_string()
+            .contains("Unsupported bulk insert payload version"));
+    }
+
+    #[test]
+    fn should_reject_v2_when_flags_nonzero() {
+        let mut enc = Vec::new();
+        enc.extend_from_slice(b"BLK2");
+        enc.extend_from_slice(&BULK_V2_VERSION.to_le_bytes());
+        enc.extend_from_slice(&1u16.to_le_bytes());
+        let err = parse_bulk_insert_payload(&enc).expect_err("bad flags");
+        assert!(err
+            .to_string()
+            .contains("Unsupported bulk insert payload flags"));
+    }
+
+    #[test]
+    fn should_reject_parse_when_column_count_exceeds_max() {
+        let mut v = Vec::new();
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(b"t");
+        v.extend_from_slice(&((MAX_BULK_COLUMNS as u32) + 1).to_le_bytes());
+        let err = parse_bulk_insert_payload(&v).expect_err("columns");
+        assert!(err.to_string().contains("MAX_BULK_COLUMNS"));
+    }
+
+    #[test]
+    fn should_reject_variable_cell_when_exceeds_max_bulk_cell_len() {
+        let mut enc = Vec::new();
+        enc.extend_from_slice(b"BLK2");
+        enc.extend_from_slice(&BULK_V2_VERSION.to_le_bytes());
+        enc.extend_from_slice(&0u16.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"t");
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(b"b");
+        enc.push(TAG_BINARY);
+        enc.push(0);
+        enc.extend_from_slice(&0u32.to_le_bytes());
+        enc.extend_from_slice(&1u32.to_le_bytes());
+        enc.extend_from_slice(&(MAX_BULK_CELL_LEN as u32 + 1).to_le_bytes());
+        let err = parse_bulk_insert_payload(&enc).expect_err("cell len");
+        assert!(err.to_string().contains("MAX_BULK_CELL_LEN"));
+    }
+
+    #[test]
+    fn should_error_when_serialize_column_data_mismatch() {
+        let payload = BulkInsertPayload {
+            table: "t".to_string(),
+            columns: vec![BulkColumnSpec {
+                name: "a".to_string(),
+                col_type: BulkColumnType::I32,
+                nullable: false,
+                max_len: 0,
+            }],
+            row_count: 1,
+            column_data: vec![BulkColumnData::Text {
+                rows: vec![b"x".to_vec()],
+                max_len: 4,
+                null_bitmap: None,
+            }],
+        };
+        let err = serialize_bulk_insert_payload(&payload).expect_err("mismatch");
+        assert!(err.to_string().contains("does not match spec"));
+    }
 }

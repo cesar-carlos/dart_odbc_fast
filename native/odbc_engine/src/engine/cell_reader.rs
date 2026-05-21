@@ -228,6 +228,31 @@ mod tests {
         assert_eq!(out, b"not-a-number");
     }
 
+    #[test]
+    fn test_text_bytes_to_i32_le_bytes_max_i32() {
+        let out = text_bytes_to_i32_le_bytes(b"2147483647");
+        assert_eq!(out, i32::MAX.to_le_bytes());
+    }
+
+    #[test]
+    fn test_text_bytes_to_i64_le_bytes_max_i64() {
+        let out = text_bytes_to_i64_le_bytes(b"9223372036854775807");
+        assert_eq!(out, i64::MAX.to_le_bytes());
+    }
+
+    #[test]
+    fn cell_reader_default_matches_new() {
+        let a = CellReader::default();
+        let b = CellReader::new();
+        assert!(a.wide_buf.is_empty() && b.wide_buf.is_empty());
+        assert!(a.binary_buf.is_empty() && b.binary_buf.is_empty());
+    }
+
+    #[test]
+    fn wide_text_to_utf8_bytes_empty_slice_is_empty_utf8() {
+        assert!(wide_text_to_utf8_bytes(&[]).is_empty());
+    }
+
     fn get_test_dsn() -> Option<String> {
         load_dotenv();
         std::env::var("ODBC_TEST_DSN")

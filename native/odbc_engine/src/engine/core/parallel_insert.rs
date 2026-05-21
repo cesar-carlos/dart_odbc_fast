@@ -275,6 +275,26 @@ mod tests {
     }
 
     #[test]
+    fn should_accept_empty_columns_when_validating_parallel_input() {
+        assert!(validate_i32_parallel_input(&[], &[]).is_ok());
+    }
+
+    #[test]
+    fn should_cover_all_rows_when_parallelism_is_one() {
+        assert_eq!(chunk_ranges(7, 1), vec![0..7]);
+    }
+
+    #[test]
+    fn should_treat_zero_parallelism_as_one_chunk_range() {
+        assert_eq!(chunk_ranges(10, 0), vec![0..10]);
+    }
+
+    #[test]
+    fn should_default_parallel_mode_to_independent() {
+        assert_eq!(ParallelMode::default(), ParallelMode::Independent);
+    }
+
+    #[test]
     fn test_collect_partial_failure_preserves_failed_chunk_details() {
         let result = collect_partial_failure(
             7,

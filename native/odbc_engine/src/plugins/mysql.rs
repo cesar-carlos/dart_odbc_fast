@@ -383,4 +383,20 @@ mod tests {
         let optimized = plugin.optimize_query(sql);
         assert_eq!(optimized, "DELETE FROM users WHERE id = 1");
     }
+
+    #[test]
+    fn should_build_upsert_sql_with_on_duplicate_key_update() {
+        let plugin = MySqlPlugin::new();
+        let sql = plugin
+            .build_upsert_sql("users", &["id", "name"], &["id"], None)
+            .expect("valid upsert");
+        assert!(sql.contains("ON DUPLICATE KEY UPDATE"));
+        assert!(sql.contains("`name` = VALUES(`name`)"));
+    }
+
+    #[test]
+    fn should_quote_identifiers_with_backticks() {
+        let plugin = MySqlPlugin::new();
+        assert_eq!(plugin.quote("order").unwrap(), "`order`");
+    }
 }

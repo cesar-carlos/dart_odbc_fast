@@ -449,4 +449,24 @@ mod tests {
         ));
         assert!(matches!(rules[3], OptimizationRule::EnableStreaming));
     }
+
+    #[test]
+    fn should_build_merge_upsert_sql() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .build_upsert_sql("dbo.users", &["id", "name"], &["id"], None)
+            .expect("valid merge upsert");
+        assert!(sql.starts_with("MERGE INTO"));
+        assert!(sql.contains("WHEN NOT MATCHED"));
+        assert!(sql.ends_with(';'));
+    }
+
+    #[test]
+    fn should_append_output_clause_for_insert() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause("INSERT INTO t (id) VALUES (?)", DmlVerb::Insert, &["id"])
+            .unwrap();
+        assert!(sql.contains("OUTPUT INSERTED.[id]"));
+    }
 }

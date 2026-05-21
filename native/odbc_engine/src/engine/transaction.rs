@@ -273,7 +273,7 @@ impl IsolationStrategy {
 
 /// Resolve `SavepointDialect::Auto` to a concrete dialect using the live DBMS
 /// info. SqlServer → `SqlServer`; everything else (including Unknown) → `Sql92`.
-fn resolve_savepoint_dialect_for_engine(engine: &str) -> SavepointDialect {
+pub(crate) fn resolve_savepoint_dialect_for_engine(engine: &str) -> SavepointDialect {
     if engine == ENGINE_SQLSERVER {
         SavepointDialect::SqlServer
     } else {
@@ -1130,9 +1130,10 @@ impl<'t> Savepoint<'t> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IsolationLevel, LockTimeout, SavepointDialect, Transaction, TransactionAccessMode,
-        TransactionState,
+        quoting_for, IsolationLevel, LockTimeout, SavepointDialect, Transaction,
+        TransactionAccessMode, TransactionState,
     };
+    use crate::engine::identifier::{quote_identifier, validate_identifier};
     use crate::error::OdbcError;
     use crate::handles::{HandleManager, SharedHandleManager};
     use std::sync::{Arc, Mutex};
@@ -1701,5 +1702,59 @@ mod tests {
             txn.savepoint_release("sp; DROP TABLE x--"),
             Err(OdbcError::ValidationError(_))
         ));
+    }
+
+    #[test]
+    fn resolve_savepoint_dialect_maps_sqlserver_and_others() {
+        use crate::engine::core::ENGINE_SQLSERVER;
+
+        assert_eq!(
+            super::resolve_savepoint_dialect_for_engine(ENGINE_SQLSERVER),
+            SavepointDialect::SqlServer
+        );
+        assert_eq!(
+            super::resolve_savepoint_dialect_for_engine("postgres"),
+            SavepointDialect::Sql92
+        );
+    }
+
+    #[test]
+    fn savepoint_create_without_connection_fails_after_identifier_validation() {
+        let txn = Transaction::for_test_no_conn(
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Sql92,
+        );
+        let result = txn.savepoint_create("sp1");
+        assert!(
+            result.is_err(),
+            "bogus conn_id must fail once SQL is dispatched"
+        );
+    }
+
+    #[test]
+    fn savepoint_sqlserver_uses_bracket_quoting_in_create_sql() {
+        validate_identifier("sp1").unwrap();
+        let qname = quote_identifier("sp1", quoting_for(SavepointDialect::SqlServer)).unwrap();
+        let sql = format!("SAVE TRANSACTION {qname}");
+        assert_eq!(sql, "SAVE TRANSACTION [sp1]");
+    }
+
+    #[test]
+    fn transaction_is_active_false_when_state_none() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles,
+            1,
+            TransactionState::None,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(!txn.is_active());
+    }
+
+    #[test]
+    fn lock_timeout_is_engine_default_predicate() {
+        assert!(LockTimeout::engine_default().is_engine_default());
+        assert!(!LockTimeout::from_millis(1).is_engine_default());
     }
 }

@@ -176,4 +176,22 @@ mod tests {
         let metrics = get_global_metrics();
         assert!(std::sync::Arc::strong_count(&metrics) >= 1);
     }
+
+    #[test]
+    fn result_encoding_equality_and_debug() {
+        assert_eq!(ResultEncoding::RowMajor, ResultEncoding::RowMajor);
+        assert_ne!(ResultEncoding::RowMajor, ResultEncoding::Columnar);
+        assert!(format!("{:?}", ResultEncoding::ColumnarCompressed).contains("ColumnarCompressed"));
+    }
+
+    #[test]
+    fn deserialize_empty_param_buffer_is_legacy_empty_list() {
+        use crate::protocol::bound_param::ParamList;
+
+        let list = deserialize_param_buffer(&[]).expect("empty buffer");
+        match list {
+            ParamList::Legacy(p) => assert!(p.is_empty()),
+            ParamList::Directed(_) => panic!("empty buffer must be legacy list"),
+        }
+    }
 }

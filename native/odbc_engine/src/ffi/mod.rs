@@ -9351,4 +9351,148 @@ mod tests {
             "Should be able to get error even without connection"
         );
     }
+
+    // --- Pure FFI helpers (no ODBC handles) ---------------------------------
+
+    #[test]
+    fn should_reject_connection_string_with_null_byte() {
+        let err = validate_connection_string_format("DSN=test\0bad");
+        assert!(
+            err.as_ref().is_some_and(|m| m.contains("null byte")),
+            "expected null-byte rejection, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_reject_connection_string_without_key_value_pairs() {
+        let err = validate_connection_string_format("not_a_pair");
+        assert!(
+            err.as_ref().is_some_and(|m| m.contains("key=value")),
+            "expected key=value rejection, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_hash_bytes_deterministically() {
+        let a = hash_bytes(b"SELECT 1");
+        let b = hash_bytes(b"SELECT 1");
+        let c = hash_bytes(b"SELECT 2");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn should_parse_optional_c_string_pointers() {
+        assert_eq!(ptr_to_opt_str(std::ptr::null()), None);
+        let empty = CString::new("").unwrap();
+        assert_eq!(ptr_to_opt_str(empty.as_ptr()), None);
+        let spaces = CString::new("   ").unwrap();
+        assert_eq!(ptr_to_opt_str(spaces.as_ptr()), None);
+        let val = CString::new("  myschema ").unwrap();
+        assert_eq!(ptr_to_opt_str(val.as_ptr()), Some("myschema".to_string()));
+    }
+
+    #[test]
+    fn should_read_xa_buffer_as_empty_when_null_and_zero_length() {
+        assert_eq!(xa_read_buffer(std::ptr::null(), 0), Some(Vec::new()));
+        assert_eq!(xa_read_buffer(std::ptr::null(), 1), None);
+    }
+
+    #[test]
+    fn should_copy_xa_buffer_bytes_when_pointer_valid() {
+        let data = [1u8, 2, 3];
+        assert_eq!(
+            xa_read_buffer(data.as_ptr(), data.len() as c_uint),
+            Some(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn should_set_out_written_helpers() {
+        let mut written: c_uint = 99;
+        set_out_written_zero(&mut written);
+        assert_eq!(written, 0);
+        set_out_written_needed(&mut written, 512);
+        assert_eq!(written, 512);
+    }
+
+    #[test]
+    fn should_read_env_usize_with_fallback() {
+        let key = "ODBC_TEST_READ_ENV_USIZE_XYZ";
+        std::env::remove_var(key);
+        assert_eq!(read_env_usize(key, 42), 42);
+        std::env::set_var(key, "100");
+        assert_eq!(read_env_usize(key, 42), 100);
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn should_read_env_u64_with_fallback() {
+        let key = "ODBC_TEST_READ_ENV_U64_XYZ";
+        std::env::remove_var(key);
+        assert_eq!(read_env_u64(key, 7), 7);
+        std::env::set_var(key, "9001");
+        assert_eq!(read_env_u64(key, 7), 9001);
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn should_build_upsert_sql_via_ffi_without_connection() {
+        let conn = CString::new("Driver={PostgreSQL};Server=localhost;").unwrap();
+        let table = CString::new("users").unwrap();
+        let payload = CString::new(r#"{"columns":["id","name"],"conflict":["id"]}"#).unwrap();
+        let mut out = vec![0u8; 4096];
+        let mut written: c_uint = 0;
+        let code = odbc_build_upsert_sql(
+            conn.as_ptr(),
+            table.as_ptr(),
+            payload.as_ptr(),
+            out.as_mut_ptr(),
+            out.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(code, 0, "FFI upsert build should succeed");
+        let sql = std::str::from_utf8(&out[..written as usize]).unwrap();
+        assert!(sql.contains("ON CONFLICT"));
+    }
+
+    #[test]
+    fn should_reject_ffi_upsert_when_buffer_too_small() {
+        let conn = CString::new("Driver={PostgreSQL};Server=localhost;").unwrap();
+        let table = CString::new("users").unwrap();
+        let payload = CString::new(r#"{"columns":["id","name"],"conflict":["id"]}"#).unwrap();
+        let mut out = [0u8; 8];
+        let mut written: c_uint = 0;
+        let code = odbc_build_upsert_sql(
+            conn.as_ptr(),
+            table.as_ptr(),
+            payload.as_ptr(),
+            out.as_mut_ptr(),
+            out.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(code, -2);
+        assert!(written > out.len() as c_uint);
+    }
+
+    #[test]
+    fn should_append_returning_sql_via_ffi_for_postgres() {
+        let conn = CString::new("Driver={PostgreSQL};Server=localhost;").unwrap();
+        let sql = CString::new("INSERT INTO users (id) VALUES (?)").unwrap();
+        let cols = CString::new("id").unwrap();
+        let mut out = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let code = odbc_append_returning_sql(
+            conn.as_ptr(),
+            sql.as_ptr(),
+            0,
+            cols.as_ptr(),
+            out.as_mut_ptr(),
+            out.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(code, 0);
+        let appended = std::str::from_utf8(&out[..written as usize]).unwrap();
+        assert!(appended.contains("RETURNING"));
+    }
 }

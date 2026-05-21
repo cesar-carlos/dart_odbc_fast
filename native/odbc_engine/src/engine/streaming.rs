@@ -1684,4 +1684,116 @@ mod tests {
         assert_eq!(chunk, None);
         assert!(!state.has_more());
     }
+
+    #[test]
+    fn test_frame_item_row_count_tag_encodes_i64_payload() {
+        let framed = frame_item(
+            MULTI_STREAM_ITEM_TAG_ROW_COUNT,
+            42i64.to_le_bytes().to_vec(),
+        )
+        .unwrap();
+        assert_eq!(framed[0], MULTI_STREAM_ITEM_TAG_ROW_COUNT);
+        assert_eq!(
+            u32::from_le_bytes([framed[1], framed[2], framed[3], framed[4]]),
+            8
+        );
+        assert_eq!(i64::from_le_bytes(framed[5..13].try_into().unwrap()), 42);
+    }
+
+    #[test]
+    fn test_batched_streaming_state_cancelled_returns_end() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Cancelled);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        assert!(state.cancelled);
+        assert!(!state.has_more());
+    }
+
+    #[test]
+    fn test_batched_streaming_state_worker_disconnect_returns_worker_crashed() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let err = state.fetch_next_chunk().unwrap_err();
+        assert!(matches!(err, OdbcError::WorkerCrashed(_)));
+        assert!(state.stream_error.is_some());
+    }
+
+    #[test]
+    fn test_async_streaming_state_poll_cancelled() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Cancelled);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Cancelled);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_async_streaming_state_worker_disconnect_returns_worker_crashed() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        // Blocking fetch surfaces WorkerCrashed; poll_status only marks Done.
+        let err = state.fetch_next_chunk().unwrap_err();
+        assert!(matches!(err, OdbcError::WorkerCrashed(_)));
+    }
+
+    #[test]
+    fn test_stream_state_in_memory_delegates_fetch() {
+        let mut state = StreamState::InMemory(StreamingState {
+            data: vec![1, 2, 3],
+            offset: 0,
+            chunk_size: 2,
+        });
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2]));
+        assert!(state.has_more());
+    }
+
+    #[test]
+    fn test_stream_state_copy_next_chunk_delegates_to_in_memory() {
+        let mut state = StreamState::InMemory(StreamingState {
+            data: vec![5, 6],
+            offset: 0,
+            chunk_size: 2,
+        });
+        let mut out = [0u8; 2];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 2,
+                has_more: false
+            }
+        );
+        assert_eq!(&out, &[5, 6]);
+    }
+
+    #[test]
+    fn test_batched_streaming_state_multiple_batches() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(4);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2]));
+        let _ = tx.send(BatchedMessage::Batch(vec![3, 4]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2]));
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![3, 4]));
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_async_streaming_state_poll_pending_before_batch() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Pending);
+        let _ = tx.send(BatchedMessage::Batch(vec![9]));
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+    }
 }

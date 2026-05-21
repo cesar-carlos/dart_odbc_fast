@@ -343,4 +343,38 @@ mod tests {
 
         otel_shutdown();
     }
+
+    #[test]
+    fn should_reject_null_trace_pointer_after_init() {
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
+        let result = unsafe { otel_export_trace(std::ptr::null(), 0) };
+        assert_eq!(result, 1);
+        otel_shutdown();
+    }
+
+    #[test]
+    fn should_reject_invalid_utf8_trace_payload() {
+        unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
+        let invalid = [0xFFu8, 0xFE];
+        let result = unsafe { otel_export_trace(invalid.as_ptr(), invalid.len()) };
+        assert_eq!(result, 3);
+        otel_shutdown();
+    }
+
+    #[test]
+    fn should_use_console_exporter_for_non_http_endpoint() {
+        let endpoint = std::ffi::CString::new("file:///tmp/traces").unwrap();
+        let result = unsafe { otel_init(endpoint.as_ptr(), std::ptr::null(), std::ptr::null()) };
+        assert_eq!(result, 0);
+        let trace = br#"{"trace_id":"abc"}"#;
+        let export = unsafe { otel_export_trace(trace.as_ptr(), trace.len()) };
+        assert_eq!(export, 0);
+        otel_shutdown();
+    }
+
+    #[test]
+    fn should_return_error_when_get_last_error_pointers_null() {
+        let result = unsafe { otel_get_last_error(std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(result, 1);
+    }
 }

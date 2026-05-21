@@ -534,4 +534,53 @@ mod tests {
         assert_eq!(placeholders(1), "?");
         assert_eq!(placeholders(3), "?, ?, ?");
     }
+
+    #[test]
+    fn should_quote_column_list_for_insert_clause() {
+        let quoted = quote_column_list(&["id", "name"]).expect("quote columns");
+        assert_eq!(quoted, "\"id\", \"name\"");
+    }
+
+    #[test]
+    fn should_reject_mismatched_column_count_when_quoting_list() {
+        let err = quote_column_list(&["bad;drop"]).unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn should_map_bulk_column_specs_to_buffer_descriptors() {
+        let specs = [
+            BulkColumnSpec {
+                name: "a".to_string(),
+                col_type: BulkColumnType::I32,
+                nullable: false,
+                max_len: 0,
+            },
+            BulkColumnSpec {
+                name: "b".to_string(),
+                col_type: BulkColumnType::Text,
+                nullable: true,
+                max_len: 0,
+            },
+            BulkColumnSpec {
+                name: "c".to_string(),
+                col_type: BulkColumnType::Binary,
+                nullable: false,
+                max_len: 0,
+            },
+        ];
+        let descs: Vec<_> = specs
+            .iter()
+            .map(spec_to_buffer_desc)
+            .collect::<Result<Vec<_>>>()
+            .expect("buffer descs");
+        assert!(matches!(descs[0], BufferDesc::I32 { nullable: false }));
+        assert!(matches!(descs[1], BufferDesc::Text { max_str_len: 1 }));
+        assert!(matches!(descs[2], BufferDesc::Binary { length: 1 }));
+    }
+
+    #[test]
+    fn should_accept_empty_columns_when_validating_i32_bulk_data() {
+        assert!(validate_i32_bulk_data(&[], &[]).is_ok());
+    }
 }

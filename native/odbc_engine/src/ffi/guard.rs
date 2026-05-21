@@ -353,4 +353,36 @@ mod tests {
         assert_eq!(<u64 as FromZero>::ffi_zero(), 0u64);
         assert_eq!(<i64 as FromZero>::ffi_zero(), 0i64);
     }
+
+    #[test]
+    fn call_size_passes_through_value() {
+        assert_eq!(call_size(|| 42), 42);
+    }
+
+    #[test]
+    fn call_ptr_assert_unwind_safe_returns_value() {
+        let p = call_ptr_assert_unwind_safe(|| Box::into_raw(Box::new(9i32)));
+        assert!(!p.is_null());
+        // SAFETY: pointer came from Box::into_raw above.
+        let reclaimed = unsafe { Box::from_raw(p) };
+        assert_eq!(*reclaimed, 9);
+    }
+
+    #[test]
+    fn call_ptr_assert_unwind_safe_returns_null_on_panic() {
+        let p: *mut u8 = call_ptr_assert_unwind_safe(|| panic!("assert ptr"));
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn call_id_assert_unwind_safe_returns_zero_on_panic() {
+        let v: u32 = call_id_assert_unwind_safe(|| panic!("assert id"));
+        assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn call_id_assert_unwind_safe_passes_through_value() {
+        let v: u64 = call_id_assert_unwind_safe(|| 99);
+        assert_eq!(v, 99);
+    }
 }

@@ -71,7 +71,7 @@ def check_tarpaulin_installed() -> bool:
     result = subprocess.run(
         ["cargo", "tarpaulin", "--version"],
         capture_output=True,
-        stderr=subprocess.STDOUT,
+        text=True,
     )
     return result.returncode == 0
 

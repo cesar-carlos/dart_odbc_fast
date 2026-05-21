@@ -338,4 +338,127 @@ mod tests {
         };
         assert!(m.contains("ref_cursor_out_bind_not_enabled"), "{m}");
     }
+
+    #[test]
+    fn should_map_output_integer_slots_when_bound_to_slots() {
+        let o = bound_to_slots(&[bp(ParamDirection::Output, ParamValue::Integer(0))]).unwrap();
+        assert!(matches!(o.slots[0], ParamSlot::OutI32(_)));
+    }
+
+    #[test]
+    fn should_map_output_bigint_and_null_slots_when_bound_to_slots() {
+        let o = bound_to_slots(&[
+            bp(ParamDirection::Output, ParamValue::BigInt(0)),
+            bp(ParamDirection::Output, ParamValue::Null),
+        ])
+        .unwrap();
+        assert!(matches!(o.slots[0], ParamSlot::OutI64(_)));
+        assert!(matches!(o.slots[1], ParamSlot::OutI32(_)));
+    }
+
+    #[test]
+    fn should_map_inout_numeric_slots_when_bound_to_slots() {
+        let o = bound_to_slots(&[
+            bp(ParamDirection::InOut, ParamValue::Integer(7)),
+            bp(ParamDirection::InOut, ParamValue::BigInt(9)),
+        ])
+        .unwrap();
+        match &o.slots[0] {
+            ParamSlot::InOutI32(n) => assert_eq!(n.into_opt(), Some(7)),
+            _ => panic!("expected InOutI32"),
+        }
+        match &o.slots[1] {
+            ParamSlot::InOutI64(n) => assert_eq!(n.into_opt(), Some(9)),
+            _ => panic!("expected InOutI64"),
+        }
+    }
+
+    #[test]
+    fn should_map_output_decimal_to_text_shell_when_bound_to_slots() {
+        let o = bound_to_slots(&[bp(
+            ParamDirection::Output,
+            ParamValue::Decimal("12.34".to_string()),
+        )])
+        .unwrap();
+        assert!(matches!(o.slots[0], ParamSlot::OutText(_)));
+    }
+
+    #[test]
+    fn should_reject_empty_decimal_out_when_bound_to_slots() {
+        let err = bound_to_slots(&[bp(
+            ParamDirection::Output,
+            ParamValue::Decimal(String::new()),
+        )])
+        .err()
+        .expect("empty decimal output should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("decimal_inout_out_requires_non_empty"), "{m}");
+    }
+
+    #[test]
+    fn should_reject_inout_null_when_bound_to_slots() {
+        let err = bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::Null)])
+            .err()
+            .expect("inout null should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("inout_null"), "{m}");
+    }
+
+    #[test]
+    fn should_reject_ref_cursor_as_input_when_bound_to_slots() {
+        let err = bound_to_slots(&[bp(ParamDirection::Input, ParamValue::RefCursorOut)])
+            .err()
+            .expect("ref cursor as input should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("ref_cursor_out_invalid_direction"), "{m}");
+    }
+
+    #[test]
+    fn should_reject_inout_binary_when_bound_to_slots() {
+        let err = bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::Binary(vec![1]))])
+            .err()
+            .expect("inout binary should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("binary_out_inout_not_implemented"), "{m}");
+    }
+
+    #[test]
+    fn should_reject_inout_string_over_max_code_units_when_bound_to_slots() {
+        let too_long = "x".repeat(super::OUT_TEXT_MAX_CODE_UNITS + 1);
+        let err = bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::String(too_long))])
+            .err()
+            .expect("inout string too long should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("inout_string_too_long"), "{m}");
+    }
+
+    #[test]
+    fn should_collect_output_footer_for_mixed_out_slots() {
+        let params = bound_to_slots(&[
+            bp(ParamDirection::Input, ParamValue::Integer(1)),
+            bp(ParamDirection::Output, ParamValue::Integer(0)),
+            bp(ParamDirection::InOut, ParamValue::String("hi".to_string())),
+        ])
+        .unwrap();
+        let footer = params.output_footer_values();
+        assert_eq!(footer.len(), 2);
+        assert_eq!(footer[0], ParamValue::Null);
+        assert_eq!(footer[1], ParamValue::String("hi".to_string()));
+    }
+
+    #[test]
+    fn should_emit_integer_footer_when_inout_i32_has_value() {
+        let params = bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::Integer(42))]).unwrap();
+        assert_eq!(params.output_footer_values(), vec![ParamValue::Integer(42)]);
+    }
 }

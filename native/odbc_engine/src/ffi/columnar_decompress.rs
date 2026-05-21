@@ -140,4 +140,50 @@ mod tests {
         odbc_columnar_decompress_free(pout, 0, 0);
         odbc_columnar_decompress_free(pout, olen, ocap);
     }
+
+    #[test]
+    fn should_reject_null_input_pointer() {
+        let mut pout: *mut u8 = std::ptr::null_mut();
+        let mut olen: c_uint = 0;
+        let mut ocap: c_uint = 0;
+        let st =
+            odbc_columnar_decompress(1u8, std::ptr::null(), 0, &mut pout, &mut olen, &mut ocap);
+        assert_eq!(st, FfiError::NullPointer.as_i32());
+        assert!(pout.is_null());
+    }
+
+    #[test]
+    fn should_reject_uncompressed_algorithm_id() {
+        let mut pout: *mut u8 = std::ptr::null_mut();
+        let mut olen: c_uint = 0;
+        let mut ocap: c_uint = 0;
+        let payload = [0u8; 4];
+        let st = odbc_columnar_decompress(
+            0u8,
+            payload.as_ptr(),
+            payload.len() as c_uint,
+            &mut pout,
+            &mut olen,
+            &mut ocap,
+        );
+        assert_eq!(st, FfiError::InvalidArgument.as_i32());
+    }
+
+    #[test]
+    fn should_reject_invalid_compressed_payload() {
+        let mut pout: *mut u8 = std::ptr::null_mut();
+        let mut olen: c_uint = 0;
+        let mut ocap: c_uint = 0;
+        let garbage = [0xFFu8; 16];
+        let st = odbc_columnar_decompress(
+            1u8,
+            garbage.as_ptr(),
+            garbage.len() as c_uint,
+            &mut pout,
+            &mut olen,
+            &mut ocap,
+        );
+        assert_eq!(st, FfiError::InvalidArgument.as_i32());
+        assert!(pout.is_null());
+    }
 }

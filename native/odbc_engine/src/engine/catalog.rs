@@ -75,50 +75,7 @@ pub fn list_tables(
     }
 
     // Fallback: legacy INFORMATION_SCHEMA path used when no plugin matches.
-    let cat = catalog.unwrap_or("").trim();
-    let sch = schema.unwrap_or("").trim();
-
-    let (sql, params): (String, Vec<ParamValue>) = if cat.is_empty() && sch.is_empty() {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
-             FROM INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') \
-             ORDER BY TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME"
-                .to_string(),
-            vec![],
-        )
-    } else if !cat.is_empty() && sch.is_empty() {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
-             FROM INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') AND TABLE_CATALOG = ? \
-             ORDER BY TABLE_SCHEMA, TABLE_NAME"
-                .to_string(),
-            vec![ParamValue::String(cat.to_string())],
-        )
-    } else if cat.is_empty() && !sch.is_empty() {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
-             FROM INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') AND TABLE_SCHEMA = ? \
-             ORDER BY TABLE_NAME"
-                .to_string(),
-            vec![ParamValue::String(sch.to_string())],
-        )
-    } else {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
-             FROM INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') \
-             AND TABLE_CATALOG = ? AND TABLE_SCHEMA = ? \
-             ORDER BY TABLE_NAME"
-                .to_string(),
-            vec![
-                ParamValue::String(cat.to_string()),
-                ParamValue::String(sch.to_string()),
-            ],
-        )
-    };
+    let (sql, params) = information_schema_list_tables_query(catalog, schema);
 
     if params.is_empty() {
         PIPELINE.execute_direct(conn, &sql)
@@ -158,30 +115,7 @@ pub fn list_columns(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
         return execute_catalog_query(conn, q?);
     }
 
-    let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, \
-             ORDINAL_POSITION, DATA_TYPE, IS_NULLABLE \
-             FROM INFORMATION_SCHEMA.COLUMNS \
-             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
-             ORDER BY ORDINAL_POSITION"
-                .to_string(),
-            vec![
-                ParamValue::String(sch.to_string()),
-                ParamValue::String(table_name),
-            ],
-        )
-    } else {
-        (
-            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, \
-             ORDINAL_POSITION, DATA_TYPE, IS_NULLABLE \
-             FROM INFORMATION_SCHEMA.COLUMNS \
-             WHERE TABLE_NAME = ? \
-             ORDER BY TABLE_SCHEMA, ORDINAL_POSITION"
-                .to_string(),
-            vec![ParamValue::String(table_name)],
-        )
-    };
+    let (sql, params) = information_schema_list_columns_query(&table_name, schema);
 
     PIPELINE.execute_with_params(conn, &sql, &params)
 }
@@ -190,10 +124,7 @@ pub fn list_columns(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
 /// Minimal type info for tools; full ODBC SQLGetTypeInfo would require lower-level API.
 /// Returns binary protocol (same as odbc_exec_query).
 pub fn get_type_info(conn: &Connection<'static>) -> Result<Vec<u8>> {
-    let sql = "SELECT DISTINCT DATA_TYPE AS type_name \
-               FROM INFORMATION_SCHEMA.COLUMNS \
-               ORDER BY type_name";
-    PIPELINE.execute_direct(conn, sql)
+    PIPELINE.execute_direct(conn, information_schema_type_info_sql())
 }
 
 /// Lists primary keys for a table from INFORMATION_SCHEMA.
@@ -207,7 +138,145 @@ pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
         return execute_catalog_query(conn, q?);
     }
 
-    let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
+    let (sql, params) = information_schema_list_primary_keys_query(&table_name, schema);
+
+    PIPELINE.execute_with_params(conn, &sql, &params)
+}
+
+/// Lists foreign keys for a table from INFORMATION_SCHEMA.
+/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
+/// Returns binary protocol (same as odbc_exec_query).
+/// Result columns: CONSTRAINT_NAME, FROM_TABLE, FROM_COLUMN, TO_TABLE, TO_COLUMN, UPDATE_RULE, DELETE_RULE
+pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
+    let (schema, table_name) = validate_and_parse_table(table)?;
+    let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_foreign_keys_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
+
+    let (sql, params) = information_schema_list_foreign_keys_query(&table_name, schema);
+
+    PIPELINE.execute_with_params(conn, &sql, &params)
+}
+
+/// Lists indexes for a table.
+/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
+/// Returns binary protocol (same as odbc_exec_query).
+/// Result columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, IS_UNIQUE, IS_PRIMARY, ORDINAL_POSITION
+///
+/// Note: INFORMATION_SCHEMA doesn't have a standard INDEXES view, so this implementation
+/// uses database-specific queries. For maximum portability, we construct a union query
+/// that works across SQL Server, PostgreSQL, MySQL, and Oracle.
+pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
+    let (schema, table_name) = validate_and_parse_table(table)?;
+    let schema = schema.as_deref();
+    if let Some(q) = dispatch_catalog(conn, |p| p.list_indexes_sql(&table_name, schema)) {
+        return execute_catalog_query(conn, q?);
+    }
+
+    // Unified query that works across major databases
+    // We return indexes from constraints (PKs and unique constraints) as a baseline
+    // Note: This is a simplified version; full index metadata would require database-specific queries
+    let (sql, params) = information_schema_list_indexes_query(&table_name, schema);
+
+    PIPELINE.execute_with_params(conn, &sql, &params)
+}
+
+/// INFORMATION_SCHEMA fallback for [`list_tables`] when no dialect plugin matches.
+pub(crate) fn information_schema_list_tables_query(
+    catalog: Option<&str>,
+    schema: Option<&str>,
+) -> (String, Vec<ParamValue>) {
+    let cat = catalog.unwrap_or("").trim();
+    let sch = schema.unwrap_or("").trim();
+
+    if cat.is_empty() && sch.is_empty() {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
+             FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') \
+             ORDER BY TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME"
+                .to_string(),
+            vec![],
+        )
+    } else if !cat.is_empty() && sch.is_empty() {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
+             FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') AND TABLE_CATALOG = ? \
+             ORDER BY TABLE_SCHEMA, TABLE_NAME"
+                .to_string(),
+            vec![ParamValue::String(cat.to_string())],
+        )
+    } else if cat.is_empty() && !sch.is_empty() {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
+             FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') AND TABLE_SCHEMA = ? \
+             ORDER BY TABLE_NAME"
+                .to_string(),
+            vec![ParamValue::String(sch.to_string())],
+        )
+    } else {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
+             FROM INFORMATION_SCHEMA.TABLES \
+             WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') \
+             AND TABLE_CATALOG = ? AND TABLE_SCHEMA = ? \
+             ORDER BY TABLE_NAME"
+                .to_string(),
+            vec![
+                ParamValue::String(cat.to_string()),
+                ParamValue::String(sch.to_string()),
+            ],
+        )
+    }
+}
+
+/// INFORMATION_SCHEMA fallback for [`list_columns`].
+pub(crate) fn information_schema_list_columns_query(
+    table_name: &str,
+    schema: Option<&str>,
+) -> (String, Vec<ParamValue>) {
+    if let Some(sch) = schema {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, \
+             ORDINAL_POSITION, DATA_TYPE, IS_NULLABLE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+             ORDER BY ORDINAL_POSITION"
+                .to_string(),
+            vec![
+                ParamValue::String(sch.to_string()),
+                ParamValue::String(table_name.to_string()),
+            ],
+        )
+    } else {
+        (
+            "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, \
+             ORDINAL_POSITION, DATA_TYPE, IS_NULLABLE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_NAME = ? \
+             ORDER BY TABLE_SCHEMA, ORDINAL_POSITION"
+                .to_string(),
+            vec![ParamValue::String(table_name.to_string())],
+        )
+    }
+}
+
+/// INFORMATION_SCHEMA SQL for [`get_type_info`].
+pub(crate) fn information_schema_type_info_sql() -> &'static str {
+    "SELECT DISTINCT DATA_TYPE AS type_name \
+     FROM INFORMATION_SCHEMA.COLUMNS \
+     ORDER BY type_name"
+}
+
+/// INFORMATION_SCHEMA fallback for [`list_primary_keys`].
+pub(crate) fn information_schema_list_primary_keys_query(
+    table_name: &str,
+    schema: Option<&str>,
+) -> (String, Vec<ParamValue>) {
+    if let Some(sch) = schema {
         (
             "SELECT \
                 kcu.TABLE_NAME, \
@@ -226,7 +295,7 @@ pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
                 .to_string(),
             vec![
                 ParamValue::String(sch.to_string()),
-                ParamValue::String(table_name),
+                ParamValue::String(table_name.to_string()),
             ],
         )
     } else {
@@ -245,25 +314,17 @@ pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
                 AND tc.TABLE_NAME = ? \
              ORDER BY kcu.ORDINAL_POSITION"
                 .to_string(),
-            vec![ParamValue::String(table_name)],
+            vec![ParamValue::String(table_name.to_string())],
         )
-    };
-
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    }
 }
 
-/// Lists foreign keys for a table from INFORMATION_SCHEMA.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
-/// Result columns: CONSTRAINT_NAME, FROM_TABLE, FROM_COLUMN, TO_TABLE, TO_COLUMN, UPDATE_RULE, DELETE_RULE
-pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_foreign_keys_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
+/// INFORMATION_SCHEMA fallback for [`list_foreign_keys`].
+pub(crate) fn information_schema_list_foreign_keys_query(
+    table_name: &str,
+    schema: Option<&str>,
+) -> (String, Vec<ParamValue>) {
+    if let Some(sch) = schema {
         (
             "SELECT \
                 rc.CONSTRAINT_NAME, \
@@ -287,7 +348,7 @@ pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
                 .to_string(),
             vec![
                 ParamValue::String(sch.to_string()),
-                ParamValue::String(table_name),
+                ParamValue::String(table_name.to_string()),
             ],
         )
     } else {
@@ -311,32 +372,17 @@ pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
              WHERE kcu1.TABLE_NAME = ? \
              ORDER BY rc.CONSTRAINT_NAME, kcu1.ORDINAL_POSITION"
                 .to_string(),
-            vec![ParamValue::String(table_name)],
+            vec![ParamValue::String(table_name.to_string())],
         )
-    };
-
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    }
 }
 
-/// Lists indexes for a table.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
-/// Result columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, IS_UNIQUE, IS_PRIMARY, ORDINAL_POSITION
-///
-/// Note: INFORMATION_SCHEMA doesn't have a standard INDEXES view, so this implementation
-/// uses database-specific queries. For maximum portability, we construct a union query
-/// that works across SQL Server, PostgreSQL, MySQL, and Oracle.
-pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_indexes_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    // Unified query that works across major databases
-    // We return indexes from constraints (PKs and unique constraints) as a baseline
-    // Note: This is a simplified version; full index metadata would require database-specific queries
-    let (sql, params): (String, Vec<ParamValue>) = if let Some(sch) = schema {
+/// INFORMATION_SCHEMA fallback for [`list_indexes`].
+pub(crate) fn information_schema_list_indexes_query(
+    table_name: &str,
+    schema: Option<&str>,
+) -> (String, Vec<ParamValue>) {
+    if let Some(sch) = schema {
         (
             "SELECT \
                 tc.CONSTRAINT_NAME AS INDEX_NAME, \
@@ -357,7 +403,7 @@ pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
                 .to_string(),
             vec![
                 ParamValue::String(sch.to_string()),
-                ParamValue::String(table_name),
+                ParamValue::String(table_name.to_string()),
             ],
         )
     } else {
@@ -378,11 +424,9 @@ pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
                 AND tc.TABLE_NAME = ? \
              ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION"
                 .to_string(),
-            vec![ParamValue::String(table_name)],
+            vec![ParamValue::String(table_name.to_string())],
         )
-    };
-
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    }
 }
 
 #[cfg(test)]
@@ -438,7 +482,137 @@ mod tests {
         assert_eq!(name, "x");
     }
 
-    // Note: Full integration tests for list_primary_keys, list_foreign_keys, and list_indexes
-    // are in the E2E test suite (tests/e2e_multi_db) which runs against real databases.
-    // Unit tests here focus on input validation and query construction logic.
+    fn assert_string_param(value: &ParamValue, expected: &str) {
+        match value {
+            ParamValue::String(s) => assert_eq!(s, expected),
+            other => panic!("expected String param, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_unfiltered_has_no_params() {
+        let (sql, params) = information_schema_list_tables_query(None, None);
+        assert!(sql.contains("INFORMATION_SCHEMA.TABLES"));
+        assert!(sql.contains("TABLE_TYPE IN ('BASE TABLE','VIEW')"));
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_catalog_only() {
+        let (sql, params) = information_schema_list_tables_query(Some("mydb"), None);
+        assert!(sql.contains("TABLE_CATALOG = ?"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "mydb");
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_schema_only() {
+        let (sql, params) = information_schema_list_tables_query(None, Some("dbo"));
+        assert!(sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "dbo");
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_catalog_and_schema() {
+        let (sql, params) = information_schema_list_tables_query(Some("mydb"), Some("dbo"));
+        assert!(sql.contains("TABLE_CATALOG = ?"));
+        assert!(sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "mydb");
+        assert_string_param(&params[1], "dbo");
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_trims_whitespace_filters() {
+        let (sql, params) = information_schema_list_tables_query(Some("  mydb  "), Some("  dbo  "));
+        assert!(sql.contains("TABLE_CATALOG = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "mydb");
+        assert_string_param(&params[1], "dbo");
+    }
+
+    #[test]
+    fn information_schema_list_tables_query_empty_strings_are_unfiltered() {
+        let (sql, params) = information_schema_list_tables_query(Some(""), Some("   "));
+        assert!(!sql.contains("TABLE_CATALOG = ?"));
+        assert!(!sql.contains("TABLE_SCHEMA = ?"));
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn information_schema_list_columns_query_without_schema() {
+        let (sql, params) = information_schema_list_columns_query("users", None);
+        assert!(sql.contains("INFORMATION_SCHEMA.COLUMNS"));
+        assert!(sql.contains("WHERE TABLE_NAME = ?"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "users");
+    }
+
+    #[test]
+    fn information_schema_list_columns_query_with_schema() {
+        let (sql, params) = information_schema_list_columns_query("users", Some("dbo"));
+        assert!(sql.contains("TABLE_SCHEMA = ?"));
+        assert!(sql.contains("TABLE_NAME = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "dbo");
+        assert_string_param(&params[1], "users");
+    }
+
+    #[test]
+    fn information_schema_type_info_sql_selects_distinct_types() {
+        let sql = information_schema_type_info_sql();
+        assert!(sql.contains("SELECT DISTINCT DATA_TYPE"));
+        assert!(sql.contains("ORDER BY type_name"));
+    }
+
+    #[test]
+    fn information_schema_list_primary_keys_query_without_schema() {
+        let (sql, params) = information_schema_list_primary_keys_query("orders", None);
+        assert!(sql.contains("CONSTRAINT_TYPE = 'PRIMARY KEY'"));
+        assert!(sql.contains("tc.TABLE_NAME = ?"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "orders");
+    }
+
+    #[test]
+    fn information_schema_list_primary_keys_query_with_schema() {
+        let (sql, params) = information_schema_list_primary_keys_query("orders", Some("sales"));
+        assert!(sql.contains("tc.TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[1], "orders");
+    }
+
+    #[test]
+    fn information_schema_list_foreign_keys_query_without_schema() {
+        let (sql, params) = information_schema_list_foreign_keys_query("child", None);
+        assert!(sql.contains("REFERENTIAL_CONSTRAINTS"));
+        assert!(sql.contains("WHERE kcu1.TABLE_NAME = ?"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "child");
+    }
+
+    #[test]
+    fn information_schema_list_foreign_keys_query_with_schema() {
+        let (sql, params) = information_schema_list_foreign_keys_query("child", Some("dbo"));
+        assert!(sql.contains("kcu1.TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "dbo");
+    }
+
+    #[test]
+    fn information_schema_list_indexes_query_without_schema() {
+        let (sql, params) = information_schema_list_indexes_query("items", None);
+        assert!(sql.contains("CONSTRAINT_TYPE = 'PRIMARY KEY' OR tc.CONSTRAINT_TYPE = 'UNIQUE'"));
+        assert_eq!(params.len(), 1);
+        assert_string_param(&params[0], "items");
+    }
+
+    #[test]
+    fn information_schema_list_indexes_query_with_schema() {
+        let (sql, params) = information_schema_list_indexes_query("items", Some("inv"));
+        assert!(sql.contains("tc.TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[1], "items");
+    }
 }

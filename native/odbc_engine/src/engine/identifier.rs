@@ -208,6 +208,22 @@ mod tests {
     }
 
     #[test]
+    fn identifier_quoting_wrap_double_quote_style() {
+        assert_eq!(IdentifierQuoting::DoubleQuote.wrap("col"), "\"col\"");
+    }
+
+    #[test]
+    fn validate_identifier_accepts_lone_underscore() {
+        assert!(validate_identifier("_").is_ok());
+    }
+
+    #[test]
+    fn quote_qualified_rejects_empty_segment() {
+        assert!(quote_qualified_default("schema.").is_err());
+        assert!(quote_qualified_default(".table").is_err());
+    }
+
+    #[test]
     fn quote_default_rejects_classic_injection_attempts() {
         for bad in [
             "table; DROP TABLE users--",

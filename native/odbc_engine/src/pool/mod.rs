@@ -488,4 +488,34 @@ mod tests {
     fn test_resolve_checkout_validation_connection_string_overrides_env() {
         assert!(resolve_checkout_validation(Some(true), Some(false)));
     }
+
+    #[test]
+    fn should_parse_bool_yes_and_on() {
+        assert_eq!(parse_bool_flag("yes"), Some(true));
+        assert_eq!(parse_bool_flag("ON"), Some(true));
+        assert_eq!(parse_bool_flag("off"), Some(false));
+        assert_eq!(parse_bool_flag("nope"), None);
+    }
+
+    #[test]
+    fn should_resolve_health_check_from_connection_string() {
+        let conn = "DSN=x;health_check_query=SELECT CURRENT_TIMESTAMP;";
+        let config = PoolConfig::from_connection_string(conn);
+        assert_eq!(config.health_check_query, "SELECT CURRENT_TIMESTAMP");
+        assert_eq!(config.sanitized_connection_string, "DSN=x;");
+    }
+
+    #[test]
+    fn should_strip_pool_test_on_checkout_aliases() {
+        let conn = "DSN=a;Pool_Test_On_Checkout=false;UID=u";
+        let (sanitized, flag, _) = parse_pool_options_from_connection_string(conn);
+        assert_eq!(sanitized, "DSN=a;UID=u");
+        assert!(!flag.expect("parsed flag"));
+    }
+
+    #[test]
+    fn should_split_connection_string_parts_inside_braces() {
+        let parts = split_connection_string_parts("PWD={a;b};DSN=x");
+        assert_eq!(parts, vec!["PWD={a;b}", "DSN=x"]);
+    }
 }

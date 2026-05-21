@@ -313,6 +313,8 @@ impl Default for PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::capabilities::returning::DmlVerb;
+    use crate::plugins::capabilities::SessionOptions;
     use crate::protocol::types::OdbcType;
 
     #[test]
@@ -504,5 +506,103 @@ mod tests {
         assert_eq!(plugin.map_type(1), OdbcType::Varchar);
         assert_eq!(plugin.map_type(4), OdbcType::Integer);
         assert_eq!(plugin.map_type(-5), OdbcType::BigInt);
+    }
+
+    #[test]
+    fn should_map_plugin_id_for_known_dbms_names() {
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("Microsoft SQL Server"),
+            Some("sqlserver")
+        );
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("PostgreSQL"),
+            Some("postgres")
+        );
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("MariaDB"),
+            Some("mariadb")
+        );
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("Snowflake"),
+            Some("snowflake")
+        );
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("Unknown DBMS"),
+            None
+        );
+    }
+
+    #[test]
+    fn should_report_is_supported_when_driver_has_registered_plugin() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={PostgreSQL};Server=localhost;";
+        assert!(registry.is_supported(conn));
+    }
+
+    #[test]
+    fn should_report_is_supported_false_when_detected_but_not_registered() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MongoDB ODBC};Server=localhost;";
+        assert!(!registry.is_supported(conn));
+    }
+
+    #[test]
+    fn should_resolve_plugin_from_dbms_name() {
+        let registry = PluginRegistry::default();
+        let plugin = registry
+            .get_for_dbms_name("PostgreSQL")
+            .expect("postgres from DBMS name");
+        assert_eq!(plugin.name(), "postgres");
+    }
+
+    #[test]
+    fn should_build_postgres_upsert_sql_via_registry() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={PostgreSQL};Server=localhost;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("postgres upsert SQL");
+        assert!(sql.contains("ON CONFLICT"));
+        assert!(sql.contains("EXCLUDED"));
+        assert!(sql.contains("?, ?"));
+    }
+
+    #[test]
+    fn should_append_postgres_returning_via_registry() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={PostgreSQL};Server=localhost;";
+        let out = registry
+            .append_returning_sql(
+                conn,
+                "INSERT INTO users (id) VALUES (?)",
+                DmlVerb::Insert,
+                &["id"],
+            )
+            .expect("returning dispatch")
+            .expect("postgres returning SQL");
+        assert!(out.contains("RETURNING"));
+        assert!(out.contains("\"id\""));
+    }
+
+    #[test]
+    fn should_emit_session_init_sql_for_sqlserver() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SQL Server};Server=localhost;";
+        let stmts = registry
+            .session_init_sql(conn, &SessionOptions::default())
+            .expect("session init dispatch");
+        assert!(
+            stmts.iter().any(|s| s.contains("ARITHABORT")),
+            "SQL Server session init should include ARITHABORT"
+        );
+    }
+
+    #[test]
+    fn should_register_plugin_on_empty_registry() {
+        let registry = PluginRegistry::new();
+        let plugin = Arc::new(crate::plugins::sqlite::SqlitePlugin::new()) as Arc<dyn DriverPlugin>;
+        registry.register(plugin).expect("register sqlite");
+        assert_eq!(registry.get("sqlite").expect("lookup").name(), "sqlite");
     }
 }

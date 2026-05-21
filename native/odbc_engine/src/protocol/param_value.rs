@@ -962,4 +962,58 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0], Some(String::new()));
     }
+
+    #[test]
+    fn should_reject_description_count_mismatch_when_binding() {
+        let params = [ParamValue::Integer(1), ParamValue::Integer(2)];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Integer,
+        }];
+        let err = match param_values_to_input_params_with_descriptions(&params, &descriptions) {
+            Ok(_) => panic!("count mismatch should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("does not match parameter count"));
+    }
+
+    #[test]
+    fn should_bind_null_with_smallint_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::SmallInt,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("smallint null");
+        assert_eq!(bound[0].data_type(), DataType::SmallInt);
+    }
+
+    #[test]
+    fn should_bind_integer_with_unknown_description_type() {
+        let params = [ParamValue::Integer(9)];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Unknown,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("fallback bind");
+        assert_eq!(bound[0].data_type(), 4_i32.data_type());
+    }
+
+    #[test]
+    fn should_return_none_inference_when_ref_cursor_present() {
+        let params = [ParamValue::Integer(1), ParamValue::RefCursorOut];
+        let bound = param_values_to_input_params_with_inference(&params).expect("inference ok");
+        assert!(bound.is_none());
+    }
+
+    #[test]
+    fn should_reject_huge_decimal_try_serialize() {
+        let s = "9".repeat(MAX_PARAM_VALUE_PAYLOAD_LEN + 1);
+        let err = ParamValue::Decimal(s)
+            .try_serialize()
+            .expect_err("oversize");
+        assert!(err.to_string().contains("ParamValue::Decimal"));
+    }
 }

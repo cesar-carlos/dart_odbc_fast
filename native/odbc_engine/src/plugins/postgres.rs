@@ -373,4 +373,31 @@ mod tests {
         ));
         assert!(matches!(rules[3], OptimizationRule::EnableStreaming));
     }
+
+    #[test]
+    fn should_build_upsert_sql_with_on_conflict_update() {
+        let plugin = PostgresPlugin::new();
+        let sql = plugin
+            .build_upsert_sql("public.users", &["id", "name"], &["id"], None)
+            .expect("valid upsert");
+        assert!(sql.contains("INSERT INTO"));
+        assert!(sql.contains("ON CONFLICT"));
+        assert!(sql.contains("DO UPDATE SET"));
+        assert!(sql.contains("EXCLUDED.\"name\""));
+    }
+
+    #[test]
+    fn should_quote_identifiers_with_double_quotes() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(plugin.quote("UserName").unwrap(), "\"UserName\"");
+    }
+
+    #[test]
+    fn should_append_returning_clause() {
+        let plugin = PostgresPlugin::new();
+        let sql = plugin
+            .append_returning_clause("INSERT INTO t (id) VALUES (?)", DmlVerb::Insert, &["id"])
+            .unwrap();
+        assert!(sql.ends_with("RETURNING \"id\""));
+    }
 }

@@ -367,4 +367,38 @@ mod tests {
         let stmts = p.initialization_sql(&opts);
         assert!(stmts.iter().any(|s| s.contains("SET CURRENT SCHEMA")));
     }
+
+    #[test]
+    fn should_emit_list_tables_with_schema_param() {
+        let p = Db2Plugin::new();
+        let q = p.list_tables_sql(None, Some("myapp")).unwrap();
+        assert!(q.sql.contains("TABSCHEMA = UPPER(?)"));
+        assert_eq!(q.params.len(), 1);
+        assert_eq!(q.params[0], ParamValue::String("myapp".to_string()));
+    }
+
+    #[test]
+    fn should_emit_list_columns_without_schema() {
+        let p = Db2Plugin::new();
+        let q = p.list_columns_sql("ORDERS", None).unwrap();
+        assert!(q.sql.contains("TABNAME = UPPER(?)"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn should_escape_application_name_quotes_in_session_init() {
+        let p = Db2Plugin::new();
+        let opts = SessionOptions::new().with_application_name("app'name");
+        let stmts = p.initialization_sql(&opts);
+        assert!(stmts.iter().any(|s| s.contains("app''name")));
+    }
+
+    #[test]
+    fn should_optimize_query_before_semicolon() {
+        let p = Db2Plugin::new();
+        let sql = "SELECT id FROM t;";
+        let out = p.optimize_query(sql);
+        assert!(out.contains("FETCH FIRST 1000 ROWS ONLY"));
+        assert!(out.ends_with(';'));
+    }
 }

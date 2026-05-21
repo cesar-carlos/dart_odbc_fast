@@ -439,4 +439,17 @@ mod tests {
             _ => panic!("Expected Null value"),
         }
     }
+
+    #[test]
+    fn should_clone_batch_param_strings_when_converting_to_param_value() {
+        let param = BatchParam::String("copy-me".to_string());
+        match batch_param_to_param_value(&param) {
+            ParamValue::String(value) => assert_eq!(value, "copy-me"),
+            _ => panic!("expected String ParamValue"),
+        }
+        match param {
+            BatchParam::String(original) => assert_eq!(original, "copy-me"),
+            _ => panic!("original BatchParam unchanged"),
+        }
+    }
 }

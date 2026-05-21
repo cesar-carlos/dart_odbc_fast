@@ -255,4 +255,20 @@ mod tests {
         let out = s.read_back().unwrap();
         assert_eq!(out, input);
     }
+
+    #[test]
+    fn should_finish_for_streaming_read_from_memory() {
+        let mut s = DiskSpillStream::new(10);
+        s.write_chunk(b"stream").unwrap();
+        match s.finish_for_streaming_read().unwrap() {
+            SpillReadSource::Memory(buf) => assert_eq!(buf, b"stream"),
+            SpillReadSource::File(_) => panic!("expected in-memory spill"),
+        }
+    }
+
+    #[test]
+    fn should_threshold_mb_clamp_zero_to_one() {
+        let s = DiskSpillStream::new(0);
+        assert_eq!(s.threshold_mb(), 1);
+    }
 }

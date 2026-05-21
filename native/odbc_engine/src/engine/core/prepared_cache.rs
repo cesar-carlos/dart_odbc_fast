@@ -222,4 +222,42 @@ mod tests {
         let exists_1 = cache.get_or_insert("SELECT 1");
         assert!(!exists_1);
     }
+
+    #[test]
+    fn should_track_hits_misses_and_executions_when_using_cache() {
+        let cache = PreparedStatementCache::new(10);
+        assert!(!cache.get_or_insert("SELECT 1"));
+        assert!(!cache.get_or_insert("SELECT 2"));
+        assert!(cache.get_or_insert("SELECT 1"));
+        cache.record_execution();
+        cache.record_execution();
+        cache.record_execution();
+
+        assert_eq!(cache.cache_hits(), 1);
+        assert_eq!(cache.cache_misses(), 2);
+        assert_eq!(cache.total_prepares(), 2);
+        assert_eq!(cache.total_executions(), 3);
+        assert!((cache.avg_executions_per_stmt() - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn should_return_zero_avg_executions_when_no_prepares() {
+        let cache = PreparedStatementCache::new(5);
+        assert_eq!(cache.avg_executions_per_stmt(), 0.0);
+    }
+
+    #[test]
+    fn should_populate_metrics_snapshot_when_state_changes() {
+        let cache = PreparedStatementCache::new(2);
+        cache.get_or_insert("SELECT 1");
+        cache.record_execution();
+        let metrics = cache.get_metrics();
+        assert_eq!(metrics.cache_size, 1);
+        assert_eq!(metrics.cache_max_size, 2);
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 1);
+        assert_eq!(metrics.total_prepares, 1);
+        assert_eq!(metrics.total_executions, 1);
+        assert_eq!(metrics.memory_usage_bytes, 64);
+    }
 }

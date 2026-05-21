@@ -369,4 +369,46 @@ mod tests {
         assert!(payload.contains("\"driver_name\":\"PostgreSQL\""));
         assert!(payload.contains("\"supports_prepared_statements\":true"));
     }
+
+    #[test]
+    fn should_trim_driver_name_before_engine_detection() {
+        let caps = DriverCapabilities::from_driver_name("  PostgreSQL  ");
+        assert_eq!(caps.engine, ENGINE_POSTGRES);
+    }
+
+    #[test]
+    fn should_detect_oracle_sqlite_and_mongodb_from_dbms_names() {
+        assert_eq!(
+            DriverCapabilities::from_driver_name("Oracle Database 19c").engine,
+            ENGINE_ORACLE
+        );
+        assert_eq!(
+            DriverCapabilities::from_driver_name("SQLite").engine,
+            ENGINE_SQLITE
+        );
+        assert_eq!(
+            DriverCapabilities::from_driver_name("MongoDB ODBC Driver").engine,
+            ENGINE_MONGODB
+        );
+    }
+
+    #[test]
+    fn should_map_generic_sybase_to_ase_when_unqualified() {
+        let caps = DriverCapabilities::from_driver_name("Sybase");
+        assert_eq!(caps.engine, ENGINE_SYBASE_ASE);
+    }
+
+    #[test]
+    fn should_detect_oracle_from_connection_string_tokens() {
+        let caps =
+            DriverCapabilities::detect_from_connection_string("Driver={Oracle in OraDB19Home1};");
+        assert_eq!(caps.engine, ENGINE_ORACLE);
+        assert_eq!(caps.driver_name, "Oracle");
+    }
+
+    #[test]
+    fn should_apply_sqlserver_max_array_size_when_detected() {
+        let caps = DriverCapabilities::from_driver_name("Microsoft SQL Server");
+        assert_eq!(caps.max_row_array_size, 2000);
+    }
 }

@@ -91,6 +91,9 @@ jobs:
           test/infrastructure
           test/helpers/database_detection_test.dart
 
+      - name: Dart protocol performance guard (no DSN)
+        run: dart test test/performance/protocol_performance_test.dart
+
       - name: Dart slow-test budget
         run: >
           dart run tool/test_slow_report.dart

@@ -13,6 +13,31 @@ on:
       - ".github/workflows/benchmark.yml"
 
 jobs:
+  # Criterion micro-benches (protocol encode/bind paths). No database or ODBC DSN.
+  micro-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+
+      - name: Run micro benchmarks (no DB)
+        run: |
+          cd native
+          cargo bench --bench bulk_operations_bench -- --noplot
+          cargo bench --bench columnar_v1_v2_encode -- --noplot
+          cargo bench --bench metadata_cache_bench -- --noplot
+
   benchmark:
     runs-on: ubuntu-latest
     timeout-minutes: 30
