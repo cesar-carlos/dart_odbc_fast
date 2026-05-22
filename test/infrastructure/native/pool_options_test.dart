@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:test/test.dart';
 
@@ -16,6 +19,16 @@ void main() {
       expect(json, isNotNull);
       final decoded = jsonDecode(json!) as Map<String, dynamic>;
       expect(decoded, {'connection_timeout_ms': 10000});
+    });
+
+    test('emits only set keys for partial options', () {
+      final json = const PoolOptions(
+        idleTimeout: Duration(minutes: 2),
+        maxLifetime: Duration(hours: 2),
+      ).toJson();
+      final decoded = jsonDecode(json!) as Map<String, dynamic>;
+      expect(decoded.keys, containsAll(['idle_timeout_ms', 'max_lifetime_ms']));
+      expect(decoded, isNot(contains('connection_timeout_ms')));
     });
 
     test('emits all three keys when fully set', () {
@@ -45,6 +58,71 @@ void main() {
         const PoolOptions(connectionTimeout: Duration(seconds: 1)).hasAnyOption,
         isTrue,
       );
+    });
+  });
+
+  group('PoolOptions.fromUsageProfile', () {
+    test('highThroughput maps preset pool timeouts', () {
+      final options = PoolOptions.fromUsageProfile(
+        OdbcUsageProfile.highThroughput,
+      );
+      expect(options.idleTimeout, const Duration(minutes: 5));
+      expect(options.maxLifetime, const Duration(minutes: 30));
+      expect(options.connectionTimeout, const Duration(seconds: 30));
+      expect(options.hasAnyOption, isTrue);
+    });
+  });
+
+  group('OdbcPoolFactory', () {
+    test('createPool uses legacy path when options are empty', () {
+      var legacyCalls = 0;
+      var withOptionsCalls = 0;
+      final native = OdbcNative.withBindings(
+        TestOdbcBindings(
+          overrides: TestOdbcBindingsOverrides(
+            poolCreate: (_, __) {
+              legacyCalls++;
+              return 5;
+            },
+            poolCreateWithOptions: (_, __, ___) {
+              withOptionsCalls++;
+              return 6;
+            },
+          ),
+        ),
+      );
+      final factory = OdbcPoolFactory(native);
+
+      expect(factory.createPool('test-conn', 4), 5);
+      expect(legacyCalls, 1);
+      expect(withOptionsCalls, 0);
+      expect(factory.supportsApi, isTrue);
+    });
+
+    test('createPool forwards options JSON when API is supported', () {
+      var withOptionsCalls = 0;
+      final native = OdbcNative.withBindings(
+        TestOdbcBindings(
+          overrides: TestOdbcBindingsOverrides(
+            poolCreate: (_, __) => fail('legacy pool create should not run'),
+            poolCreateWithOptions: (_, __, optionsJson) {
+              withOptionsCalls++;
+              expect(optionsJson, isNotNull);
+              return 12;
+            },
+          ),
+        ),
+      );
+      final factory = OdbcPoolFactory(native);
+
+      final poolId = factory.createPool(
+        'test-conn',
+        3,
+        options: const PoolOptions(connectionTimeout: Duration(seconds: 15)),
+      );
+
+      expect(poolId, 12);
+      expect(withOptionsCalls, 1);
     });
   });
 

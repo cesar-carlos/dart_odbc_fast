@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities_v3.dart';
 import 'package:test/test.dart';
 
@@ -35,6 +36,14 @@ void main() {
         'charset': 'utf8',
         'schema': 'public',
         'extra_sql': ['SET lock_timeout = 1000'],
+      });
+    });
+
+    test('serializes extraSql only when it is the sole field', () {
+      const options = SessionOptions(extraSql: ['SET x=1']);
+
+      expect(options.toJson(), {
+        'extra_sql': ['SET x=1'],
       });
     });
   });
@@ -158,6 +167,35 @@ void main() {
       expect(backend.lastColumnsCsv, 'id,name');
     });
 
+    test('appendReturningClause passes update verb code', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..returningResponse =
+            'UPDATE t SET name=? OUTPUT inserted.id'.utf8Bytes;
+      OdbcDriverFeatures.withBackend(backend).appendReturningClause(
+        connectionString: 'DSN=SqlServer',
+        sql: 'UPDATE t SET name=?',
+        verb: DmlVerb.update,
+        columns: const ['id'],
+      );
+
+      expect(backend.lastVerbCode, DmlVerb.update.code);
+      expect(backend.lastVerbCode, 1);
+    });
+
+    test('appendReturningClause passes delete verb code', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..returningResponse = 'DELETE FROM t OUTPUT deleted.id'.utf8Bytes;
+      OdbcDriverFeatures.withBackend(backend).appendReturningClause(
+        connectionString: 'DSN=SqlServer',
+        sql: 'DELETE FROM t WHERE id=?',
+        verb: DmlVerb.delete,
+        columns: const ['id'],
+      );
+
+      expect(backend.lastVerbCode, DmlVerb.delete.code);
+      expect(backend.lastVerbCode, 2);
+    });
+
     test('getSessionInitSql serializes options and handles non-list payloads',
         () {
       final backend = _FakeDriverFeatureBackend()
@@ -178,6 +216,53 @@ void main() {
         isEmpty,
       );
       expect(backend.lastOptionsJson, isNull);
+    });
+
+    test('getSessionInitSql passes options JSON when only extraSql set', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..sessionResponse = jsonEncode(['SET x=1']).utf8Bytes;
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final statements = features.getSessionInitSql(
+        connectionString: 'DSN=Postgres',
+        options: const SessionOptions(extraSql: ['SET x=1']),
+      );
+
+      expect(statements, ['SET x=1']);
+      expect(jsonDecode(backend.lastOptionsJson!), {
+        'extra_sql': ['SET x=1'],
+      });
+    });
+
+    test('getSessionInitSql decodes multiple session statements', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..sessionResponse = jsonEncode([
+          'SET search_path=public',
+          'SET timezone=UTC',
+        ]).utf8Bytes;
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final statements = features.getSessionInitSql(connectionString: 'CONN');
+
+      expect(statements, ['SET search_path=public', 'SET timezone=UTC']);
+      expect(backend.calls, ['session']);
+      expect(backend.lastConnectionString, 'CONN');
+    });
+
+    test('appendReturningClause forwards sql to backend', () {
+      final backend = _FakeDriverFeatureBackend()
+        ..returningResponse = 'SELECT * FROM t'.utf8Bytes;
+      final features = OdbcDriverFeatures.withBackend(backend);
+
+      final sql = features.appendReturningClause(
+        connectionString: 'CONN',
+        sql: 'INSERT INTO t(id) VALUES (?)',
+        verb: DmlVerb.insert,
+        columns: const ['id'],
+      );
+
+      expect(sql, 'SELECT * FROM t');
+      expect(backend.lastSql, 'INSERT INTO t(id) VALUES (?)');
     });
 
     test('returns null when backend buffer call fails', () {
@@ -211,6 +296,85 @@ void main() {
       );
     });
   });
+
+  group('OdbcDriverFeatures (native FFI)', () {
+    const postgresConn = 'Driver={PostgreSQL Unicode};Server=db;Database=app';
+
+    late OdbcNative native;
+    OdbcDriverFeatures? features;
+
+    setUp(() {
+      native = OdbcNative();
+      if (native.init()) {
+        features = OdbcDriverFeatures(native);
+      }
+    });
+
+    tearDown(() => native.dispose());
+
+    test('native constructor exposes capability API when symbols exist', () {
+      final f = features;
+      if (f == null || !f.supportsApi) {
+        return;
+      }
+      expect(f.supportsApi, isTrue);
+    });
+
+    test('buildUpsertSql returns dialect SQL without connecting', () {
+      final f = features;
+      if (f == null || !f.supportsApi) {
+        return;
+      }
+      final sql = f.buildUpsertSql(
+        connectionString: postgresConn,
+        table: 'public.users',
+        columns: const ['id', 'name'],
+        conflictColumns: const ['id'],
+        updateColumns: const ['name'],
+      );
+
+      expect(sql, isNotNull);
+      expect(sql!.toUpperCase(), contains('INSERT'));
+      expect(sql.toUpperCase(), contains('CONFLICT'));
+    });
+
+    test('appendReturningClause returns RETURNING clause for PostgreSQL', () {
+      final f = features;
+      if (f == null || !f.supportsApi) {
+        return;
+      }
+      final sql = f.appendReturningClause(
+        connectionString: postgresConn,
+        sql: 'INSERT INTO users (id) VALUES (?)',
+        verb: DmlVerb.insert,
+        columns: const ['id'],
+      );
+
+      expect(sql, isNotNull);
+      expect(sql!.toUpperCase(), contains('RETURNING'));
+    });
+
+    test('getSessionInitSql decodes session statements from native backend',
+        () {
+      final f = features;
+      if (f == null || !f.supportsApi) {
+        return;
+      }
+      expect(
+        f.getSessionInitSql(connectionString: postgresConn),
+        isNotNull,
+      );
+      final statements = f.getSessionInitSql(
+        connectionString: postgresConn,
+        options: const SessionOptions(
+          applicationName: 'odbc_fast_test',
+          schema: 'public',
+        ),
+      );
+
+      expect(statements, isNotNull);
+    });
+  });
 }
 
 extension on String {
@@ -227,6 +391,7 @@ class _FakeDriverFeatureBackend implements OdbcDriverFeatureBackend {
   String? lastConnectionString;
   String? lastTable;
   String? lastPayloadJson;
+  String? lastSql;
   int? lastVerbCode;
   String? lastColumnsCsv;
   String? lastOptionsJson;
@@ -256,6 +421,7 @@ class _FakeDriverFeatureBackend implements OdbcDriverFeatureBackend {
   ) {
     calls.add('returning');
     lastConnectionString = connectionString;
+    lastSql = sql;
     lastVerbCode = verbCode;
     lastColumnsCsv = columnsCsv;
     return returningResponse;

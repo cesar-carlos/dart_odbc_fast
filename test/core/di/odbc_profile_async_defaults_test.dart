@@ -52,5 +52,13 @@ void main() {
       expect(d.backpressureMode, AsyncBackpressureMode.waitForSlot);
       expect(d.backpressureTimeout, const Duration(seconds: 60));
     });
+
+    test('balancedFlutter uses waitForSlot backpressure', () {
+      final d = OdbcProfileAsyncDefaults.fromUsageProfile(
+        OdbcUsageProfile.balancedFlutter,
+      );
+      expect(d.useAsync, isTrue);
+      expect(d.backpressureMode, AsyncBackpressureMode.waitForSlot);
+    });
   });
 }

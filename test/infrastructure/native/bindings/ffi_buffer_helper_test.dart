@@ -58,5 +58,41 @@ void main() {
       expect(innerResult, equals([9, 8]));
       expect(outerResult, equals([1, 2]));
     });
+
+    test('returns null when callback reports a hard failure', () {
+      final result = callWithBuffer(
+        (_, __, ___) => 1,
+        initialSize: 8,
+        maxSize: 8,
+      );
+
+      expect(result, isNull);
+    });
+
+    test('returns null when required size exceeds maxSize', () {
+      final result = callWithBuffer(
+        (_, __, outWritten) {
+          outWritten.value = 32;
+          return -2;
+        },
+        initialSize: 4,
+        maxSize: 8,
+      );
+
+      expect(result, isNull);
+    });
+
+    test('returns empty list when callback succeeds with zero bytes', () {
+      final result = callWithBuffer(
+        (_, __, outWritten) {
+          outWritten.value = 0;
+          return 0;
+        },
+        initialSize: 8,
+        maxSize: 8,
+      );
+
+      expect(result, isEmpty);
+    });
   });
 }

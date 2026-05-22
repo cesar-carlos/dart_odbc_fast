@@ -3,6 +3,7 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
@@ -29,13 +30,14 @@ class OdbcNative {
   /// Creates a new [OdbcNative] instance.
   ///
   /// Automatically loads the ODBC engine library and initializes bindings.
-  OdbcNative() {
-    _library = loadOdbcLibrary();
-    _bindings = bindings.OdbcBindings(_library);
-  }
+  OdbcNative() : _bindings = bindings.OdbcBindings(loadOdbcLibrary());
 
-  late final bindings.OdbcBindings _bindings;
-  late final ffi.DynamicLibrary _library;
+  /// Creates an instance backed by injected [bindings] (unit tests only).
+  @visibleForTesting
+  OdbcNative.withBindings(bindings.OdbcBindings injected)
+      : _bindings = injected;
+
+  final bindings.OdbcBindings _bindings;
 
   /// Read-only access to the raw bindings. Use only for new capabilities
   /// implemented in companion modules (e.g. `driver_capabilities_v3.dart`).
@@ -437,8 +439,7 @@ class OdbcNative {
   /// Returns null on FFI failure.
   String? getAuditStatusJson() {
     final data = callWithBuffer(
-      (buf, bufLen, outWritten) =>
-          _bindings.odbc_audit_get_status(buf, bufLen, outWritten),
+      _bindings.odbc_audit_get_status,
     );
     if (data == null) {
       return null;
@@ -452,8 +453,7 @@ class OdbcNative {
   /// is not available.
   StructuredError? getStructuredError() {
     final data = callWithBuffer(
-      (buf, bufLen, outWritten) =>
-          _bindings.odbc_get_structured_error(buf, bufLen, outWritten),
+      _bindings.odbc_get_structured_error,
     );
     if (data == null || data.isEmpty) {
       return null;
@@ -1224,8 +1224,7 @@ class OdbcNative {
   /// Returns null on failure.
   String? metadataCacheStatsJson() {
     final data = callWithBuffer(
-      (buf, bufLen, outWritten) =>
-          _bindings.odbc_metadata_cache_stats(buf, bufLen, outWritten),
+      _bindings.odbc_metadata_cache_stats,
       initialSize: 128,
     );
     if (data == null || data.isEmpty) {

@@ -87,20 +87,25 @@ void main() {
       const CatalogIndexesRequest(id, 1, 't'),
       const GetErrorRequest(id),
       const GetStructuredErrorRequest(id),
+      const GetStructuredErrorForConnectionRequest(id, 1),
       const DetectDriverRequest(id, 'DSN=X'),
       const AuditEnableRequest(id, enabled: true),
       const AuditGetEventsRequest(id),
       const AuditGetStatusRequest(id),
       const AuditClearRequest(id),
       const ExecuteAsyncStartRequest(id, 1, 'SELECT 1'),
+      ExecuteAsyncStartParamsRequest(id, 1, 'SELECT ?', empty),
       const AsyncPollRequest(id, 1),
       const AsyncGetResultRequest(id, 1),
       const AsyncCancelRequest(id, 1),
       const AsyncFreeRequest(id, 1),
     ];
 
-    expect(samples.length, 65,
-        reason: 'keep in sync with WorkerRequest subtypes',);
+    expect(
+      samples.length,
+      67,
+      reason: 'keep in sync with WorkerRequest subtypes',
+    );
 
     for (final req in samples) {
       final r = buildWorkerErrorResponse(req, err);
@@ -212,6 +217,34 @@ void main() {
         'driverName',
         isNull,
       ),
+    );
+
+    expect(
+      buildWorkerErrorResponse(
+        const GetStructuredErrorForConnectionRequest(id, 2),
+        err,
+      ),
+      isA<StructuredErrorResponse>()
+          .having((r) => r.message, 'message', err)
+          .having((r) => r.error, 'error', err),
+    );
+
+    expect(
+      buildWorkerErrorResponse(
+        ExecuteAsyncStartParamsRequest(id, 1, 's', empty),
+        err,
+      ),
+      isA<IntResponse>().having((r) => r.value, 'value', 0),
+    );
+
+    expect(
+      buildWorkerErrorResponse(const ClearCacheRequest(id), err),
+      isA<ClearCacheResponse>().having((r) => r.error, 'error', err),
+    );
+
+    expect(
+      buildWorkerErrorResponse(const GetMetricsRequest(id), err),
+      isA<MetricsResponse>().having((r) => r.error, 'error', err),
     );
   });
 }

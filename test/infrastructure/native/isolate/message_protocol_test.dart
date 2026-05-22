@@ -1,6 +1,7 @@
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:test/test.dart';
 
@@ -112,6 +113,119 @@ void main() {
       expect(message.message, 'syntax error');
       expect(message.sqlStateString, '42000');
       expect(message.nativeCode, 102);
+    });
+
+    test('QueryResponse lazily materializes transferable byte payload', () {
+      final bytes = Uint8List.fromList([10, 20, 30]);
+      final response = QueryResponse(
+        1,
+        transferableData: TransferableTypedData.fromList([bytes]),
+      );
+
+      expect(response.data, bytes);
+      expect(identical(response.data, response.data), isTrue);
+      expect(response.error, isNull);
+    });
+
+    test('StreamFetchResponse exposes success, hasMore, and error fields', () {
+      final response = StreamFetchResponse(
+        2,
+        success: false,
+        error: 'stream ended',
+      );
+
+      expect(response.data, isNull);
+      expect(response.success, isFalse);
+      expect(response.hasMore, isFalse);
+      expect(response.error, 'stream ended');
+    });
+
+    test('metrics and cache responses use zeroed defaults', () {
+      const metrics = MetricsResponse(3);
+      const cache = CacheMetricsResponse(4);
+      const cleared = ClearCacheResponse(5);
+
+      expect(metrics.queryCount, isZero);
+      expect(metrics.error, isNull);
+      expect(cache.avgExecutionsPerStmt, isZero);
+      expect(cache.error, isNull);
+      expect(cleared.error, isNull);
+    });
+
+    test('ValidateConnectionStringResponse models invalid native validation',
+        () {
+      const response = ValidateConnectionStringResponse(
+        6,
+        isValid: false,
+        errorMessage: 'missing DRIVER',
+      );
+
+      expect(response.isValid, isFalse);
+      expect(response.errorMessage, 'missing DRIVER');
+    });
+
+    test('ConnectResponse carries connection id and optional error', () {
+      const ok = ConnectResponse(7, 42);
+      const fail = ConnectResponse(8, 0, error: 'Connect failed');
+
+      expect(ok.connectionId, 42);
+      expect(ok.error, isNull);
+      expect(fail.connectionId, isZero);
+      expect(fail.error, 'Connect failed');
+    });
+  });
+
+  group('message protocol request defaults', () {
+    test('ConnectRequest defaults timeoutMs to zero', () {
+      const request = ConnectRequest(1, 'Driver={Test}');
+      expect(request.timeoutMs, isZero);
+      expect(request.type, RequestType.connect);
+    });
+
+    test('BeginTransactionRequest keeps legacy wire defaults', () {
+      const request = BeginTransactionRequest(2, 9, 1);
+      expect(request.savepointDialect, isZero);
+      expect(request.accessMode, isZero);
+      expect(request.lockTimeoutMs, isZero);
+    });
+
+    test('ExecuteQueryParamsRequest defaults resultEncoding to rowMajor', () {
+      final request = ExecuteQueryParamsRequest(
+        3,
+        4,
+        'SELECT 1',
+        Uint8List(0),
+      );
+      expect(request.resultEncoding, ResultEncoding.rowMajor);
+      expect(request.maxResultBufferBytes, isNull);
+    });
+
+    test('PoolCreateRequest and CatalogTablesRequest optional fields', () {
+      const pool = PoolCreateRequest(5, 'Driver={Test}', 4, optionsJson: '{}');
+      const tables = CatalogTablesRequest(6, 7);
+
+      expect(pool.optionsJson, '{}');
+      expect(tables.catalog, isEmpty);
+      expect(tables.schema, isEmpty);
+    });
+
+    test('AuditGetEventsRequest defaults limit to zero', () {
+      const request = AuditGetEventsRequest(8);
+      expect(request.limit, isZero);
+      expect(request.type, RequestType.auditGetEvents);
+    });
+
+    test('GetStructuredErrorForConnectionRequest is sendable', () async {
+      final receivePort = ReceivePort();
+      const request = GetStructuredErrorForConnectionRequest(9, 99);
+
+      receivePort.sendPort.send(request);
+      final message =
+          await receivePort.first as GetStructuredErrorForConnectionRequest;
+      receivePort.close();
+
+      expect(message.connectionId, 99);
+      expect(message.type, RequestType.getStructuredErrorForConnection);
     });
   });
 }

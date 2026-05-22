@@ -1,3 +1,4 @@
+import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
@@ -136,5 +137,20 @@ void main() {
       );
       expect(resolved.poolOptions.maxLifetime, const Duration(minutes: 30));
     });
+  });
+
+  group('ResolvedOdbcUsageProfile async parity', () {
+    for (final profile in OdbcUsageProfile.values) {
+      test('should_match_async_defaults_when_${profile.name}_is_requested', () {
+        final resolved = ResolvedOdbcUsageProfile.fromUsageProfile(profile);
+        final async = OdbcProfileAsyncDefaults.fromUsageProfile(profile);
+
+        expect(resolved.useAsync, async.useAsync);
+        expect(resolved.workerCount, async.workerCount);
+        expect(resolved.maxPendingRequests, async.maxPendingRequests);
+        expect(resolved.backpressureMode, async.backpressureMode);
+        expect(resolved.backpressureTimeout, async.backpressureTimeout);
+      });
+    }
   });
 }

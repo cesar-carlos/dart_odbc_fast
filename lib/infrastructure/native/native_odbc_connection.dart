@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart' as domain;
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
@@ -41,6 +42,13 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   NativeOdbcConnection() : _native = bindings.OdbcNative() {
     _auditLogger = OdbcAuditLogger(_native);
   }
+
+  /// Creates an instance backed by injected [native] (unit tests only).
+  @visibleForTesting
+  NativeOdbcConnection.testing(bindings.OdbcNative native) : _native = native {
+    _auditLogger = OdbcAuditLogger(_native);
+  }
+
   final bindings.OdbcNative _native;
   late final OdbcAuditLogger _auditLogger;
   bool _isInitialized = false;

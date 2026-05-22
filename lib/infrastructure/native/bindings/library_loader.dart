@@ -1,6 +1,8 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 /// Gets the platform-specific ODBC engine library name.
 ///
 /// Returns 'odbc_engine.dll' on Windows or 'libodbc_engine.so' on Linux.
@@ -111,4 +113,18 @@ DynamicLibrary? loadOdbcLibraryFromAssets() {
   // Native Assets handles this automatically via hook/build.dart
   // This method is kept for API compatibility but is no longer used
   return null;
+}
+
+/// Platform-specific ODBC engine file name (`odbc_engine.dll` / `libodbc_engine.so`).
+@visibleForTesting
+String odbcEngineLibraryFileName() => _libraryName();
+
+/// Walks upward from [Directory.current] until `pubspec.yaml` is found.
+@visibleForTesting
+String? findOdbcPackageRoot() => _findPackageRoot();
+
+/// Tries dev release paths under [root] without falling back to system PATH.
+@visibleForTesting
+DynamicLibrary? tryLoadOdbcEngineFromProjectRoot(String root) {
+  return _tryLoadFromRoot(root, _libraryName(), Platform.pathSeparator);
 }

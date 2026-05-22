@@ -57,6 +57,15 @@ void workerEntry(SendPort mainSendPort) {
   });
 }
 
+/// Dispatches one [WorkerRequest] synchronously (unit tests only).
+@visibleForTesting
+void handleWorkerRequestForTesting(
+  WorkerRequest request,
+  SendPort sendPort,
+  NativeOdbcConnection conn,
+) =>
+    _handleRequest(request, sendPort, conn);
+
 void _handleRequest(
   WorkerRequest request,
   SendPort sendPort,

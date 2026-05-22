@@ -33,6 +33,50 @@ void main() {
       expect(error?.message, contains('Failed to initialize telemetry'));
     });
 
+    test('exportTrace before init does not throw and leaves native empty',
+        () async {
+      final fake = _FakeTelemetryNativeClient();
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.exportTrace(_trace());
+
+      expect(fake.exportedTraces, isEmpty);
+    });
+
+    test('exportSpan after init with fallback recorder succeeds', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final exporter = _RecordingConsoleExporter();
+      final repository = TelemetryRepositoryImpl(fake, batchSize: 1)
+        ..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      final result = await repository.exportSpan(_span());
+
+      expect(result.isSuccess(), isTrue);
+    });
+
+    test('flush before init returns NOT_INITIALIZED', () async {
+      final repository = TelemetryRepositoryImpl(_FakeTelemetryNativeClient());
+
+      final result = await repository.flush();
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull()?.code, equals('NOT_INITIALIZED'));
+    });
+
+    test('shutdown returns TelemetryShutdownException when native throws',
+        () async {
+      final fake = _FakeTelemetryNativeClient()
+        ..throwOnShutdown = Exception('native shutdown failed');
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      final result = await repository.shutdown();
+
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull(), isA<TelemetryShutdownException>());
+    });
+
     test('export operations fail when repository is not initialized', () async {
       final repository = TelemetryRepositoryImpl(_FakeTelemetryNativeClient());
 
@@ -174,6 +218,146 @@ void main() {
       expect(result.isError(), isTrue);
       expect(result.exceptionOrNull()?.code, equals('INIT_ERROR'));
     });
+
+    test('flush succeeds after initialize and exports buffered span', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final exporter = _RecordingConsoleExporter();
+      final repository = TelemetryRepositoryImpl(fake, batchSize: 10)
+        ..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      await repository.exportSpan(_span());
+
+      final result = await repository.flush();
+
+      expect(result.isSuccess(), isTrue);
+      expect(exporter.spans, hasLength(1));
+    });
+
+    test('exportMetric succeeds after initialize', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      final result = await repository.exportMetric(_metric());
+
+      expect(result.isSuccess(), isTrue);
+    });
+
+    test('exportEvent succeeds after initialize', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      final result = await repository.exportEvent(_event());
+
+      expect(result.isSuccess(), isTrue);
+    });
+
+    test('exportTrace after init flushes batch to fallback exporter', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final exporter = _RecordingConsoleExporter();
+      final repository = TelemetryRepositoryImpl(fake, batchSize: 1)
+        ..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      await repository.exportTrace(_trace());
+
+      expect(exporter.traces, hasLength(1));
+    });
+
+    test('updateSpan succeeds and serializes through native client', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      final result = await repository.updateSpan(
+        spanId: 'span-ok',
+        endTime: DateTime.utc(2026, 2),
+        attributes: const {'span.kind': 'internal'},
+      );
+
+      expect(result.isSuccess(), isTrue);
+      expect(fake.exportedTraces, hasLength(1));
+      expect(fake.exportedTraces.single, contains('"span_id":"span-ok"'));
+      expect(fake.exportedTraces.single, contains('"span.kind":"internal"'));
+    });
+
+    test('batch export tolerates synchronous exporter failures', () async {
+      final exporter = _SyncThrowingConsoleExporter();
+      final repository = TelemetryRepositoryImpl(
+        _FakeTelemetryNativeClient(),
+        batchSize: 1,
+      )..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      await repository.exportTrace(_trace());
+
+      expect(exporter.exportAttempts, greaterThanOrEqualTo(1));
+    });
+
+    test('batch export records TelemetryException failures', () async {
+      final exporter = _SyncTelemetryExceptionExporter();
+      final repository = TelemetryRepositoryImpl(
+        _FakeTelemetryNativeClient(),
+        batchSize: 1,
+      )..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      await repository.exportSpan(_span());
+
+      expect(exporter.exportAttempts, equals(1));
+    });
+
+    test('reentrant flush during batch export is ignored', () async {
+      final exporter = _ReentrantFlushExporter();
+      final repository = TelemetryRepositoryImpl(
+        _FakeTelemetryNativeClient(),
+        batchSize: 1,
+      )..setFallbackExporter(exporter);
+      exporter.repository = repository;
+
+      await repository.initialize();
+      await repository.exportMetric(_metric());
+
+      expect(exporter.nestedFlushCalls, greaterThanOrEqualTo(1));
+    });
+
+    test('exportMetric auto-flush exports through fallback recorder', () async {
+      final exporter = _RecordingConsoleExporter();
+      final repository = TelemetryRepositoryImpl(
+        _FakeTelemetryNativeClient(),
+        batchSize: 2,
+      )..setFallbackExporter(exporter);
+
+      await repository.initialize();
+      await repository.exportMetric(_metric());
+      await repository.exportMetric(
+        Metric(
+          name: 'query.latency',
+          value: 12,
+          unit: 'ms',
+          timestamp: DateTime.utc(2026, 3),
+        ),
+      );
+
+      expect(exporter.metrics, hasLength(2));
+    });
+
+    test('updateSpan serializes parent_span_id in native payload', () async {
+      final fake = _FakeTelemetryNativeClient();
+      final repository = TelemetryRepositoryImpl(fake);
+
+      await repository.initialize();
+      await repository.updateSpan(
+        spanId: 'child-span',
+        endTime: DateTime.utc(2026, 4),
+        attributes: const {'parent': 'root'},
+      );
+
+      expect(fake.exportedTraces.single, contains('"parent_span_id":""'));
+      expect(fake.exportedTraces.single, contains('"span_id":"child-span"'));
+    });
   });
 }
 
@@ -214,6 +398,7 @@ class _FakeTelemetryNativeClient implements TelemetryNativeClient {
   int shutdownCalls = 0;
   Exception? throwOnExportTrace;
   Exception? throwOnInit;
+  Exception? throwOnShutdown;
 
   @override
   int initialize([String otlpEndpoint = '']) {
@@ -259,11 +444,68 @@ class _FakeTelemetryNativeClient implements TelemetryNativeClient {
   @override
   int shutdown() {
     shutdownCalls++;
+    final throwShutdown = throwOnShutdown;
+    if (throwShutdown != null) {
+      throw throwShutdown;
+    }
     return 1;
   }
 
   @override
   String getLastErrorMessage() => '';
+}
+
+class _SyncThrowingConsoleExporter extends ConsoleExporter {
+  int exportAttempts = 0;
+
+  @override
+  Future<ResultDart<void, Exception>> exportTrace(Trace trace) {
+    exportAttempts++;
+    throw Exception('sync trace export failed');
+  }
+
+  @override
+  Future<ResultDart<void, Exception>> exportSpan(Span span) {
+    exportAttempts++;
+    throw Exception('sync span export failed');
+  }
+
+  @override
+  Future<ResultDart<void, Exception>> exportMetric(Metric metric) {
+    exportAttempts++;
+    throw Exception('sync metric export failed');
+  }
+
+  @override
+  Future<ResultDart<void, Exception>> exportEvent(TelemetryEvent event) {
+    exportAttempts++;
+    throw Exception('sync event export failed');
+  }
+}
+
+class _SyncTelemetryExceptionExporter extends ConsoleExporter {
+  int exportAttempts = 0;
+
+  @override
+  Future<ResultDart<void, Exception>> exportSpan(Span span) {
+    exportAttempts++;
+    throw TelemetryException.now(message: 'span export failed', code: 'EXPORT');
+  }
+}
+
+class _ReentrantFlushExporter extends ConsoleExporter {
+  TelemetryRepositoryImpl? repository;
+  int nestedFlushCalls = 0;
+
+  @override
+  Future<ResultDart<void, Exception>> exportMetric(Metric metric) {
+    final repo = repository;
+    if (repo != null) {
+      nestedFlushCalls++;
+      repo.flush();
+    }
+    return super.exportMetric(metric);
+  }
 }
 
 class _RecordingConsoleExporter extends ConsoleExporter {
