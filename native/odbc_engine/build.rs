@@ -26,5 +26,8 @@ fn main() {
         .write_to_file(out_dir.join("odbc_engine.h"));
 
     println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=odbc_exports.def");
     println!("cargo:rerun-if-changed=src/ffi/mod.rs");
+    println!("cargo:rerun-if-changed=src/ffi/columnar_decompress.rs");
+    println!("cargo:rerun-if-changed=src/observability/telemetry/mod.rs");
 }

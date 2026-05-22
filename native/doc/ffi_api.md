@@ -25,9 +25,9 @@ A logger (e.g. env_logger) must be initialized by the host for output to appear.
 
 Returns engine version as JSON for client compatibility checks.
 
-- **Output**: UTF‑8 JSON `{"api":"0.1.0","abi":"1.0.0"}`.
-  - **api**: package version from Cargo.toml.
-  - **abi**: FFI contract version; bump on breaking changes.
+- **Output**: UTF-8 JSON `{"api":"<cargo-package-version>","abi":"<abi-major>.<abi-minor>"}`.
+  - **api**: package version from `Cargo.toml` via `ApiVersion::current()`.
+  - **abi**: FFI contract version via `AbiVersion::current()`; bump on breaking changes.
 - **Returns**: `0` on success; `-1` if buffer or out_written is null; `-2` if buffer too small.
 
 ### `odbc_validate_connection_string(conn_str, error_buffer, error_buffer_len) -> int`

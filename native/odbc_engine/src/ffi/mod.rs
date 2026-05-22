@@ -35,6 +35,7 @@ use crate::protocol::{
 #[cfg(feature = "sqlserver-bcp")]
 use crate::protocol::{bulk_insert::is_null, BulkColumnData};
 use crate::security::AuditLogger;
+use crate::versioning::{abi_version::AbiVersion, api_version::ApiVersion};
 use log::LevelFilter;
 use rayon::prelude::*;
 use std::collections::hash_map::DefaultHasher;
@@ -657,6 +658,11 @@ enum PendingResultKey {
         params_hash: u64,
         result_encoding: u32,
     },
+    ExecQueryMultiParams {
+        conn_id: u32,
+        sql_hash: u64,
+        params_hash: u64,
+    },
     ExecQueryMulti {
         conn_id: u32,
         sql_hash: u64,
@@ -706,6 +712,28 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
     hasher.finish()
+}
+
+fn prune_pending_results_for_connection(
+    state: &mut GlobalState,
+    conn_id: u32,
+    stmts_to_drop: &[u32],
+) {
+    state.pending_result_buffers.retain(|key, _| match key {
+        PendingResultKey::ExecQuery {
+            conn_id: key_conn, ..
+        }
+        | PendingResultKey::ExecQueryParams {
+            conn_id: key_conn, ..
+        }
+        | PendingResultKey::ExecQueryMultiParams {
+            conn_id: key_conn, ..
+        }
+        | PendingResultKey::ExecQueryMulti {
+            conn_id: key_conn, ..
+        } => *key_conn != conn_id,
+        PendingResultKey::Execute { stmt_id, .. } => !stmts_to_drop.contains(stmt_id),
+    });
 }
 
 fn try_write_pending_result(
@@ -1021,9 +1049,9 @@ pub extern "C" fn odbc_set_log_level(level: c_int) -> c_int {
 
 /// Returns engine version as JSON for client compatibility checks.
 ///
-/// Output format: `{"api":"0.1.0","abi":"1.0.0"}` (UTF-8).
+/// Output format: `{"api":"<cargo-package-version>","abi":"<abi-major>.<abi-minor>"}` (UTF-8).
 /// - **api**: package version from Cargo.toml.
-/// - **abi**: FFI contract version; bump on breaking changes.
+/// - **abi**: current FFI contract version.
 ///
 /// Returns: 0 on success; -1 if buffer or out_written is null; -2 if buffer too small.
 #[no_mangle]
@@ -1037,10 +1065,11 @@ pub extern "C" fn odbc_get_version(
             return -1;
         }
 
-        const API_VERSION: &str = env!("CARGO_PKG_VERSION");
-        const ABI_VERSION: &str = "1.0.0";
-
-        let json = format!(r#"{{"api":"{}","abi":"{}"}}"#, API_VERSION, ABI_VERSION);
+        let json = format!(
+            r#"{{"api":"{}","abi":"{}"}}"#,
+            ApiVersion::current(),
+            AbiVersion::current()
+        );
         let bytes = json.as_bytes();
 
         if bytes.len() > buffer_len as usize {
@@ -1341,18 +1370,7 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 state.stream_connections.remove(&stream_id);
             }
             state.async_requests.free_for_connection(conn_id);
-            state.pending_result_buffers.retain(|key, _| match key {
-                PendingResultKey::ExecQuery {
-                    conn_id: key_conn, ..
-                } => *key_conn != conn_id,
-                PendingResultKey::ExecQueryParams {
-                    conn_id: key_conn, ..
-                } => *key_conn != conn_id,
-                PendingResultKey::ExecQueryMulti {
-                    conn_id: key_conn, ..
-                } => *key_conn != conn_id,
-                PendingResultKey::Execute { stmt_id, .. } => !stmts_to_drop.contains(stmt_id),
-            });
+            prune_pending_results_for_connection(&mut state, conn_id, &stmts_to_drop);
             drop(state);
 
             for txn in transactions {
@@ -4128,11 +4146,10 @@ pub extern "C" fn odbc_exec_query_multi_params(
             let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
             hash_bytes(raw)
         };
-        let pending_key = PendingResultKey::ExecQueryParams {
+        let pending_key = PendingResultKey::ExecQueryMultiParams {
             conn_id,
             sql_hash: hash_bytes(sql_str.as_bytes()),
             params_hash,
-            result_encoding: 0,
         };
         if let Some(code) = try_write_pending_result(
             &mut state,
@@ -6505,6 +6522,121 @@ mod tests {
 
         let len = result as usize;
         String::from_utf8_lossy(&buffer[..len]).to_string()
+    }
+
+    #[test]
+    fn odbc_get_version_uses_version_modules() {
+        let mut buffer = vec![0u8; 128];
+        let mut written: c_uint = 0;
+
+        let code = odbc_get_version(buffer.as_mut_ptr(), buffer.len() as c_uint, &mut written);
+
+        assert_eq!(code, 0);
+        let text = std::str::from_utf8(&buffer[..written as usize]).unwrap();
+        let json: Value = serde_json::from_str(text).unwrap();
+        let expected_api = ApiVersion::current().to_string();
+        let expected_abi = AbiVersion::current().to_string();
+        assert_eq!(json["api"].as_str(), Some(expected_api.as_str()));
+        assert_eq!(json["abi"].as_str(), Some(expected_abi.as_str()));
+    }
+
+    #[test]
+    fn pending_result_keys_do_not_collide_for_query_params_and_multi_params() {
+        let conn_id = 42;
+        let sql_hash = hash_bytes(b"SELECT ?");
+        let params_hash = hash_bytes(b"params");
+        let query_key = PendingResultKey::ExecQueryParams {
+            conn_id,
+            sql_hash,
+            params_hash,
+            result_encoding: 0,
+        };
+        let multi_key = PendingResultKey::ExecQueryMultiParams {
+            conn_id,
+            sql_hash,
+            params_hash,
+        };
+
+        assert_ne!(query_key, multi_key);
+
+        let mut keys = HashSet::new();
+        assert!(keys.insert(query_key));
+        assert!(keys.insert(multi_key));
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[test]
+    #[serial(ffi_last_error)]
+    fn prune_pending_results_for_connection_removes_multi_params() {
+        odbc_init();
+        let target_conn = next_test_invalid_id();
+        let other_conn = next_test_invalid_id();
+        let sql_hash = hash_bytes(b"SELECT ?");
+        let params_hash = hash_bytes(b"params");
+        let target_multi_params = PendingResultKey::ExecQueryMultiParams {
+            conn_id: target_conn,
+            sql_hash,
+            params_hash,
+        };
+        let target_query_params = PendingResultKey::ExecQueryParams {
+            conn_id: target_conn,
+            sql_hash,
+            params_hash,
+            result_encoding: 0,
+        };
+        let target_multi = PendingResultKey::ExecQueryMulti {
+            conn_id: target_conn,
+            sql_hash,
+        };
+        let target_stmt = PendingResultKey::Execute {
+            stmt_id: target_conn,
+            params_hash,
+            timeout_override_ms: 0,
+            fetch_size: 0,
+        };
+        let other_multi_params = PendingResultKey::ExecQueryMultiParams {
+            conn_id: other_conn,
+            sql_hash,
+            params_hash,
+        };
+        let other_stmt = PendingResultKey::Execute {
+            stmt_id: other_conn,
+            params_hash,
+            timeout_override_ms: 0,
+            fetch_size: 0,
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        for key in [
+            target_multi_params.clone(),
+            target_query_params.clone(),
+            target_multi.clone(),
+            target_stmt.clone(),
+            other_multi_params.clone(),
+            other_stmt.clone(),
+        ] {
+            stash_pending_result(&mut state, key, vec![1]);
+        }
+
+        prune_pending_results_for_connection(&mut state, target_conn, &[target_conn]);
+
+        assert!(!state
+            .pending_result_buffers
+            .contains_key(&target_multi_params));
+        assert!(!state
+            .pending_result_buffers
+            .contains_key(&target_query_params));
+        assert!(!state.pending_result_buffers.contains_key(&target_multi));
+        assert!(!state.pending_result_buffers.contains_key(&target_stmt));
+        assert!(state
+            .pending_result_buffers
+            .contains_key(&other_multi_params));
+        assert!(state.pending_result_buffers.contains_key(&other_stmt));
+
+        state.pending_result_buffers.remove(&other_multi_params);
+        state.pending_result_buffers.remove(&other_stmt);
     }
 
     #[test]

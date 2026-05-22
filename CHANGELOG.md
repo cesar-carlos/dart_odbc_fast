@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `executeQueryParamBuffer` on async connections attempts the native async path
   for all result encodings when the options symbol is present, reducing
   `fallbacksToBlocking` for columnar workloads.
+- FFI export-surface validation now derives the canonical symbol list from Rust
+  `#[no_mangle] extern "C"` entrypoints and checks `.def`, `cbindgen`, generated
+  header, and Dart native lookups for drift.
+
+### Fixed
+
+- Windows native exports now include `odbc_columnar_decompress` and
+  `odbc_columnar_decompress_free`, keeping compressed columnar v2 decoding
+  available through the DLL export table.
 
 ## [3.8.0] - 2026-05-21
 

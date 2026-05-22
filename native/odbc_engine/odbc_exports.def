@@ -86,6 +86,8 @@ odbc_audit_get_status
 odbc_metadata_cache_enable
 odbc_metadata_cache_stats
 odbc_metadata_cache_clear
+odbc_columnar_decompress
+odbc_columnar_decompress_free
 otel_init
 otel_export_trace
 otel_export_trace_to_string
