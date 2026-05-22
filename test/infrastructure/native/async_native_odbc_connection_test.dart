@@ -549,6 +549,52 @@ void _fakeWorkerAsyncExecuteParamsSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: async params with non-default
+/// [ExecuteAsyncStartParamsRequest.resultEncodingWire].
+void _fakeWorkerAsyncExecuteParamsColumnarSupport(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  var paramsLength = 0;
+  var encodingWire = 0;
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartParamsRequest) {
+      paramsLength = message.serializedParams.length;
+      encodingWire = message.resultEncodingWire;
+      mainSendPort.send(IntResponse(message.requestId, 4321));
+      return;
+    }
+    if (message is AsyncPollRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 1));
+      return;
+    }
+    if (message is AsyncGetResultRequest) {
+      mainSendPort.send(
+        QueryResponse(
+          message.requestId,
+          data: Uint8List.fromList([paramsLength, encodingWire]),
+        ),
+      );
+      return;
+    }
+    if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AsyncCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
 /// Fake worker: reports async params unavailable so callers use fallback.
 void _fakeWorkerAsyncExecuteParamsFallback(SendPort mainSendPort) {
   final receivePort = ReceivePort();
@@ -1729,6 +1775,28 @@ void main() {
       expect(data, equals(Uint8List.fromList([3])));
       async.dispose();
     });
+
+    test(
+      'executeQueryParamBuffer uses async path for columnar encoding '
+      'without blocking fallback',
+      () async {
+        final async = AsyncNativeOdbcConnection(
+          isolateEntry: _fakeWorkerAsyncExecuteParamsColumnarSupport,
+        );
+        await async.initialize();
+
+        final data = await async.executeQueryParamBuffer(
+          1,
+          'SELECT ?',
+          Uint8List.fromList([1, 2, 3]),
+          resultEncoding: ResultEncoding.columnar,
+        );
+
+        expect(data, equals(Uint8List.fromList([3, 1])));
+        expect(async.getWorkerPoolStats().fallbacksToBlocking, equals(0));
+        async.dispose();
+      },
+    );
 
     test('executeQueryParamBuffer falls back when async params is unavailable',
         () async {

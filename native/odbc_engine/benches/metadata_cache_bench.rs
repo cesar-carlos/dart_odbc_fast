@@ -2,14 +2,25 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use odbc_engine::engine::core::metadata_cache::{ColumnMetadata, MetadataCache, TableSchema};
 use std::time::{Duration, Instant};
 
+fn small_schema(i: usize) -> TableSchema {
+    TableSchema {
+        table_name: format!("table_{i}"),
+        columns: vec![ColumnMetadata {
+            name: "id".to_string(),
+            odbc_type: 4,
+            nullable: false,
+        }],
+        cached_at: Instant::now(),
+    }
+}
+
 fn benchmark_cache_hit_vs_miss(c: &mut Criterion) {
     let cache = MetadataCache::new(100, Duration::from_secs(300));
 
-    // Pre-populate the cache
     for i in 0..50 {
-        let key = format!("conn:table_{}", i);
+        let key = format!("conn:table_{i}");
         let schema = TableSchema {
-            table_name: format!("table_{}", i),
+            table_name: format!("table_{i}"),
             columns: vec![
                 ColumnMetadata {
                     name: "id".to_string(),
@@ -27,16 +38,17 @@ fn benchmark_cache_hit_vs_miss(c: &mut Criterion) {
         cache.cache_schema(&key, schema);
     }
 
+    let hit_key = "conn:table_0".to_string();
+    let miss_key = "conn:nonexistent_table".to_string();
+
     let mut group = c.benchmark_group("cache_hit_vs_miss");
 
-    // Benchmark cache hit (entry exists)
     group.bench_function("cache_hit", |b| {
-        b.iter(|| black_box(cache.get_schema("conn:table_0")));
+        b.iter(|| black_box(cache.get_schema(hit_key.as_str())));
     });
 
-    // Benchmark cache miss (entry does not exist)
     group.bench_function("cache_miss", |b| {
-        b.iter(|| black_box(cache.get_schema("conn:nonexistent_table")));
+        b.iter(|| black_box(cache.get_schema(miss_key.as_str())));
     });
 
     group.finish();
@@ -45,34 +57,34 @@ fn benchmark_cache_hit_vs_miss(c: &mut Criterion) {
 fn benchmark_cache_payload_operations(c: &mut Criterion) {
     let cache = MetadataCache::new(100, Duration::from_secs(300));
 
-    // Pre-populate with payloads of varying sizes
-    for i in 0..50 {
-        let key = format!("conn:payload_{}", i);
+    let payload_keys: Vec<String> = (0..50).map(|i| format!("conn:payload_{i}")).collect();
+    for (i, key) in payload_keys.iter().enumerate() {
         let data: Vec<u8> = (0..100).map(|j| (i + j) as u8).collect();
-        cache.cache_payload(&key, &data);
+        cache.cache_payload(key, &data);
     }
+
+    let hit_key = payload_keys[0].clone();
+    let miss_key = "conn:nonexistent".to_string();
 
     let mut group = c.benchmark_group("payload_operations");
 
-    // Benchmark payload cache hit
     group.bench_function("payload_hit", |b| {
-        b.iter(|| black_box(cache.get_payload("conn:payload_0")));
+        b.iter(|| black_box(cache.get_payload(hit_key.as_str())));
     });
 
-    // Benchmark payload cache miss
     group.bench_function("payload_miss", |b| {
-        b.iter(|| black_box(cache.get_payload("conn:nonexistent")));
+        b.iter(|| black_box(cache.get_payload(miss_key.as_str())));
     });
 
-    // Benchmark payload insert
-    group.bench_function("payload_insert", |b| {
-        let mut counter = 1000u32;
+    let rotation_keys: Vec<String> = (0..200).map(|i| format!("conn:payload_rot_{i}")).collect();
+    let data = vec![1u8, 2, 3, 4, 5];
+    let mut rot = 0usize;
+    group.bench_function("payload_insert_steady", |b| {
         b.iter(|| {
-            let key = format!("conn:new_payload_{}", counter);
-            let data = vec![1u8, 2, 3, 4, 5];
-            cache.cache_payload(&key, &data);
-            counter += 1;
-            black_box(())
+            let key = &rotation_keys[rot % rotation_keys.len()];
+            rot = rot.wrapping_add(1);
+            cache.cache_payload(key, &data);
+            black_box(cache.get_payload(key));
         });
     });
 
@@ -82,31 +94,24 @@ fn benchmark_cache_payload_operations(c: &mut Criterion) {
 fn benchmark_cache_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_scaling");
 
-    // Test cache performance with different sizes
     for size in [10, 50, 100, 500].iter() {
         let cache = MetadataCache::new(*size, Duration::from_secs(300));
 
-        // Fill cache to 80% capacity
         let fill_count = (*size as f64 * 0.8) as usize;
-        for i in 0..fill_count {
-            let key = format!("conn:table_{}", i);
-            let schema = TableSchema {
-                table_name: format!("table_{}", i),
-                columns: vec![ColumnMetadata {
-                    name: "id".to_string(),
-                    odbc_type: 4,
-                    nullable: false,
-                }],
-                cached_at: Instant::now(),
-            };
-            cache.cache_schema(&key, schema);
+        let keys: Vec<String> = (0..fill_count).map(|i| format!("conn:table_{i}")).collect();
+        for (i, key) in keys.iter().enumerate() {
+            cache.cache_schema(key, small_schema(i));
         }
+
+        let lookups = (*size).max(10);
+        let lookup_indices: Vec<usize> = (0..lookups)
+            .map(|i| (i * 7 + 3) % fill_count.max(1))
+            .collect();
 
         group.bench_with_input(BenchmarkId::new("get_schema", size), size, |b, _| {
             b.iter(|| {
-                // Access a mix of cached entries
-                for i in 0..10.min(fill_count) {
-                    black_box(cache.get_schema(&format!("conn:table_{}", i)));
+                for &idx in &lookup_indices {
+                    black_box(cache.get_schema(keys[idx].as_str()));
                 }
             });
         });
@@ -115,14 +120,65 @@ fn benchmark_cache_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_payload_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("payload_scaling");
+
+    for size in [10, 50, 100, 500].iter() {
+        let cache = MetadataCache::new(*size, Duration::from_secs(300));
+        let fill_count = (*size as f64 * 0.8) as usize;
+        let keys: Vec<String> = (0..fill_count).map(|i| format!("42:Produto:{i}")).collect();
+        for (i, key) in keys.iter().enumerate() {
+            let data: Vec<u8> = (0..64).map(|j| ((i + j) % 256) as u8).collect();
+            cache.cache_payload(key, &data);
+        }
+        let lookups = (*size).max(10);
+        let lookup_indices: Vec<usize> = (0..lookups)
+            .map(|i| (i * 11 + 5) % fill_count.max(1))
+            .collect();
+
+        group.bench_with_input(BenchmarkId::new("get_payload", size), size, |b, _| {
+            b.iter(|| {
+                for &idx in &lookup_indices {
+                    black_box(cache.get_payload(keys[idx].as_str()));
+                }
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn benchmark_eviction_at_capacity(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cache_eviction");
+    let capacity = 500usize;
+    let keys: Vec<String> = (0..capacity).map(|i| format!("conn:table_{i}")).collect();
+    let cache = MetadataCache::new(capacity, Duration::from_secs(300));
+    for (i, key) in keys.iter().enumerate() {
+        cache.cache_schema(key, small_schema(i));
+    }
+
+    group.bench_function("get_schema_mid_at_capacity", |b| {
+        b.iter(|| black_box(cache.get_schema(keys[250].as_str())));
+    });
+
+    group.bench_function("insert_then_get_overflow_key", |b| {
+        let overflow_key = "conn:table_overflow";
+        b.iter(|| {
+            cache.cache_schema(overflow_key, small_schema(999_999));
+            black_box(cache.get_schema(overflow_key));
+        });
+    });
+
+    group.finish();
+}
+
 fn benchmark_stats_and_clear(c: &mut Criterion) {
     let cache = MetadataCache::new(100, Duration::from_secs(300));
 
-    // Pre-populate
     for i in 0..50 {
-        let key = format!("conn:table_{}", i);
+        let key = format!("conn:table_{i}");
         let schema = TableSchema {
-            table_name: format!("table_{}", i),
+            table_name: format!("table_{i}"),
             columns: vec![],
             cached_at: Instant::now(),
         };
@@ -135,12 +191,11 @@ fn benchmark_stats_and_clear(c: &mut Criterion) {
         b.iter(|| black_box(cache.stats()));
     });
 
-    // Note: We don't benchmark clear in a loop because it would empty the cache
     group.bench_function("clear_once", |b| {
         b.iter(|| {
             let test_cache = MetadataCache::new(100, Duration::from_secs(300));
             for i in 0..10 {
-                test_cache.cache_payload(&format!("key_{}", i), &[1, 2, 3]);
+                test_cache.cache_payload(&format!("key_{i}"), &[1, 2, 3]);
             }
             test_cache.clear();
             black_box(test_cache.stats())
@@ -150,27 +205,20 @@ fn benchmark_stats_and_clear(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark demonstrating cache effectiveness for repeated queries.
-/// Shows the performance difference between:
-/// 1. Cold cache (first query)
-/// 2. Warm cache (subsequent queries)
 fn benchmark_repeated_query_simulation(c: &mut Criterion) {
     let cache = MetadataCache::new(100, Duration::from_secs(300));
 
     let mut group = c.benchmark_group("repeated_query_simulation");
 
-    // Simulate 100 repeated queries to the same 10 tables
     group.bench_function("100_queries_10_tables", |b| {
         b.iter(|| {
             for query_num in 0..100 {
                 let table_idx = query_num % 10;
-                let key = format!("conn:table_{}", table_idx);
+                let key = format!("conn:table_{table_idx}");
 
-                // Check cache first
                 if cache.get_schema(&key).is_none() {
-                    // Simulate "query" and cache result
                     let schema = TableSchema {
-                        table_name: format!("table_{}", table_idx),
+                        table_name: format!("table_{table_idx}"),
                         columns: vec![
                             ColumnMetadata {
                                 name: "id".to_string(),
@@ -200,6 +248,8 @@ criterion_group!(
     benchmark_cache_hit_vs_miss,
     benchmark_cache_payload_operations,
     benchmark_cache_scaling,
+    benchmark_payload_scaling,
+    benchmark_eviction_at_capacity,
     benchmark_stats_and_clear,
     benchmark_repeated_query_simulation,
 );

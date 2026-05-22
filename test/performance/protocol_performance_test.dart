@@ -126,14 +126,22 @@ void main() {
       expect(copiedRows.length, equals(rows));
       expect(refRows.length, equals(rows));
 
-      // Smoke check against actual builder path.
+      // Smoke check against actual builder path (addRow + full build).
       final builder = BulkInsertBuilder()
           .table('perf_table')
           .addColumn('a', BulkColumnType.i32)
           .addColumn('b', BulkColumnType.text, maxLen: 32)
           .addColumn('c', BulkColumnType.i32);
-      dataForRef.take(1000).forEach(builder.addRow);
+      final buildWatch = Stopwatch()..start();
+      for (var i = 0; i < rows; i++) {
+        builder.addRow(<dynamic>[i, 'name_$i', i * 2]);
+      }
       final payload = builder.build();
+      buildWatch.stop();
+      print(
+        'P1.2 BulkInsertBuilder addRow+build x$rows: '
+        '${buildWatch.elapsedMilliseconds}ms',
+      );
       expect(payload.isNotEmpty, isTrue);
     });
 
@@ -190,6 +198,12 @@ void main() {
       );
 
       expect(bufferTotalLength, equals(legacyTotalLength));
+      expect(
+        bufferWatch.elapsedMicroseconds,
+        greaterThanOrEqualTo(legacyWatch.elapsedMicroseconds),
+        reason:
+            'interpolation path should stay at least as fast as StringBuffer',
+      );
     });
 
     test('P4.1 parser and framing synthetic benchmark', () {
@@ -260,6 +274,68 @@ void main() {
       expect(columnarCells, equals(rows * iterations));
       expect(framed, equals(iterations));
       expect(decoded, equals(2 * iterations));
+    });
+
+    test('P4.1b multi-result decoder chunk sizes (stress vs realistic)', () {
+      const rows = 2000;
+      const iterations = 30;
+      final rowMajor = _rowMajorBuffer(rows: rows);
+      final columnar = _columnarBuffer(rows: rows);
+      final multi = _multiResultFrames(rowMajor, columnar);
+
+      int runDecoder(int chunkStep) {
+        var decoded = 0;
+        for (var i = 0; i < iterations; i++) {
+          final decoder = MultiResultStreamDecoder();
+          for (var offset = 0; offset < multi.length; offset += chunkStep) {
+            final end = offset + chunkStep < multi.length
+                ? offset + chunkStep
+                : multi.length;
+            decoded +=
+                decoder.feed(Uint8List.sublistView(multi, offset, end)).length;
+          }
+          decoder.assertExhausted();
+        }
+        return decoded;
+      }
+
+      final stressWatch = Stopwatch()..start();
+      final stressDecoded = runDecoder(17);
+      stressWatch.stop();
+
+      final realisticWatch = Stopwatch()..start();
+      final realisticDecoded = runDecoder(1024);
+      realisticWatch.stop();
+
+      final fullWatch = Stopwatch()..start();
+      final fullDecoded = runDecoder(multi.length);
+      fullWatch.stop();
+
+      print(
+        'P4.1b multi-result decoder chunk=17: '
+        '${stressWatch.elapsedMilliseconds}ms, items=$stressDecoded',
+      );
+      print(
+        'P4.1b multi-result decoder chunk=1024: '
+        '${realisticWatch.elapsedMilliseconds}ms, items=$realisticDecoded',
+      );
+      print(
+        'P4.1b multi-result decoder chunk=full: '
+        '${fullWatch.elapsedMilliseconds}ms, items=$fullDecoded',
+      );
+
+      expect(stressDecoded, equals(2 * iterations));
+      expect(realisticDecoded, equals(2 * iterations));
+      expect(fullDecoded, equals(2 * iterations));
+
+      if (Platform.environment['PERF_STRICT'] == '1') {
+        expect(
+          realisticWatch.elapsedMicroseconds,
+          lessThan(stressWatch.elapsedMicroseconds * 4),
+          reason: '1024-byte chunks should not be orders slower than '
+              '17-byte stress',
+        );
+      }
     });
   });
 }

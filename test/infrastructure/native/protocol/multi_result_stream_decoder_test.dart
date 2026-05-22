@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
@@ -168,6 +169,28 @@ void main() {
       final decoder = MultiResultStreamDecoder();
       final items = decoder.feed(Uint8List(0));
       expect(items, isEmpty);
+      decoder.assertExhausted();
+    });
+
+    test('decodes a large result-set frame fed in 1024-byte chunks', () {
+      final columns = List<String>.generate(12, (i) => 'c$i');
+      final rows = List<List<String>>.generate(
+        400,
+        (r) => List<String>.generate(12, (c) => 'v${r}_$c'),
+      );
+      final frame = _buildResultSetFrame(columns, rows);
+      expect(frame.length, greaterThan(1024 * 3));
+
+      final decoder = MultiResultStreamDecoder();
+      var itemCount = 0;
+      const chunkSize = 1024;
+      for (var offset = 0; offset < frame.length; offset += chunkSize) {
+        final end = min(offset + chunkSize, frame.length);
+        itemCount += decoder
+            .feed(Uint8List.sublistView(frame, offset, end))
+            .length;
+      }
+      expect(itemCount, equals(1));
       decoder.assertExhausted();
     });
   });

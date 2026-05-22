@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
@@ -48,8 +49,9 @@ const int multiStreamItemTagRowCount = MultiResultParser.tagRowCount;
 class MultiResultStreamDecoder {
   static const int _frameHeaderSize = 5; // tag(1) + len(4)
 
-  Uint8List _buffer = Uint8List(0);
-  int _offset = 0;
+  final Queue<Uint8List> _chunks = Queue<Uint8List>();
+  int _headOffset = 0;
+  int _length = 0;
 
   /// Number of items decoded so far across all `feed` calls.
   int _itemsDecoded = 0;
@@ -57,7 +59,7 @@ class MultiResultStreamDecoder {
 
   /// Number of bytes currently held back inside the decoder waiting for the
   /// rest of a frame to arrive. Useful for backpressure / observability.
-  int get pendingBytes => _buffer.length - _offset;
+  int get pendingBytes => _length;
 
   /// Append [chunk] to the internal buffer and return any items that became
   /// fully available. The returned list may be empty if the chunk only
@@ -66,7 +68,8 @@ class MultiResultStreamDecoder {
   /// Throws [FormatException] if a frame declares an unknown tag.
   List<MultiResultItem> feed(Uint8List chunk) {
     if (chunk.isEmpty) return const [];
-    _addChunk(chunk);
+    _chunks.addLast(chunk);
+    _length += chunk.length;
     return _drainCompleteFrames();
   }
 
@@ -82,37 +85,88 @@ class MultiResultStreamDecoder {
     }
   }
 
-  void _addChunk(Uint8List chunk) {
-    if (pendingBytes == 0) {
-      _buffer = chunk;
-      _offset = 0;
-      return;
+  Uint8List _peekLogical(int count) {
+    if (_chunks.isEmpty || count > _length) {
+      throw RangeError.range(count, 0, _length, 'count');
+    }
+    final first = _chunks.first;
+    if (_headOffset + count <= first.length) {
+      return Uint8List.sublistView(first, _headOffset, _headOffset + count);
+    }
+    return _copyLogical(count, consume: false);
+  }
+
+  Uint8List _takeLogical(int count) {
+    if (_chunks.isEmpty || count > _length) {
+      throw RangeError.range(count, 0, _length, 'count');
+    }
+    final first = _chunks.first;
+    if (_headOffset + count <= first.length) {
+      final bytes = Uint8List.sublistView(
+        first,
+        _headOffset,
+        _headOffset + count,
+      );
+      _dropLogical(count);
+      return bytes;
+    }
+    return _copyLogical(count, consume: true);
+  }
+
+  Uint8List _copyLogical(int count, {required bool consume}) {
+    final out = Uint8List(count);
+    var written = 0;
+    var localHead = _headOffset;
+
+    for (final chunk in _chunks) {
+      final available = chunk.length - localHead;
+      if (available <= 0) {
+        localHead = 0;
+        continue;
+      }
+      final take = count - written < available ? count - written : available;
+      out.setRange(written, written + take, chunk, localHead);
+      written += take;
+      if (written == count) break;
+      localHead = 0;
     }
 
-    final remaining = pendingBytes;
-    final next = Uint8List(remaining + chunk.length)
-      ..setRange(0, remaining, _buffer, _offset)
-      ..setAll(remaining, chunk);
-    _buffer = next;
-    _offset = 0;
+    if (consume) {
+      _dropLogical(count);
+    }
+    return out;
+  }
+
+  void _dropLogical(int count) {
+    var remaining = count;
+    while (remaining > 0) {
+      final first = _chunks.first;
+      final available = first.length - _headOffset;
+      if (remaining < available) {
+        _headOffset += remaining;
+        _length -= count;
+        return;
+      }
+      remaining -= available;
+      _chunks.removeFirst();
+      _headOffset = 0;
+    }
+    _length -= count;
   }
 
   List<MultiResultItem> _drainCompleteFrames() {
     final items = <MultiResultItem>[];
 
-    while (true) {
-      if (pendingBytes < _frameHeaderSize) break;
-      final tag = _buffer[_offset];
-      final len = ByteData.sublistView(_buffer, _offset + 1, _offset + 5)
+    while (_length >= _frameHeaderSize) {
+      final headerView = _peekLogical(_frameHeaderSize);
+      final tag = headerView[0];
+      final len = ByteData.sublistView(headerView, 1, _frameHeaderSize)
           .getUint32(0, _littleEndian);
-      final frameEnd = _offset + _frameHeaderSize + len;
-      if (frameEnd > _buffer.length) break; // need more bytes
+      final frameBytes = _frameHeaderSize + len;
+      if (_length < frameBytes) break;
 
-      final payload = Uint8List.sublistView(
-        _buffer,
-        _offset + _frameHeaderSize,
-        frameEnd,
-      );
+      _dropLogical(_frameHeaderSize);
+      final payload = len == 0 ? Uint8List(0) : _takeLogical(len);
 
       switch (tag) {
         case multiStreamItemTagResultSet:
@@ -131,15 +185,9 @@ class MultiResultStreamDecoder {
 
         default:
           throw FormatException(
-            'Streaming multi-result: unknown frame tag $tag at offset $_offset',
+            'Streaming multi-result: unknown frame tag $tag',
           );
       }
-      _offset = frameEnd;
-    }
-
-    if (_offset == _buffer.length) {
-      _buffer = Uint8List(0);
-      _offset = 0;
     }
 
     _itemsDecoded += items.length;

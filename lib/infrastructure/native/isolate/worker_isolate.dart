@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
@@ -702,10 +703,16 @@ void _handleRequest(
         sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
 
       case ExecuteAsyncStartParamsRequest():
+        final encoding = switch (request.resultEncodingWire) {
+          1 => ResultEncoding.columnar,
+          2 => ResultEncoding.columnarCompressed,
+          _ => ResultEncoding.rowMajor,
+        };
         final asyncRequestId = conn.executeAsyncStartParams(
           request.connectionId,
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
+          resultEncoding: encoding,
         );
         sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
 

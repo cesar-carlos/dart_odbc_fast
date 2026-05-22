@@ -223,9 +223,15 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   int? executeAsyncStartParams(
     int connectionId,
     String sql,
-    Uint8List? serializedParams,
-  ) =>
-      _native.executeAsyncStartParams(connectionId, sql, serializedParams);
+    Uint8List? serializedParams, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) =>
+      _native.executeAsyncStartParams(
+        connectionId,
+        sql,
+        serializedParams,
+        resultEncoding: resultEncoding,
+      );
 
   /// Polls async request status:
   /// `0` pending, `1` ready, `-1` error, `-2` cancelled.

@@ -11,15 +11,18 @@ Usage:
     python scripts/run_dart_benchmarks.py --smoke --compare
     python scripts/run_dart_benchmarks.py --rust-micro
     python scripts/run_dart_benchmarks.py --harness
+    python scripts/run_dart_benchmarks.py --all
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -103,6 +106,28 @@ def bench_out_dir(root: Path) -> Path:
     return out
 
 
+def print_async_fallback_summary(json_path: Path) -> None:
+    if not json_path.is_file():
+        return
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print_info(f"Could not read {json_path.name}: {exc}")
+        return
+    if not isinstance(data, list):
+        return
+    print_step(f"async summary ({json_path.name}):")
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        scenario = item.get("scenario")
+        if not isinstance(scenario, str):
+            continue
+        fb = item.get("fallbacksToBlocking", 0)
+        qps = item.get("queriesPerSecond", 0)
+        print_info(f"  {scenario}: fallbacks={fb}, queries/s={qps}")
+
+
 def run_streaming(root: Path, query: str, tag: str) -> int:
     out = bench_out_dir(root) / f"streaming-{tag}.json"
     os.environ["ODBC_STREAM_BENCH_QUERY"] = query
@@ -120,7 +145,29 @@ def run_async(root: Path, query: str, tag: str) -> int:
     os.environ["ODBC_BENCH_OUTPUT"] = "json"
     os.environ["ODBC_BENCH_OUT_FILE"] = str(out)
     print_step(f"async concurrency -> {out.name}")
-    return run(["dart", "run", "example/async_concurrency_benchmark.dart"], root)
+    code = run(["dart", "run", "example/async_concurrency_benchmark.dart"], root)
+    if code == 0:
+        print_async_fallback_summary(out)
+    return code
+
+
+def _compare_tool_argv(root: Path) -> list[str]:
+    cmd: list[str] = [
+        "dart",
+        "run",
+        "tool/compare_benchmark_baseline.dart",
+    ]
+    cmd += [
+        "--max-regression-percent",
+        os.environ.get("BENCHMARK_MAX_REGRESSION_PERCENT", "30"),
+        "--max-p95-regression-percent",
+        os.environ.get("BENCHMARK_MAX_P95_REGRESSION_PERCENT", "30"),
+        "--max-fallbacks-delta",
+        os.environ.get("BENCHMARK_MAX_FALLBACKS_DELTA", "5"),
+    ]
+    if os.environ.get("BENCHMARK_COMPARE_STRICT", "").strip() in ("1", "true", "yes"):
+        cmd.append("--strict-scenarios")
+    return cmd
 
 
 def compare(root: Path, tag: str, kind: str) -> int:
@@ -135,20 +182,14 @@ def compare(root: Path, tag: str, kind: str) -> int:
         shutil.copy2(current, baseline)
         return 0
     print_step(f"compare {kind}-{tag}")
-    return run(
-        [
-            "dart",
-            "run",
-            "tool/compare_benchmark_baseline.dart",
-            "--baseline",
-            str(baseline),
-            "--current",
-            str(current),
-            "--max-regression-percent",
-            "30",
-        ],
-        root,
-    )
+    cmd = _compare_tool_argv(root)
+    cmd += [
+        "--baseline",
+        str(baseline),
+        "--current",
+        str(current),
+    ]
+    return run(cmd, root)
 
 
 def run_rust_micro(root: Path) -> int:
@@ -173,14 +214,41 @@ def run_rust_micro(root: Path) -> int:
     if code != 0:
         return code
     print_step("Rust columnar_v2_placeholder (--features columnar-v2)")
-    return run(
+    code = run(
         ["cargo", "bench", "--bench", "columnar_v2_placeholder", "--features", "columnar-v2"],
         native,
     )
+    if code != 0:
+        return code
+    if os.environ.get("BENCHMARK_SAVE_RUST_MICRO_LOG", "").strip() in ("1", "true", "yes"):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = bench_out_dir(root) / f"rust-micro-{stamp}.txt"
+        print_step(f"Saving Rust bench log to {log_path.name}")
+        with log_path.open("w", encoding="utf-8") as log_file:
+            subprocess.run(
+                [
+                    "cargo",
+                    "bench",
+                    "--bench",
+                    "bulk_operations_bench",
+                    "--bench",
+                    "metadata_cache_bench",
+                ],
+                cwd=native,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+    return code
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ODBC Fast benchmarks")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run protocol, rust-micro, harness, smoke, heavy, and compare",
+    )
     parser.add_argument(
         "--smoke",
         action="store_true",
@@ -194,14 +262,14 @@ def main() -> int:
     parser.add_argument(
         "--rows",
         type=int,
-        default=5000,
+        default=None,
         metavar="N",
-        help="Row limit for --heavy (default 5000)",
+        help="Row limit for --heavy (default 5000 or ODBC_BENCH_ROWS)",
     )
     parser.add_argument(
         "--table",
-        default="Produto",
-        help="Table name for --heavy (default Produto)",
+        default=None,
+        help="Table name for --heavy (default Produto or ODBC_BENCH_TABLE)",
     )
     parser.add_argument(
         "--compare",
@@ -224,6 +292,24 @@ def main() -> int:
         help="Run benchmarks/m1_baseline.dart and m2_performance.dart (DSN for m2)",
     )
     args = parser.parse_args()
+
+    if args.all:
+        args.protocol = True
+        args.rust_micro = True
+        args.harness = True
+        args.smoke = True
+        args.heavy = True
+        args.compare = True
+
+    rows_default = 5000
+    if os.environ.get("ODBC_BENCH_ROWS", "").strip().isdigit():
+        rows_default = int(os.environ["ODBC_BENCH_ROWS"])
+    if args.rows is None:
+        args.rows = rows_default
+
+    table_default = os.environ.get("ODBC_BENCH_TABLE", "Produto").strip() or "Produto"
+    if args.table is None:
+        args.table = table_default
 
     if not any(
         (

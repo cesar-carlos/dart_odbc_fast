@@ -21,9 +21,12 @@ sync, worker count, backpressure, and the shape of
 | `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          |
 | `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   |
 
-`ResultEncoding.rowMajor` remains the safe default for query payloads; prefer
-columnar encodings only after benchmarking your workload (wide SQL Server rows
-often hit async **blocking fallbacks** with columnar modes).
+`ResultEncoding.rowMajor` remains the safe default for query payloads.
+Columnar modes are only worth adopting after benchmarking your workload: they
+need the native engine to export `odbc_execute_async_params_options` so the
+worker isolate can start async execution with a non-row-major encoding. Older
+engines without that symbol still fall back to a blocking query for columnar
+requests.
 
 ---
 
@@ -34,6 +37,8 @@ From `native/odbc_engine`:
 ```powershell
 # Criterion benches (HTML report in native/odbc_engine/target/criterion/)
 cargo bench --bench bulk_operations_bench
+# Narrow a single Criterion case (useful when `encode_small_buffer_100_rows` is noisy):
+cargo bench --bench bulk_operations_bench -- encode_small_buffer_100_rows
 cargo bench --bench comparative_bench
 cargo bench --bench metadata_cache_bench
 
@@ -51,7 +56,30 @@ python scripts/run_dart_benchmarks.py --protocol --smoke
 python scripts/run_dart_benchmarks.py --heavy --rows 5000
 python scripts/run_dart_benchmarks.py --rust-micro
 python scripts/run_dart_benchmarks.py --harness
+# Full local epic (DSN + optional `Produto` table for --heavy):
+python scripts/run_dart_benchmarks.py --all
 ```
+
+`--all` runs protocol tests, Rust micro-benches, harness, smoke, heavy, and
+`--compare` against `bench_baselines/*.baseline.json` (creates baseline files
+on first run). After async runs, the script prints a short
+`fallbacksToBlocking` summary per scenario (columnar should trend to **0**
+once async encoding reaches the native async path).
+
+Optional environment knobs:
+
+| Variable | Effect |
+| -------- | ------ |
+| `ODBC_BENCH_CONNECTION_COUNT` | Async benchmark parallel connections (default 4) |
+| `ODBC_BENCH_QUERY_COUNT` | Async benchmark queries per scenario (default 24) |
+| `ODBC_BENCH_TABLE` / `ODBC_BENCH_ROWS` | Defaults for `--heavy` when flags omitted |
+| `BENCHMARK_MAX_P95_REGRESSION_PERCENT` | Passed to `tool/compare_benchmark_baseline.dart` |
+| `BENCHMARK_MAX_FALLBACKS_DELTA` | Max allowed increase in `fallbacksToBlocking` vs baseline |
+| `BENCHMARK_COMPARE_STRICT=1` | Fail if current JSON has scenarios not listed in baseline |
+| `BENCHMARK_SAVE_RUST_MICRO_LOG=1` | Append a second Rust bench run log under `bench_baselines/` |
+
+`PERF_STRICT=1` with `dart test test/performance/` enables an extra timing check
+on **P4.1b** (multi-result decoder: 1024-byte chunks vs 17-byte stress).
 
 `benchmarks/m1_baseline.dart` and `benchmarks/m2_performance.dart` use
 `benchmark_harness` [`AsyncBenchmarkBase`](https://pub.dev/packages/benchmark_harness)
@@ -146,8 +174,16 @@ Benchmark baselines can be compared with:
 dart run tool/compare_benchmark_baseline.dart `
   --baseline bench_baselines/streaming-baseline.json `
   --current bench_baselines/streaming-current.json `
-  --max-regression-percent 30
+  --max-regression-percent 30 `
+  --max-p95-regression-percent 30 `
+  --max-fallbacks-delta 5
 ```
+
+Async JSON from `example/async_concurrency_benchmark.dart` includes
+`queriesPerSecond`, `rowsPerSecond`, `latencyP95Micros`, and
+`fallbacksToBlocking` for regression checks. Native pool scenarios also emit
+`poolConnectMs` and `poolQueryMs` (checkout vs query time, wall-clock sum across
+tasks).
 
 Live `test/my_test` table scans are bounded by default with `SELECT TOP N`.
 Use `MY_TEST_ROW_LIMIT` to tune quick local coverage. Use

@@ -202,19 +202,26 @@ impl AsyncRequestManager {
         None
     }
 
-    fn start_request(&mut self, conn_id: u32, sql: String, params: Option<Vec<u8>>) -> Option<u32> {
+    fn start_request(
+        &mut self,
+        conn_id: u32,
+        sql: String,
+        params: Option<Vec<u8>>,
+        result_encoding: u32,
+    ) -> Option<u32> {
         let request_id = self.allocate_request_id()?;
         let slot = Arc::new(AsyncRequestSlot::new(conn_id));
         let slot_for_worker = Arc::clone(&slot);
 
         let handle = match async_bridge::spawn_blocking_task(move || {
-            let result =
-                std::panic::catch_unwind(|| run_async_query(conn_id, &sql, params.as_deref()))
-                    .unwrap_or_else(|_| {
-                        Err(OdbcError::InternalError(
-                            "Async request task panicked".to_string(),
-                        ))
-                    });
+            let result = std::panic::catch_unwind(|| {
+                run_async_query(conn_id, &sql, params.as_deref(), result_encoding)
+            })
+            .unwrap_or_else(|_| {
+                Err(OdbcError::InternalError(
+                    "Async request task panicked".to_string(),
+                ))
+            });
             let cancelled = slot_for_worker.cancelled.load(Ordering::SeqCst);
             if let Ok(mut outcome) = slot_for_worker.outcome.lock() {
                 *outcome = if cancelled {
@@ -326,12 +333,19 @@ impl AsyncRequestManager {
     }
 }
 
-fn run_async_query(conn_id: u32, sql: &str, params: Option<&[u8]>) -> Result<Vec<u8>> {
+fn run_async_query(
+    conn_id: u32,
+    sql: &str,
+    params: Option<&[u8]>,
+    result_encoding: u32,
+) -> Result<Vec<u8>> {
     let Some(mut state) = try_lock_global_state() else {
         return Err(OdbcError::InternalError(
             "Failed to lock global state".to_string(),
         ));
     };
+
+    let encoding = ResultEncoding::from_wire(result_encoding).unwrap_or(ResultEncoding::RowMajor);
 
     state.audit_logger.log_query(conn_id, sql);
     let metrics = Arc::clone(&state.metrics);
@@ -339,14 +353,19 @@ fn run_async_query(conn_id: u32, sql: &str, params: Option<&[u8]>) -> Result<Vec
     let mut target = take_runnable_connection(&mut state, conn_id)?;
     drop(state);
 
-    let params = params.unwrap_or(&[]);
+    let params_slice = params.unwrap_or(&[]);
     let result = match &mut target {
         RunnableConnection::Regular(conn_arc) => match conn_arc.lock() {
             Ok(mut conn_guard) => {
-                if params.is_empty() {
+                if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
                     execute_query_with_cached_connection(&mut conn_guard, sql)
                 } else {
-                    execute_query_with_param_buffer(conn_guard.connection(), sql, params)
+                    execute_query_with_param_buffer_encoding(
+                        conn_guard.connection(),
+                        sql,
+                        params_slice,
+                        encoding,
+                    )
                 }
             }
             Err(_) => Err(OdbcError::InternalError(
@@ -357,10 +376,15 @@ fn run_async_query(conn_id: u32, sql: &str, params: Option<&[u8]>) -> Result<Vec
             let conn_guard = pooled.lock().map_err(|_| {
                 OdbcError::InternalError("Failed to lock pooled connection".to_string())
             })?;
-            if params.is_empty() {
+            if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
                 execute_query_with_connection(conn_guard.get_connection(), sql)
             } else {
-                execute_query_with_param_buffer(conn_guard.get_connection(), sql, params)
+                execute_query_with_param_buffer_encoding(
+                    conn_guard.get_connection(),
+                    sql,
+                    params_slice,
+                    encoding,
+                )
             }
         }
     };
@@ -3347,7 +3371,7 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
 
         state
             .async_requests
-            .start_request(conn_id, sql_str, None)
+            .start_request(conn_id, sql_str, None, 0)
             .unwrap_or(0)
     })
 }
@@ -3408,7 +3432,70 @@ pub extern "C" fn odbc_execute_async_params(
 
         state
             .async_requests
-            .start_request(conn_id, sql_str, params)
+            .start_request(conn_id, sql_str, params, 0)
+            .unwrap_or(0)
+    })
+}
+
+/// Like [odbc_execute_async_params] but selects binary result encoding for the
+/// async task (`0` = row-major, `1` = columnar v2, `2` = columnar compressed).
+/// Invalid encoding codes fall back to row-major.
+#[no_mangle]
+pub extern "C" fn odbc_execute_async_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        if sql.is_null() {
+            return 0;
+        }
+
+        if params_buffer.is_null() && params_len > 0 {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                "params_buffer is null but params_len is greater than zero".to_string(),
+            );
+            return 0;
+        }
+
+        let c_str = unsafe { CStr::from_ptr(sql) };
+        let sql_str = match c_str.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return 0,
+        };
+
+        let params = if params_buffer.is_null() || params_len == 0 {
+            None
+        } else {
+            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+            Some(raw.to_vec())
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+
+        if !state.connections.contains_key(&conn_id)
+            && !state.pooled_connections.contains_key(&conn_id)
+        {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
+
+        state
+            .async_requests
+            .start_request(conn_id, sql_str, params, result_encoding)
             .unwrap_or(0)
     })
 }

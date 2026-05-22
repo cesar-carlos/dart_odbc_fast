@@ -85,17 +85,11 @@ String _toValidatedUtcIso8601(DateTime value) {
 }
 
 String _unsupportedParameterTypeMessage(Object value) {
-  final buffer = StringBuffer()
-    ..write('Unsupported parameter type: ')
-    ..write(value.runtimeType)
-    ..write('. ')
-    ..write(
+  return 'Unsupported parameter type: ${value.runtimeType}. '
       'Expected one of: null, int, String, List<int>, bool, double, '
-      'DateTime, or ParamValue. ',
-    )
-    ..write('Use explicit ParamValue wrapper if needed, e.g., ')
-    ..write('ParamValueString(value) for custom string conversion.');
-  return buffer.toString();
+      'DateTime, or ParamValue. '
+      'Use explicit ParamValue wrapper if needed, e.g., '
+      'ParamValueString(value) for custom string conversion.';
 }
 
 /// Explicit SQL data types for optional typed parameter API.

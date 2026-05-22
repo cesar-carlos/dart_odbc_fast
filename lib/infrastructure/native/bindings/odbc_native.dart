@@ -68,6 +68,10 @@ class OdbcNative {
   bool get supportsAsyncExecuteParamsApi =>
       _bindings.supportsAsyncExecuteParamsApi;
 
+  /// True when async parameterized execution supports [ResultEncoding] (v3.9+).
+  bool get supportsAsyncExecuteParamsOptionsApi =>
+      _bindings.supportsAsyncExecuteParamsOptionsApi;
+
   /// True when the native library exposes result encoding options for direct
   /// parameterized query execution.
   bool get supportsResultEncodingOptions =>
@@ -186,14 +190,40 @@ class OdbcNative {
   int? executeAsyncStartParams(
     int connectionId,
     String sql,
-    Uint8List? params,
-  ) {
+    Uint8List? params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) {
     if (!_bindings.supportsAsyncExecuteParamsApi) {
       return null;
     }
     return _withSql(
       sql,
       (sqlPtr) {
+        if (_bindings.supportsAsyncExecuteParamsOptionsApi) {
+          final wire = resultEncoding.wireCode;
+          if (params == null || params.isEmpty) {
+            return _bindings.odbc_execute_async_params_options(
+              connectionId,
+              sqlPtr,
+              ffi.nullptr.cast<ffi.Uint8>(),
+              0,
+              wire,
+            );
+          }
+          return _withParamsBuffer(
+            params,
+            (paramsPtr) => _bindings.odbc_execute_async_params_options(
+              connectionId,
+              sqlPtr,
+              paramsPtr,
+              params.length,
+              wire,
+            ),
+          );
+        }
+        if (resultEncoding != ResultEncoding.rowMajor) {
+          return null;
+        }
         if (params == null || params.isEmpty) {
           return _bindings.odbc_execute_async_params(
             connectionId,

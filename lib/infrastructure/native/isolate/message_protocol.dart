@@ -659,11 +659,13 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
     int requestId,
     this.connectionId,
     this.sql,
-    this.serializedParams,
-  ) : super(requestId, RequestType.executeAsyncStartParams);
+    this.serializedParams, {
+    this.resultEncodingWire = 0,
+  }) : super(requestId, RequestType.executeAsyncStartParams);
   final int connectionId;
   final String sql;
   final Uint8List serializedParams;
+  final int resultEncodingWire;
 }
 
 /// Poll async request status.

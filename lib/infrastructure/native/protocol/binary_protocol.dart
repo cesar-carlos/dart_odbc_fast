@@ -444,6 +444,7 @@ class BinaryProtocolParser {
     required List<List<dynamic>> rows,
   }) {
     final odbc = OdbcType.fromDiscriminant(odbcType);
+    final bd = ByteData.sublistView(raw);
     var p = 0;
     final rowCount = rows.length;
     for (var i = 0; i < rowCount; i++) {
@@ -458,8 +459,7 @@ class BinaryProtocolParser {
           if (p + 4 > raw.length) {
             throw const FormatException('Columnar v2: int cell truncated');
           }
-          rows[i][columnIndex] =
-              ByteData.sublistView(raw, p, p + 4).getInt32(0, _littleEndian);
+          rows[i][columnIndex] = bd.getInt32(p, _littleEndian);
           p += 4;
         }
       } else if (odbc == OdbcType.bigInt) {
@@ -470,8 +470,7 @@ class BinaryProtocolParser {
           if (p + 8 > raw.length) {
             throw const FormatException('Columnar v2: bigint cell truncated');
           }
-          rows[i][columnIndex] =
-              ByteData.sublistView(raw, p, p + 8).getInt64(0, _littleEndian);
+          rows[i][columnIndex] = bd.getInt64(p, _littleEndian);
           p += 8;
         }
       } else {
@@ -482,11 +481,7 @@ class BinaryProtocolParser {
           if (p + 4 > raw.length) {
             throw const FormatException('Columnar v2: varchar len truncated');
           }
-          final bl = ByteData.sublistView(
-            raw,
-            p,
-            p + 4,
-          ).getUint32(0, _littleEndian);
+          final bl = bd.getUint32(p, _littleEndian);
           p += 4;
           if (p + bl > raw.length) {
             throw const FormatException('Columnar v2: varchar data truncated');

@@ -31,6 +31,11 @@ pub struct MetadataCacheStats {
     pub payload_entries: usize,
 }
 
+/// Dual LRU cache for table schemas and opaque column-list payloads.
+///
+/// TTL is evaluated on **read** using the [`Instant`] stored at **insert** time
+/// ([`TableSchema::cached_at`] / payload `cached_at`). Hits do not extend TTL
+/// (no sliding expiration).
 pub struct MetadataCache {
     schemas: Arc<Mutex<LruCache<String, TableSchema>>>,
     payloads: Arc<Mutex<LruCache<String, CachedPayload>>>,

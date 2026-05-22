@@ -61,6 +61,28 @@ void main() {
       expect(message.serializedParams, [9]);
       expect(message.maxResultBufferBytes, 1024);
     });
+
+    test('ExecuteAsyncStartParamsRequest carries result encoding wire code',
+        () async {
+      final receivePort = ReceivePort();
+      final request = ExecuteAsyncStartParamsRequest(
+        31,
+        2,
+        'SELECT 1',
+        Uint8List.fromList([1, 2]),
+        resultEncodingWire: ResultEncoding.columnarCompressed.wireCode,
+      );
+
+      receivePort.sendPort.send(request);
+      final message = await receivePort.first as ExecuteAsyncStartParamsRequest;
+      receivePort.close();
+
+      expect(message.requestId, 31);
+      expect(message.connectionId, 2);
+      expect(message.type, RequestType.executeAsyncStartParams);
+      expect(message.resultEncodingWire, 2);
+      expect(message.serializedParams, [1, 2]);
+    });
   });
 
   group('message protocol responses', () {

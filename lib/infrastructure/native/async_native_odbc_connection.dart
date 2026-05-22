@@ -1464,8 +1464,9 @@ class AsyncNativeOdbcConnection {
   Future<int> executeAsyncStartParams(
     int connectionId,
     String sql,
-    Uint8List? serializedParams,
-  ) async {
+    Uint8List? serializedParams, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
     final bytes = serializedParams == null || serializedParams.isEmpty
         ? Uint8List(0)
         : serializedParams;
@@ -1475,6 +1476,7 @@ class AsyncNativeOdbcConnection {
         connectionId,
         sql,
         bytes,
+        resultEncodingWire: resultEncoding.wireCode,
       ),
     );
     return r.value;
@@ -1856,19 +1858,18 @@ class AsyncNativeOdbcConnection {
   }) async {
     final bytes =
         paramBuffer == null || paramBuffer.isEmpty ? Uint8List(0) : paramBuffer;
-    if (resultEncoding == ResultEncoding.rowMajor) {
-      final asyncRequestId = await executeAsyncStartParams(
-        connectionId,
-        sql,
-        bytes,
+    final asyncRequestId = await executeAsyncStartParams(
+      connectionId,
+      sql,
+      bytes,
+      resultEncoding: resultEncoding,
+    );
+    if (asyncRequestId > 0) {
+      return _waitForAsyncResult(
+        asyncRequestId,
+        maxBufferBytes: maxBufferBytes,
+        timeout: timeout,
       );
-      if (asyncRequestId > 0) {
-        return _waitForAsyncResult(
-          asyncRequestId,
-          maxBufferBytes: maxBufferBytes,
-          timeout: timeout,
-        );
-      }
     }
 
     _recordFallbackToBlocking(connectionId);

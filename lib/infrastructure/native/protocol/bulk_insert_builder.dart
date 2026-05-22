@@ -269,6 +269,10 @@ class BulkTimestamp {
 /// Provides a fluent API to define table structure, columns, and rows
 /// for efficient bulk insert operations.
 ///
+/// Rows passed to [addRow] are stored by reference; do not mutate a row list
+/// after it is added (wrap with `List.unmodifiable` when the same list instance
+/// might be reused elsewhere).
+///
 /// Example:
 /// ```dart
 /// final builder = BulkInsertBuilder()

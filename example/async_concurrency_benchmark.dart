@@ -1,5 +1,12 @@
 // Async concurrency benchmark for worker pool, native pool and streaming.
 // Run: dart run example/async_concurrency_benchmark.dart
+//
+// Columnar scenarios use the native async execute path when available; if the
+// engine returns no async request id, the client falls back to blocking
+// encode paths (see `fallbacksToBlocking` in JSON output).
+//
+// Tunables: `ODBC_BENCH_CONNECTION_COUNT`, `ODBC_BENCH_QUERY_COUNT`
+// (defaults 4, 24).
 
 import 'dart:convert';
 import 'dart:io';
@@ -14,8 +21,8 @@ Future<void> main() async {
   final dsn = requireExampleDsn();
   if (dsn == null) return;
 
-  const connectionCount = 4;
-  const queryCount = 24;
+  final connectionCount = _envInt('ODBC_BENCH_CONNECTION_COUNT', 4);
+  final queryCount = _envInt('ODBC_BENCH_QUERY_COUNT', 24);
   const poolSize = 4;
   const maxInFlight = 4;
 
@@ -151,12 +158,20 @@ Future<_BenchmarkResult> _benchNativePool({
 
   try {
     poolId = await async.poolCreate(dsn, poolSize);
+    var poolConnectMicros = 0;
+    var poolQueryMicros = 0;
     final elapsed = await _measure(() {
       return _runLimited<void>(taskCount, maxInFlight, (index) async {
+        final checkout = Stopwatch()..start();
         final connId = await async.poolGetConnection(poolId);
+        checkout.stop();
+        poolConnectMicros += checkout.elapsedMicroseconds;
+        final querySw = Stopwatch()..start();
         try {
           await _runQuery(async, connId, query);
         } finally {
+          querySw.stop();
+          poolQueryMicros += querySw.elapsedMicroseconds;
           await async.poolReleaseConnection(connId);
         }
       });
@@ -173,6 +188,8 @@ Future<_BenchmarkResult> _benchNativePool({
       rowsOrBatches: taskCount,
       resultEncoding: ResultEncoding.rowMajor,
       stats: stats,
+      poolConnectMs: (poolConnectMicros / 1000).round(),
+      poolQueryMs: (poolQueryMicros / 1000).round(),
     );
   } finally {
     if (poolId > 0) {
@@ -329,6 +346,17 @@ String _envOr(String name, String fallback) {
   return fallback;
 }
 
+int _envInt(String name, int fallback) {
+  final raw = Platform.environment[name];
+  if (raw == null || raw.isEmpty) return fallback;
+  return int.tryParse(raw) ?? fallback;
+}
+
+double _throughputPerSecond(int units, int elapsedMs) {
+  if (elapsedMs <= 0 || units <= 0) return 0;
+  return units * 1000.0 / elapsedMs;
+}
+
 void _writeResults(List<_BenchmarkResult> results) {
   final format = _envOr('ODBC_BENCH_OUTPUT', 'text').toLowerCase();
   final outFile = Platform.environment['ODBC_BENCH_OUT_FILE'];
@@ -366,7 +394,8 @@ String _toText(List<_BenchmarkResult> results) {
 String _toCsv(List<_BenchmarkResult> results) {
   const header = 'scenario,workers,poolSize,maxInFlight,queryCount,elapsedMs,'
       'resultEncoding,'
-      'rowsOrBatches,totalRouted,timeouts,fallbacksToBlocking';
+      'rowsOrBatches,queriesPerSecond,rowsPerSecond,poolConnectMs,poolQueryMs,'
+      'totalRouted,timeouts,fallbacksToBlocking,latencyP95Micros';
   final rows = results.map((result) {
     return [
       result.scenario,
@@ -377,9 +406,14 @@ String _toCsv(List<_BenchmarkResult> results) {
       result.elapsedMs,
       result.resultEncoding.name,
       result.rowsOrBatches,
+      result.queriesPerSecond.toStringAsFixed(2),
+      result.rowsPerSecond.toStringAsFixed(2),
+      result.poolConnectMs ?? '',
+      result.poolQueryMs ?? '',
       result.stats.totalRouted,
       result.stats.timeouts,
       result.stats.fallbacksToBlocking,
+      result.stats.latencyP95Micros,
     ].join(',');
   });
   return [header, ...rows].join('\n');
@@ -396,6 +430,8 @@ final class _BenchmarkResult {
     required this.rowsOrBatches,
     required this.resultEncoding,
     required this.stats,
+    this.poolConnectMs,
+    this.poolQueryMs,
   });
 
   final String scenario;
@@ -407,6 +443,20 @@ final class _BenchmarkResult {
   final int rowsOrBatches;
   final ResultEncoding resultEncoding;
   final AsyncWorkerPoolStats stats;
+  final int? poolConnectMs;
+  final int? poolQueryMs;
+
+  double get queriesPerSecond => _throughputPerSecond(queryCount, elapsedMs);
+
+  /// Approximate rows/s when each completed unit is one logical row
+  /// (worker pool, prepared, native pool). Streaming uses batch count as
+  /// throughput units.
+  double get rowsPerSecond {
+    if (scenario == 'streaming batched') {
+      return _throughputPerSecond(rowsOrBatches, elapsedMs);
+    }
+    return _throughputPerSecond(queryCount, elapsedMs);
+  }
 
   Map<String, Object?> toJson() {
     return {
@@ -418,6 +468,10 @@ final class _BenchmarkResult {
       'elapsedMs': elapsedMs,
       'resultEncoding': resultEncoding.name,
       'rowsOrBatches': rowsOrBatches,
+      'queriesPerSecond': queriesPerSecond,
+      'rowsPerSecond': rowsPerSecond,
+      if (poolConnectMs != null) 'poolConnectMs': poolConnectMs,
+      if (poolQueryMs != null) 'poolQueryMs': poolQueryMs,
       'totalRouted': stats.totalRouted,
       'completedRequests': stats.completedRequests,
       'failedRequests': stats.failedRequests,

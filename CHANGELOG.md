@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Native FFI `odbc_execute_async_params_options` (additive) so parameterized
+  async execution can request `ResultEncoding` (row-major, columnar v2, or
+  columnar compressed) on the background task; Dart bindings and the worker
+  isolate forward `resultEncodingWire` from `ExecuteAsyncStartParamsRequest`.
+
+### Changed
+
+- `executeQueryParamBuffer` on async connections attempts the native async path
+  for all result encodings when the options symbol is present, reducing
+  `fallbacksToBlocking` for columnar workloads.
+
 ## [3.8.0] - 2026-05-21
 
 ### Added

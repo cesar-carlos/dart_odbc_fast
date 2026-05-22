@@ -47,6 +47,12 @@ class OdbcBindings {
     } on Object catch (_) {
       _odbc_execute_async_params_ptr = null;
     }
+    try {
+      _odbc_execute_async_params_options_ptr =
+          _dylib.lookup('odbc_execute_async_params_options');
+    } on Object catch (_) {
+      _odbc_execute_async_params_options_ptr = null;
+    }
     _odbc_stream_start_ptr = _dylib.lookup('odbc_stream_start');
     try {
       _odbc_stream_start_async_ptr = _dylib.lookup('odbc_stream_start_async');
@@ -244,6 +250,8 @@ class OdbcBindings {
       _odbc_execute_async_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_execute_async_params_func>>?
       _odbc_execute_async_params_ptr;
+  ffi.Pointer<ffi.NativeFunction<odbc_execute_async_params_options_func>>?
+      _odbc_execute_async_params_options_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_async_poll_func>>? _odbc_async_poll_ptr;
   ffi.Pointer<ffi.NativeFunction<odbc_async_get_result_func>>?
       _odbc_async_get_result_ptr;
@@ -436,6 +444,12 @@ class OdbcBindings {
   bool get supportsAsyncExecuteParamsApi =>
       supportsAsyncExecuteApi && _odbc_execute_async_params_ptr != null;
 
+  /// True when [odbc_execute_async_params_options] is exported
+  /// (async columnar).
+  bool get supportsAsyncExecuteParamsOptionsApi =>
+      supportsAsyncExecuteParamsApi &&
+      _odbc_execute_async_params_options_ptr != null;
+
   bool get supportsAsyncStreamApi =>
       _odbc_stream_start_async_ptr != null &&
       _odbc_stream_poll_async_ptr != null;
@@ -603,6 +617,25 @@ class OdbcBindings {
           ffi.Pointer<ffi.Uint8>,
           int,
         )>()(connId, sql, paramsBuffer, paramsLen);
+  }
+
+  int? odbc_execute_async_params_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int resultEncoding,
+  ) {
+    final ptr = _odbc_execute_async_params_options_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+        )>()(connId, sql, paramsBuffer, paramsLen, resultEncoding);
   }
 
   int? odbc_async_poll(int requestId, ffi.Pointer<ffi.Int32> outStatus) {
@@ -1667,6 +1700,13 @@ typedef odbc_execute_async_params_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
   ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+);
+typedef odbc_execute_async_params_options_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
   ffi.Uint32,
 );
 typedef odbc_async_poll_func = ffi.Int32 Function(

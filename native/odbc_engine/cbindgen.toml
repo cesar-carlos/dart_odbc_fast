@@ -38,6 +38,7 @@ include = [
     "odbc_get_structured_error_for_connection",
     "odbc_execute_async",
     "odbc_execute_async_params",
+    "odbc_execute_async_params_options",
     "odbc_async_poll",
     "odbc_async_get_result",
     "odbc_async_cancel",

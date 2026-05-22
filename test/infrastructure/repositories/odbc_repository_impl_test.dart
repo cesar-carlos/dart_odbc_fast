@@ -20,6 +20,18 @@ import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart'
 import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
 
+/// Single multi-stream row-count frame (tag + u32 len + i64).
+Uint8List _rowCountMultiStreamFrame(int n) {
+  final payload = ByteData(8)..setInt64(0, n, Endian.little);
+  final builder = BytesBuilder()
+    ..addByte(multiStreamItemTagRowCount)
+    ..add(
+      (ByteData(4)..setUint32(0, 8, Endian.little)).buffer.asUint8List(),
+    )
+    ..add(payload.buffer.asUint8List());
+  return builder.toBytes();
+}
+
 /// SQLSTATE `0A000` as raw bytes for structured cancellation errors.
 const List<int> _sqlState0A000 = [48, 65, 48, 48, 48];
 
@@ -1300,6 +1312,38 @@ void main() {
             );
           },
         );
+      },
+    );
+
+    test(
+      'streamQueryMulti decodes row-count frame split across stream fetches',
+      () async {
+        final frame = _rowCountMultiStreamFrame(4242);
+        const mid = 5;
+        native
+          ..streamMultiStartBatchedResult = 9001
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: Uint8List.sublistView(frame, 0, mid),
+              hasMore: true,
+            ),
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: Uint8List.sublistView(frame, mid),
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMulti(connectionId, 'SELECT 1')
+            .toList();
+        expect(chunks, hasLength(1));
+        expect(chunks.single.isSuccess(), isTrue);
+        final item = chunks.single.getOrNull()!;
+        expect(item.isRowCount, isTrue);
+        expect(item.rowCount, equals(4242));
       },
     );
 

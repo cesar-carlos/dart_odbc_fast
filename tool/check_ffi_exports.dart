@@ -2,6 +2,7 @@ import 'dart:io';
 
 const _requiredSymbols = <String>[
   'odbc_execute_async_params',
+  'odbc_execute_async_params_options',
   'odbc_exec_query_params_options',
 ];
 
