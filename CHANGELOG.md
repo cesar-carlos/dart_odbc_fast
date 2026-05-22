@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ResolvedOdbcUsageProfile`** as a public value object for inspecting the
   effective preset shape exposed by `ServiceLocator`.
 - Example **[`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart)**.
+- **Native unit test coverage (`odbc_engine`):** expanded colocated `#[cfg(test)]`
+  suites across protocol (`bulk_insert`, `param_value`, `multi_result`,
+  `encoder`), engine core (batch/execution binding plans, ref cursor, spill,
+  metadata cache, driver capabilities), streaming/XA/transaction state and SQL
+  shape checks, FFI guard/columnar validation, plugin catalog dialect helpers,
+  security/sanitize/audit, and pool configuration—without requiring a live ODBC
+  DSN. Full lib + integration tarpaulin run reaches **~60%** line coverage
+  (up from **~55%** before this push); reproduce with
+  `python native/odbc_engine/scripts/run_coverage.py`.
+- **SQL Server BCP unit tests (`sqlserver-bcp`):** Windows-only validation and
+  `build_bound_columns` coverage with the feature enabled; the `sqlserver-bcp`
+  Cargo feature now enables `libloading` for native DLL loading.
 
 ### Changed
 
@@ -36,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected the async-default documentation in [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md)
   so `ServiceLocator.initialize()` and direct `AsyncNativeOdbcConnection(...)`
   defaults are described separately.
+- **Batch and execution param routing:** extracted
+  `plan_batch_param_binding`, `plan_query_param_binding`,
+  `plan_multi_result_param_binding`, `encode_row_count_only`, and batch routing
+  helpers (`batch_query_uses_optimized_path`, `should_skip_batch_optimized_execution`,
+  `batch_param_set_chunk_count`) so production paths and unit tests share the
+  same dispatch logic.
+- **Telemetry console export:** `ConsoleExporter` delegates to
+  `observability::telemetry::console::export_trace` so JSON trace export is
+  covered by unit tests.
 
 ### Fixed
 
@@ -55,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`benchmark_harness` m1/m2 scripts:** restored compilation and meaningful
   timings by using `AsyncBenchmarkBase`, shared `benchmarks/odbc_async_benchmarks.dart`,
   connect/disconnect per iteration, and `scripts/run_dart_benchmarks.py --harness`.
+- **Rust Clippy (`-D warnings`):** wired batch routing helpers into production
+  code (fixing `dead_code` on test-only exports), simplified `async_bridge`
+  test `block_on`, and replaced a redundant `vec!` in batch executor tests.
 
 ## [3.7.0] - 2026-05-14
 

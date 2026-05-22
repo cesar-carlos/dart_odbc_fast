@@ -65,13 +65,13 @@ impl BatchExecutor {
         let mut results = Vec::new();
 
         for query in queries {
-            if query.params.is_empty() {
-                let result = self.pipeline.execute_direct(conn, &query.sql)?;
-                results.push(result);
-            } else {
+            if batch_query_uses_optimized_path(&query) {
                 let mut result =
                     self.execute_batch_optimized(conn, &query.sql, vec![query.params])?;
                 results.append(&mut result);
+            } else {
+                let result = self.pipeline.execute_direct(conn, &query.sql)?;
+                results.push(result);
             }
         }
 
@@ -85,15 +85,16 @@ impl BatchExecutor {
         param_sets: Vec<Vec<BatchParam>>,
     ) -> Result<Vec<Vec<u8>>> {
         let mut results = Vec::new();
-        if param_sets.is_empty() {
+        if should_skip_batch_optimized_execution(&param_sets) {
             return Ok(results);
         }
 
         let batch_size = self.effective_batch_size();
+        let chunk_limit = batch_param_set_chunk_count(param_sets.len(), batch_size);
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
         let mut parameter_descriptions: Option<Vec<ParameterDescription>> = None;
 
-        for params_chunk in param_sets.chunks(batch_size) {
+        for params_chunk in param_sets.chunks(batch_size).take(chunk_limit) {
             for param_set in params_chunk {
                 let param_values: Vec<ParamValue> =
                     param_set.iter().map(batch_param_to_param_value).collect();
@@ -521,7 +522,7 @@ mod tests {
     #[test]
     fn should_treat_zero_batch_size_as_single_row_chunks() {
         let executor = BatchExecutor::new(10, 0);
-        let param_sets = vec![vec![BatchParam::Integer(1)], vec![BatchParam::Integer(2)]];
+        let param_sets = [vec![BatchParam::Integer(1)], vec![BatchParam::Integer(2)]];
         let chunk_count = param_sets.chunks(executor.effective_batch_size()).count();
         assert_eq!(chunk_count, 2);
     }

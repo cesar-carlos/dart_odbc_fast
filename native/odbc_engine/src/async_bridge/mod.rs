@@ -168,7 +168,7 @@ mod tests {
 
         let runtime = get_runtime_for_test().expect("runtime should initialize");
         runtime
-            .block_on(async { handle.await })
+            .block_on(handle)
             .expect("blocking task should finish");
         assert!(done.load(Ordering::SeqCst));
     }
