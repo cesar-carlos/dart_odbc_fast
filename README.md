@@ -6,7 +6,7 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 3.8.0
+## What's New in 3.8.1
 
 - **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` keeps
   the existing sync default for compatibility, and now offers opt-in presets
@@ -16,7 +16,7 @@
   See [Quick Start](#quick-start-high-level-service) and
   [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
 
-Highlights of the current `3.8.0` release. See the
+Highlights of the current `3.8.1` release. See the
 [CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
@@ -387,7 +387,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.8.0
+  odbc_fast: ^3.8.1
 ```
 
 Then:

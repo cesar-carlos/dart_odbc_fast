@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.1] - 2026-05-22
+
 ### Added
 
 - Native FFI `odbc_execute_async_params_options` (additive) so parameterized
@@ -2146,6 +2148,7 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
+[3.8.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.8.0...v3.8.1
 [3.8.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.6.0...v3.6.1
