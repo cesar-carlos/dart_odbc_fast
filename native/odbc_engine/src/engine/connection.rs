@@ -237,4 +237,97 @@ mod tests {
         let result = conn.with_transaction(IsolationLevel::ReadCommitted, |_| Ok(42));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_begin_transaction_with_dialect_invalid_conn_id_returns_error() {
+        use crate::engine::transaction::{IsolationLevel, SavepointDialect};
+
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(999, handles);
+        let result = conn
+            .begin_transaction_with_dialect(IsolationLevel::ReadCommitted, SavepointDialect::Auto);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_begin_transaction_with_access_mode_invalid_conn_id_returns_error() {
+        use crate::engine::transaction::{IsolationLevel, SavepointDialect, TransactionAccessMode};
+
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(999, handles);
+        let result = conn.begin_transaction_with_access_mode(
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Sql92,
+            TransactionAccessMode::ReadOnly,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_begin_transaction_with_lock_timeout_invalid_conn_id_returns_error() {
+        use crate::engine::transaction::{
+            IsolationLevel, LockTimeout, SavepointDialect, TransactionAccessMode,
+        };
+
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(999, handles);
+        let result = conn.begin_transaction_with_lock_timeout(
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Auto,
+            TransactionAccessMode::ReadWrite,
+            LockTimeout::from_millis(500),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_with_transaction_with_dialect_invalid_conn_id_returns_error() {
+        use crate::engine::transaction::{IsolationLevel, SavepointDialect};
+
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(999, handles);
+        let result = conn.with_transaction_with_dialect(
+            IsolationLevel::Serializable,
+            SavepointDialect::SqlServer,
+            |_| Ok(()),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_disconnect_unknown_conn_id_returns_error() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(404, handles);
+        assert!(conn.disconnect().is_err());
+    }
+
+    #[test]
+    fn test_dbms_info_invalid_conn_id_returns_error() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(999, handles);
+        assert!(conn.dbms_info().is_err());
+    }
+
+    #[test]
+    fn should_not_treat_whitespace_only_connection_string_as_empty() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let result = OdbcConnection::connect(handles, "   ");
+        assert!(result.is_err());
+        assert!(!matches!(result, Err(OdbcError::EmptyConnectionString)));
+    }
+
+    #[test]
+    fn should_not_treat_whitespace_only_connection_string_with_timeout_as_empty() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let result = OdbcConnection::connect_with_timeout(handles, "\t", 30);
+        assert!(result.is_err());
+        assert!(!matches!(result, Err(OdbcError::EmptyConnectionString)));
+    }
+
+    #[test]
+    fn should_fail_driver_capabilities_for_unknown_connection_id() {
+        let handles = Arc::new(Mutex::new(HandleManager::new()));
+        let conn = OdbcConnection::new(404, handles);
+        assert!(conn.driver_capabilities().is_err());
+    }
 }

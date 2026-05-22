@@ -385,4 +385,16 @@ mod tests {
         let v: u64 = call_id_assert_unwind_safe(|| 99);
         assert_eq!(v, 99);
     }
+
+    #[test]
+    fn call_id_i64_returns_zero_on_panic() {
+        let v: i64 = call_id(|| panic!("i64 id boom"));
+        assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn call_id_i64_passes_through_value() {
+        let v: i64 = call_id(|| 42);
+        assert_eq!(v, 42);
+    }
 }

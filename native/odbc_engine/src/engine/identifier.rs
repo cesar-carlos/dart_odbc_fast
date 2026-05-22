@@ -237,4 +237,24 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn validate_identifier_rejects_hyphen_and_reports_invalid_char() {
+        let err = validate_identifier("bad-name").unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("invalid character"),
+            "expected invalid-character detail, got {msg}"
+        );
+    }
+
+    #[test]
+    fn quote_identifier_propagates_validation_failure() {
+        assert!(quote_identifier("9starts_with_digit", IdentifierQuoting::Backtick).is_err());
+    }
+
+    #[test]
+    fn quote_qualified_rejects_empty_qualified_string() {
+        assert!(quote_qualified_default("").is_err());
+    }
 }

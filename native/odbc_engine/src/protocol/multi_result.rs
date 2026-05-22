@@ -46,6 +46,11 @@ pub fn encode_multi(items: &[MultiResultItem]) -> Vec<u8> {
     try_encode_multi(items).expect("multi-result payload exceeds wire limits")
 }
 
+/// Single-item MULT payload for DML / no-cursor executes (row-count only).
+pub fn encode_row_count_only(row_count: i64) -> Vec<u8> {
+    encode_multi(&[MultiResultItem::RowCount(row_count)])
+}
+
 /// Checked variant of [`encode_multi`] for callers that prefer an error over a
 /// panic when a result set exceeds the wire-format limits.
 pub fn try_encode_multi(items: &[MultiResultItem]) -> Result<Vec<u8>> {
@@ -282,6 +287,17 @@ mod tests {
     }
 
     #[test]
+    fn encode_row_count_only_matches_single_item_multi_encoder() {
+        for count in [0_i64, 1, 42, -1, i64::MAX, i64::MIN] {
+            let via_helper = encode_row_count_only(count);
+            let via_multi = encode_multi(&[MultiResultItem::RowCount(count)]);
+            assert_eq!(via_helper, via_multi);
+            let dec = decode_multi(&via_helper).expect("round-trip");
+            assert_eq!(dec, vec![MultiResultItem::RowCount(count)]);
+        }
+    }
+
+    #[test]
     fn test_encode_decode_multi_result_set() {
         let items = vec![MultiResultItem::ResultSet(vec![1, 2, 3])];
         let enc = encode_multi(&items);
@@ -448,5 +464,75 @@ mod tests {
         let result = decode_multi(&bytes);
 
         assert!(result.unwrap_err().to_string().contains("trailing bytes"));
+    }
+
+    #[test]
+    fn decode_multi_v2_tolerates_output_footer_trailer() {
+        let items = vec![MultiResultItem::RowCount(3)];
+        let mut bytes = encode_multi(&items);
+        bytes.extend_from_slice(&OUTPUT_FOOTER_MAGIC);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let dec = decode_multi(&bytes).expect("footer trailer");
+        assert_eq!(dec, items);
+    }
+
+    #[test]
+    fn decode_multi_v2_tolerates_ref_cursor_footer_trailer() {
+        let items = vec![MultiResultItem::ResultSet(vec![1, 2])];
+        let mut bytes = encode_multi(&items);
+        bytes.extend_from_slice(&REF_CURSOR_FOOTER_MAGIC);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let dec = decode_multi(&bytes).expect("rc footer trailer");
+        assert_eq!(dec, items);
+    }
+
+    #[test]
+    fn decode_multi_v1_rejects_unknown_item_tag() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.push(0xAB);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(err.to_string().contains("Unknown multi-result item tag"));
+    }
+
+    #[test]
+    fn decode_multi_rejects_item_payload_over_limit() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.push(TAG_RESULT_SET);
+        bytes.extend_from_slice(&(MAX_MULTI_RESULT_PAYLOAD as u32 + 1).to_le_bytes());
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(err.to_string().contains("exceeds limit"));
+    }
+
+    #[test]
+    fn decode_multi_rejects_count_exceeding_available_bytes() {
+        let mut bytes = encode_multi(&[]);
+        bytes[8] = 2;
+        bytes[9] = 0;
+        bytes[10] = 0;
+        bytes[11] = 0;
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(err.to_string().contains("exceeds available payload"));
+    }
+
+    #[test]
+    fn decode_multi_rejects_item_count_over_max() {
+        let mut bytes = encode_multi(&[]);
+        let over = (MAX_MULTI_RESULT_ITEMS as u32).saturating_add(1);
+        bytes[8..12].copy_from_slice(&over.to_le_bytes());
+
+        let err = decode_multi(&bytes).unwrap_err();
+        assert!(err.to_string().contains("item count"));
+        assert!(err.to_string().contains("exceeds limit"));
     }
 }

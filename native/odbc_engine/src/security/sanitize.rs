@@ -195,4 +195,34 @@ mod tests {
             "password=***;PASSWORD=***;PwD=***"
         );
     }
+
+    #[test]
+    fn should_redact_sas_and_api_key_aliases() {
+        let s = "DSN=x;SAS=sig;Api_Key=k;Access_Token=t";
+        assert_eq!(
+            sanitize_connection_string(s),
+            "DSN=x;SAS=***;Api_Key=***;Access_Token=***"
+        );
+    }
+
+    #[test]
+    fn should_preserve_bare_token_without_equals() {
+        let s = "DSN=prod;Trusted_Connection;PWD=secret";
+        assert_eq!(
+            sanitize_connection_string(s),
+            "DSN=prod;Trusted_Connection;PWD=***"
+        );
+    }
+
+    #[test]
+    fn should_redact_key_with_surrounding_whitespace() {
+        let s = "  Password  =p;Server=h";
+        assert_eq!(sanitize_connection_string(s), "  Password  =***;Server=h");
+    }
+
+    #[test]
+    fn should_drop_trailing_empty_segment_after_final_semicolon() {
+        let s = "DSN=a;Server=b;";
+        assert_eq!(sanitize_connection_string(s), "DSN=a;Server=b");
+    }
 }

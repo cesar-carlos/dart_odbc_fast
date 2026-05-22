@@ -290,4 +290,20 @@ mod tests {
             .unwrap();
         assert!(r.ends_with("RETURNING \"id\""));
     }
+
+    #[test]
+    fn should_emit_empty_indexes_catalog_query() {
+        let p = SnowflakePlugin::new();
+        let q = p.list_indexes_sql("any_table", None).unwrap();
+        assert!(q.sql.contains("WHERE 1 = 0"));
+        assert!(q.params.is_empty());
+    }
+
+    #[test]
+    fn should_emit_information_schema_tables_for_list_tables() {
+        let p = SnowflakePlugin::new();
+        let q = p.list_tables_sql(None, Some("PUBLIC")).unwrap();
+        assert!(q.sql.contains("INFORMATION_SCHEMA.TABLES"));
+        assert_eq!(q.params.len(), 1);
+    }
 }

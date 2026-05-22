@@ -18,7 +18,7 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, PreparedXa, XaTransac
 
 #[path = "../helpers/mod.rs"]
 mod helpers;
-use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_msdtc_xa_tests};
+use helpers::e2e::{should_run_msdtc_xa_tests, should_run_sqlserver_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]

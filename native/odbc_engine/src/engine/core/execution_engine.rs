@@ -23,10 +23,102 @@ use std::sync::{Arc, Mutex};
 /// i.e. SQLSTATE 02000 ("no data") which corresponds to the SQL_NO_DATA return code.
 ///
 /// Replaces the previous `e.to_string().contains("SQL_NO_DATA")` heuristic (A13).
-fn is_no_more_results(err: &OdbcError) -> bool {
+pub(super) fn is_no_more_results(err: &OdbcError) -> bool {
     let s = err.sqlstate();
     // SQLSTATE 02000 = "no data" (SQL_NO_DATA)
     s == [b'0', b'2', b'0', b'0', b'0']
+}
+
+/// Gate for Oracle-only ref-cursor binds before any connection I/O.
+/// How [`ExecutionEngine::execute_query_with_params_inner`] routes positional params (no ODBC).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QueryParamBindingPlan {
+    DirectNoParams,
+    InferenceExecute,
+    PreparedNullAware,
+    PreparedStandard,
+}
+
+pub(super) fn plan_query_param_binding(params: &[ParamValue]) -> Result<QueryParamBindingPlan> {
+    if params.is_empty() {
+        return Ok(QueryParamBindingPlan::DirectNoParams);
+    }
+    if has_null_param(params) {
+        if param_values_to_input_params_with_inference(params)?.is_some() {
+            return Ok(QueryParamBindingPlan::InferenceExecute);
+        }
+        return Ok(QueryParamBindingPlan::PreparedNullAware);
+    }
+    Ok(QueryParamBindingPlan::PreparedStandard)
+}
+
+/// How [`ExecutionEngine::execute_multi_result_with_params_inner`] routes params (no ODBC).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MultiResultParamBindingPlan {
+    InferencePrealloc,
+    PreparedStandard,
+    PreparedNullAware,
+}
+
+pub(super) fn plan_multi_result_param_binding(
+    params: &[ParamValue],
+) -> Result<MultiResultParamBindingPlan> {
+    if param_values_to_input_params_with_inference(params)?.is_some() {
+        return Ok(MultiResultParamBindingPlan::InferencePrealloc);
+    }
+    if has_null_param(params) {
+        return Ok(MultiResultParamBindingPlan::PreparedNullAware);
+    }
+    Ok(MultiResultParamBindingPlan::PreparedStandard)
+}
+
+/// Normalizes ODBC `row_count()` (`None` → 0) for wire encoding.
+pub(super) fn odbc_row_count_i64(count: Option<usize>) -> i64 {
+    count.map(|n| n as i64).unwrap_or(0)
+}
+
+/// First MULT item after execute when the bound-params path may have read rows.
+pub(super) fn bound_params_first_multi_item(
+    had_initial_cursor: bool,
+    row_count_when_no_cursor: i64,
+    result_set_body: Vec<u8>,
+) -> MultiResultItem {
+    if had_initial_cursor {
+        MultiResultItem::ResultSet(result_set_body)
+    } else {
+        MultiResultItem::RowCount(row_count_when_no_cursor)
+    }
+}
+
+/// Encodes a row buffer for query / optional-cursor paths (row-major or columnar).
+pub(super) fn encode_query_result_payload(
+    row_buffer: &RowBuffer,
+    use_columnar: bool,
+    use_compression: bool,
+) -> Result<Vec<u8>> {
+    if use_columnar {
+        let columnar_buffer = row_buffer_to_columnar(row_buffer);
+        ColumnarEncoder::encode(&columnar_buffer, use_compression)
+    } else {
+        Ok(RowBufferEncoder::encode(row_buffer))
+    }
+}
+
+pub(super) fn ensure_ref_cursor_oracle_only(
+    bound: &[BoundParam],
+    oracle_active: bool,
+) -> Result<()> {
+    use super::ref_cursor_oracle::bound_has_ref_cursor;
+
+    if bound_has_ref_cursor(bound) && !oracle_active {
+        return Err(OdbcError::ValidationError(
+            "DIRECTED_PARAM|ref_cursor_out_oracle_only: ParamValue::RefCursorOut is \
+             only supported with the Oracle ODBC driver; see \
+             doc/notes/REF_CURSOR_ORACLE_ROADMAP.md"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub struct ExecutionEngine {
@@ -227,15 +319,8 @@ impl ExecutionEngine {
         let result: Result<Vec<u8>> = (|| {
             use super::ref_cursor_oracle::bound_has_ref_cursor;
 
+            ensure_ref_cursor_oracle_only(bound, self.is_oracle_plugin_active())?;
             if bound_has_ref_cursor(bound) {
-                if !self.is_oracle_plugin_active() {
-                    return Err(OdbcError::ValidationError(
-                        "DIRECTED_PARAM|ref_cursor_out_oracle_only: ParamValue::RefCursorOut is \
-                         only supported with the Oracle ODBC driver; see \
-                         doc/notes/REF_CURSOR_ORACLE_ROADMAP.md"
-                            .to_string(),
-                    ));
-                }
                 return self.execute_oracle_ref_cursor_path(conn, sql, bound, timeout_sec);
             }
 
@@ -296,13 +381,9 @@ impl ExecutionEngine {
             // multi-result path to emit a spurious empty `ResultSet` as the first MULT
             // item instead of the real row-count.
             let initial_rc: Option<i64> = if !had_initial_cursor {
-                Some(
-                    prealloc
-                        .row_count()
-                        .map_err(OdbcError::from)?
-                        .map(|n| n as i64)
-                        .unwrap_or(0),
-                )
+                Some(odbc_row_count_i64(
+                    prealloc.row_count().map_err(OdbcError::from)?,
+                ))
             } else {
                 None
             };
@@ -329,27 +410,22 @@ impl ExecutionEngine {
 
             if drain.is_empty() {
                 // Fast path: single result set — preserve the original wire format.
-                let body = if self.use_columnar {
-                    let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-                    ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
-                } else {
-                    RowBufferEncoder::encode(&row_buffer)
-                };
+                let body = encode_query_result_payload(
+                    &row_buffer,
+                    self.use_columnar,
+                    self.use_compression,
+                )?;
                 Ok(RowBufferEncoder::append_output_footer(body, &out_vals))
             } else {
                 // Multi-result path: wrap every item in a MULT envelope, then append OUT1.
-                // The first logical item is a RowCount when the initial execute returned no
-                // cursor, or a ResultSet when it did.
-                let first_item = if let Some(rc) = initial_rc {
-                    MultiResultItem::RowCount(rc)
-                } else {
-                    let first_body = if self.use_columnar {
-                        let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-                        ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
-                    } else {
-                        RowBufferEncoder::encode(&row_buffer)
-                    };
-                    MultiResultItem::ResultSet(first_body)
+                let first_body = encode_query_result_payload(
+                    &row_buffer,
+                    self.use_columnar,
+                    self.use_compression,
+                )?;
+                let first_item = match initial_rc {
+                    Some(rc) => bound_params_first_multi_item(false, rc, first_body),
+                    None => bound_params_first_multi_item(true, 0, first_body),
                 };
                 let mut all_items = Vec::with_capacity(1 + drain.len());
                 all_items.push(first_item);
@@ -378,43 +454,47 @@ impl ExecutionEngine {
         _fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         let plugin = self.current_plugin();
-        if params.is_empty() {
-            let cursor = conn
-                .execute(sql, (), timeout_sec)
-                .map_err(OdbcError::from)?;
-            return self.encode_optional_cursor(cursor, plugin.as_deref());
-        }
-
-        if has_null_param(params) {
-            if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+        match plan_query_param_binding(params)? {
+            QueryParamBindingPlan::DirectNoParams => {
+                let cursor = conn
+                    .execute(sql, (), timeout_sec)
+                    .map_err(OdbcError::from)?;
+                self.encode_optional_cursor(cursor, plugin.as_deref())
+            }
+            QueryParamBindingPlan::InferenceExecute => {
+                let parameters = param_values_to_input_params_with_inference(params)?
+                    .expect("plan_query_param_binding guarantees inference path");
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
-                return self.encode_optional_cursor(cursor, plugin.as_deref());
+                self.encode_optional_cursor(cursor, plugin.as_deref())
             }
-
-            let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-            if let Some(timeout_sec) = timeout_sec {
-                stmt.set_query_timeout_sec(timeout_sec)
+            QueryParamBindingPlan::PreparedNullAware => {
+                let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+                if let Some(timeout_sec) = timeout_sec {
+                    stmt.set_query_timeout_sec(timeout_sec)
+                        .map_err(OdbcError::from)?;
+                }
+                let descriptions = stmt
+                    .parameter_descriptions()
+                    .map_err(OdbcError::from)?
+                    .collect::<std::result::Result<Vec<_>, _>>()
                     .map_err(OdbcError::from)?;
+                let parameters =
+                    param_values_to_input_params_with_descriptions(params, &descriptions)?;
+                let cursor = stmt
+                    .execute(parameters.as_slice())
+                    .map_err(OdbcError::from)?;
+                self.encode_optional_cursor(cursor, plugin.as_deref())
             }
-            let descriptions = stmt
-                .parameter_descriptions()
-                .map_err(OdbcError::from)?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(OdbcError::from)?;
-            let parameters = param_values_to_input_params_with_descriptions(params, &descriptions)?;
-            let cursor = stmt
-                .execute(parameters.as_slice())
-                .map_err(OdbcError::from)?;
-            return self.encode_optional_cursor(cursor, plugin.as_deref());
+            QueryParamBindingPlan::PreparedStandard => {
+                let parameters = param_values_to_input_params(params)?;
+                let cursor = conn
+                    .execute(sql, parameters.as_slice(), timeout_sec)
+                    .map_err(OdbcError::from)?;
+                self.encode_optional_cursor(cursor, plugin.as_deref())
+            }
         }
-
-        let parameters = param_values_to_input_params(params)?;
-        let cursor = conn
-            .execute(sql, parameters.as_slice(), timeout_sec)
-            .map_err(OdbcError::from)?;
-        self.encode_optional_cursor(cursor, plugin.as_deref())
 
         // FOR JSON normalisation — see execute_query_inner above (closes #2).
     }
@@ -453,12 +533,7 @@ impl ExecutionEngine {
         // FOR JSON normalisation — see execute_query_inner above (closes #2).
         coalesce_for_json_rows(&mut row_buffer);
 
-        if self.use_columnar {
-            let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
-        } else {
-            Ok(RowBufferEncoder::encode(&row_buffer))
-        }
+        encode_query_result_payload(&row_buffer, self.use_columnar, self.use_compression)
     }
 
     pub fn execute_multi_result(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
@@ -533,11 +608,7 @@ impl ExecutionEngine {
         };
 
         if !had_initial_cursor {
-            let rc = stmt
-                .row_count()
-                .map_err(OdbcError::from)?
-                .map(|n| n as i64)
-                .unwrap_or(0);
+            let rc = odbc_row_count_i64(stmt.row_count().map_err(OdbcError::from)?);
             all_items.push(MultiResultItem::RowCount(rc));
         }
 
@@ -551,7 +622,12 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
-        if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+        if matches!(
+            plan_multi_result_param_binding(params)?,
+            MultiResultParamBindingPlan::InferencePrealloc
+        ) {
+            let parameters = param_values_to_input_params_with_inference(params)?
+                .expect("plan_multi_result_param_binding guarantees inference path");
             let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
             let mut all_items: Vec<MultiResultItem> = Vec::new();
 
@@ -575,11 +651,7 @@ impl ExecutionEngine {
             };
 
             if !had_initial_cursor {
-                let rc = prealloc
-                    .row_count()
-                    .map_err(OdbcError::from)?
-                    .map(|n| n as i64)
-                    .unwrap_or(0);
+                let rc = odbc_row_count_i64(prealloc.row_count().map_err(OdbcError::from)?);
                 all_items.push(MultiResultItem::RowCount(rc));
             }
 
@@ -588,17 +660,20 @@ impl ExecutionEngine {
         }
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-        let parameters = if params.is_empty() {
-            Vec::new()
-        } else if has_null_param(params) {
-            let descriptions = stmt
-                .parameter_descriptions()
-                .map_err(OdbcError::from)?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(OdbcError::from)?;
-            param_values_to_input_params_with_descriptions(params, &descriptions)?
-        } else {
-            param_values_to_input_params(params)?
+        let parameters = match plan_multi_result_param_binding(params)? {
+            MultiResultParamBindingPlan::InferencePrealloc => {
+                unreachable!("inference path handled above")
+            }
+            MultiResultParamBindingPlan::PreparedStandard if params.is_empty() => Vec::new(),
+            MultiResultParamBindingPlan::PreparedNullAware => {
+                let descriptions = stmt
+                    .parameter_descriptions()
+                    .map_err(OdbcError::from)?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(OdbcError::from)?;
+                param_values_to_input_params_with_descriptions(params, &descriptions)?
+            }
+            MultiResultParamBindingPlan::PreparedStandard => param_values_to_input_params(params)?,
         };
         let mut all_items: Vec<MultiResultItem> = Vec::new();
 
@@ -622,11 +697,7 @@ impl ExecutionEngine {
         };
 
         if !had_initial_cursor {
-            let rc = stmt
-                .row_count()
-                .map_err(OdbcError::from)?
-                .map(|n| n as i64)
-                .unwrap_or(0);
+            let rc = odbc_row_count_i64(stmt.row_count().map_err(OdbcError::from)?);
             all_items.push(MultiResultItem::RowCount(rc));
         }
 
@@ -775,12 +846,8 @@ impl ExecutionEngine {
         let out_vals = odbc_params.output_footer_values();
         let mut main_buffer = RowBuffer::new();
         coalesce_for_json_rows(&mut main_buffer);
-        let main_body = if self.use_columnar {
-            let columnar_buffer = row_buffer_to_columnar(&main_buffer);
-            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)?
-        } else {
-            RowBufferEncoder::encode(&main_buffer)
-        };
+        let main_body =
+            encode_query_result_payload(&main_buffer, self.use_columnar, self.use_compression)?;
         let body = RowBufferEncoder::append_output_footer(main_body, &out_vals);
         Ok(RowBufferEncoder::append_ref_cursor_footer(body, &ref_blobs))
     }
@@ -890,12 +957,7 @@ impl ExecutionEngine {
         // FOR JSON normalisation — see execute_query_inner above (closes #2).
         coalesce_for_json_rows(&mut row_buffer);
 
-        if self.use_columnar {
-            let columnar_buffer = row_buffer_to_columnar(&row_buffer);
-            ColumnarEncoder::encode(&columnar_buffer, self.use_compression)
-        } else {
-            Ok(RowBufferEncoder::encode(&row_buffer))
-        }
+        encode_query_result_payload(&row_buffer, self.use_columnar, self.use_compression)
     }
 
     pub fn get_metrics(&self) -> Arc<Metrics> {
@@ -956,9 +1018,33 @@ impl ExecutionEngine {
 }
 
 #[cfg(test)]
+impl ExecutionEngine {
+    pub(crate) fn test_optimize_sql(&self, sql: &str, plugin: Option<&dyn DriverPlugin>) -> String {
+        self.optimize_sql_with_plugin(sql, plugin)
+    }
+
+    pub(crate) fn test_map_sql_type(
+        &self,
+        code: i16,
+        plugin: Option<&dyn DriverPlugin>,
+    ) -> OdbcType {
+        self.map_sql_type(code, plugin)
+    }
+
+    pub(crate) fn test_is_oracle_plugin_active(&self) -> bool {
+        self.is_oracle_plugin_active()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::PluginRegistry;
+    use crate::plugins::{
+        mariadb::MariaDbPlugin, postgres::PostgresPlugin, sqlserver::SqlServerPlugin,
+        PluginRegistry,
+    };
+    use crate::protocol::bound_param::{BoundParam, ParamDirection};
+    use crate::protocol::ParamValue;
 
     #[test]
     fn test_execution_engine_new() {
@@ -1321,5 +1407,395 @@ mod tests {
         let tracer2 = engine.get_tracer();
 
         assert!(Arc::ptr_eq(&tracer1, &tracer2));
+    }
+
+    #[test]
+    fn should_treat_sqlstate_02000_as_no_more_results() {
+        let err = OdbcError::Structured {
+            sqlstate: [b'0', b'2', b'0', b'0', b'0'],
+            native_code: 0,
+            message: "no data".to_string(),
+        };
+        assert!(is_no_more_results(&err));
+    }
+
+    #[test]
+    fn should_not_treat_unrelated_errors_as_no_more_results() {
+        assert!(!is_no_more_results(&OdbcError::ValidationError(
+            "x".to_string()
+        )));
+        assert!(!is_no_more_results(&OdbcError::OdbcApi("fail".to_string())));
+        let err = OdbcError::Structured {
+            sqlstate: [b'4', b'2', b'S', b'0', b'2'],
+            native_code: 18456,
+            message: "login failed".to_string(),
+        };
+        assert!(!is_no_more_results(&err));
+    }
+
+    #[test]
+    fn should_leave_sql_unchanged_when_no_plugin_is_active() {
+        let engine = ExecutionEngine::new(10);
+        assert_eq!(
+            engine.test_optimize_sql("SELECT * FROM t", None),
+            "SELECT * FROM t"
+        );
+    }
+
+    #[test]
+    fn should_apply_plugin_query_optimization_when_plugin_is_provided() {
+        let engine = ExecutionEngine::new(10);
+        let plugin = SqlServerPlugin::new();
+        let optimized = engine.test_optimize_sql("SELECT * FROM t", Some(&plugin));
+        assert!(optimized.contains("TOP 1000"));
+    }
+
+    #[test]
+    fn should_map_sql_type_via_plugin_when_plugin_is_provided() {
+        let engine = ExecutionEngine::new(10);
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(
+            engine.test_map_sql_type(4, Some(&plugin)),
+            OdbcType::Integer
+        );
+        assert_eq!(
+            engine.test_map_sql_type(4, None),
+            OdbcType::from_odbc_sql_type(4)
+        );
+    }
+
+    #[test]
+    fn should_report_oracle_plugin_active_only_after_oracle_connection_string() {
+        let engine = ExecutionEngine::new(10);
+        assert!(!engine.test_is_oracle_plugin_active());
+        engine.set_connection_string("Driver={Oracle};Server=localhost;");
+        assert!(engine.test_is_oracle_plugin_active());
+        engine.set_connection_string("Driver={SQL Server};Server=localhost;");
+        assert!(!engine.test_is_oracle_plugin_active());
+    }
+
+    #[test]
+    fn should_reject_ref_cursor_out_when_oracle_plugin_is_not_active() {
+        let bound = [BoundParam {
+            direction: ParamDirection::Output,
+            value: ParamValue::RefCursorOut,
+        }];
+        let err = ensure_ref_cursor_oracle_only(&bound, false)
+            .expect_err("ref cursor without oracle should fail");
+        let OdbcError::ValidationError(msg) = err else {
+            panic!("expected ValidationError, got {err:?}");
+        };
+        assert!(msg.contains("ref_cursor_out_oracle_only"), "{msg}");
+    }
+
+    #[test]
+    fn should_allow_ref_cursor_gate_when_oracle_plugin_is_active() {
+        let bound = [BoundParam {
+            direction: ParamDirection::Output,
+            value: ParamValue::RefCursorOut,
+        }];
+        ensure_ref_cursor_oracle_only(&bound, true).expect("oracle active should pass gate");
+    }
+
+    #[test]
+    fn should_skip_ref_cursor_gate_when_no_ref_cursor_markers() {
+        let bound = [BoundParam {
+            direction: ParamDirection::Input,
+            value: ParamValue::Integer(1),
+        }];
+        ensure_ref_cursor_oracle_only(&bound, false).expect("no ref cursor should pass gate");
+    }
+
+    #[test]
+    fn should_not_treat_internal_or_odbc_api_errors_as_no_more_results() {
+        assert!(!is_no_more_results(&OdbcError::InternalError(
+            "x".to_string()
+        )));
+        assert!(!is_no_more_results(&OdbcError::OdbcApi(
+            "SQL_NO_DATA".to_string()
+        )));
+    }
+
+    #[test]
+    fn should_plan_direct_query_when_params_are_empty() {
+        assert_eq!(
+            plan_query_param_binding(&[]).expect("empty query plan"),
+            QueryParamBindingPlan::DirectNoParams
+        );
+    }
+
+    #[test]
+    fn should_plan_standard_query_for_non_null_params() {
+        let params = vec![ParamValue::Integer(1), ParamValue::String("x".to_string())];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("standard query plan"),
+            QueryParamBindingPlan::PreparedStandard
+        );
+    }
+
+    #[test]
+    fn should_plan_inference_query_for_homogeneous_nullable_integers() {
+        let params = vec![ParamValue::Integer(1), ParamValue::Null];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("inference query plan"),
+            QueryParamBindingPlan::InferenceExecute
+        );
+    }
+
+    #[test]
+    fn should_plan_null_aware_query_when_null_types_are_mixed() {
+        let params = vec![
+            ParamValue::String("a".to_string()),
+            ParamValue::Integer(1),
+            ParamValue::Null,
+        ];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("null-aware query plan"),
+            QueryParamBindingPlan::PreparedNullAware
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_inference_for_homogeneous_integer_params() {
+        let params = vec![ParamValue::Integer(1), ParamValue::Integer(2)];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("multi inference plan"),
+            MultiResultParamBindingPlan::InferencePrealloc
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_standard_for_non_null_mixed_params() {
+        let params = vec![ParamValue::String("a".to_string()), ParamValue::Integer(1)];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("multi standard plan"),
+            MultiResultParamBindingPlan::PreparedStandard
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_null_aware_for_null_params_without_inference() {
+        let params = vec![
+            ParamValue::String("a".to_string()),
+            ParamValue::Integer(1),
+            ParamValue::Null,
+        ];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("multi null-aware plan"),
+            MultiResultParamBindingPlan::PreparedNullAware
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_standard_for_empty_params() {
+        assert_eq!(
+            plan_multi_result_param_binding(&[]).expect("empty multi plan"),
+            MultiResultParamBindingPlan::PreparedStandard
+        );
+    }
+
+    #[test]
+    fn should_activate_mariadb_plugin_from_connection_string() {
+        let engine = ExecutionEngine::new(10);
+        engine.set_connection_string("Driver={MariaDB};Server=localhost;Database=test;");
+        let active = engine.active_plugin.lock().unwrap();
+        assert!(active.is_some());
+        assert_eq!(active.as_ref().unwrap().name(), "mariadb");
+    }
+
+    #[test]
+    fn should_activate_mysql_plugin_from_connection_string() {
+        let engine = ExecutionEngine::new(10);
+        engine.set_connection_string("Driver={MySQL ODBC 8.0 Driver};Server=localhost;");
+        let active = engine.active_plugin.lock().unwrap();
+        assert!(active.is_some());
+        assert_eq!(active.as_ref().unwrap().name(), "mysql");
+    }
+
+    #[test]
+    fn should_apply_mariadb_limit_optimization_when_plugin_active() {
+        let engine = ExecutionEngine::new(10);
+        let plugin = MariaDbPlugin::new();
+        let optimized = engine.test_optimize_sql("SELECT * FROM users", Some(&plugin));
+        assert!(optimized.contains("LIMIT 1000"), "{optimized}");
+    }
+
+    #[test]
+    fn should_map_postgres_type_via_plugin() {
+        let engine = ExecutionEngine::new(10);
+        let plugin = PostgresPlugin::new();
+        assert_eq!(
+            engine.test_map_sql_type(4, Some(&plugin)),
+            OdbcType::Integer
+        );
+        assert_eq!(
+            engine.test_map_sql_type(999, Some(&plugin)),
+            OdbcType::Varchar
+        );
+    }
+
+    #[test]
+    fn should_map_odbc_row_count_none_to_zero() {
+        assert_eq!(odbc_row_count_i64(None), 0);
+        assert_eq!(odbc_row_count_i64(Some(0)), 0);
+        assert_eq!(odbc_row_count_i64(Some(42)), 42);
+    }
+
+    #[test]
+    fn should_build_bound_params_first_item_as_row_count_when_no_cursor() {
+        let item = bound_params_first_multi_item(false, 7, vec![1, 2, 3]);
+        assert_eq!(item, MultiResultItem::RowCount(7));
+    }
+
+    #[test]
+    fn should_build_bound_params_first_item_as_result_set_when_cursor_present() {
+        let body = vec![9, 8, 7];
+        let item = bound_params_first_multi_item(true, 0, body.clone());
+        assert_eq!(item, MultiResultItem::ResultSet(body));
+    }
+
+    #[test]
+    fn should_encode_empty_row_buffer_row_major() {
+        let buffer = RowBuffer::new();
+        let bytes = encode_query_result_payload(&buffer, false, false).expect("encode");
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn should_encode_empty_row_buffer_columnar_with_compression() {
+        let buffer = RowBuffer::new();
+        let bytes = encode_query_result_payload(&buffer, true, true).expect("encode");
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn should_encode_nonempty_row_buffer_row_major() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("id".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+        let bytes = encode_query_result_payload(&buffer, false, false).expect("encode");
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn should_not_treat_no_more_results_variant_as_sqlstate_02000() {
+        assert!(!is_no_more_results(&OdbcError::NoMoreResults));
+    }
+
+    #[test]
+    fn should_not_treat_structured_non_02000_as_no_more_results() {
+        let err = OdbcError::Structured {
+            sqlstate: [b'0', b'1', b'0', b'0', b'0'],
+            native_code: 0,
+            message: "general".to_string(),
+        };
+        assert!(!is_no_more_results(&err));
+    }
+
+    #[test]
+    fn should_plan_query_standard_for_homogeneous_bigint_params_without_null() {
+        let params = vec![ParamValue::BigInt(1), ParamValue::BigInt(2)];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("bigint query plan"),
+            QueryParamBindingPlan::PreparedStandard
+        );
+    }
+
+    #[test]
+    fn should_plan_query_standard_for_bigint_and_string_without_null() {
+        let params = vec![ParamValue::BigInt(1), ParamValue::String("x".to_string())];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("mixed query plan"),
+            QueryParamBindingPlan::PreparedStandard
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_inference_for_nullable_bigint_params() {
+        let params = vec![ParamValue::BigInt(9), ParamValue::Null];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("nullable bigint multi"),
+            MultiResultParamBindingPlan::InferencePrealloc
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_inference_for_mixed_integer_and_bigint() {
+        let params = vec![ParamValue::Integer(1), ParamValue::BigInt(2)];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("promoted multi"),
+            MultiResultParamBindingPlan::InferencePrealloc
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_inference_for_string_and_null_same_family() {
+        let params = vec![ParamValue::String("a".to_string()), ParamValue::Null];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("string+null multi"),
+            MultiResultParamBindingPlan::InferencePrealloc
+        );
+    }
+
+    #[test]
+    fn should_plan_query_inference_for_nullable_bigint_params() {
+        let params = vec![ParamValue::BigInt(9), ParamValue::Null];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("nullable bigint query"),
+            QueryParamBindingPlan::InferenceExecute
+        );
+    }
+
+    #[test]
+    fn should_plan_query_null_aware_for_all_null_without_inference_family() {
+        let params = vec![ParamValue::Null, ParamValue::Null];
+        assert_eq!(
+            plan_query_param_binding(&params).expect("all-null query"),
+            QueryParamBindingPlan::PreparedNullAware
+        );
+    }
+
+    #[test]
+    fn should_plan_multi_result_null_aware_for_all_null_without_inference() {
+        let params = vec![ParamValue::Null];
+        assert_eq!(
+            plan_multi_result_param_binding(&params).expect("single null multi"),
+            MultiResultParamBindingPlan::PreparedNullAware
+        );
+    }
+
+    #[test]
+    fn should_map_negative_odbc_row_count_none_to_zero() {
+        assert_eq!(odbc_row_count_i64(None), 0);
+    }
+
+    #[test]
+    fn should_encode_columnar_payload_with_multiple_rows() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("n".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+        buffer.add_row(vec![Some(2i32.to_le_bytes().to_vec())]);
+        let bytes = encode_query_result_payload(&buffer, true, false).expect("columnar encode");
+        assert!(!bytes.is_empty());
+        let row_major = encode_query_result_payload(&buffer, false, false).expect("row-major");
+        assert_ne!(bytes, row_major);
+    }
+
+    #[test]
+    fn should_apply_postgres_limit_optimization_when_plugin_provided() {
+        let engine = ExecutionEngine::new(10);
+        let plugin = PostgresPlugin::new();
+        let optimized = engine.test_optimize_sql("SELECT * FROM t", Some(&plugin));
+        assert!(optimized.contains("LIMIT"), "{optimized}");
+    }
+
+    #[test]
+    fn should_reject_ref_cursor_inout_when_oracle_inactive() {
+        let bound = [BoundParam {
+            direction: ParamDirection::InOut,
+            value: ParamValue::RefCursorOut,
+        }];
+        let err = ensure_ref_cursor_oracle_only(&bound, false).expect_err("inout ref cursor");
+        assert!(matches!(err, OdbcError::ValidationError(_)));
     }
 }

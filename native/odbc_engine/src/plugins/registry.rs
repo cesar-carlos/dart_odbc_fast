@@ -605,4 +605,62 @@ mod tests {
         registry.register(plugin).expect("register sqlite");
         assert_eq!(registry.get("sqlite").expect("lookup").name(), "sqlite");
     }
+
+    #[test]
+    fn should_map_plugin_id_for_db2_and_sybase_dbms_names() {
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("DB2/LINUXX8664"),
+            Some("db2")
+        );
+        assert_eq!(
+            PluginRegistry::plugin_id_for_dbms_name("Adaptive Server Enterprise"),
+            Some("sybase")
+        );
+    }
+
+    #[test]
+    fn should_build_sqlserver_upsert_via_registry() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SQL Server};Server=localhost;";
+        let sql = registry
+            .build_upsert_sql(conn, "dbo.users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("sqlserver upsert SQL");
+        assert!(sql.contains("MERGE INTO"));
+    }
+
+    #[test]
+    fn should_append_oracle_returning_via_registry() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={Oracle in OraDB21Home1};Dbq=localhost/XEPDB1;";
+        let out = registry
+            .append_returning_sql(
+                conn,
+                "INSERT INTO t (id) VALUES (?)",
+                DmlVerb::Insert,
+                &["id"],
+            )
+            .expect("returning dispatch")
+            .expect("oracle returning SQL");
+        assert!(out.contains("RETURNING"));
+        assert!(out.contains(":ret_0"));
+    }
+
+    #[test]
+    fn should_emit_mysql_session_init_via_registry() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MySQL ODBC 8.0 Driver};Server=localhost;";
+        let stmts = registry
+            .session_init_sql(conn, &SessionOptions::default())
+            .expect("session init dispatch");
+        assert!(stmts.iter().any(|s| s.contains("SET NAMES")));
+    }
+
+    #[test]
+    fn should_resolve_snowflake_plugin_from_connection_string() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SnowflakeDSIIDriver};Server=account.snowflakecomputing.com;";
+        let plugin = registry.get_for_connection(conn).expect("snowflake plugin");
+        assert_eq!(plugin.name(), "snowflake");
+    }
 }

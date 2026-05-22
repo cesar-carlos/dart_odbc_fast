@@ -151,4 +151,25 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 100);
     }
+
+    #[test]
+    fn test_spawn_blocking_task_runs_closure() {
+        init_runtime();
+
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let done = Arc::new(AtomicBool::new(false));
+        let done_task = Arc::clone(&done);
+        let handle = spawn_blocking_task(move || {
+            done_task.store(true, Ordering::SeqCst);
+        })
+        .expect("spawn_blocking should succeed");
+
+        let runtime = get_runtime_for_test().expect("runtime should initialize");
+        runtime
+            .block_on(async { handle.await })
+            .expect("blocking task should finish");
+        assert!(done.load(Ordering::SeqCst));
+    }
 }

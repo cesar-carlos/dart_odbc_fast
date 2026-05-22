@@ -511,4 +511,46 @@ mod tests {
         ));
         assert!(matches!(rules[3], OptimizationRule::EnableStreaming));
     }
+
+    #[test]
+    fn should_emit_user_tables_catalog_without_schema_filter() {
+        let plugin = OraclePlugin::new();
+        let q = plugin.list_tables_sql(None, None).unwrap();
+        assert!(q.sql.contains("USER_TABLES"));
+        assert!(q.params.is_empty());
+    }
+
+    #[test]
+    fn should_emit_all_tables_catalog_when_schema_provided() {
+        let plugin = OraclePlugin::new();
+        let q = plugin.list_tables_sql(None, Some("HR")).unwrap();
+        assert!(q.sql.contains("ALL_TABLES"));
+        assert!(q.sql.contains("OWNER = ?"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn should_reject_empty_table_for_list_columns_sql() {
+        let plugin = OraclePlugin::new();
+        assert!(plugin.list_columns_sql("   ", None).is_err());
+    }
+
+    #[test]
+    fn should_append_oracle_returning_into_bind_variables() {
+        let plugin = OraclePlugin::new();
+        let sql = plugin
+            .append_returning_clause("INSERT INTO t (id) VALUES (?)", DmlVerb::Insert, &["id"])
+            .unwrap();
+        assert!(sql.contains("RETURNING"));
+        assert!(sql.contains("INTO :ret_0"));
+    }
+
+    #[test]
+    fn should_map_timestamp_with_time_zone_extended_type() {
+        let plugin = OraclePlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(93, Some("TIMESTAMP WITH TIME ZONE")),
+            OdbcType::TimestampWithTz
+        );
+    }
 }

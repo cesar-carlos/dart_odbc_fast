@@ -411,4 +411,43 @@ mod tests {
         let caps = DriverCapabilities::from_driver_name("Microsoft SQL Server");
         assert_eq!(caps.max_row_array_size, 2000);
     }
+
+    #[test]
+    fn should_detect_sqlite_and_bigquery_from_dbms_names() {
+        assert_eq!(
+            DriverCapabilities::from_driver_name("SQLite 3").engine,
+            ENGINE_SQLITE
+        );
+        assert_eq!(
+            DriverCapabilities::from_driver_name("Google BigQuery").engine,
+            ENGINE_BIGQUERY
+        );
+    }
+
+    #[test]
+    fn should_prefer_mariadb_over_mysql_in_connection_string() {
+        let caps = DriverCapabilities::detect_from_connection_string(
+            "Driver={MariaDB ODBC};Server=h;Database=d;",
+        );
+        assert_eq!(caps.engine, ENGINE_MARIADB);
+    }
+
+    #[test]
+    fn should_detect_sql_anywhere_as_sybase_asa() {
+        let caps = DriverCapabilities::from_driver_name("SQL Anywhere 17");
+        assert_eq!(caps.engine, ENGINE_SYBASE_ASA);
+    }
+
+    #[test]
+    fn should_serialize_engine_field_in_capabilities_json() {
+        let caps = DriverCapabilities::from_driver_name("postgres");
+        let json = caps.to_json().expect("json");
+        assert!(json.contains("\"engine\":\"postgres\""));
+    }
+
+    #[test]
+    fn should_apply_oracle_max_array_size_when_detected() {
+        let caps = DriverCapabilities::from_driver_name("Oracle");
+        assert_eq!(caps.max_row_array_size, 5000);
+    }
 }

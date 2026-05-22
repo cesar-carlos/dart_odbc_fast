@@ -1,7 +1,6 @@
 mod helpers;
 use helpers::e2e::{
-    get_connection_and_db_type, should_run_e2e_tests, should_run_sqlserver_e2e_tests,
-    DatabaseType,
+    get_connection_and_db_type, should_run_e2e_tests, should_run_sqlserver_e2e_tests, DatabaseType,
 };
 use helpers::get_sqlserver_test_dsn;
 use odbc_engine::{execute_query_with_connection, OdbcConnection, OdbcEnvironment};

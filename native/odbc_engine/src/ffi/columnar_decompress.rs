@@ -186,4 +186,57 @@ mod tests {
         assert_eq!(st, FfiError::InvalidArgument.as_i32());
         assert!(pout.is_null());
     }
+
+    #[test]
+    fn odbc_decompress_lz4_roundtrip() {
+        let raw = b"lz4 columnar payload ".repeat(30);
+        let comp = compress(&raw, Ct::Lz4).expect("compress for test");
+        let mut pout: *mut u8 = std::ptr::null_mut();
+        let mut olen: c_uint = 0;
+        let mut ocap: c_uint = 0;
+        let st = odbc_columnar_decompress(
+            2u8,
+            comp.as_ptr(),
+            comp.len() as c_uint,
+            &mut pout,
+            &mut olen,
+            &mut ocap,
+        );
+        assert_eq!(st, 0);
+        assert_eq!(olen as usize, raw.len());
+        let got = unsafe { std::slice::from_raw_parts(pout, olen as usize) };
+        assert_eq!(got, raw.as_slice());
+        odbc_columnar_decompress_free(pout, olen, ocap);
+    }
+
+    #[test]
+    fn should_reject_null_output_pointers() {
+        let payload = [1u8, 2, 3];
+        let st = odbc_columnar_decompress(
+            1u8,
+            payload.as_ptr(),
+            payload.len() as c_uint,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(st, FfiError::NullPointer.as_i32());
+    }
+
+    #[test]
+    fn should_reject_unknown_compression_algorithm_id() {
+        let mut pout: *mut u8 = std::ptr::null_mut();
+        let mut olen: c_uint = 0;
+        let mut ocap: c_uint = 0;
+        let payload = [0u8; 4];
+        let st = odbc_columnar_decompress(
+            99u8,
+            payload.as_ptr(),
+            payload.len() as c_uint,
+            &mut pout,
+            &mut olen,
+            &mut ocap,
+        );
+        assert_eq!(st, FfiError::InvalidArgument.as_i32());
+    }
 }

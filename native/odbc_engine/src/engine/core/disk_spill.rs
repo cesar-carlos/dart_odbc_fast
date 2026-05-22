@@ -271,4 +271,37 @@ mod tests {
         let s = DiskSpillStream::new(0);
         assert_eq!(s.threshold_mb(), 1);
     }
+
+    #[test]
+    fn should_read_back_empty_spill_stream() {
+        let mut s = DiskSpillStream::new(10);
+        assert!(s.read_back().unwrap().is_empty());
+    }
+
+    #[test]
+    fn should_finish_for_streaming_read_from_spilled_file() {
+        let mut s = DiskSpillStream::new(1);
+        s.write_chunk(&[1, 2, 3]).unwrap();
+        let big = vec![0u8; 2 * 1024 * 1024];
+        s.write_chunk(&big).unwrap();
+        match s.finish_for_streaming_read().unwrap() {
+            SpillReadSource::File(path) => {
+                let data = std::fs::read(&path).expect("read spill file");
+                assert_eq!(data.len(), 3 + big.len());
+                assert_eq!(data[0], 1);
+            }
+            SpillReadSource::Memory(_) => panic!("expected file spill for large payload"),
+        }
+    }
+
+    #[test]
+    fn should_flush_disk_spill_writer_partial_buffer() {
+        let mut s = DiskSpillStream::new(10);
+        {
+            let mut writer = DiskSpillWriter::new(&mut s);
+            writer.write_all(b"partial").unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(s.read_back().unwrap(), b"partial");
+    }
 }

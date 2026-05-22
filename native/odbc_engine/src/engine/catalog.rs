@@ -615,4 +615,49 @@ mod tests {
         assert_eq!(params.len(), 2);
         assert_string_param(&params[1], "items");
     }
+
+    #[test]
+    fn information_schema_list_columns_query_with_empty_schema_uses_schema_branch() {
+        let (sql, params) = information_schema_list_columns_query("users", Some(""));
+        assert!(sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "");
+        assert_string_param(&params[1], "users");
+    }
+
+    #[test]
+    fn validate_and_parse_table_preserves_ascii_table_name_bytes() {
+        let (schema, name) = validate_and_parse_table("dbo.Users_Table1").unwrap();
+        assert_eq!(schema.as_deref(), Some("dbo"));
+        assert_eq!(name, "Users_Table1");
+    }
+
+    #[test]
+    fn should_reject_validate_and_parse_table_when_name_is_only_whitespace() {
+        let err = validate_and_parse_table("   ").unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn should_reject_validate_and_parse_table_when_segment_after_dot_is_blank() {
+        let err = validate_and_parse_table("dbo.   ").unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn information_schema_list_foreign_keys_query_binds_schema_when_provided() {
+        let (sql, params) = information_schema_list_foreign_keys_query("child", Some("dbo"));
+        assert!(sql.contains("kcu1.TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "dbo");
+        assert_string_param(&params[1], "child");
+    }
+
+    #[test]
+    fn information_schema_list_primary_keys_query_empty_schema_still_binds() {
+        let (sql, params) = information_schema_list_primary_keys_query("t", Some(""));
+        assert!(sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(params.len(), 2);
+        assert_string_param(&params[0], "");
+    }
 }

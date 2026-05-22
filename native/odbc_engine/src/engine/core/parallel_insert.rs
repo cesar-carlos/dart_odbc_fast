@@ -7,6 +7,10 @@ use std::sync::Arc;
 
 const DEFAULT_BATCH_SIZE: usize = 10_000;
 
+fn clamp_positive(n: usize) -> usize {
+    n.max(1)
+}
+
 /// Atomicity contract for `insert_i32_parallel`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ParallelMode {
@@ -54,13 +58,13 @@ impl ParallelBulkInsert {
         Self {
             pool,
             batch_size: DEFAULT_BATCH_SIZE,
-            parallelism: parallelism.max(1),
+            parallelism: clamp_positive(parallelism),
             mode: ParallelMode::Independent,
         }
     }
 
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
-        self.batch_size = batch_size.max(1);
+        self.batch_size = clamp_positive(batch_size);
         self
     }
 
@@ -338,5 +342,24 @@ mod tests {
         let pool = Arc::new(ConnectionPool::new(&conn_str, 2).unwrap());
         let pbi = ParallelBulkInsert::new(pool, 2).with_batch_size(5_000);
         assert_eq!(pbi.batch_size(), 5_000);
+    }
+
+    #[test]
+    fn should_clamp_non_positive_sizes_to_one() {
+        assert_eq!(clamp_positive(0), 1);
+        assert_eq!(clamp_positive(1), 1);
+        assert_eq!(clamp_positive(25), 25);
+    }
+
+    #[test]
+    fn should_split_each_row_when_parallelism_exceeds_row_count() {
+        assert_eq!(chunk_ranges(3, 10), vec![0..1, 1..2, 2..3]);
+    }
+
+    #[test]
+    fn should_reject_extra_data_vectors_for_single_column() {
+        let columns = ["only"];
+        let data = vec![vec![1], vec![2]];
+        assert!(validate_i32_parallel_input(&columns, &data).is_err());
     }
 }

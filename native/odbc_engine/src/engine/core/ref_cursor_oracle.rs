@@ -128,4 +128,78 @@ mod tests {
         ];
         assert!(strip_ref_cursor_placeholders(sql, &b).is_err());
     }
+
+    #[test]
+    fn should_count_placeholders_in_sql() {
+        assert_eq!(count_placeholders("select ?, ?"), 2);
+        assert_eq!(count_placeholders("no markers"), 0);
+    }
+
+    #[test]
+    fn should_detect_ref_cursor_markers_in_bound_list() {
+        let with = [bp(ParamDirection::Output, ParamValue::RefCursorOut)];
+        let without = [bp(ParamDirection::Input, ParamValue::Integer(1))];
+        assert!(bound_has_ref_cursor(&with));
+        assert!(!bound_has_ref_cursor(&without));
+    }
+
+    #[test]
+    fn should_filter_non_ref_cursor_params_preserving_order() {
+        let bound = [
+            bp(ParamDirection::Output, ParamValue::RefCursorOut),
+            bp(ParamDirection::Input, ParamValue::Integer(7)),
+            bp(ParamDirection::Output, ParamValue::RefCursorOut),
+        ];
+        let filtered = filter_non_ref_cursor_params(&bound);
+        assert_eq!(filtered.len(), 1);
+        assert!(matches!(filtered[0].value, ParamValue::Integer(7)));
+    }
+
+    #[test]
+    fn should_strip_trailing_ref_cursor_and_trailing_comma() {
+        let sql = "call p(?,?)";
+        let bound = [
+            bp(ParamDirection::Input, ParamValue::Integer(1)),
+            bp(ParamDirection::Output, ParamValue::RefCursorOut),
+        ];
+        assert_eq!(
+            strip_ref_cursor_placeholders(sql, &bound).expect("strip trailing ref cursor"),
+            "call p(?)".to_string()
+        );
+    }
+
+    #[test]
+    fn should_drop_comma_before_removed_ref_cursor_placeholder() {
+        let sql = "call p(?,?)";
+        let bound = [
+            bp(ParamDirection::Output, ParamValue::RefCursorOut),
+            bp(ParamDirection::Input, ParamValue::Integer(1)),
+        ];
+        assert_eq!(
+            strip_ref_cursor_placeholders(sql, &bound).expect("strip leading ref cursor comma"),
+            "call p(?)".to_string()
+        );
+    }
+
+    #[test]
+    fn should_reject_ref_cursor_as_input_direction() {
+        let sql = "call p(?)";
+        let bound = [bp(ParamDirection::Input, ParamValue::RefCursorOut)];
+        let err = strip_ref_cursor_placeholders(sql, &bound).unwrap_err();
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("ref_cursor_out_invalid_direction"), "{m}");
+    }
+
+    #[test]
+    fn should_error_when_sql_has_no_placeholders_for_bound_params() {
+        let sql = "call p()";
+        let bound = [bp(ParamDirection::Input, ParamValue::Integer(1))];
+        let err = strip_ref_cursor_placeholders(sql, &bound).unwrap_err();
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("ref_cursor_oracle_sql_param_count"), "{m}");
+    }
 }

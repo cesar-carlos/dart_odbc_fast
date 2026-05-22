@@ -3,7 +3,7 @@ use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, StreamingExecutor};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
-use helpers::e2e::{should_run_sqlserver_e2e_tests, should_run_slow_e2e_tests};
+use helpers::e2e::{should_run_slow_e2e_tests, should_run_sqlserver_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]

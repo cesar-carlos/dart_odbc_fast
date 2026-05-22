@@ -545,6 +545,42 @@ mod tests {
     }
 
     #[test]
+    fn should_default_pool_options_match_struct_default() {
+        let opts = PoolOptions::default();
+        assert_eq!(opts.idle_timeout, None);
+        assert_eq!(opts.max_lifetime, None);
+        assert_eq!(opts.connection_timeout, None);
+    }
+
+    #[test]
+    fn should_recognize_pool_checkout_option_aliases() {
+        assert!(is_pool_checkout_option("pooltestoncheckout"));
+        assert!(is_pool_checkout_option("test_on_check_out"));
+        assert!(!is_pool_checkout_option("dsn"));
+    }
+
+    #[test]
+    fn should_recognize_health_check_query_aliases() {
+        assert!(is_pool_health_check_option("health_check_query"));
+        assert!(is_pool_health_check_option("poolhealthcheckquery"));
+        assert!(!is_pool_health_check_option("password"));
+    }
+
+    #[test]
+    fn should_resolve_health_check_default_when_overrides_empty() {
+        assert_eq!(
+            resolve_health_check_query(None, Some("   ".to_string())),
+            "SELECT 1"
+        );
+    }
+
+    #[test]
+    fn should_extract_pool_id_using_host_key() {
+        let id = ConnectionPool::extract_pool_components("Host=db1;Port=3306;User=app;");
+        assert_eq!(id, "db1:3306:app");
+    }
+
+    #[test]
     fn recreate_with_max_size_preserves_resolved_pool_configuration() {
         let dsn = match std::env::var("ODBC_TEST_DSN")
             .ok()

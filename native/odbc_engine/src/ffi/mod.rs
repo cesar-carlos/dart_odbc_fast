@@ -9885,4 +9885,28 @@ mod tests {
         let appended = std::str::from_utf8(&out[..written as usize]).unwrap();
         assert!(appended.contains("RETURNING"));
     }
+
+    #[test]
+    fn should_reject_connection_string_with_empty_key() {
+        let err = validate_connection_string_format("=value_only");
+        assert!(
+            err.as_ref().is_some_and(|m| m.contains("key=value")),
+            "expected empty-key rejection, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_accept_connection_string_with_balanced_driver_braces() {
+        assert!(validate_connection_string_format(
+            "Driver={SQL Server Native Client 11.0};Server=localhost;Database=test;"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn odbc_validate_connection_string_rejects_null_pointer() {
+        let mut buf = [0u8; 64];
+        let code = odbc_validate_connection_string(std::ptr::null(), buf.as_mut_ptr(), 64);
+        assert_eq!(code, -1);
+    }
 }

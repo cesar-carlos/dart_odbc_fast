@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["test-helpers", "observability"]
-sqlserver-bcp = []
+sqlserver-bcp = ["dep:libloading"]
 # Reuse ODBC prepared statement handles per connection (LRU cache).
 # Default off; enables repetitive prepare/execute workload improvements.
 statement-handle-reuse = []

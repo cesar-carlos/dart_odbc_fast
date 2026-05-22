@@ -246,6 +246,22 @@ mod tests {
     }
 
     #[test]
+    fn should_emit_mariadb_indexes_catalog_sql() {
+        let p = MariaDbPlugin::new();
+        let q = p.list_indexes_sql("users", None).unwrap();
+        assert!(q.sql.contains("INFORMATION_SCHEMA.STATISTICS"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn session_init_sets_names_charset() {
+        let p = MariaDbPlugin::new();
+        let opts = SessionOptions::new().with_charset("utf8mb4");
+        let stmts = p.initialization_sql(&opts);
+        assert!(stmts.iter().any(|s| s.contains("SET NAMES utf8mb4")));
+    }
+
+    #[test]
     fn type_catalog_recognises_uuid_as_uuid() {
         let p = MariaDbPlugin::new();
         assert_eq!(p.map_type_extended(1, Some("UUID")), OdbcType::Uuid);

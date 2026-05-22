@@ -546,4 +546,52 @@ mod tests {
             "InvalidHandle should map to Fatal category"
         );
     }
+
+    #[test]
+    fn should_format_protocol_and_worker_error_variants() {
+        assert_eq!(
+            OdbcError::NoMoreResults.to_string(),
+            "No more result sets available"
+        );
+        assert!(OdbcError::MalformedPayload("bad".into())
+            .to_string()
+            .contains("Malformed payload"));
+        assert!(OdbcError::RollbackFailed("x".into())
+            .to_string()
+            .contains("Rollback failed"));
+        assert!(OdbcError::ResourceLimitReached("cap".into())
+            .to_string()
+            .contains("Resource limit"));
+        assert_eq!(OdbcError::Cancelled.to_string(), "Operation cancelled");
+        assert!(OdbcError::WorkerCrashed("panic".into())
+            .to_string()
+            .contains("Worker thread crashed"));
+        let bulk = OdbcError::BulkPartialFailure {
+            rows_inserted_before_failure: 10,
+            failed_chunks: 2,
+            detail: "timeout".into(),
+        };
+        let msg = bulk.to_string();
+        assert!(msg.contains("10"));
+        assert!(msg.contains("2"));
+        assert!(msg.contains("timeout"));
+    }
+
+    #[test]
+    fn should_classify_malformed_payload_as_fatal() {
+        assert_eq!(
+            OdbcError::MalformedPayload("x".into()).error_category(),
+            ErrorCategory::Fatal
+        );
+        assert!(!OdbcError::Cancelled.is_retryable());
+        assert!(!OdbcError::Cancelled.is_connection_error());
+    }
+
+    #[test]
+    fn should_reject_structured_deserialize_when_message_not_utf8() {
+        let mut data = vec![0u8; 13];
+        data[9..13].copy_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&[0xFF, 0xFE, 0x80]);
+        assert!(StructuredError::deserialize(&data).is_none());
+    }
 }

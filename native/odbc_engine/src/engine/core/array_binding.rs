@@ -583,4 +583,67 @@ mod tests {
     fn should_accept_empty_columns_when_validating_i32_bulk_data() {
         assert!(validate_i32_bulk_data(&[], &[]).is_ok());
     }
+
+    #[test]
+    fn should_map_i64_and_timestamp_specs_to_buffer_descriptors() {
+        let i64_spec = BulkColumnSpec {
+            name: "big".to_string(),
+            col_type: BulkColumnType::I64,
+            nullable: true,
+            max_len: 0,
+        };
+        let ts_spec = BulkColumnSpec {
+            name: "ts".to_string(),
+            col_type: BulkColumnType::Timestamp,
+            nullable: false,
+            max_len: 0,
+        };
+        assert!(matches!(
+            spec_to_buffer_desc(&i64_spec).expect("i64 desc"),
+            BufferDesc::I64 { nullable: true }
+        ));
+        assert!(matches!(
+            spec_to_buffer_desc(&ts_spec).expect("timestamp desc"),
+            BufferDesc::Timestamp { nullable: false }
+        ));
+    }
+
+    #[test]
+    fn should_map_decimal_spec_to_text_buffer_descriptor() {
+        let spec = BulkColumnSpec {
+            name: "amount".to_string(),
+            col_type: BulkColumnType::Decimal,
+            nullable: true,
+            max_len: 24,
+        };
+        assert!(matches!(
+            spec_to_buffer_desc(&spec).expect("decimal desc"),
+            BufferDesc::Text { max_str_len: 24 }
+        ));
+    }
+
+    #[test]
+    fn should_quote_empty_column_list_as_empty_string() {
+        assert_eq!(quote_column_list(&[]).expect("empty list"), "");
+    }
+
+    #[test]
+    fn should_quote_three_column_list_for_insert_clause() {
+        let quoted = quote_column_list(&["a", "b", "c"]).expect("three columns");
+        assert_eq!(quoted, "\"a\", \"b\", \"c\"");
+    }
+
+    #[test]
+    fn should_use_min_str_len_one_for_text_spec_with_zero_max_len() {
+        let spec = BulkColumnSpec {
+            name: "note".to_string(),
+            col_type: BulkColumnType::Text,
+            nullable: false,
+            max_len: 0,
+        };
+        assert!(matches!(
+            spec_to_buffer_desc(&spec).expect("text desc"),
+            BufferDesc::Text { max_str_len: 1 }
+        ));
+    }
 }

@@ -461,4 +461,59 @@ mod tests {
         let params = bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::Integer(42))]).unwrap();
         assert_eq!(params.output_footer_values(), vec![ParamValue::Integer(42)]);
     }
+
+    #[test]
+    fn should_map_input_params_to_in_any_slots() {
+        let params = bound_to_slots(&[bp(ParamDirection::Input, ParamValue::Integer(3))]).unwrap();
+        assert!(matches!(params.slots[0], ParamSlot::InAny(_)));
+        assert!(params.output_footer_values().is_empty());
+    }
+
+    #[test]
+    fn should_accept_inout_decimal_when_non_empty() {
+        let params = bound_to_slots(&[bp(
+            ParamDirection::InOut,
+            ParamValue::Decimal("9.99".to_string()),
+        )])
+        .unwrap();
+        assert!(matches!(params.slots[0], ParamSlot::InOutText(_)));
+    }
+
+    #[test]
+    fn should_reject_empty_decimal_inout_when_bound_to_slots() {
+        let err = bound_to_slots(&[bp(
+            ParamDirection::InOut,
+            ParamValue::Decimal(String::new()),
+        )])
+        .err()
+        .expect("empty decimal inout should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(m.contains("decimal_inout_out_requires_non_empty"), "{m}");
+    }
+
+    #[test]
+    fn should_emit_bigint_footer_when_inout_i64_has_value() {
+        let params =
+            bound_to_slots(&[bp(ParamDirection::InOut, ParamValue::BigInt(9001))]).unwrap();
+        assert_eq!(
+            params.output_footer_values(),
+            vec![ParamValue::BigInt(9001)]
+        );
+    }
+
+    #[test]
+    fn should_reject_output_binary_with_directed_prefix() {
+        let err = bound_to_slots(&[bp(ParamDirection::Output, ParamValue::Binary(vec![0xAB]))])
+            .err()
+            .expect("output binary should fail");
+        let OdbcError::ValidationError(m) = err else {
+            panic!("expected ValidationError");
+        };
+        assert!(
+            m.starts_with(super::ERR_PREFIX) && m.contains("binary_out_inout_not_implemented"),
+            "{m}"
+        );
+    }
 }

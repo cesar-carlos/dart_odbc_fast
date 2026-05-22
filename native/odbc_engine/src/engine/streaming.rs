@@ -1290,6 +1290,7 @@ impl StreamingState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::core::SpillReadSource;
     use std::sync::mpsc;
 
     #[test]
@@ -1795,5 +1796,695 @@ mod tests {
         assert_eq!(state.poll_status(), AsyncStreamStatus::Pending);
         let _ = tx.send(BatchedMessage::Batch(vec![9]));
         assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+    }
+
+    #[test]
+    fn test_multi_stream_item_tags_are_distinct() {
+        assert_ne!(
+            MULTI_STREAM_ITEM_TAG_RESULT_SET,
+            MULTI_STREAM_ITEM_TAG_ROW_COUNT
+        );
+        assert_eq!(MULTI_STREAM_ITEM_TAG_RESULT_SET, 0);
+        assert_eq!(MULTI_STREAM_ITEM_TAG_ROW_COUNT, 1);
+    }
+
+    #[test]
+    fn test_frame_item_empty_payload() {
+        let framed = frame_item(MULTI_STREAM_ITEM_TAG_ROW_COUNT, vec![]).unwrap();
+        assert_eq!(framed, [MULTI_STREAM_ITEM_TAG_ROW_COUNT, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_encode_row_buffer_matches_row_buffer_encoder() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("n".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(7i32.to_le_bytes().to_vec())]);
+        let via_helper = encode_row_buffer(&buffer).unwrap();
+        let direct = RowBufferEncoder::encode(&buffer);
+        assert_eq!(via_helper, direct);
+    }
+
+    #[test]
+    fn test_batched_request_cancel_sets_atomic_flag() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let state = BatchedStreamingState::from_receiver(rx, 4);
+        assert!(!state.cancel_requested.load(Ordering::Relaxed));
+        state.request_cancel();
+        assert!(state.cancel_requested.load(Ordering::Relaxed));
+        drop(tx);
+    }
+
+    #[test]
+    fn test_async_request_cancel_sets_atomic_flag() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let state = AsyncStreamingState::from_receiver(rx, 4);
+        assert!(!state.cancel_requested.load(Ordering::Relaxed));
+        state.request_cancel();
+        assert!(state.cancel_requested.load(Ordering::Relaxed));
+        drop(tx);
+    }
+
+    #[test]
+    fn test_batched_fetch_repeats_stream_error_without_recv() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("sticky".to_string()));
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let e1 = state.fetch_next_chunk().unwrap_err();
+        let e2 = state.fetch_next_chunk().unwrap_err();
+        assert!(e1.to_string().contains("sticky"));
+        assert!(e2.to_string().contains("sticky"));
+    }
+
+    #[test]
+    fn test_batched_copy_returns_end_when_already_done() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        let mut out = [0u8; 8];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::End
+        );
+    }
+
+    #[test]
+    fn test_async_copy_next_chunk_splits_across_chunk_size() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3, 4, 5]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 2);
+        let mut out = [0u8; 2];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 2,
+                has_more: true
+            }
+        );
+        assert_eq!(&out, &[1, 2]);
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 2,
+                has_more: true
+            }
+        );
+        assert_eq!(&out, &[3, 4]);
+        let mut last = [0u8; 1];
+        assert_eq!(
+            state.copy_next_chunk(&mut last).unwrap(),
+            StreamCopyResult::Copied {
+                written: 1,
+                has_more: true
+            }
+        );
+        assert_eq!(last[0], 5);
+    }
+
+    #[test]
+    fn test_async_poll_disconnected_marks_done_before_blocking_fetch() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        // Non-blocking poll treats disconnect as a clean Done (no WorkerCrashed).
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Done);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_async_fetch_without_prior_poll_surfaces_worker_crashed_on_disconnect() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        let err = state.fetch_next_chunk().unwrap_err();
+        assert!(matches!(err, OdbcError::WorkerCrashed(_)));
+    }
+
+    #[test]
+    fn test_stream_state_file_backed_delegates_fetch_copy_and_has_more() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_stream_state_delegate_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [9u8, 8, 7, 6, 5]).unwrap();
+
+        let mut state =
+            StreamState::FileBacked(StreamingStateFileBacked::new(path.clone(), 2, 5).unwrap());
+        assert!(state.has_more());
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![9, 8]));
+        let mut out = [0u8; 2];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 2,
+                has_more: true
+            }
+        );
+        assert_eq!(&out, &[7, 6]);
+        let mut last = [0u8; 1];
+        assert_eq!(
+            state.copy_next_chunk(&mut last).unwrap(),
+            StreamCopyResult::Copied {
+                written: 1,
+                has_more: false
+            }
+        );
+        assert_eq!(last[0], 5);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    fn parse_multi_stream_frame(bytes: &[u8]) -> (u8, Vec<u8>) {
+        assert!(bytes.len() >= 5, "frame must include tag + u32 len");
+        let tag = bytes[0];
+        let len = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
+        assert_eq!(bytes.len(), 5 + len);
+        (tag, bytes[5..].to_vec())
+    }
+
+    #[test]
+    fn test_multi_stream_frames_parse_result_set_then_row_count() {
+        let rs = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, vec![9, 8, 7]).unwrap();
+        let rc = frame_item(MULTI_STREAM_ITEM_TAG_ROW_COUNT, 5i64.to_le_bytes().to_vec()).unwrap();
+
+        let (tag1, payload1) = parse_multi_stream_frame(&rs);
+        assert_eq!(tag1, MULTI_STREAM_ITEM_TAG_RESULT_SET);
+        assert_eq!(payload1, vec![9, 8, 7]);
+
+        let (tag2, payload2) = parse_multi_stream_frame(&rc);
+        assert_eq!(tag2, MULTI_STREAM_ITEM_TAG_ROW_COUNT);
+        assert_eq!(i64::from_le_bytes(payload2.try_into().unwrap()), 5);
+    }
+
+    #[test]
+    fn test_encode_row_buffer_surfaces_resource_limit() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("x".repeat(usize::from(u16::MAX) + 1), OdbcType::Varchar);
+        let err = encode_row_buffer(&buffer).unwrap_err();
+        assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
+        assert!(err.to_string().contains("encoding"));
+    }
+
+    #[test]
+    fn test_batched_copy_sticky_stream_error() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("copy sticky".to_string()));
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 4];
+        let e1 = state.copy_next_chunk(&mut out).unwrap_err();
+        let e2 = state.copy_next_chunk(&mut out).unwrap_err();
+        assert!(e1.to_string().contains("copy sticky"));
+        assert!(e2.to_string().contains("copy sticky"));
+    }
+
+    #[test]
+    fn test_batched_copy_returns_error_from_worker() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("copy fail".to_string()));
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 8];
+        let err = state.copy_next_chunk(&mut out).unwrap_err();
+        assert!(err.to_string().contains("copy fail"));
+    }
+
+    #[test]
+    fn test_async_copy_sticky_stream_error() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("async copy sticky".to_string()));
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 4];
+        let e1 = state.copy_next_chunk(&mut out).unwrap_err();
+        let e2 = state.copy_next_chunk(&mut out).unwrap_err();
+        assert!(e1.to_string().contains("async copy sticky"));
+        assert!(e2.to_string().contains("async copy sticky"));
+    }
+
+    #[test]
+    fn test_async_poll_ready_when_offset_mid_batch() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3, 4]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 2);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        let mut out = [0u8; 2];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 2,
+                has_more: true
+            }
+        );
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        assert_eq!(state.offset, 2);
+    }
+
+    #[test]
+    fn test_streaming_state_copy_returns_end_when_exhausted() {
+        let mut state = StreamingState {
+            data: vec![1, 2],
+            offset: 2,
+            chunk_size: 4,
+        };
+        let mut out = [0u8; 4];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::End
+        );
+        assert!(!state.has_more());
+    }
+
+    #[test]
+    fn test_file_backed_streaming_state_copy_returns_end_when_exhausted() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_state_copy_end_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1u8, 2]).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 4, 2).unwrap();
+            state.offset = 2;
+            let mut out = [0u8; 4];
+            assert_eq!(
+                state.copy_next_chunk(&mut out).unwrap(),
+                StreamCopyResult::End
+            );
+            assert!(!state.has_more());
+        }
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_stream_state_in_memory_has_more_false_when_exhausted() {
+        let mut state = StreamState::InMemory(StreamingState {
+            data: vec![1],
+            offset: 0,
+            chunk_size: 8,
+        });
+        assert!(state.has_more());
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1]));
+        assert!(!state.has_more());
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_batched_copy_clears_batch_after_full_read() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3]));
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 3);
+        let mut out = [0u8; 3];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::Copied {
+                written: 3,
+                has_more: true
+            }
+        );
+        assert!(state.current_batch.is_none());
+        assert_eq!(state.offset, 0);
+    }
+
+    #[test]
+    fn test_async_fetch_sticky_error_without_poll() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("fetch sticky".to_string()));
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        let e1 = state.fetch_next_chunk().unwrap_err();
+        let e2 = state.fetch_next_chunk().unwrap_err();
+        assert!(e1.to_string().contains("fetch sticky"));
+        assert!(e2.to_string().contains("fetch sticky"));
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Error);
+    }
+
+    #[test]
+    fn test_batched_fetch_returns_none_when_done_flag_set() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        assert!(!state.has_more());
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_frame_item_max_u32_payload_length_header() {
+        let payload = vec![0u8; 1024];
+        let framed = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, payload.clone()).unwrap();
+        assert_eq!(
+            u32::from_le_bytes([framed[1], framed[2], framed[3], framed[4]]),
+            1024
+        );
+        assert_eq!(&framed[5..], &payload[..]);
+    }
+
+    #[test]
+    fn test_spill_memory_source_preserves_encoder_bytes_and_metadata() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("id".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+        let expected = RowBufferEncoder::encode(&buffer);
+
+        let mut spill = DiskSpillStream::new(64);
+        {
+            let mut writer = DiskSpillWriter::new(&mut spill);
+            RowBufferEncoder::encode_to_writer(&buffer, &mut writer).unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(spill.threshold_mb(), 64);
+
+        match spill.finish_for_streaming_read().unwrap() {
+            SpillReadSource::Memory(bytes) => {
+                assert_eq!(bytes, expected);
+                let state = StreamingState {
+                    data: bytes,
+                    offset: 0,
+                    chunk_size: 4,
+                };
+                assert_eq!(state.data.len(), expected.len());
+                assert!(state.has_more());
+            }
+            SpillReadSource::File(path) => {
+                let _ = std::fs::remove_file(path);
+                panic!("small payload must stay in memory under a 64 MiB threshold");
+            }
+        }
+    }
+
+    #[test]
+    fn test_file_backed_total_len_matches_sum_of_chunk_reads() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_total_len_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let payload: Vec<u8> = (0u8..=20).collect();
+        std::fs::write(&path, &payload).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 7, payload.len()).unwrap();
+            let mut collected = Vec::new();
+            while let Some(chunk) = state.fetch_next_chunk().unwrap() {
+                collected.extend_from_slice(&chunk);
+            }
+            assert_eq!(collected, payload);
+            assert_eq!(state.offset, payload.len());
+        }
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_multi_stream_concatenated_frames_parse_in_order() {
+        let rs = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, vec![1, 2]).unwrap();
+        let rc = frame_item(MULTI_STREAM_ITEM_TAG_ROW_COUNT, 3i64.to_le_bytes().to_vec()).unwrap();
+        let rs_len = rs.len();
+        let mut combined = rs;
+        combined.extend(rc);
+        let (tag1, p1) = parse_multi_stream_frame(&combined[..rs_len]);
+        assert_eq!(tag1, MULTI_STREAM_ITEM_TAG_RESULT_SET);
+        assert_eq!(p1, vec![1, 2]);
+
+        let (tag2, p2) = parse_multi_stream_frame(&combined[rs_len..]);
+        assert_eq!(tag2, MULTI_STREAM_ITEM_TAG_ROW_COUNT);
+        assert_eq!(i64::from_le_bytes(p2.try_into().unwrap()), 3);
+    }
+
+    #[test]
+    fn test_frame_item_capacity_is_tag_plus_len_plus_payload() {
+        let payload = vec![4u8, 5, 6];
+        let framed = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, payload.clone()).unwrap();
+        assert_eq!(framed.len(), 5 + payload.len());
+        assert_eq!(framed.capacity(), framed.len());
+    }
+
+    #[test]
+    fn test_batched_worker_crashed_fetch_is_sticky() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let e1 = state.fetch_next_chunk().unwrap_err();
+        let e2 = state.fetch_next_chunk().unwrap_err();
+        assert!(matches!(e1, OdbcError::WorkerCrashed(_)));
+        assert!(matches!(e2, OdbcError::InternalError(_)));
+        assert!(e2.to_string().contains("disconnected"));
+        assert!(state.done);
+    }
+
+    #[test]
+    fn test_batched_worker_crashed_copy_is_sticky() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 4];
+        let e1 = state.copy_next_chunk(&mut out).unwrap_err();
+        let e2 = state.copy_next_chunk(&mut out).unwrap_err();
+        assert!(matches!(e1, OdbcError::WorkerCrashed(_)));
+        assert!(matches!(e2, OdbcError::InternalError(_)));
+    }
+
+    #[test]
+    fn test_async_poll_error_stays_error_on_repeat() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("poll sticky".to_string()));
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Error);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Error);
+        let err = state.fetch_next_chunk().unwrap_err();
+        assert!(err.to_string().contains("poll sticky"));
+    }
+
+    #[test]
+    fn test_async_copy_worker_crashed_is_sticky() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 2];
+        let e1 = state.copy_next_chunk(&mut out).unwrap_err();
+        let e2 = state.copy_next_chunk(&mut out).unwrap_err();
+        assert!(matches!(e1, OdbcError::WorkerCrashed(_)));
+        assert!(matches!(e2, OdbcError::InternalError(_)));
+    }
+
+    #[test]
+    fn test_batched_has_more_false_after_worker_crashed() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let _ = state.fetch_next_chunk().unwrap_err();
+        assert!(!state.has_more());
+    }
+
+    #[test]
+    fn test_encode_row_buffer_empty_schema_succeeds() {
+        let buffer = RowBuffer::new();
+        let encoded = encode_row_buffer(&buffer).unwrap();
+        assert_eq!(encoded, RowBufferEncoder::encode(&buffer));
+    }
+
+    #[test]
+    fn test_stream_state_file_backed_has_more_delegates_until_exhausted() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_stream_state_has_more_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1u8, 2, 3]).unwrap();
+
+        {
+            let mut state =
+                StreamState::FileBacked(StreamingStateFileBacked::new(path.clone(), 2, 3).unwrap());
+            assert!(state.has_more());
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2]));
+            assert!(state.has_more());
+            assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![3]));
+            assert!(!state.has_more());
+            assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        }
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_file_backed_fetch_returns_none_when_offset_already_at_total() {
+        let path = std::env::temp_dir().join(format!(
+            "odbc_streaming_offset_past_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, [1u8]).unwrap();
+
+        {
+            let mut state = StreamingStateFileBacked::new(path.clone(), 8, 1).unwrap();
+            state.offset = 1;
+            assert_eq!(state.fetch_next_chunk().unwrap(), None);
+            assert!(!state.has_more());
+        }
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_batched_stream_error_sets_has_more_until_fetch() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Error("before fetch".to_string()));
+        drop(tx);
+
+        let state = BatchedStreamingState::from_receiver(rx, 4);
+        assert!(state.has_more());
+    }
+
+    #[test]
+    fn test_async_stream_status_variants_are_distinct() {
+        let statuses = [
+            AsyncStreamStatus::Pending,
+            AsyncStreamStatus::Ready,
+            AsyncStreamStatus::Done,
+            AsyncStreamStatus::Cancelled,
+            AsyncStreamStatus::Error,
+        ];
+        for (i, a) in statuses.iter().enumerate() {
+            for (j, b) in statuses.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_stream_copy_result_variants_are_distinct() {
+        let copied = StreamCopyResult::Copied {
+            written: 1,
+            has_more: true,
+        };
+        let end = StreamCopyResult::End;
+        let small = StreamCopyResult::BufferTooSmall { needed: 4 };
+        assert_ne!(copied, end);
+        assert_ne!(copied, small);
+        assert_ne!(end, small);
+    }
+
+    #[test]
+    fn test_batched_copy_returns_end_when_cancelled() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Cancelled);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 8];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::End
+        );
+        assert!(state.cancelled);
+        assert!(!state.has_more());
+    }
+
+    #[test]
+    fn test_async_copy_returns_end_when_cancelled() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Cancelled);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        let mut out = [0u8; 8];
+        assert_eq!(
+            state.copy_next_chunk(&mut out).unwrap(),
+            StreamCopyResult::End
+        );
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_async_poll_cancelled_after_draining_queued_batch() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+        let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3]));
+        let _ = tx.send(BatchedMessage::Cancelled);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 8);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Ready);
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![1, 2, 3]));
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Cancelled);
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+    }
+
+    #[test]
+    fn test_streaming_state_fetch_resumes_from_mid_offset() {
+        let mut state = StreamingState {
+            data: vec![10, 20, 30, 40, 50],
+            offset: 2,
+            chunk_size: 2,
+        };
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![30, 40]));
+        assert_eq!(state.offset, 4);
+        assert_eq!(state.fetch_next_chunk().unwrap(), Some(vec![50]));
+    }
+
+    #[test]
+    fn test_batched_has_more_false_after_done_message() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = BatchedStreamingState::from_receiver(rx, 4);
+        assert!(state.has_more());
+        assert_eq!(state.fetch_next_chunk().unwrap(), None);
+        assert!(!state.has_more());
+    }
+
+    #[test]
+    fn test_async_has_more_false_after_poll_done() {
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let _ = tx.send(BatchedMessage::Done);
+        drop(tx);
+
+        let mut state = AsyncStreamingState::from_receiver(rx, 4);
+        assert_eq!(state.poll_status(), AsyncStreamStatus::Done);
+        assert!(!state.has_more());
     }
 }

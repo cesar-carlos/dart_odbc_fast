@@ -258,4 +258,25 @@ mod tests {
         logger.clear_events();
         assert_eq!(logger.event_count(), 0);
     }
+
+    #[test]
+    fn should_log_error_without_connection_id() {
+        let logger = AuditLogger::new(true);
+        logger.log_error(None, "orphan failure");
+        let events = logger.get_events(1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "error");
+        assert_eq!(events[0].connection_id, None);
+        assert_eq!(
+            events[0].metadata.get("error"),
+            Some(&"orphan failure".to_string())
+        );
+    }
+
+    #[test]
+    fn should_return_empty_events_when_limit_zero() {
+        let logger = AuditLogger::new(true);
+        logger.log_query(1, "SELECT 1");
+        assert!(logger.get_events(0).is_empty());
+    }
 }

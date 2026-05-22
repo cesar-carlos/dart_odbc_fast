@@ -584,4 +584,41 @@ mod tests {
     fn test_version_constant() {
         assert_eq!(VERSION, 1);
     }
+
+    #[test]
+    fn append_output_footer_non_try_wrapper_succeeds() {
+        use crate::protocol::param_value::ParamValue;
+
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_output_footer(base.clone(), &[ParamValue::Null]);
+        assert_eq!(
+            out.len(),
+            base.len() + 4 + 4 + ParamValue::Null.serialize().len()
+        );
+        assert!(out[base.len()..base.len() + 4] == OUTPUT_FOOTER_MAGIC);
+    }
+
+    #[test]
+    fn append_ref_cursor_footer_non_try_wrapper_succeeds() {
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_ref_cursor_footer(base, std::slice::from_ref(&blob));
+        assert!(out.windows(4).any(|w| w == REF_CURSOR_FOOTER_MAGIC));
+    }
+
+    #[test]
+    fn try_encode_with_compression_shrinks_or_falls_back_to_raw() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("payload".to_string(), OdbcType::Binary);
+        let cell = vec![0xABu8; 1_100_000];
+        buffer.add_row(vec![Some(cell)]);
+
+        let raw = RowBufferEncoder::try_encode(&buffer).expect("raw encode");
+        let compressed = RowBufferEncoder::try_encode_with_compression(&buffer).expect("compress");
+
+        assert!(
+            compressed.len() < raw.len() || compressed == raw,
+            "expected compression to shrink payload or fall back to raw"
+        );
+    }
 }

@@ -400,4 +400,22 @@ mod tests {
             .unwrap();
         assert!(sql.ends_with("RETURNING \"id\""));
     }
+
+    #[test]
+    fn should_emit_pg_indexes_catalog_sql() {
+        let plugin = PostgresPlugin::new();
+        let q = plugin.list_indexes_sql("users", None).unwrap();
+        assert!(q.sql.contains("pg_indexes"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn session_init_quotes_search_path_schema() {
+        let plugin = PostgresPlugin::new();
+        let opts = SessionOptions::new().with_schema("public");
+        let stmts = plugin.initialization_sql(&opts);
+        assert!(stmts
+            .iter()
+            .any(|s| s.contains("search_path TO \"public\"")));
+    }
 }

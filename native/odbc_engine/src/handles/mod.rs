@@ -534,4 +534,13 @@ mod tests {
             "MAX_CONN_ID_ALLOC_ATTEMPTS should be 1000"
         );
     }
+
+    #[test]
+    fn should_with_connection_fail_when_handle_missing() {
+        let manager = HandleManager::new();
+        let err = manager
+            .with_connection(99, |_| Ok(()))
+            .expect_err("unknown handle");
+        assert!(matches!(err, OdbcError::InvalidHandle(99)));
+    }
 }

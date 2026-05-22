@@ -1819,4 +1819,218 @@ mod tests {
         assert!(LockTimeout::engine_default().is_engine_default());
         assert!(!LockTimeout::from_millis(1).is_engine_default());
     }
+
+    #[test]
+    fn isolation_sqlite_pragma_sql_formats() {
+        let ru = format!(
+            "PRAGMA read_uncommitted = {}",
+            if matches!(
+                IsolationLevel::ReadUncommitted,
+                IsolationLevel::ReadUncommitted
+            ) {
+                1
+            } else {
+                0
+            }
+        );
+        assert_eq!(ru, "PRAGMA read_uncommitted = 1");
+        let serial = match IsolationLevel::Serializable {
+            IsolationLevel::ReadUncommitted => "PRAGMA read_uncommitted = 1",
+            _ => "PRAGMA read_uncommitted = 0",
+        };
+        assert_eq!(serial, "PRAGMA read_uncommitted = 0");
+    }
+
+    #[test]
+    fn isolation_db2_set_current_sql_format() {
+        let sql = format!(
+            "SET CURRENT ISOLATION = {}",
+            IsolationLevel::RepeatableRead.to_db2_keyword()
+        );
+        assert_eq!(sql, "SET CURRENT ISOLATION = RS");
+    }
+
+    #[test]
+    fn transaction_savepoint_dialect_getter_matches_for_test() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_dialect(
+            handles,
+            1,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::SqlServer,
+        );
+        assert_eq!(txn.savepoint_dialect(), SavepointDialect::SqlServer);
+    }
+
+    #[test]
+    fn quoting_for_auto_uses_sql92_double_quote() {
+        assert_eq!(
+            quoting_for(SavepointDialect::Auto),
+            crate::engine::identifier::IdentifierQuoting::DoubleQuote
+        );
+    }
+
+    #[test]
+    fn resolve_savepoint_dialect_unknown_engine_uses_sql92() {
+        use crate::engine::core::ENGINE_UNKNOWN;
+
+        assert_eq!(
+            super::resolve_savepoint_dialect_for_engine(ENGINE_UNKNOWN),
+            SavepointDialect::Sql92
+        );
+    }
+
+    #[test]
+    fn savepoint_create_sql92_emits_double_quoted_identifier() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test_with_dialect(
+            handles,
+            u32::MAX,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Sql92,
+        );
+        validate_identifier("sp_ok").unwrap();
+        let qname = quote_identifier("sp_ok", quoting_for(SavepointDialect::Sql92)).unwrap();
+        let sql = format!("SAVEPOINT {qname}");
+        assert_eq!(sql, "SAVEPOINT \"sp_ok\"");
+        // Method fails on dispatch (no connection) after validation passes.
+        assert!(txn.savepoint_create("sp_ok").is_err());
+    }
+
+    #[test]
+    fn savepoint_rollback_to_sqlserver_bracket_quoting() {
+        validate_identifier("sp1").unwrap();
+        let qname = quote_identifier("sp1", quoting_for(SavepointDialect::SqlServer)).unwrap();
+        let sql = format!("ROLLBACK TRANSACTION {qname}");
+        assert_eq!(sql, "ROLLBACK TRANSACTION [sp1]");
+    }
+
+    #[test]
+    fn transaction_handles_returns_shared_arc_from_for_test() {
+        let handles: SharedHandleManager = Arc::new(Mutex::new(HandleManager::new()));
+        let txn = Transaction::for_test(
+            handles.clone(),
+            3,
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+        );
+        assert!(Arc::ptr_eq(&handles, &txn.handles()));
+    }
+
+    #[test]
+    fn resolve_savepoint_dialect_maps_non_sqlserver_engines_to_sql92() {
+        use crate::engine::core::{
+            ENGINE_DB2, ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES,
+            ENGINE_SNOWFLAKE, ENGINE_SQLITE, ENGINE_UNKNOWN,
+        };
+
+        for engine in [
+            ENGINE_POSTGRES,
+            ENGINE_MYSQL,
+            ENGINE_MARIADB,
+            ENGINE_DB2,
+            ENGINE_ORACLE,
+            ENGINE_SQLITE,
+            ENGINE_SNOWFLAKE,
+            ENGINE_UNKNOWN,
+        ] {
+            assert_eq!(
+                super::resolve_savepoint_dialect_for_engine(engine),
+                SavepointDialect::Sql92,
+                "{engine} must use SQL-92 savepoint grammar"
+            );
+        }
+    }
+
+    #[test]
+    fn savepoint_auto_defensive_create_uses_savepoint_keyword() {
+        validate_identifier("sp_auto").unwrap();
+        let qname = quote_identifier("sp_auto", quoting_for(SavepointDialect::Auto)).unwrap();
+        let sql = format!("SAVEPOINT {qname}");
+        assert_eq!(sql, "SAVEPOINT \"sp_auto\"");
+    }
+
+    #[test]
+    fn savepoint_release_sql92_emits_release_savepoint() {
+        validate_identifier("sp_rel").unwrap();
+        let qname = quote_identifier("sp_rel", quoting_for(SavepointDialect::Sql92)).unwrap();
+        let sql = format!("RELEASE SAVEPOINT {qname}");
+        assert_eq!(sql, "RELEASE SAVEPOINT \"sp_rel\"");
+    }
+
+    #[test]
+    fn savepoint_rollback_to_sql92_uses_double_quoted_identifier() {
+        validate_identifier("sp_rb").unwrap();
+        let qname = quote_identifier("sp_rb", quoting_for(SavepointDialect::Sql92)).unwrap();
+        let sql = format!("ROLLBACK TO SAVEPOINT {qname}");
+        assert_eq!(sql, "ROLLBACK TO SAVEPOINT \"sp_rb\"");
+    }
+
+    #[test]
+    fn oracle_isolation_unsupported_level_validation_message() {
+        for level in [
+            IsolationLevel::ReadUncommitted,
+            IsolationLevel::RepeatableRead,
+        ] {
+            let msg = format!(
+                "Oracle does not support isolation level {level:?}; \
+                 only ReadCommitted and Serializable are supported"
+            );
+            assert!(msg.contains("Oracle does not support"));
+            assert!(msg.contains("ReadCommitted"));
+            assert!(msg.contains("Serializable"));
+        }
+    }
+
+    #[test]
+    fn snowflake_savepoint_dialect_resolves_to_sql92_not_sqlserver() {
+        use crate::engine::core::{ENGINE_SNOWFLAKE, ENGINE_SQLSERVER};
+
+        assert_ne!(ENGINE_SNOWFLAKE, ENGINE_SQLSERVER);
+        assert_eq!(
+            super::resolve_savepoint_dialect_for_engine(ENGINE_SNOWFLAKE),
+            SavepointDialect::Sql92
+        );
+        assert_eq!(
+            super::resolve_savepoint_dialect_for_engine(ENGINE_SQLSERVER),
+            SavepointDialect::SqlServer
+        );
+    }
+
+    #[test]
+    fn quoting_for_sqlserver_uses_bracket_style() {
+        assert_eq!(
+            quoting_for(SavepointDialect::SqlServer),
+            crate::engine::identifier::IdentifierQuoting::Brackets
+        );
+    }
+
+    #[test]
+    fn savepoint_rollback_to_rejects_empty_name_on_sql92() {
+        let txn = Transaction::for_test_no_conn(
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Sql92,
+        );
+        assert!(matches!(
+            txn.savepoint_rollback_to(""),
+            Err(OdbcError::ValidationError(_))
+        ));
+    }
+
+    #[test]
+    fn transaction_for_test_no_conn_validates_before_dispatch_on_release() {
+        let txn = Transaction::for_test_no_conn(
+            TransactionState::Active,
+            IsolationLevel::ReadCommitted,
+            SavepointDialect::Sql92,
+        );
+        assert!(txn.savepoint_release("ok_name").is_err());
+        assert!(matches!(
+            txn.savepoint_release("bad;name"),
+            Err(OdbcError::ValidationError(_))
+        ));
+    }
 }

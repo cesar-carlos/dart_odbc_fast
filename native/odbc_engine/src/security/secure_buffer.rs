@@ -172,4 +172,15 @@ mod tests {
         let extracted = buffer.into_vec();
         assert_eq!(extracted, original.into_bytes());
     }
+
+    #[test]
+    fn should_report_len_and_is_empty() {
+        let empty = SecureBuffer::new(Vec::new());
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+
+        let filled = SecureBuffer::new(vec![9, 8]);
+        assert!(!filled.is_empty());
+        assert_eq!(filled.len(), 2);
+    }
 }

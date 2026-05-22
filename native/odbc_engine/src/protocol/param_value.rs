@@ -1016,4 +1016,294 @@ mod tests {
             .expect_err("oversize");
         assert!(err.to_string().contains("ParamValue::Decimal"));
     }
+
+    #[test]
+    fn should_reject_huge_binary_try_serialize() {
+        let b = vec![0u8; MAX_PARAM_VALUE_PAYLOAD_LEN + 1];
+        let err = ParamValue::Binary(b).try_serialize().expect_err("oversize");
+        assert!(err.to_string().contains("ParamValue::Binary"));
+    }
+
+    #[test]
+    fn test_deserialize_binary_truncated_payload() {
+        let enc = ParamValue::Binary(vec![1, 2, 3]).serialize();
+        let truncated = &enc[..enc.len() - 1];
+        let err = ParamValue::deserialize(truncated).expect_err("truncated binary");
+        assert!(err.to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn test_deserialize_length_overflow_at_consumed_boundary() {
+        let data = vec![TAG_NULL, 0xff, 0xff, 0xff, 0xff];
+        let err = ParamValue::deserialize(&data).expect_err("overflow");
+        assert!(
+            err.to_string().contains("payload length")
+                || err.to_string().contains("length overflow")
+        );
+    }
+
+    #[test]
+    fn should_bind_null_with_real_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Real,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("real null");
+        assert_eq!(bound[0].data_type(), DataType::Real);
+    }
+
+    #[test]
+    fn should_bind_null_with_float_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Float { precision: 10 },
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("float null");
+        assert_eq!(bound[0].data_type(), DataType::Float { precision: 10 });
+    }
+
+    #[test]
+    fn should_bind_null_with_date_description_via_text_null_box() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Date,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("date null");
+        assert_eq!(bound[0].data_type(), DataType::Date);
+    }
+
+    #[test]
+    fn should_infer_decimal_family_for_null_and_decimal() {
+        let params = [ParamValue::Null, ParamValue::Decimal("1.0".into())];
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("infer")
+            .expect("decimal family");
+        assert_eq!(bound.len(), 2);
+        assert!(matches!(
+            bound[0].data_type(),
+            DataType::Varchar { length: None }
+        ));
+    }
+
+    #[test]
+    fn should_infer_string_family_for_null_and_string() {
+        let params = [ParamValue::Null, ParamValue::String("x".into())];
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("infer")
+            .expect("string family");
+        assert_eq!(bound.len(), 2);
+        assert!(matches!(
+            bound[0].data_type(),
+            DataType::Varchar { length: None }
+        ));
+    }
+
+    #[test]
+    fn should_infer_binary_family_for_null_and_binary() {
+        let params = [ParamValue::Null, ParamValue::Binary(vec![0xAB])];
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("infer")
+            .expect("binary family");
+        assert_eq!(bound.len(), 2);
+        assert!(matches!(
+            bound[0].data_type(),
+            DataType::Varbinary { length: None }
+        ));
+    }
+
+    #[test]
+    fn test_param_values_to_input_params_maps_all_bindable_variants() {
+        let params = [
+            ParamValue::String("s".into()),
+            ParamValue::BigInt(9),
+            ParamValue::Decimal("1".into()),
+        ];
+        let bound = param_values_to_input_params(&params).expect("bind all");
+        assert_eq!(bound.len(), 3);
+    }
+
+    #[test]
+    fn test_param_values_to_strings_unicode() {
+        let params = [ParamValue::String("日本語".into())];
+        let out = param_values_to_strings(&params).expect("unicode");
+        assert_eq!(out[0].as_deref(), Some("日本語"));
+    }
+
+    #[test]
+    fn should_bind_null_with_double_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Double,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("double null");
+        assert_eq!(bound[0].data_type(), DataType::Double);
+    }
+
+    #[test]
+    fn should_bind_null_with_binary_family_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::LongVarbinary { length: None },
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("long varbinary null");
+        assert_eq!(
+            bound[0].data_type(),
+            DataType::LongVarbinary { length: None }
+        );
+    }
+
+    #[test]
+    fn should_infer_integer_family_without_bigint_values() {
+        let params = [
+            ParamValue::Integer(1),
+            ParamValue::Null,
+            ParamValue::Integer(2),
+        ];
+        let bound = param_values_to_input_params_with_inference(&params)
+            .expect("infer")
+            .expect("integer family");
+        assert_eq!(bound.len(), 3);
+        assert_eq!(bound[0].data_type(), DataType::Integer);
+        assert_eq!(bound[1].data_type(), DataType::Integer);
+    }
+
+    #[test]
+    fn should_bind_bigint_with_bigint_description() {
+        let params = [ParamValue::BigInt(42)];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::BigInt,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("bigint bind");
+        assert_eq!(bound[0].data_type(), DataType::BigInt);
+    }
+
+    #[test]
+    fn should_map_null_only_to_default_input_parameter() {
+        let bound = param_values_to_input_params(&[ParamValue::Null]).expect("null bind");
+        assert_eq!(bound.len(), 1);
+    }
+
+    #[test]
+    fn should_bind_null_with_tinyint_and_bit_descriptions() {
+        for data_type in [DataType::TinyInt, DataType::Bit] {
+            let params = [ParamValue::Null];
+            let descriptions = [ParameterDescription {
+                nullability: Nullability::Nullable,
+                data_type,
+            }];
+            let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+                .expect("nullable bind");
+            assert_eq!(bound[0].data_type(), data_type);
+        }
+    }
+
+    #[test]
+    fn should_roundtrip_via_try_serialize() {
+        let p = ParamValue::String("via try".to_string());
+        let enc = p.try_serialize().expect("try_serialize");
+        let (dec, n) = ParamValue::deserialize(&enc).expect("deserialize");
+        assert_eq!(dec, p);
+        assert_eq!(n, enc.len());
+    }
+
+    #[test]
+    fn should_bind_null_via_default_input_parameter() {
+        let bound = param_value_to_input_parameter(&ParamValue::Null).expect("null bind");
+        assert_eq!(
+            bound.data_type(),
+            Option::<String>::None.into_parameter().data_type()
+        );
+    }
+
+    #[test]
+    fn should_bind_integer_with_smallint_description_type() {
+        let params = [ParamValue::Integer(12)];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::SmallInt,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("smallint integer");
+        assert_eq!(bound[0].data_type(), DataType::SmallInt);
+    }
+
+    #[test]
+    fn should_bind_bigint_with_bigint_description_type() {
+        let params = [ParamValue::BigInt(99)];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::BigInt,
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("bigint bind");
+        assert_eq!(bound[0].data_type(), DataType::BigInt);
+    }
+
+    #[test]
+    fn should_bind_null_with_unknown_description_when_inference_succeeds() {
+        let params = [ParamValue::Null, ParamValue::String("x".into())];
+        let descriptions = [
+            ParameterDescription {
+                nullability: Nullability::Nullable,
+                data_type: DataType::Unknown,
+            },
+            ParameterDescription {
+                nullability: Nullability::Nullable,
+                data_type: DataType::Unknown,
+            },
+        ];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("inferred null");
+        assert!(matches!(
+            bound[0].data_type(),
+            DataType::Varchar { length: None }
+        ));
+    }
+
+    #[test]
+    fn should_serialize_params_via_try_serialize_params() {
+        let params = vec![ParamValue::Integer(1), ParamValue::Null];
+        let enc = try_serialize_params(&params).expect("try serialize list");
+        let dec = deserialize_params(&enc).expect("deserialize list");
+        assert_eq!(dec, params);
+    }
+
+    #[test]
+    fn should_ignore_ref_cursor_in_max_param_string_len() {
+        let params = [ParamValue::RefCursorOut, ParamValue::String("ab".into())];
+        assert_eq!(max_param_string_len(&params), 2);
+    }
+
+    #[test]
+    fn should_bind_null_with_numeric_family_description() {
+        let params = [ParamValue::Null];
+        let descriptions = [ParameterDescription {
+            nullability: Nullability::Nullable,
+            data_type: DataType::Numeric {
+                precision: 10,
+                scale: 2,
+            },
+        }];
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions)
+            .expect("numeric null");
+        assert_eq!(
+            bound[0].data_type(),
+            DataType::Numeric {
+                precision: 10,
+                scale: 2
+            }
+        );
+    }
 }

@@ -140,4 +140,46 @@ mod tests {
         assert_eq!(q.sql, "SELECT * FROM t WHERE x = ?");
         assert_eq!(q.params.len(), 1);
     }
+
+    #[test]
+    fn defaults_list_tables_unfiltered_has_no_params() {
+        let q = defaults::list_tables(None, None).unwrap();
+        assert!(q.sql.contains("INFORMATION_SCHEMA.TABLES"));
+        assert!(q.params.is_empty());
+    }
+
+    #[test]
+    fn defaults_list_tables_catalog_and_schema_filters() {
+        let q = defaults::list_tables(Some("cat"), Some("sch")).unwrap();
+        assert!(q.sql.contains("TABLE_CATALOG = ?"));
+        assert!(q.sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(q.params.len(), 2);
+    }
+
+    #[test]
+    fn defaults_list_columns_rejects_empty_table_name() {
+        assert!(defaults::list_columns("  ", None).is_err());
+    }
+
+    #[test]
+    fn defaults_list_tables_catalog_only_filter() {
+        let q = defaults::list_tables(Some("mydb"), None).unwrap();
+        assert!(q.sql.contains("TABLE_CATALOG = ?"));
+        assert_eq!(q.params.len(), 1);
+        assert!(matches!(&q.params[0], ParamValue::String(s) if s == "mydb"));
+    }
+
+    #[test]
+    fn defaults_list_tables_schema_only_filter() {
+        let q = defaults::list_tables(None, Some("public")).unwrap();
+        assert!(q.sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn defaults_list_columns_with_schema_param() {
+        let q = defaults::list_columns("users", Some("dbo")).unwrap();
+        assert!(q.sql.contains("TABLE_SCHEMA = ?"));
+        assert_eq!(q.params.len(), 2);
+    }
 }

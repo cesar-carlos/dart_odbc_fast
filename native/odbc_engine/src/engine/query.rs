@@ -194,4 +194,117 @@ mod tests {
             ParamList::Directed(_) => panic!("empty buffer must be legacy list"),
         }
     }
+
+    #[test]
+    fn deserialize_legacy_param_buffer_rejects_truncated_payload() {
+        // Legacy format: one byte type tag without following value bytes.
+        let garbage = [0xFFu8];
+        let err = deserialize_param_buffer(&garbage).unwrap_err();
+        assert!(matches!(err, crate::error::OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn deserialize_drt1_rejects_truncated_value_after_direction() {
+        let mut buf = Vec::from(*b"DRT1");
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(0); // ParamDirection::Input — valid direction, missing ParamValue bytes.
+        let err = deserialize_param_buffer(&buf).unwrap_err();
+        match err {
+            crate::error::OdbcError::ValidationError(msg) => {
+                assert!(
+                    msg.contains("truncated"),
+                    "expected truncated value error, got {msg}"
+                );
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_drt1_rejects_invalid_direction_code() {
+        let mut buf = Vec::from(*b"DRT1");
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(99); // not a valid ParamDirection
+        let err = deserialize_param_buffer(&buf).unwrap_err();
+        match err {
+            crate::error::OdbcError::ValidationError(msg) => {
+                assert!(msg.contains("invalid direction"));
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn result_encoding_pipeline_row_major_uses_global_singleton() {
+        let a = ResultEncoding::RowMajor.pipeline();
+        let b = ResultEncoding::RowMajor.pipeline();
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn result_encoding_pipeline_columnar_builds_distinct_pipeline() {
+        let row = ResultEncoding::RowMajor.pipeline();
+        let col = ResultEncoding::Columnar.pipeline();
+        let compressed = ResultEncoding::ColumnarCompressed.pipeline();
+        assert!(!std::sync::Arc::ptr_eq(&row, &col));
+        assert!(!std::sync::Arc::ptr_eq(&col, &compressed));
+    }
+
+    #[test]
+    fn should_deserialize_legacy_integer_param_buffer() {
+        use crate::protocol::bound_param::ParamList;
+
+        let mut buf = ParamValue::Integer(42).serialize();
+        buf.extend(ParamValue::Integer(7).serialize());
+        let list = deserialize_param_buffer(&buf).expect("legacy integers");
+        match list {
+            ParamList::Legacy(p) => {
+                assert_eq!(p.len(), 2);
+                assert_eq!(p[0], ParamValue::Integer(42));
+                assert_eq!(p[1], ParamValue::Integer(7));
+            }
+            ParamList::Directed(_) => panic!("expected legacy list"),
+        }
+    }
+
+    #[test]
+    fn should_deserialize_drt1_input_and_output_params() {
+        use crate::protocol::bound_param::{BoundParam, ParamDirection, ParamList};
+
+        let in_bytes = ParamValue::Integer(1).serialize();
+        let out_bytes = ParamValue::Null.serialize();
+        let mut buf: Vec<u8> = b"DRT1".to_vec();
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        buf.push(ParamDirection::Input as u8);
+        buf.extend_from_slice(&in_bytes);
+        buf.push(ParamDirection::Output as u8);
+        buf.extend_from_slice(&out_bytes);
+
+        let list = deserialize_param_buffer(&buf).expect("drt1 in+out");
+        match list {
+            ParamList::Directed(b) => {
+                assert_eq!(
+                    b,
+                    vec![
+                        BoundParam {
+                            direction: ParamDirection::Input,
+                            value: ParamValue::Integer(1),
+                        },
+                        BoundParam {
+                            direction: ParamDirection::Output,
+                            value: ParamValue::Null,
+                        },
+                    ]
+                );
+            }
+            ParamList::Legacy(_) => panic!("expected directed list"),
+        }
+    }
+
+    #[test]
+    fn should_reject_drt1_when_count_exceeds_max_param_limit() {
+        let mut buf: Vec<u8> = b"DRT1".to_vec();
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(deserialize_param_buffer(&buf).is_err());
+    }
 }

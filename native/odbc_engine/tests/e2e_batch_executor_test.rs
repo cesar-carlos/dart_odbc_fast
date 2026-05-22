@@ -9,7 +9,9 @@ use helpers::env::get_sqlserver_test_dsn;
 
 fn skip_unless_sqlserver_e2e() -> bool {
     if !should_run_sqlserver_e2e_tests() {
-        eprintln!("Skipping: SQL Server E2E DSN not available (set ODBC_TEST_DSN or SQLSERVER_TEST_*)");
+        eprintln!(
+            "Skipping: SQL Server E2E DSN not available (set ODBC_TEST_DSN or SQLSERVER_TEST_*)"
+        );
         return true;
     }
     false

@@ -181,4 +181,21 @@ mod tests {
         assert_eq!(seen, "peek");
         assert!(manager.retrieve("k").is_ok());
     }
+
+    #[test]
+    fn should_with_secret_fail_when_key_missing() {
+        let manager = SecretManager::new();
+        let err = manager
+            .with_secret("missing", |b| b.len())
+            .expect_err("missing key");
+        assert!(err.to_string().contains("Secret not found"));
+    }
+
+    #[test]
+    fn should_remove_missing_key_without_error() {
+        let manager = SecretManager::new();
+        manager
+            .remove("never_stored")
+            .expect("remove is idempotent");
+    }
 }

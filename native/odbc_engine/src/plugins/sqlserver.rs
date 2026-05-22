@@ -469,4 +469,21 @@ mod tests {
             .unwrap();
         assert!(sql.contains("OUTPUT INSERTED.[id]"));
     }
+
+    #[test]
+    fn should_emit_sys_primary_keys_catalog_sql() {
+        let plugin = SqlServerPlugin::new();
+        let q = plugin.list_primary_keys_sql("Orders", None).unwrap();
+        assert!(q.sql.contains("sys.indexes"));
+        assert!(q.sql.contains("is_primary_key = 1"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn should_emit_sys_indexes_catalog_sql() {
+        let plugin = SqlServerPlugin::new();
+        let q = plugin.list_indexes_sql("Orders", None).unwrap();
+        assert!(q.sql.contains("sys.index_columns"));
+        assert_eq!(q.params.len(), 1);
+    }
 }

@@ -53,8 +53,7 @@ impl TelemetryExporter for ConsoleExporter {
     /// - Prints JSON trace to console.
     /// - Returns 0 on success (non-zero would indicate failure).
     fn export(&self, trace_json: &str) -> i32 {
-        println!("{}", trace_json);
-        0
+        super::console::export_trace(trace_json)
     }
 }
 

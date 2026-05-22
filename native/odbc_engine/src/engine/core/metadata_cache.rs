@@ -352,4 +352,44 @@ mod tests {
         assert!(c.get_schema("table2").is_some());
         assert!(c.get_schema("table3").is_some());
     }
+
+    #[test]
+    fn should_clamp_zero_max_size_to_one() {
+        let c = MetadataCache::new(0, Duration::from_secs(10));
+        assert_eq!(c.max_size(), 1);
+    }
+
+    #[test]
+    fn should_return_none_for_missing_payload_key() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        assert!(c.get_payload("missing").is_none());
+    }
+
+    #[test]
+    fn should_overwrite_cached_schema_on_second_put() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        let first = TableSchema {
+            table_name: "t".to_string(),
+            columns: vec![ColumnMetadata {
+                name: "a".to_string(),
+                odbc_type: 1,
+                nullable: true,
+            }],
+            cached_at: Instant::now(),
+        };
+        let second = TableSchema {
+            table_name: "t".to_string(),
+            columns: vec![ColumnMetadata {
+                name: "b".to_string(),
+                odbc_type: 4,
+                nullable: false,
+            }],
+            cached_at: Instant::now(),
+        };
+        c.cache_schema("t", first);
+        c.cache_schema("t", second);
+        let got = c.get_schema("t").expect("schema present");
+        assert_eq!(got.columns[0].name, "b");
+        assert_eq!(got.columns[0].odbc_type, 4);
+    }
 }

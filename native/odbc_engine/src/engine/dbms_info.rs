@@ -164,4 +164,28 @@ mod tests {
         assert!(json.contains("\"max_catalog_name_len\":128"));
         assert!(json.contains("\"max_column_name_len\":128"));
     }
+
+    #[test]
+    fn dbms_info_maps_sybase_ase_and_redshift_engines() {
+        use crate::engine::core::{ENGINE_REDSHIFT, ENGINE_SYBASE_ASE};
+
+        assert_eq!(fake("Adaptive Server Enterprise").engine, ENGINE_SYBASE_ASE);
+        assert_eq!(fake("Amazon Redshift").engine, ENGINE_REDSHIFT);
+    }
+
+    #[test]
+    fn dbms_info_clone_preserves_dbms_name_and_engine() {
+        let info = fake("PostgreSQL");
+        let cloned = info.clone();
+        assert_eq!(cloned.dbms_name, info.dbms_name);
+        assert_eq!(cloned.engine, info.engine);
+        assert_eq!(cloned.current_catalog, info.current_catalog);
+    }
+
+    #[test]
+    fn dbms_info_debug_includes_dbms_name() {
+        let info = fake("SQLite");
+        let debug = format!("{info:?}");
+        assert!(debug.contains("SQLite"));
+    }
 }

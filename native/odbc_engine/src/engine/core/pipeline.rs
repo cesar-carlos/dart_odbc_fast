@@ -6,6 +6,7 @@ use crate::protocol::ParamValue;
 use odbc_api::Connection;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct QueryPlan {
     sql: String,
     use_cache: bool,
@@ -231,5 +232,29 @@ mod tests {
         let sql = "SELECT u.id, u.name FROM users u WHERE u.active = 1";
         let plan = pipeline.parse_sql(sql).unwrap();
         assert_eq!(plan.sql(), sql);
+    }
+
+    #[test]
+    fn should_reject_tab_only_sql_when_parsing() {
+        let pipeline = QueryPipeline::new(100);
+        let err = pipeline
+            .parse_sql("\t\n")
+            .expect_err("tab/newline-only SQL should be rejected");
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn should_parse_sql_preserving_unicode_identifiers() {
+        let pipeline = QueryPipeline::new(100);
+        let sql = "SELECT naïve FROM t";
+        let plan = pipeline.parse_sql(sql).unwrap();
+        assert_eq!(plan.sql(), sql);
+    }
+
+    #[test]
+    fn query_plan_debug_includes_sql_fragment() {
+        let plan = QueryPlan::new("SELECT 1".to_string());
+        let debug = format!("{plan:?}");
+        assert!(debug.contains("SELECT 1"));
     }
 }
