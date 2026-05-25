@@ -445,6 +445,11 @@ class AsyncNativeOdbcConnection {
   final Map<int, int> _statementWorkerById = {};
   final Map<int, int> _statementConnectionById = {};
   final Map<int, int> _transactionWorkerById = {};
+
+  /// Maps txnId → native connectionId so that _clearConnectionAffinity can
+  /// remove stale transaction entries when a connection is disconnected or
+  /// pool-released.
+  final Map<int, int> _transactionConnectionById = {};
   final Map<int, int> _streamWorkerById = {};
   final Map<int, int> _asyncRequestWorkerById = {};
   final Queue<_BackpressureWaiter> _backpressureWaiters =
@@ -975,20 +980,17 @@ class AsyncNativeOdbcConnection {
       case (ClearAllStatementsRequest(), IntResponse(value: 0)):
         _statementWorkerById.clear();
         _statementConnectionById.clear();
-      case (BeginTransactionRequest(), IntResponse(value: final id))
+      case (
+            BeginTransactionRequest(:final connectionId),
+            IntResponse(value: final id),
+          )
           when id > 0:
         _transactionWorkerById[id] = worker.index;
-      case (
-            CommitTransactionRequest(:final txnId),
-            BoolResponse(:final value),
-          )
-          when value:
-      case (
-            RollbackTransactionRequest(:final txnId),
-            BoolResponse(:final value),
-          )
-          when value:
+        _transactionConnectionById[id] = connectionId;
+      case (CommitTransactionRequest(:final txnId), BoolResponse()):
+      case (RollbackTransactionRequest(:final txnId), BoolResponse()):
         _transactionWorkerById.remove(txnId);
+        _transactionConnectionById.remove(txnId);
       case (StreamStartRequest(), IntResponse(value: final id)) when id > 0:
       case (StreamStartBatchedRequest(), IntResponse(value: final id))
           when id > 0:
@@ -1026,6 +1028,17 @@ class AsyncNativeOdbcConnection {
       _statementConnectionById.remove(stmtId);
       _namedParamOrderByStmtId.remove(stmtId);
     }
+    // Clean up transaction affinity for transactions that belonged to this
+    // connection (native rolls them back on disconnect; Dart must not retain
+    // stale worker mappings).
+    final txnIds = _transactionConnectionById.entries
+        .where((entry) => entry.value == connectionId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final txnId in txnIds) {
+      _transactionWorkerById.remove(txnId);
+      _transactionConnectionById.remove(txnId);
+    }
   }
 
   void _clearWorkerAffinity(int workerIndex) {
@@ -1036,7 +1049,14 @@ class AsyncNativeOdbcConnection {
         .forEach(_clearConnectionAffinity);
 
     _statementWorkerById.removeWhere((_, value) => value == workerIndex);
-    _transactionWorkerById.removeWhere((_, value) => value == workerIndex);
+    final txnIdsForWorker = _transactionWorkerById.entries
+        .where((e) => e.value == workerIndex)
+        .map((e) => e.key)
+        .toList(growable: false);
+    for (final txnId in txnIdsForWorker) {
+      _transactionWorkerById.remove(txnId);
+      _transactionConnectionById.remove(txnId);
+    }
     _streamWorkerById.removeWhere((_, value) => value == workerIndex);
     _asyncRequestWorkerById.removeWhere((_, value) => value == workerIndex);
   }

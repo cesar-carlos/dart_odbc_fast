@@ -129,7 +129,6 @@ class TelemetryBuffer {
   void _startPeriodicFlush() {
     _flushTimer = Timer.periodic(_flushInterval, (_) {
       if (size > 0) {
-        flush();
         onFlush?.call();
       }
     });

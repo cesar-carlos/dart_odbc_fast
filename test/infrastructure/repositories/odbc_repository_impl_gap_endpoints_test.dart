@@ -851,10 +851,11 @@ void main() {
       },
     );
 
-    test('poolHealthCheck returns success with native false', () async {
+    test('poolHealthCheck returns failure with native false', () async {
+      // Native false → pool invalid or unhealthy → Failure with ConnectionError.
       final result = await repository.poolHealthCheck(1);
-      expect(result.isSuccess(), isTrue);
-      expect(result.getOrNull(), isFalse);
+      expect(result.isError(), isTrue);
+      expect(result.exceptionOrNull(), isA<ConnectionError>());
     });
 
     test('closeStatement succeeds when native returns true', () async {

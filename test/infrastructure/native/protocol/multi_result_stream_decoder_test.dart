@@ -186,9 +186,8 @@ void main() {
       const chunkSize = 1024;
       for (var offset = 0; offset < frame.length; offset += chunkSize) {
         final end = min(offset + chunkSize, frame.length);
-        itemCount += decoder
-            .feed(Uint8List.sublistView(frame, offset, end))
-            .length;
+        itemCount +=
+            decoder.feed(Uint8List.sublistView(frame, offset, end)).length;
       }
       expect(itemCount, equals(1));
       decoder.assertExhausted();

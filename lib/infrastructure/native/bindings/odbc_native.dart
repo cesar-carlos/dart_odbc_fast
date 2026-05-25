@@ -404,9 +404,11 @@ class OdbcNative {
       if (len == 0) {
         return null;
       }
-      final bytes =
-          outBuf.asTypedList(len).map((e) => e.toUnsigned(8)).toList();
-      return utf8.decode(bytes);
+      // Cast to Uint8 view — no allocation, no sign-conversion loop.
+      return utf8.decode(
+        outBuf.cast<ffi.Uint8>().asTypedList(len),
+        allowMalformed: true,
+      );
     } finally {
       malloc
         ..free(connStrPtr)
@@ -427,8 +429,11 @@ class OdbcNative {
       if (n == 0) {
         return '';
       }
-      final bytes = buf.asTypedList(n).map((e) => e.toUnsigned(8)).toList();
-      return utf8.decode(bytes);
+      // Cast to Uint8 view — no allocation, no sign-conversion loop.
+      return utf8.decode(
+        buf.cast<ffi.Uint8>().asTypedList(n),
+        allowMalformed: true,
+      );
     } finally {
       malloc.free(buf);
     }
@@ -865,9 +870,7 @@ class OdbcNative {
             final paramsLen = paramsBuffer.length;
             final paramsPtr = malloc<ffi.Uint8>(paramsLen);
             try {
-              for (var i = 0; i < paramsLen; i++) {
-                paramsPtr[i] = paramsBuffer[i];
-              }
+              paramsPtr.asTypedList(paramsLen).setAll(0, paramsBuffer);
               return _bindings.odbc_exec_query_multi_params(
                 connectionId,
                 sqlPtr,

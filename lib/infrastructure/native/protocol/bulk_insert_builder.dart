@@ -31,19 +31,16 @@ Never _throwNullabilityError(String columnName, int rowNumber) {
 }
 
 void _validateTextColumn(String value, BulkColumnSpec spec, int rowNumber) {
-  if (spec.maxLen > 0 && value.length > spec.maxLen) {
-    throw ArgumentError(
-      'Column "${spec.name}" exceeds max length ${spec.maxLen} '
-      '(got ${value.length} characters) at row $rowNumber.',
-    );
-  }
-
-  final List<int> utf8Bytes = utf8.encode(value);
-  if (spec.maxLen > 0 && utf8Bytes.length > spec.maxLen) {
-    throw ArgumentError(
-      'Column "${spec.name}" UTF-8 encoding exceeds max length ${spec.maxLen} '
-      '(got ${utf8Bytes.length} bytes) at row $rowNumber.',
-    );
+  // maxLen is defined in bytes (wire format is UTF-8; legacy path pads to
+  // maxLen bytes). Only encode when a limit is actually set.
+  if (spec.maxLen > 0) {
+    final utf8Bytes = utf8.encode(value);
+    if (utf8Bytes.length > spec.maxLen) {
+      throw ArgumentError(
+        'Column "${spec.name}" UTF-8 encoding exceeds max length '
+        '${spec.maxLen} (got ${utf8Bytes.length} bytes) at row $rowNumber.',
+      );
+    }
   }
 }
 
@@ -399,32 +396,32 @@ class BulkInsertBuilder {
       }
     }
 
-    final out = <int>[];
+    final out = BytesBuilder(copy: false);
     if (version == BulkPayloadVersion.v2) {
       out
-        ..addAll(_bulkPayloadV2Magic)
-        ..addAll(_u16Le(_bulkPayloadV2Version))
-        ..addAll(_u16Le(_bulkPayloadV2Flags));
+        ..add(_bulkPayloadV2Magic)
+        ..add(_u16Le(_bulkPayloadV2Version))
+        ..add(_u16Le(_bulkPayloadV2Flags));
     }
 
     final tableBytes = utf8.encode(_table);
     out
-      ..addAll(_u32Le(tableBytes.length))
-      ..addAll(tableBytes)
-      ..addAll(_u32Le(_columns.length));
+      ..add(_u32Le(tableBytes.length))
+      ..add(tableBytes)
+      ..add(_u32Le(_columns.length));
 
     for (final spec in _columns) {
       final nameBytes = utf8.encode(spec.name);
       out
-        ..addAll(_u32Le(nameBytes.length))
-        ..addAll(nameBytes)
-        ..add(spec.tag)
-        ..add(spec.nullable ? 1 : 0)
-        ..addAll(_u32Le(spec.maxLen));
+        ..add(_u32Le(nameBytes.length))
+        ..add(nameBytes)
+        ..addByte(spec.tag)
+        ..addByte(spec.nullable ? 1 : 0)
+        ..add(_u32Le(spec.maxLen));
     }
 
     final rowCount = _rows.length;
-    out.addAll(_u32Le(rowCount));
+    out.add(_u32Le(rowCount));
 
     for (var c = 0; c < _columns.length; c++) {
       final spec = _columns[c];
@@ -435,11 +432,11 @@ class BulkInsertBuilder {
       }
     }
 
-    return Uint8List.fromList(out);
+    return out.toBytes();
   }
 
   void _serializeColumnLegacy(
-    List<int> out,
+    BytesBuilder out,
     BulkColumnSpec spec,
     int colIndex,
     int rowCount,
@@ -457,24 +454,24 @@ class BulkInsertBuilder {
             final v = _rows[r][colIndex];
             if (v == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
-          out.addAll(_i32Le(i));
+          out.add(_i32Le(i));
         }
       case BulkColumnType.i64:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
-          out.addAll(_i64Le(i));
+          out.add(_i64Le(i));
         }
       case BulkColumnType.text:
       case BulkColumnType.decimal:
@@ -482,22 +479,24 @@ class BulkInsertBuilder {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
-          List<int> raw;
+          final List<int> raw;
           if (v == null) {
-            raw = <int>[];
+            raw = const <int>[];
           } else if (v is String) {
             raw = utf8.encode(v);
           } else {
             raw = utf8.encode('$v');
           }
           final len = raw.length.clamp(0, maxLen);
-          out.addAll(raw.take(len));
+          final slice =
+              raw is Uint8List ? raw.sublist(0, len) : raw.take(len).toList();
+          out.add(slice);
           for (var i = len; i < maxLen; i++) {
-            out.add(0);
+            out.addByte(0);
           }
         }
       case BulkColumnType.binary:
@@ -505,24 +504,26 @@ class BulkInsertBuilder {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
-          List<int> raw;
+          final List<int> raw;
           if (v == null) {
-            raw = <int>[];
+            raw = const <int>[];
           } else if (v is Uint8List) {
-            raw = v.toList();
+            raw = v;
           } else if (v is List<int>) {
             raw = v;
           } else {
-            raw = <int>[];
+            raw = const <int>[];
           }
           final len = raw.length.clamp(0, maxLen);
-          out.addAll(raw.take(len));
+          final slice =
+              raw is Uint8List ? raw.sublist(0, len) : raw.take(len).toList();
+          out.add(slice);
           for (var i = len; i < maxLen; i++) {
-            out.add(0);
+            out.addByte(0);
           }
         }
       case BulkColumnType.timestamp:
@@ -530,7 +531,7 @@ class BulkInsertBuilder {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
@@ -559,19 +560,19 @@ class BulkInsertBuilder {
             );
           }
           out
-            ..addAll(_i16Le(t.year))
-            ..addAll(_u16Le(t.month))
-            ..addAll(_u16Le(t.day))
-            ..addAll(_u16Le(t.hour))
-            ..addAll(_u16Le(t.minute))
-            ..addAll(_u16Le(t.second))
-            ..addAll(_u32Le(t.fraction));
+            ..add(_i16Le(t.year))
+            ..add(_u16Le(t.month))
+            ..add(_u16Le(t.day))
+            ..add(_u16Le(t.hour))
+            ..add(_u16Le(t.minute))
+            ..add(_u16Le(t.second))
+            ..add(_u32Le(t.fraction));
         }
     }
   }
 
   void _serializeColumnV2(
-    List<int> out,
+    BytesBuilder out,
     BulkColumnSpec spec,
     int colIndex,
     int rowCount,
@@ -592,30 +593,30 @@ class BulkInsertBuilder {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final raw = v == null ? <int>[] : utf8.encode('$v');
           out
-            ..addAll(_u32Le(raw.length))
-            ..addAll(raw);
+            ..add(_u32Le(raw.length))
+            ..add(raw);
         }
       case BulkColumnType.binary:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
             if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
           }
-          out.addAll(nullBitmap);
+          out.add(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final raw = v == null
-              ? <int>[]
-              : (v is Uint8List ? v.toList() : (v as List<int>));
+              ? const <int>[]
+              : (v is Uint8List ? v : (v as List<int>));
           out
-            ..addAll(_u32Le(raw.length))
-            ..addAll(raw);
+            ..add(_u32Le(raw.length))
+            ..add(raw);
         }
     }
   }

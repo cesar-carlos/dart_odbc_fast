@@ -145,8 +145,11 @@ class ServiceLocator {
       );
     }
 
-    if (_locatorInitialized && _useAsync) {
-      _asyncNativeConnection.dispose();
+    if (_locatorInitialized) {
+      if (_useAsync) {
+        _asyncNativeConnection.dispose();
+      }
+      _nativeConnection.dispose();
     }
 
     final resolvedUsageProfile = ResolvedOdbcUsageProfile(
@@ -192,18 +195,30 @@ class ServiceLocator {
     _locatorInitialized = true;
   }
 
+  void _requireInitialized() {
+    if (!_locatorInitialized) {
+      throw StateError(
+        'ServiceLocator has not been initialized. '
+        'Call ServiceLocator().initialize() before accessing services.',
+      );
+    }
+  }
+
   /// Gets the appropriate service based on initialization mode.
   ///
   /// If [initialize] was called with async mode, returns the async
   /// service. Otherwise returns the sync service.
   ///
-  /// Throws if [initialize] has not been called.
+  /// Throws [StateError] if [initialize] has not been called.
   ///
   /// See also:
   /// - [syncService] - Always returns sync service
   /// - [asyncService] - Always returns async service (throws if not
   ///   initialized)
-  OdbcService get service => _useAsync ? _asyncService : _service;
+  OdbcService get service {
+    _requireInitialized();
+    return _useAsync ? _asyncService : _service;
+  }
 
   /// Gets the sync [OdbcService] instance.
   ///
@@ -211,8 +226,11 @@ class ServiceLocator {
   /// explicitly want blocking operations (e.g., for fast queries or CLI
   /// tools).
   ///
-  /// Throws if [initialize] has not been called.
-  OdbcService get syncService => _service;
+  /// Throws [StateError] if [initialize] has not been called.
+  OdbcService get syncService {
+    _requireInitialized();
+    return _service;
+  }
 
   /// Gets the async [OdbcService] instance.
   ///
@@ -236,16 +254,22 @@ class ServiceLocator {
   /// If async mode is on, returns the async repository. Otherwise returns the
   /// sync repository.
   ///
-  /// Throws if [initialize] has not been called.
-  IOdbcRepository get repository => _useAsync ? _asyncRepository : _repository;
+  /// Throws [StateError] if [initialize] has not been called.
+  IOdbcRepository get repository {
+    _requireInitialized();
+    return _useAsync ? _asyncRepository : _repository;
+  }
 
   /// Gets the [NativeOdbcConnection] instance.
   ///
   /// This is the underlying sync connection that both sync and async modes use.
   /// The async mode wraps this connection in an [AsyncNativeOdbcConnection].
   ///
-  /// Throws if [initialize] has not been called.
-  NativeOdbcConnection get nativeConnection => _nativeConnection;
+  /// Throws [StateError] if [initialize] has not been called.
+  NativeOdbcConnection get nativeConnection {
+    _requireInitialized();
+    return _nativeConnection;
+  }
 
   /// Gets the typed native audit logger wrapper.
   ///
@@ -284,13 +308,17 @@ class ServiceLocator {
   /// Whether the locator was initialized with async mode.
   bool get isAsyncMode => _useAsync;
 
-  /// Releases async resources (worker isolate). Call on app exit when using
-  /// async mode. Safe to call multiple times; subsequent [initialize] calls
-  /// dispose any previous async worker automatically.
+  /// Releases all native resources and worker isolates. Call on app exit.
+  ///
+  /// Safe to call multiple times; subsequent [initialize] calls dispose any
+  /// previous resources automatically.
   void shutdown() {
-    if (_locatorInitialized && _useAsync) {
-      _asyncNativeConnection.dispose();
-      _useAsync = false;
+    if (_locatorInitialized) {
+      if (_useAsync) {
+        _asyncNativeConnection.dispose();
+        _useAsync = false;
+      }
+      _nativeConnection.dispose();
     }
   }
 }

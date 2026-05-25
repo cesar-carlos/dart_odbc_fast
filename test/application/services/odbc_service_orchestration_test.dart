@@ -26,30 +26,28 @@ void main() {
 
     group('executeQuery connection guard', () {
       test(
-        'should_throw_connection_error_when_executeQuery_has_null_connectionId',
+        'should_return_failure_connection_error_when_executeQuery_has_null_connectionId',
         () async {
-          await expectLater(
-            service.executeQuery('SELECT 1'),
-            throwsA(
-              isA<ConnectionError>().having(
-                (e) => e.message,
-                'message',
-                contains('No active connection'),
-              ),
-            ),
+          final result = await service.executeQuery('SELECT 1');
+          expect(result.isError(), isTrue);
+          final err = result.exceptionOrNull();
+          expect(err, isA<ConnectionError>());
+          expect(
+            (err as ConnectionError).message,
+            contains('No active connection'),
           );
           expect(mockRepo.executeQueryParamsCalled, isFalse);
         },
       );
 
       test(
-        'should_throw_connection_error_when_executeQuery_has_'
+        'should_return_failure_connection_error_when_executeQuery_has_'
         'empty_connectionId',
         () async {
-          await expectLater(
-            service.executeQuery('SELECT 1', connectionId: ''),
-            throwsA(isA<ConnectionError>()),
-          );
+          final result =
+              await service.executeQuery('SELECT 1', connectionId: '');
+          expect(result.isError(), isTrue);
+          expect(result.exceptionOrNull(), isA<ConnectionError>());
           expect(mockRepo.executeQueryParamsCalled, isFalse);
         },
       );
@@ -124,7 +122,9 @@ void main() {
 
           expect(result.isSuccess(), isTrue);
           expect(
-              mockRepo.lastBeginIsolationLevel, IsolationLevel.readCommitted,);
+            mockRepo.lastBeginIsolationLevel,
+            IsolationLevel.readCommitted,
+          );
           expect(mockRepo.lastBeginSavepointDialect, SavepointDialect.auto);
           expect(mockRepo.lastBeginAccessMode, TransactionAccessMode.readWrite);
           expect(mockRepo.lastBeginLockTimeout, isNull);

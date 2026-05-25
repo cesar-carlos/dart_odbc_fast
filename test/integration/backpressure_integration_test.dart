@@ -12,8 +12,8 @@ void main() {
       const maxBufferSize = 2;
       final query = StreamingQuery(maxBufferSize: maxBufferSize);
 
-      const chunk = ParsedRowBuffer(
-        columns: [ColumnMetadata(name: 'a', odbcType: 2)],
+      final chunk = ParsedRowBuffer(
+        columns: [const ColumnMetadata(name: 'a', odbcType: 2)],
         rows: [
           [1],
         ],
@@ -40,8 +40,8 @@ void main() {
 
     test('clearBuffer unblocks waiting addChunk', () async {
       final query = StreamingQuery(maxBufferSize: 2);
-      const chunk = ParsedRowBuffer(
-        columns: [ColumnMetadata(name: 'a', odbcType: 2)],
+      final chunk = ParsedRowBuffer(
+        columns: [const ColumnMetadata(name: 'a', odbcType: 2)],
         rows: [
           [1],
         ],

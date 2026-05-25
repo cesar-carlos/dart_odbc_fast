@@ -101,8 +101,10 @@ void main() {
       expect(OdbcTelemetryAttributes.dsn, 'odbc.dsn');
       expect(OdbcTelemetryAttributes.timeoutMs, 'odbc.timeout_ms');
       expect(OdbcTelemetryAttributes.fetchSize, 'odbc.fetch_size');
-      expect(OdbcTelemetryAttributes.bulkOperationType,
-          'odbc.bulk_operation_type',);
+      expect(
+        OdbcTelemetryAttributes.bulkOperationType,
+        'odbc.bulk_operation_type',
+      );
       expect(OdbcTelemetryAttributes.transactionId, 'odbc.transaction_id');
       expect(OdbcTelemetryAttributes.isolationLevel, 'odbc.isolation_level');
       expect(OdbcTelemetryAttributes.retryCount, 'odbc.retry_count');

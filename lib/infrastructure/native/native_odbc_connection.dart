@@ -1014,5 +1014,6 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
   /// native resources. After calling this, the instance should not be used.
   void dispose() {
     _native.dispose();
+    _isInitialized = false;
   }
 }

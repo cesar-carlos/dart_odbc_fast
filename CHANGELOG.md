@@ -7,6 +7,166 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (pool de conexão e controle de transação)
+
+- **[CRITICAL — pool]** `poolGetConnection` now records the connection string sentinel
+  `"pool://<poolId>"` in `_connectionStrings` and registers ownership in the new
+  `_poolCheckouts` / `_connectionPoolId` maps so that options, cleanup, and pool membership
+  checks work correctly for pooled connections.
+- **[CRITICAL — pool]** `poolReleaseConnection` now calls
+  `_clearStatementMetadataForConnection` before removing the connection ID, preventing
+  indefinite growth of `_namedParamOrderByStmtId` and `_statementConnectionByStmtId` for
+  prepared statements opened on pooled connections.
+- **[CRITICAL — pool]** `poolClose` now sweeps all checked-out connection IDs for the
+  closing pool from every Dart-side map (`_connectionIds`, `_connectionStrings`,
+  `_connectionOptions`, statement metadata) so callers cannot accidentally execute against
+  invalidated native handles after pool destruction.
+- **[CRITICAL — transaction]** `commitTransaction`, `rollbackTransaction`,
+  `createSavepoint`, `rollbackToSavepoint`, and `releaseSavepoint` now validate both
+  `connectionId` (must be an active connection in `_connectionIds`) and `txnId` (must be
+  > 0) before calling the native layer; the native connection ID is also forwarded to
+  `_convertNativeErrorToFailure` so async error reads are routed to the correct worker
+  isolate instead of an arbitrary least-loaded one.
+- **[HIGH — pool]** `disconnect()` now returns `ValidationError` immediately when called
+  on a pool-owned connection, preventing the wrong native API (`odbc_disconnect` vs
+  `odbc_pool_release_connection`) from being invoked.
+- **[HIGH — pool]** Added `poolId <= 0` validation to `poolGetConnection`,
+  `poolHealthCheck`, `poolGetState`, and `poolClose`, matching the existing guard in
+  `poolSetSize`.
+- **[HIGH — pool]** `poolHealthCheck` now returns `Failure(ConnectionError)` with
+  structured-error detail when the pool check returns false, instead of `Success(false)`
+  which was indistinguishable from "pool does not exist".
+- **[HIGH — pool]** `bulkInsertParallel` now validates `poolId`, `table`, `columns`,
+  `dataBuffer`, and `rowCount` before calling the native layer; the `poolReleaseConnection`
+  result in the `finally` block is checked and logged via `AppLogger.warning` instead of
+  being silently discarded.
+- **[HIGH — async affinity]** `AsyncNativeOdbcConnection` now maintains a
+  `_transactionConnectionById` map (`txnId → nativeConnectionId`) so that
+  `_clearConnectionAffinity` can remove stale transaction worker entries when a connection
+  is disconnected or pool-released.
+- **[HIGH — async affinity]** `_transactionWorkerById` entries are now removed
+  unconditionally after commit or rollback (not only on success), preventing stale
+  transaction-to-worker mappings that would route subsequent operations to the wrong
+  isolate.
+- **[HIGH — transaction]** `TransactionHandle.runWithBegin` no longer attempts an
+  emergency rollback after a commit failure: the native engine removes the transaction
+  handle from its registry before issuing `SQL COMMIT`, making any subsequent rollback call
+  a silent no-op. Cleanup is handled by `odbc_disconnect`.
+- **[MEDIUM — transaction]** `TransactionHandle.createSavepoint`,
+  `rollbackToSavepoint`, and `releaseSavepoint` now return `false` immediately when
+  `_state != active`, preventing spurious FFI calls on committed, rolled-back, or
+  failed transaction handles.
+- **[MEDIUM — transaction]** `TransactionHandle.withSavepoint` now checks and throws
+  `StateError` when `releaseSavepoint` fails on the success path, and when
+  `rollbackToSavepoint` fails on the error path, so callers are never silently left with a
+  savepoint in an unknown state.
+- **[MEDIUM — transaction]** Savepoint name is validated in the repository before reaching
+  FFI — empty or whitespace-only names now return `ValidationError` immediately.
+- **[MEDIUM — pool]** `PoolOptions.toJson` now clamps `Duration` values to 0 before
+  serialising to JSON, preventing negative millisecond values that would overflow Rust's
+  `u64` fields.
+
+### Fixed
+
+- **[CRITICAL]** `OdbcService.executeQuery` now returns `Failure(ConnectionError(...))` instead of
+  throwing when `connectionId` is null or empty — aligns with the `Result<T>` contract used by
+  all other service methods and prevents unhandled exceptions inside `runInTransaction` helpers.
+- **[CRITICAL]** `OdbcService.runInXaTransaction` calls `_xaSafelyAbort` on every XA phase failure
+  (`xa_end`, `xa_prepare`, `xa_commit_prepared`, `xa_commit_one_phase`), not only on user-action
+  failures — prevents XA branches from being left in an open state on the resource manager.
+- **[CRITICAL]** Worker isolate in `workerEntry` now closes its `ReceivePort` when
+  `NativeOdbcConnection` construction fails, so the main isolate detects the channel death instead
+  of waiting for per-request timeouts.
+- **[CRITICAL]** `TelemetryBuffer._startPeriodicFlush` timer no longer calls `flush()` before
+  `onFlush?.call()`; the repository's `_exportBatch` calls `flush()` itself, so the previous double
+  call silently discarded every time-triggered telemetry batch.
+- **[CRITICAL]** `XaTransactionHandle.commitPrepared` sets `_state` to the new
+  `XaState.failedAfterPrepare` (not `failed`) when the commit fails. Cleanup paths in
+  `runWithStart` and `OdbcService._xaSafelyAbort` now correctly call `rollbackPrepared()` for this
+  state instead of the wrong `xaRollbackActive` opcode.
+- **[HIGH]** `BinaryProtocolParser` and `_BufferReader.readString` decode column names with
+  `utf8.decode(..., allowMalformed: true)` instead of `String.fromCharCodes` (Latin-1), fixing
+  silent corruption of non-ASCII column identifiers (Japanese, Arabic, etc.).
+- **[HIGH]** `BulkInsertBuilder._validateTextColumn` validates `maxLen` exclusively in bytes (UTF-8
+  encoded length) and no longer also compares against raw character count with the same limit —
+  multi-byte strings were incorrectly rejected when `maxLen` was defined in characters.
+- **[HIGH]** `ServiceLocator.initialize` and `shutdown` now dispose the sync
+  `NativeOdbcConnection` as well as the async pool, preventing FFI handle leaks on re-initialization
+  and app shutdown.
+- **[HIGH]** `OdbcError.isRetryable` extended to include deadlock (`40001`, `40P01`) and
+  ODBC timeout (`HYT00`, `HYT01`) SQLSTATEs in addition to the previous `08xxx` family.
+  `ResourceLimitReachedError` overrides `isRetryable` to return `true` (consistent with its
+  `category = transient`).
+- **[HIGH]** `TransactionHandle.runWithBegin` attempts a best-effort rollback when commit fails
+  (not only when `isActive`), preventing the DB transaction from remaining open after a commit
+  failure (deadlock, disconnect, constraint error).
+- **[HIGH]** `NativeOdbcConnection.dispose` resets `_isInitialized = false` so subsequent calls
+  to `connect` correctly detect the uninitialized state.
+- **[HIGH]** `callWithBuffer` (and `_ReusableFfiScratch.call`) clamp the initial buffer size to
+  `min(initialSize, limit)` so callers passing `maxBufferBytes` smaller than 64 KB (the default
+  initial size) now enter the retry loop instead of returning `null` without an FFI call —
+  `PreparedStatement.execute(maxBufferBytes: N)` with N < 65 536 was silently broken.
+- **[MEDIUM]** `OdbcService.dispose` now forwards to `IOdbcRepository.dispose` (new default no-op
+  on the interface; overridden in `OdbcRepositoryImpl`) so async worker isolates are released when
+  the service is disposed.
+- **[MEDIUM]** `StructuredError.deserialize` uses `utf8.decode(..., allowMalformed: true)` to
+  prevent a `FormatException` from escaping on malformed FFI payloads.
+- **[MEDIUM]** `_isUnsupportedCancellation` removed the redundant raw `sqlState` comparison that
+  was always covered by the normalized check.
+- **[LOW]** `ParsedRowBuffer.columnNames` is now a `late final` field cached on first access,
+  avoiding a new `List<String>` allocation on every getter call.
+- **[LOW]** `ServiceLocator` property getters (`service`, `syncService`, `repository`,
+  `nativeConnection`) throw an actionable `StateError` before initialization instead of a
+  `LateInitializationError`.
+
+### Performance
+
+- **`serializeParams` single-buffer** — replaced the old `List<int>` grow + per-param `addAll` +
+  final `Uint8List.fromList` with a two-pass strategy: phase 1 pre-encodes text/decimal payloads
+  and computes the exact byte count; phase 2 writes all params directly into a single pre-sized
+  `Uint8List` using `ByteData` setters. Eliminates every intermediate `List<int>` allocation per
+  param and the final full-buffer copy. Impact is highest for queries with many or large string
+  parameters.
+- **`_connectionOptions` single lookup per operation** — added `_optionsFor(connectionId)` helper
+  so that every execute method performs one `HashMap` lookup instead of two (one for `maxBytes`,
+  one for `queryTimeout`). Applies to `executeQuery`, `executeQueryParams`,
+  `executeQueryParamBuffer`, `executeQueryMultiFull`, `executeQueryMultiParams`, `streamQuery`, and
+  the streaming path — i.e., every hot query method.
+- **`_toQueryResultMulti` pre-sized list** — replaced `.map().toList()` with
+  `List.generate(..., growable: false)` to pre-allocate the result list without the intermediate
+  lazy iterator.
+- **Row-major v1 parse** — `_parseRowMajorV1` now pre-allocates fixed-size row lists with
+  `List.generate` + `List.filled` instead of creating one growable `List<dynamic>` per row;
+  for large result sets this removes O(rowCount) header allocations and eliminates incremental
+  `add` amortisation overhead.
+- **Binary cell decode** — `_convertData` returns the `Uint8List.sublistView` directly for binary
+  columns instead of copying via `Uint8List.fromList`; callers that need a mutable independent
+  copy can use `Uint8List.fromList(cell as Uint8List)`.
+- **Column names in QueryResult** — `_parseBufferToQueryResult` and the streaming path now use
+  the cached `ParsedRowBuffer.columnNames` instead of re-mapping `columns.map((c) => c.name)`
+  on every parse call.
+- **`getError` / `detectDriver`** — replaced `Int8List.map((e) => e.toUnsigned(8)).toList()` +
+  `utf8.decode` with a zero-allocation `Pointer.cast<Uint8>().asTypedList(n)` view; removes one
+  `List<int>` allocation per native error read and per driver detection call.
+- **`execQueryMultiParams` param copy** — replaced O(n) Dart byte-by-byte loop with
+  `setAll(0, paramsBuffer)` (bulk memcpy delegate), matching the existing approach in other
+  `_withParamsBuffer` paths.
+- **`deserializeParamValue` OUT payload** — uses `Uint8List.sublistView` instead of `sublist`
+  for the per-param payload slice; avoids one copy per OUT/INOUT parameter in DRT1 responses.
+
+### Changed
+
+- `BulkInsertBuilder.build` uses `BytesBuilder` instead of a growing `List<int>` + final
+  `Uint8List.fromList` copy, reducing GC pressure for large bulk inserts by eliminating one full
+  buffer copy.
+- `BulkInsertBuilder._validateTextColumn` no longer calls `utf8.encode` when `maxLen == 0`
+  (unlimited), avoiding a full UTF-8 encoding pass that was unconditionally allocated per cell.
+- Added `XaState.failedAfterPrepare` to the public `XaState` enum to distinguish a commit failure
+  after a successful `xa_prepare` from other failure modes.
+- `IOdbcRepository` now declares a default no-op `dispose()` method so implementations can
+  override it without breaking existing mock implementations.
+- `ServiceLocator.shutdown` doc updated to reflect that sync resources are now also released.
+
 ### Changed
 
 - Columnar encoder compression threshold raised from 100 bytes to 1 024 bytes

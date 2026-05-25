@@ -47,7 +47,8 @@ class StructuredError {
 
     final sqlState = data.sublist(0, 5);
 
-    final byteData = ByteData.sublistView(Uint8List.fromList(data));
+    final asUint8 = data is Uint8List ? data : Uint8List.fromList(data);
+    final byteData = ByteData.sublistView(asUint8);
     final nativeCode = byteData.getInt32(5, Endian.little);
     final msgLen = byteData.getUint32(9, Endian.little);
 
@@ -55,7 +56,10 @@ class StructuredError {
       return null;
     }
 
-    final message = utf8.decode(data.sublist(13, 13 + msgLen));
+    final message = utf8.decode(
+      asUint8.sublist(13, 13 + msgLen),
+      allowMalformed: true,
+    );
 
     return StructuredError(
       sqlState: sqlState,

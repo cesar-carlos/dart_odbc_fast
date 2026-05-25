@@ -154,8 +154,18 @@ void main() {
       'throws FormatException when buffer does not start with MULT magic',
       () {
         final buf = Uint8List.fromList([
-          0x00, 0x01, 0x02, 0x03,
-          0, 0, 0, 0, 0, 0, 0, 0,
+          0x00,
+          0x01,
+          0x02,
+          0x03,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
         ]);
         expect(
           () => MultiResultParser.parseMultiWithOutputs(buf),

@@ -48,12 +48,21 @@ sealed class OdbcError implements Exception {
 
   /// Returns true if the error is transient and may be retried.
   ///
-  /// Connection errors with SQLSTATE starting with '08' are typically
-  /// retryable, as they often indicate temporary network issues or timeouts.
+  /// Retryable SQLSTATE families:
+  /// - `08xxx` — connection errors (network / login timeout).
+  /// - `40001` — serialization failure / deadlock (most databases).
+  /// - `40P01` — PostgreSQL deadlock detected.
+  /// - `HYT00` — timeout expired (ODBC generic).
+  /// - `HYT01` — connection timeout expired (ODBC generic).
+  ///
+  /// Subclasses that always represent transient conditions (e.g.
+  /// [ResourceLimitReachedError]) override this to return `true`.
   bool get isRetryable {
     if (sqlState == null) return false;
-    // Connection errors (08xxx) are often retryable
-    return sqlState!.startsWith('08');
+    if (sqlState!.startsWith('08')) return true;
+    if (sqlState == '40001' || sqlState == '40P01') return true;
+    if (sqlState == 'HYT00' || sqlState == 'HYT01') return true;
+    return false;
   }
 
   /// Returns true if this is a connection-related error.
@@ -205,6 +214,9 @@ final class ResourceLimitReachedError extends OdbcError {
 
   @override
   ErrorCategory get category => ErrorCategory.transient;
+
+  @override
+  bool get isRetryable => true;
 }
 
 /// Operation cancelled by the caller (cooperative cancellation).

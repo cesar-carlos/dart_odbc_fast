@@ -70,6 +70,11 @@ enum XaState {
   /// Recovery via [NativeOdbcConnection.xaRecover] +
   /// [NativeOdbcConnection.xaResumePrepared] is the only way out.
   failed,
+
+  /// `xa_commit_prepared` (or `xa_commit_one_phase` in two-phase flow) failed
+  /// after a successful `xa_prepare`. The RM branch is still in Prepared state
+  /// and must be rolled back via `xa_rollback_prepared`, not `xa_rollback`.
+  failedAfterPrepare,
 }
 
 /// Lightweight Dart wrapper around a native XA transaction id.
@@ -149,7 +154,9 @@ class XaTransactionHandle {
       _state = XaState.committed;
       return true;
     }
-    _state = XaState.failed;
+    // Branch is still Prepared at the RM — use failedAfterPrepare so cleanup
+    // callers know to invoke rollbackPrepared(), not rollback().
+    _state = XaState.failedAfterPrepare;
     return false;
   }
 
@@ -287,7 +294,8 @@ class XaTransactionHandle {
         if (xa.state == XaState.active) {
           xa.end(); // advances to idle (or failed)
         }
-        if (xa.state == XaState.prepared) {
+        if (xa.state == XaState.prepared ||
+            xa.state == XaState.failedAfterPrepare) {
           xa.rollbackPrepared();
         } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
           xa.rollback();

@@ -859,6 +859,7 @@ class MockOdbcRepository implements IOdbcRepository {
     return 'mock';
   }
 
+  @override
   void dispose() {
     _connection = Connection(
       id: '',

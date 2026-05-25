@@ -48,7 +48,9 @@ Uint8List? _callWithTransientBuffer(
   required int limit,
   required int initialSize,
 }) {
-  var size = initialSize;
+  // Clamp to limit so callers passing maxBufferBytes smaller than the default
+  // 64 KB initialSize still enter the loop instead of skipping it entirely.
+  var size = initialSize <= limit ? initialSize : limit;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
     final outWritten = malloc<ffi.Uint32>()..value = 0;
@@ -95,7 +97,7 @@ final class _ReusableFfiScratch {
     required int limit,
     required int initialSize,
   }) {
-    var size = initialSize;
+    var size = initialSize <= limit ? initialSize : limit;
     while (size <= limit) {
       _ensureCapacity(size);
       _outWritten.value = 0;

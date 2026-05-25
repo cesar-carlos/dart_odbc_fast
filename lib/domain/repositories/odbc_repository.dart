@@ -446,6 +446,11 @@ abstract class IOdbcRepository {
   /// false otherwise.
   bool isInitialized();
 
+  /// Releases underlying native resources and worker isolates.
+  ///
+  /// Call on application exit. No-op if resources were already released.
+  void dispose() {}
+
   /// Clears all cached prepared statements.
   ///
   /// Removes all prepared statements from the cache, releasing

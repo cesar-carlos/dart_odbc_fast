@@ -308,7 +308,9 @@ void main() {
         backend: backend,
       );
       expect(handle.commitPrepared(), isFalse);
-      expect(handle.state, XaState.failed);
+      // commitPrepared failure → failedAfterPrepare (branch still Prepared
+      // at the RM; cleanup must use rollbackPrepared, not rollback).
+      expect(handle.state, XaState.failedAfterPrepare);
 
       handle = XaTransactionHandle.withBackend(
         xaId: 12,

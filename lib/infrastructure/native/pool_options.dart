@@ -44,11 +44,14 @@ class PoolOptions {
   /// Returns an empty string when no fields are set (caller may pass `null`
   /// FFI pointer instead, equivalent meaning).
   String? toJson() {
+    // Clamp to 0 so negative Durations do not produce negative u64 values
+    // on the Rust side (which would overflow or be treated as "no timeout").
+    int msOrZero(Duration d) => d.inMilliseconds.clamp(0, 0x7FFFFFFFFFFFFFFF);
     final map = <String, Object?>{
-      if (idleTimeout != null) 'idle_timeout_ms': idleTimeout!.inMilliseconds,
-      if (maxLifetime != null) 'max_lifetime_ms': maxLifetime!.inMilliseconds,
+      if (idleTimeout != null) 'idle_timeout_ms': msOrZero(idleTimeout!),
+      if (maxLifetime != null) 'max_lifetime_ms': msOrZero(maxLifetime!),
       if (connectionTimeout != null)
-        'connection_timeout_ms': connectionTimeout!.inMilliseconds,
+        'connection_timeout_ms': msOrZero(connectionTimeout!),
     };
     if (map.isEmpty) return null;
     return jsonEncode(map);

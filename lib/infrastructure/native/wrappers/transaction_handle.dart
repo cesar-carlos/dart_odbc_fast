@@ -82,19 +82,34 @@ class TransactionHandle implements ffi.Finalizable {
 
   /// Creates a savepoint named [name] inside this transaction.
   ///
+  /// Returns `false` immediately if the transaction is no longer active
+  /// (committed, rolled back, or in a failed state).
+  ///
   /// The savepoint name MUST match the identifier grammar enforced by the
   /// engine (ASCII letter or `_`, then letters/digits/`_`, ≤128 chars).
   /// Names containing semicolons, quotes or whitespace are rejected at the
   /// FFI boundary (B1 fix in v3.1).
-  bool createSavepoint(String name) => _backend.createSavepoint(_txnId, name);
+  bool createSavepoint(String name) {
+    if (_state != _State.active) return false;
+    return _backend.createSavepoint(_txnId, name);
+  }
 
   /// Rolls back to the named savepoint. The transaction itself stays active.
-  bool rollbackToSavepoint(String name) =>
-      _backend.rollbackToSavepoint(_txnId, name);
+  ///
+  /// Returns `false` immediately if the transaction is no longer active.
+  bool rollbackToSavepoint(String name) {
+    if (_state != _State.active) return false;
+    return _backend.rollbackToSavepoint(_txnId, name);
+  }
 
   /// Releases the named savepoint (no-op on SQL Server). The transaction
   /// stays active.
-  bool releaseSavepoint(String name) => _backend.releaseSavepoint(_txnId, name);
+  ///
+  /// Returns `false` immediately if the transaction is no longer active.
+  bool releaseSavepoint(String name) {
+    if (_state != _State.active) return false;
+    return _backend.releaseSavepoint(_txnId, name);
+  }
 
   /// Runs [action] within a savepoint named [name]. On success the savepoint
   /// is released; on any thrown exception we rollback to the savepoint, then
@@ -112,10 +127,22 @@ class TransactionHandle implements ffi.Finalizable {
     }
     try {
       final result = await action();
-      releaseSavepoint(name);
+      if (!releaseSavepoint(name)) {
+        throw StateError(
+          'Failed to release savepoint "$name" on txn $_txnId',
+        );
+      }
       return result;
     } on Object {
-      rollbackToSavepoint(name);
+      if (!rollbackToSavepoint(name)) {
+        // Rollback to savepoint failed; the transaction may be in an
+        // inconsistent state. The caller will rethrow the original cause
+        // and should decide whether to rollback the entire transaction.
+        throw StateError(
+          'Failed to rollback to savepoint "$name" on txn $_txnId '
+          '(original error is suppressed — check structured error channel)',
+        );
+      }
       // We do not auto-release after rollback: SQL-92 keeps the savepoint
       // alive after ROLLBACK TO, and SQL Server has no RELEASE at all.
       rethrow;
@@ -142,6 +169,11 @@ class TransactionHandle implements ffi.Finalizable {
     try {
       final result = await action(txn);
       if (!txn.commit()) {
+        // Commit failed. The native engine removes the transaction handle
+        // from its registry *before* issuing SQL COMMIT, so a subsequent
+        // rollback call would return "Invalid transaction ID" — it is a
+        // no-op. Cleanup is handled by odbc_disconnect when the connection
+        // is eventually closed.
         throw StateError('Failed to commit transaction ${txn.txnId}');
       }
       return result;

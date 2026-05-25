@@ -548,6 +548,7 @@ class OdbcService implements IOdbcService {
           return userResult;
         }
         if (!xa.commitOnePhase()) {
+          await _xaSafelyAbort(xa);
           return Failure(
             QueryError(
               message: 'runInXaTransaction: xa_commit_one_phase failed '
@@ -574,6 +575,7 @@ class OdbcService implements IOdbcService {
         return userResult;
       }
       if (!xa.end()) {
+        await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
             message: 'runInXaTransaction: xa_end failed on xid=${xa.xid}',
@@ -581,6 +583,7 @@ class OdbcService implements IOdbcService {
         );
       }
       if (!xa.prepare()) {
+        await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
             message: 'runInXaTransaction: xa_prepare failed on xid=${xa.xid}',
@@ -588,6 +591,7 @@ class OdbcService implements IOdbcService {
         );
       }
       if (!xa.commitPrepared()) {
+        await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
             message: 'runInXaTransaction: xa_commit_prepared failed '
@@ -614,7 +618,10 @@ class OdbcService implements IOdbcService {
       if (xa.state == XaState.active) {
         xa.end();
       }
-      if (xa.state == XaState.prepared) {
+      if (xa.state == XaState.prepared ||
+          xa.state == XaState.failedAfterPrepare) {
+        // Branch is Prepared at the RM — must use rollbackPrepared(), not
+        // rollback(), to issue the correct XA opcode.
         xa.rollbackPrepared();
       } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
         xa.rollback();
@@ -1091,8 +1098,10 @@ class OdbcService implements IOdbcService {
     String? connectionId,
   }) async {
     if (connectionId == null || connectionId.isEmpty) {
-      throw const ConnectionError(
-        message: 'No active connection. Call connect() first.',
+      return const Failure(
+        ConnectionError(
+          message: 'No active connection. Call connect() first.',
+        ),
       );
     }
 
@@ -1104,5 +1113,5 @@ class OdbcService implements IOdbcService {
   }
 
   @override
-  void dispose() {}
+  void dispose() => _repository.dispose();
 }

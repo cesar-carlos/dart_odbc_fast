@@ -57,9 +57,8 @@ void main() {
         ),
         throwsA(
           isA<ArgumentError>().having(
-            (e) => e
-                .toString()
-                .contains('decimal_inout_out_requires_non_empty'),
+            (e) =>
+                e.toString().contains('decimal_inout_out_requires_non_empty'),
             'slug',
             true,
           ),

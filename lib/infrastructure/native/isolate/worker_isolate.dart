@@ -43,6 +43,9 @@ void workerEntry(SendPort mainSendPort) {
     conn = NativeOdbcConnection();
   } on Object catch (_) {
     mainSendPort.send(const InitializeResponse(0, success: false));
+    // Close the port so the main isolate detects the channel death instead
+    // of having pending requests hang until timeout.
+    receivePort.close();
     return;
   }
 

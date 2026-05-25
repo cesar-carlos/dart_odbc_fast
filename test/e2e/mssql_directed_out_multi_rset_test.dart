@@ -119,10 +119,14 @@ void main() {
         );
         try {
           await locator!.syncService.executeQueryParams(
-            c.id, _sqlDrop, <dynamic>[],
+            c.id,
+            _sqlDrop,
+            <dynamic>[],
           );
           final result = await locator!.syncService.executeQueryParams(
-            c.id, _sqlCreate, <dynamic>[],
+            c.id,
+            _sqlCreate,
+            <dynamic>[],
           );
           if (!result.isSuccess()) {
             initFailure =
@@ -145,7 +149,9 @@ void main() {
           );
           try {
             await locator!.syncService.executeQueryParams(
-              c.id, _sqlDrop, <dynamic>[],
+              c.id,
+              _sqlDrop,
+              <dynamic>[],
             );
           } finally {
             await locator!.syncService.disconnect(c.id);
@@ -181,8 +187,7 @@ void main() {
           expect(
             callResult.isSuccess(),
             isTrue,
-            reason:
-                'CALL multi-result + OUT (sync): '
+            reason: 'CALL multi-result + OUT (sync): '
                 '${callResult.exceptionOrNull()}',
           );
           callResult.fold(
@@ -212,8 +217,7 @@ void main() {
               // Depending on NOCOUNT, there may be a RowCount item before the
               // second ResultSet.  Accept either [RowCount, ResultSet] or just
               // [ResultSet].
-              final resultItems =
-                  tail.whereType<DirectedResultItem>().toList();
+              final resultItems = tail.whereType<DirectedResultItem>().toList();
               expect(
                 resultItems,
                 isNotEmpty,
@@ -256,8 +260,7 @@ void main() {
           expect(
             callResult.isSuccess(),
             isTrue,
-            reason:
-                'CALL multi-result + OUT (async): '
+            reason: 'CALL multi-result + OUT (async): '
                 '${callResult.exceptionOrNull()}',
           );
           callResult.fold(

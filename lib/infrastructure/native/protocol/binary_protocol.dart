@@ -41,7 +41,7 @@ class ParsedRowBuffer {
   /// The [rows] list contains row data, where each row is a list of values.
   /// The [rowCount] is the number of rows in the result set.
   /// The [columnCount] is the number of columns in the result set.
-  const ParsedRowBuffer({
+  ParsedRowBuffer({
     required this.columns,
     required this.rows,
     required this.rowCount,
@@ -61,7 +61,10 @@ class ParsedRowBuffer {
   final int columnCount;
 
   /// Column names in order.
-  List<String> get columnNames => columns.map((c) => c.name).toList();
+  ///
+  /// Cached on first access to avoid repeated allocations in hot paths.
+  late final List<String> columnNames =
+      List.unmodifiable(columns.map((c) => c.name));
 }
 
 /// A parsed ODBC binary message: row/column payload plus optional `OUT1`
@@ -265,20 +268,22 @@ class BinaryProtocolParser {
       columns.add(ColumnMetadata(name: name, odbcType: odbcType));
     }
 
-    final rows = <List<dynamic>>[];
+    // Pre-allocate fixed-size rows so there are no growable-list header
+    // allocations per row. Mirrors the columnar v2 path.
+    final rows = List<List<dynamic>>.generate(
+      rowCount,
+      (_) => List<dynamic>.filled(columnCount, null),
+      growable: false,
+    );
     for (var r = 0; r < rowCount; r++) {
-      final row = <dynamic>[];
       for (var c = 0; c < columnCount; c++) {
         final isNull = reader.readUint8();
-        if (isNull == 1) {
-          row.add(null);
-        } else {
+        if (isNull != 1) {
           final cellLen = reader.readUint32();
           final cellBytes = reader.readBytes(cellLen);
-          row.add(_convertData(cellBytes, columns[c].odbcType));
+          rows[r][c] = _convertData(cellBytes, columns[c].odbcType);
         }
       }
-      rows.add(row);
     }
 
     return ParsedRowBuffer(
@@ -312,7 +317,7 @@ class BinaryProtocolParser {
       throw const FormatException('Columnar v2: truncated payload');
     }
     if (colCount == 0) {
-      return const ParsedRowBuffer(
+      return ParsedRowBuffer(
         columns: [],
         rows: [],
         rowCount: 0,
@@ -347,8 +352,9 @@ class BinaryProtocolParser {
       if (off + nameLen > end) {
         throw const FormatException('Columnar v2: name truncated');
       }
-      final name = String.fromCharCodes(
+      final name = utf8.decode(
         Uint8List.sublistView(data, off, off + nameLen),
+        allowMalformed: true,
       );
       off += nameLen;
       columnMetas.add(ColumnMetadata(name: name, odbcType: odbcType));
@@ -577,7 +583,10 @@ class BinaryProtocolParser {
   static dynamic _convertData(Uint8List data, int odbcType) {
     final type = OdbcType.fromDiscriminant(odbcType);
     if (type == OdbcType.binary) {
-      return Uint8List.fromList(data);
+      // data is already a Uint8List.sublistView into the protocol buffer.
+      // Returning it directly avoids a copy; callers that need a mutable
+      // independent copy should use Uint8List.fromList(cell as Uint8List).
+      return data;
     }
     if (type == OdbcType.integer) {
       if (data.length >= 4) {
@@ -655,11 +664,14 @@ class _BufferReader {
     return value;
   }
 
-  /// Reads a string of the specified [length] from the buffer.
+  /// Reads a UTF-8 string of the specified [length] from the buffer.
+  ///
+  /// Malformed sequences are replaced with U+FFFD to match the convention
+  /// used in [BinaryProtocolParser._decodeText] for cell values.
   String readString(int length) {
     final bytes = Uint8List.sublistView(_data, _offset, _offset + length);
     _offset += length;
-    return String.fromCharCodes(bytes);
+    return utf8.decode(bytes, allowMalformed: true);
   }
 
   /// Reads [length] bytes from the buffer as a [Uint8List].
