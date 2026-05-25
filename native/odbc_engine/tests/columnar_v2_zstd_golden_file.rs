@@ -3,15 +3,20 @@
 //! integration tests. Regenerate: `UPDATE_GOLDEN=1 cargo test -p odbc_engine
 //! columnar_v2_zstd_golden_matches_rust_encoder -- --ignored`.
 
-use odbc_engine::protocol::{ColumnData, ColumnMetadata, ColumnarEncoder, OdbcType, RowBufferV2};
+use odbc_engine::protocol::{
+    ColumnData, ColumnMetadata, ColumnarEncoder, OdbcType, RowBufferV2,
+    columnar_encoder::COMPRESSION_THRESHOLD_BYTES,
+};
 use std::path::PathBuf;
 
 fn build_v2_int_zstd() -> Vec<u8> {
     let mut buffer = RowBufferV2::new();
-    // 300 rows × 5 bytes each = 1500 bytes raw payload, exceeding the 1024-byte
-    // compression threshold so the zstd path is always taken.
-    let rows: Vec<_> = (0i32..300).map(Some).collect();
-    buffer.set_row_count(300);
+    // Each integer cell is 5 bytes (1 null-flag + 4 value). Use enough rows so
+    // the raw payload strictly exceeds COMPRESSION_THRESHOLD_BYTES and the zstd
+    // path is always taken, regardless of future threshold adjustments.
+    let row_count = (COMPRESSION_THRESHOLD_BYTES / 5) + 10;
+    let rows: Vec<_> = (0i32..row_count as i32).map(Some).collect();
+    buffer.set_row_count(row_count);
     let metadata = ColumnMetadata {
         name: "n".to_string(),
         odbc_type: OdbcType::Integer,

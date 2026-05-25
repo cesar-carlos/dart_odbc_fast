@@ -65,15 +65,6 @@ bool _shouldSkipDownload() {
   return false;
 }
 
-/// Whether the build hook should prefer a locally built native library.
-///
-/// This is useful while iterating on Rust source locally, but the default stays
-/// `false` so benchmark/test commands don't accidentally bundle a stale
-/// `native/target/release` artifact produced by other cargo workflows.
-bool _shouldPreferLocalBuild() {
-  final preferLocal = Platform.environment['ODBC_FAST_PREFER_LOCAL_BUILD'];
-  return preferLocal == 'true';
-}
 
 String _getLibraryName(OS os) {
   switch (os) {
@@ -90,8 +81,10 @@ String _getLibraryName(OS os) {
 ///
 /// Search strategy in priority order:
 /// 1. Local cache (~/.cache/odbc_fast/)
-/// 2. Automatic GitHub Release download (skipped in CI/pub.dev)
-/// 3. Development build output (native/target/release/) when explicitly opted in
+/// 2. Local build output (native/target/release/) — used automatically when
+///    the artifact exists, or when explicitly opted in via
+///    ODBC_FAST_PREFER_LOCAL_BUILD=true.
+/// 3. Automatic GitHub Release download (skipped in CI/pub.dev)
 /// 4. null (allows tests without native library)
 Future<Uri?> _getLibraryPath(
   OS os,
@@ -111,7 +104,16 @@ Future<Uri?> _getLibraryPath(
     return cachedLib;
   }
 
-  // 2. Download from GitHub Release (production/build only, skipped in CI/pub.dev)
+  // 2. Local build output: always preferred when the file exists (avoids an
+  //    unnecessary network round-trip during active development) or when the
+  //    caller explicitly opts in.
+  final localArtifact = _findLocalArtifact(os, packageRoot, libName);
+  if (localArtifact != null) {
+    print('[odbc_fast] Using local build artifact: ${localArtifact.toFilePath()}');
+    return localArtifact;
+  }
+
+  // 3. Download from GitHub Release (production/build only, skipped in CI/pub.dev)
   final downloaded = await _downloadFromGitHub(
     os,
     arch,
@@ -124,24 +126,28 @@ Future<Uri?> _getLibraryPath(
     return downloaded;
   }
 
-  // 3. Development: native/target/release/ (workspace target) or
-  // native/odbc_engine/target/release/ (crate-local target), but only when
-  // the caller explicitly prefers local Rust artifacts.
-  if (_shouldPreferLocalBuild()) {
-    final devPath = packageRoot.resolve('native/target/release/$libName');
-    if (File.fromUri(devPath).existsSync()) {
-      return devPath;
-    }
-
-    final devPathLocal =
-        packageRoot.resolve('native/odbc_engine/target/release/$libName');
-    if (File.fromUri(devPathLocal).existsSync()) {
-      return devPathLocal;
-    }
-  }
-
   // Library not found: return null instead of throwing. This allows tests to
   // continue without a native library.
+  return null;
+}
+
+/// Returns the path to a locally built native library, or null if none exists.
+///
+/// Checks workspace target and crate-local target. When
+/// ODBC_FAST_PREFER_LOCAL_BUILD is not set, the artifact is still used if
+/// found — this avoids network calls during active development while keeping
+/// production builds reproducible (the cache or download path is taken when
+/// no local artifact exists).
+Uri? _findLocalArtifact(OS os, Uri packageRoot, String libName) {
+  final candidates = [
+    packageRoot.resolve('native/target/release/$libName'),
+    packageRoot.resolve('native/odbc_engine/target/release/$libName'),
+  ];
+  for (final path in candidates) {
+    if (File.fromUri(path).existsSync()) {
+      return path;
+    }
+  }
   return null;
 }
 
@@ -238,7 +244,9 @@ Future<Uri?> _downloadFromGitHub(
     while (attempt < maxRetries) {
       HttpClient? client;
       try {
-        client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
+        client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 30)
+          ..idleTimeout = const Duration(seconds: 60);
 
         final request = await client.getUrl(Uri.parse(url));
         final response = await request.close();
@@ -257,6 +265,7 @@ Future<Uri?> _downloadFromGitHub(
         }
 
         if (response.statusCode == 404) {
+          await response.drain<void>();
           print('[odbc_fast] [ERROR] Release not found (HTTP 404)');
           print('[odbc_fast]');
           print('[odbc_fast] This can happen if:');
@@ -277,7 +286,8 @@ Future<Uri?> _downloadFromGitHub(
           return null;
         }
 
-        // Other status codes
+        // Other status codes: drain body to free the connection, then retry.
+        await response.drain<void>();
         attempt++;
         if (attempt < maxRetries) {
           final delay = Duration(milliseconds: 100 * (1 << attempt));

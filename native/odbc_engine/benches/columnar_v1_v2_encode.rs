@@ -31,7 +31,7 @@ fn columnar_v1_v2_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_row_vs_columnar");
     for (rows, cols) in [(256usize, 16usize), (1024, 32)] {
         let rb = make_fixture(rows, cols);
-        let colbuf = row_buffer_to_columnar(&rb);
+        let colbuf = row_buffer_to_columnar(&rb).expect("valid bench fixture");
         let v1 = RowBufferEncoder::encode(&rb);
         let len = v1.len() as u64;
         group.throughput(Throughput::Bytes(len));

@@ -96,10 +96,10 @@ pub(super) fn encode_query_result_payload(
     use_compression: bool,
 ) -> Result<Vec<u8>> {
     if use_columnar {
-        let columnar_buffer = row_buffer_to_columnar(row_buffer);
+        let columnar_buffer = row_buffer_to_columnar(row_buffer)?;
         ColumnarEncoder::encode(&columnar_buffer, use_compression)
     } else {
-        Ok(RowBufferEncoder::encode(row_buffer))
+        RowBufferEncoder::encode_result(row_buffer)
     }
 }
 
@@ -414,7 +414,7 @@ impl ExecutionEngine {
                     self.use_columnar,
                     self.use_compression,
                 )?;
-                Ok(RowBufferEncoder::append_output_footer(body, &out_vals))
+                RowBufferEncoder::append_output_footer_result(body, &out_vals)
             } else {
                 // Multi-result path: wrap every item in a MULT envelope, then append OUT1.
                 let first_body = encode_query_result_payload(
@@ -430,9 +430,7 @@ impl ExecutionEngine {
                 all_items.push(first_item);
                 all_items.extend(drain);
                 let multi_body = try_encode_multi(&all_items)?;
-                Ok(RowBufferEncoder::append_output_footer(
-                    multi_body, &out_vals,
-                ))
+                RowBufferEncoder::append_output_footer_result(multi_body, &out_vals)
             }
         })();
 
@@ -847,8 +845,8 @@ impl ExecutionEngine {
         coalesce_for_json_rows(&mut main_buffer);
         let main_body =
             encode_query_result_payload(&main_buffer, self.use_columnar, self.use_compression)?;
-        let body = RowBufferEncoder::append_output_footer(main_body, &out_vals);
-        Ok(RowBufferEncoder::append_ref_cursor_footer(body, &ref_blobs))
+        let body = RowBufferEncoder::append_output_footer_result(main_body, &out_vals)?;
+        RowBufferEncoder::append_ref_cursor_footer_result(body, &ref_blobs)
     }
 
     /// Like [`Self::drive_more_results`], but only collects cursor result
@@ -924,7 +922,7 @@ impl ExecutionEngine {
             row_buffer.add_row(row_data);
         }
         coalesce_for_json_rows(&mut row_buffer);
-        Ok(RowBufferEncoder::encode(&row_buffer))
+        RowBufferEncoder::encode_result(&row_buffer)
     }
 
     /// Read every row from `cursor`, encode it as a row-buffer (or columnar

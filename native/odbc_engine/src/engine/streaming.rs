@@ -248,8 +248,7 @@ impl StreamingExecutor {
             if let Some(threshold_mb) = spill_threshold_mb.filter(|&t| t > 0) {
                 let mut spill = DiskSpillStream::new(threshold_mb);
                 let mut writer = DiskSpillWriter::new(&mut spill);
-                RowBufferEncoder::encode_to_writer(&row_buffer, &mut writer)
-                    .map_err(|e| OdbcError::InternalError(format!("encode to spill: {}", e)))?;
+                RowBufferEncoder::encode_to_writer_result(&row_buffer, &mut writer)?;
                 writer
                     .flush()
                     .map_err(|e| OdbcError::InternalError(format!("spill flush: {}", e)))?;
@@ -799,8 +798,7 @@ where
 }
 
 fn encode_row_buffer(row_buffer: &RowBuffer) -> Result<Vec<u8>> {
-    RowBufferEncoder::try_encode(row_buffer)
-        .map_err(|e| OdbcError::ResourceLimitReached(format!("result encoding failed: {e}")))
+    RowBufferEncoder::encode_result(row_buffer)
 }
 
 fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {

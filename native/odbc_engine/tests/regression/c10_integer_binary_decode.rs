@@ -1,7 +1,8 @@
 //! C10 — Integer columns must be transported as fixed-width LE bytes;
-//! decoders must reject malformed widths instead of silently producing NULL.
+//! columnar conversion must reject malformed widths instead of silently NULL.
 
 use odbc_engine::protocol::{row_buffer_to_columnar, ColumnData, OdbcType, RowBuffer};
+use odbc_engine::OdbcError;
 
 #[test]
 fn columnar_round_trip_preserves_i32_values() {
@@ -11,7 +12,7 @@ fn columnar_round_trip_preserves_i32_values() {
     rb.add_row(vec![Some((-1i32).to_le_bytes().to_vec())]);
     rb.add_row(vec![None]);
 
-    let v2 = row_buffer_to_columnar(&rb);
+    let v2 = row_buffer_to_columnar(&rb).expect("valid integer cells");
     assert_eq!(v2.row_count, 3);
     match &v2.columns[0].data {
         ColumnData::Integer(values) => {
@@ -30,7 +31,7 @@ fn columnar_preserves_i64_values() {
     rb.add_row(vec![Some(i64::MAX.to_le_bytes().to_vec())]);
     rb.add_row(vec![Some(i64::MIN.to_le_bytes().to_vec())]);
 
-    let v2 = row_buffer_to_columnar(&rb);
+    let v2 = row_buffer_to_columnar(&rb).expect("valid bigint cells");
     match &v2.columns[0].data {
         ColumnData::BigInt(values) => {
             assert_eq!(values[0], Some(i64::MAX));
@@ -38,4 +39,16 @@ fn columnar_preserves_i64_values() {
         }
         _ => panic!("expected BigInt column data"),
     }
+}
+
+#[test]
+fn columnar_conversion_rejects_malformed_integer_width() {
+    let mut rb = RowBuffer::new();
+    rb.add_column("id".to_string(), OdbcType::Integer);
+    rb.add_row(vec![Some(vec![0x01, 0x02, 0x03])]);
+
+    assert!(matches!(
+        row_buffer_to_columnar(&rb),
+        Err(OdbcError::ValidationError(_))
+    ));
 }

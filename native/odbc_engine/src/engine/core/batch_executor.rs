@@ -198,7 +198,7 @@ impl BatchExecutor {
         }
 
         coalesce_for_json_rows(&mut row_buffer);
-        Ok(RowBufferEncoder::encode(&row_buffer))
+        RowBufferEncoder::encode_result(&row_buffer)
     }
 
     fn execute_direct_param_set(
@@ -260,7 +260,7 @@ impl BatchExecutor {
         }
 
         coalesce_for_json_rows(&mut row_buffer);
-        Ok(RowBufferEncoder::encode(&row_buffer))
+        RowBufferEncoder::encode_result(&row_buffer)
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::error::{OdbcError, Result};
 use crate::protocol::compression::CompressionStrategy;
 use crate::protocol::param_value::ParamValue;
 use crate::protocol::row_buffer::RowBuffer;
@@ -43,11 +44,20 @@ pub enum EncodeError {
 }
 
 impl RowBufferEncoder {
+    fn map_encode_error(e: EncodeError) -> OdbcError {
+        OdbcError::ResourceLimitReached(format!("result encoding failed: {e}"))
+    }
+
+    /// Production path: returns [`OdbcError::ResourceLimitReached`] instead of panicking.
+    pub fn encode_result(buffer: &RowBuffer) -> Result<Vec<u8>> {
+        Self::try_encode(buffer).map_err(Self::map_encode_error)
+    }
+
     pub fn encode(buffer: &RowBuffer) -> Vec<u8> {
         Self::try_encode(buffer).expect("row buffer exceeds binary protocol limits")
     }
 
-    pub fn try_encode(buffer: &RowBuffer) -> Result<Vec<u8>, EncodeError> {
+    pub fn try_encode(buffer: &RowBuffer) -> std::result::Result<Vec<u8>, EncodeError> {
         let shape = measure_buffer(buffer)?;
         let mut output = Vec::with_capacity(shape.total_len);
         Self::encode_to_writer_with_shape(buffer, &mut output, shape)?;
@@ -55,16 +65,24 @@ impl RowBufferEncoder {
     }
 
     /// Encode buffer to a writer. Used for spill-to-disk when result exceeds memory threshold.
-    pub fn encode_to_writer<W: Write>(buffer: &RowBuffer, w: &mut W) -> Result<(), EncodeError> {
+    pub fn encode_to_writer<W: Write>(
+        buffer: &RowBuffer,
+        w: &mut W,
+    ) -> std::result::Result<(), EncodeError> {
         let shape = measure_buffer(buffer)?;
         Self::encode_to_writer_with_shape(buffer, w, shape)
+    }
+
+    /// Like [`Self::encode_to_writer`] but maps failures to [`OdbcError::ResourceLimitReached`].
+    pub fn encode_to_writer_result<W: Write>(buffer: &RowBuffer, w: &mut W) -> Result<()> {
+        Self::encode_to_writer(buffer, w).map_err(Self::map_encode_error)
     }
 
     fn encode_to_writer_with_shape<W: Write>(
         buffer: &RowBuffer,
         w: &mut W,
         shape: EncodedShape,
-    ) -> Result<(), EncodeError> {
+    ) -> std::result::Result<(), EncodeError> {
         w.write_all(&MAGIC.to_le_bytes())?;
         w.write_all(&VERSION.to_le_bytes())?;
         w.write_all(&shape.column_count.to_le_bytes())?;
@@ -100,10 +118,14 @@ impl RowBufferEncoder {
             .expect("output footer exceeds binary protocol limits")
     }
 
+    pub fn append_output_footer_result(base: Vec<u8>, outputs: &[ParamValue]) -> Result<Vec<u8>> {
+        Self::try_append_output_footer(base, outputs).map_err(Self::map_encode_error)
+    }
+
     pub fn try_append_output_footer(
         mut base: Vec<u8>,
         outputs: &[ParamValue],
-    ) -> Result<Vec<u8>, EncodeError> {
+    ) -> std::result::Result<Vec<u8>, EncodeError> {
         if outputs.is_empty() {
             return Ok(base);
         }
@@ -122,10 +144,14 @@ impl RowBufferEncoder {
             .expect("ref cursor footer exceeds binary protocol limits")
     }
 
+    pub fn append_ref_cursor_footer_result(base: Vec<u8>, blobs: &[Vec<u8>]) -> Result<Vec<u8>> {
+        Self::try_append_ref_cursor_footer(base, blobs).map_err(Self::map_encode_error)
+    }
+
     pub fn try_append_ref_cursor_footer(
         mut base: Vec<u8>,
         blobs: &[Vec<u8>],
-    ) -> Result<Vec<u8>, EncodeError> {
+    ) -> std::result::Result<Vec<u8>, EncodeError> {
         if blobs.is_empty() {
             return Ok(base);
         }
@@ -146,7 +172,9 @@ impl RowBufferEncoder {
             .expect("row buffer exceeds binary protocol limits")
     }
 
-    pub fn try_encode_with_compression(buffer: &RowBuffer) -> Result<Vec<u8>, EncodeError> {
+    pub fn try_encode_with_compression(
+        buffer: &RowBuffer,
+    ) -> std::result::Result<Vec<u8>, EncodeError> {
         let raw = Self::try_encode(buffer)?;
         let strategy = CompressionStrategy::auto_select(raw.len());
         Ok(match strategy.compress_owned(raw) {
@@ -156,7 +184,7 @@ impl RowBufferEncoder {
     }
 }
 
-fn measure_buffer(buffer: &RowBuffer) -> Result<EncodedShape, EncodeError> {
+fn measure_buffer(buffer: &RowBuffer) -> std::result::Result<EncodedShape, EncodeError> {
     let column_count = checked_u16_len(buffer.column_count(), "column count")?;
     let row_count = checked_u32_len(buffer.row_count(), "row count")?;
     let mut metadata_size = 0usize;
@@ -194,7 +222,7 @@ fn measure_buffer(buffer: &RowBuffer) -> Result<EncodedShape, EncodeError> {
     })
 }
 
-fn checked_u16_len(value: usize, field: &'static str) -> Result<u16, EncodeError> {
+fn checked_u16_len(value: usize, field: &'static str) -> std::result::Result<u16, EncodeError> {
     value.try_into().map_err(|_| EncodeError::LengthTooLarge {
         field,
         value,
@@ -202,7 +230,7 @@ fn checked_u16_len(value: usize, field: &'static str) -> Result<u16, EncodeError
     })
 }
 
-fn checked_u32_len(value: usize, field: &'static str) -> Result<u32, EncodeError> {
+fn checked_u32_len(value: usize, field: &'static str) -> std::result::Result<u32, EncodeError> {
     value.try_into().map_err(|_| EncodeError::LengthTooLarge {
         field,
         value,
@@ -214,7 +242,7 @@ fn checked_payload_add(
     current: usize,
     added: usize,
     context: &'static str,
-) -> Result<usize, EncodeError> {
+) -> std::result::Result<usize, EncodeError> {
     current
         .checked_add(added)
         .ok_or(EncodeError::PayloadSizeOverflow { context })
@@ -223,6 +251,7 @@ fn checked_payload_add(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::OdbcError;
     use crate::protocol::types::OdbcType;
 
     #[test]
@@ -239,6 +268,20 @@ mod tests {
             u32::from_le_bytes([c[a_len + 8], c[a_len + 9], c[a_len + 10], c[a_len + 11]]) as usize;
         assert_eq!(blen, b.len());
         assert_eq!(&c[a_len + 12..a_len + 12 + blen], &b[..]);
+    }
+
+    #[test]
+    fn encode_result_maps_limit_errors_to_resource_limit_reached() {
+        let mut buffer = RowBuffer::new();
+        for _ in 0..=u16::MAX {
+            buffer.add_column(String::new(), OdbcType::Integer);
+        }
+
+        let err = RowBufferEncoder::encode_result(&buffer).unwrap_err();
+
+        assert!(
+            matches!(err, OdbcError::ResourceLimitReached(msg) if msg.contains("result encoding failed"))
+        );
     }
 
     #[test]

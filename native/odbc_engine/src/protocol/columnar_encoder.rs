@@ -7,6 +7,12 @@ use crate::protocol::row_buffer::RowBuffer;
 const MAGIC: u32 = 0x4F444243;
 const VERSION_V2: u16 = 2;
 
+/// Minimum raw column payload size in bytes required to attempt zstd compression.
+///
+/// Payloads at or below this threshold are stored uncompressed because the
+/// zstd frame overhead would exceed any transfer savings for small columns.
+pub const COMPRESSION_THRESHOLD_BYTES: usize = 1024;
+
 pub struct ColumnarEncoder;
 
 impl ColumnarEncoder {
@@ -53,7 +59,7 @@ impl ColumnarEncoder {
 
         let raw_payload_size = Self::estimate_column_payload_size(col_block)?;
         // Skip compression for small payloads where zstd overhead exceeds transfer savings.
-        if !use_compression || raw_payload_size <= 1024 {
+        if !use_compression || raw_payload_size <= COMPRESSION_THRESHOLD_BYTES {
             output.push(0);
             output.extend_from_slice(
                 &checked_u32(raw_payload_size, "column payload length")?.to_le_bytes(),
@@ -193,7 +199,7 @@ impl ColumnarEncoder {
     /// Encode row-oriented buffer for bulk operations: transpose to columnar,
     /// then encode with compression. Optimal for analytical workloads.
     pub fn encode_for_bulk(buffer: &RowBuffer) -> Result<Vec<u8>> {
-        let columnar = row_buffer_to_columnar(buffer);
+        let columnar = row_buffer_to_columnar(buffer)?;
         Self::encode(&columnar, true)
     }
 }

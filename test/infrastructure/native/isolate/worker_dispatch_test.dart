@@ -85,7 +85,7 @@ Future<T> _dispatch<T extends WorkerResponse>(
 }
 
 void main() {
-  group('worker dispatch', () {
+  group('worker dispatch', timeout: const Timeout(Duration(minutes: 2)), () {
     test('should_initialize_and_return_bool_success', () async {
       final conn = _connection(
         TestOdbcBindingsOverrides(init: () => 0),

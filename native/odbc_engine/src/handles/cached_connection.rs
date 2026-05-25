@@ -231,5 +231,5 @@ where
         }
     }
 
-    Ok(RowBufferEncoder::encode(&row_buffer))
+    RowBufferEncoder::encode_result(&row_buffer)
 }
