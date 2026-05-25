@@ -7,7 +7,8 @@ import 'package:test/test.dart';
 
 /// Golden buffer from Rust:
 /// `native/odbc_engine/tests/columnar_v2_zstd_golden_file.rs` (regenerate:
-/// `UPDATE_GOLDEN=1` with that test).
+/// `UPDATE_GOLDEN=1` with that test). The fixture row count is chosen by the
+/// Rust test to exceed the compression threshold and force the zstd path.
 void main() {
   test(
     'columnar v2 zstd golden parses when native decompress FFI is available',
@@ -36,11 +37,12 @@ void main() {
         return;
       }
 
+      const expectedRowCount = 214;
       final parsed = BinaryProtocolParser.parse(Uint8List.fromList(data));
-      expect(parsed.rowCount, 30);
+      expect(parsed.rowCount, expectedRowCount);
       expect(parsed.columnCount, 1);
       expect(parsed.columns[0].name, 'n');
-      for (var i = 0; i < 30; i++) {
+      for (var i = 0; i < expectedRowCount; i++) {
         expect(parsed.rows[i][0], i);
       }
     },
