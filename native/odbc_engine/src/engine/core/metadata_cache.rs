@@ -37,7 +37,7 @@ pub struct MetadataCacheStats {
 /// ([`TableSchema::cached_at`] / payload `cached_at`). Hits do not extend TTL
 /// (no sliding expiration).
 pub struct MetadataCache {
-    schemas: Arc<Mutex<LruCache<String, TableSchema>>>,
+    schemas: Arc<Mutex<LruCache<String, Arc<TableSchema>>>>,
     payloads: Arc<Mutex<LruCache<String, CachedPayload>>>,
     ttl: Duration,
     max_size: usize,
@@ -45,7 +45,7 @@ pub struct MetadataCache {
 
 #[derive(Debug, Clone)]
 struct CachedPayload {
-    data: Vec<u8>,
+    data: Arc<[u8]>,
     cached_at: Instant,
 }
 
@@ -63,10 +63,15 @@ impl MetadataCache {
     }
 
     pub fn get_schema(&self, table: &str) -> Option<TableSchema> {
+        self.get_schema_shared(table)
+            .map(|schema| schema.as_ref().clone())
+    }
+
+    pub(crate) fn get_schema_shared(&self, table: &str) -> Option<Arc<TableSchema>> {
         let Ok(mut guard) = self.schemas.lock() else {
             return None;
         };
-        let schema = guard.get(table)?.clone();
+        let schema = Arc::clone(guard.get(table)?);
         if schema.cached_at.elapsed() > self.ttl {
             guard.pop(table);
             return None;
@@ -74,13 +79,23 @@ impl MetadataCache {
         Some(schema)
     }
 
+    #[doc(hidden)]
+    pub fn get_schema_shared_for_benchmark(&self, table: &str) -> Option<Arc<TableSchema>> {
+        self.get_schema_shared(table)
+    }
+
     pub fn cache_schema(&self, table: &str, schema: TableSchema) {
         if let Ok(mut guard) = self.schemas.lock() {
-            guard.put(table.to_string(), schema);
+            guard.put(table.to_string(), Arc::new(schema));
         }
     }
 
     pub fn get_payload(&self, key: &str) -> Option<Vec<u8>> {
+        self.get_payload_shared(key)
+            .map(|payload| payload.as_ref().to_vec())
+    }
+
+    pub(crate) fn get_payload_shared(&self, key: &str) -> Option<Arc<[u8]>> {
         let Ok(mut guard) = self.payloads.lock() else {
             return None;
         };
@@ -92,12 +107,17 @@ impl MetadataCache {
         Some(payload.data)
     }
 
+    #[doc(hidden)]
+    pub fn get_payload_shared_for_benchmark(&self, key: &str) -> Option<Arc<[u8]>> {
+        self.get_payload_shared(key)
+    }
+
     pub fn cache_payload(&self, key: &str, data: &[u8]) {
         if let Ok(mut guard) = self.payloads.lock() {
             guard.put(
                 key.to_string(),
                 CachedPayload {
-                    data: data.to_vec(),
+                    data: Arc::<[u8]>::from(data),
                     cached_at: Instant::now(),
                 },
             );
@@ -175,6 +195,35 @@ mod tests {
     }
 
     #[test]
+    fn should_return_shared_schema_without_deep_clone_on_hit() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        c.cache_schema(
+            "t1",
+            TableSchema {
+                table_name: "t1".to_string(),
+                columns: vec![ColumnMetadata {
+                    name: "id".to_string(),
+                    odbc_type: 4,
+                    nullable: false,
+                }],
+                cached_at: Instant::now(),
+            },
+        );
+
+        let first = c
+            .get_schema_shared("t1")
+            .expect("shared schema should be present");
+        let second = c
+            .get_schema_shared("t1")
+            .expect("shared schema should remain present");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "shared schema hits should clone only the Arc handle"
+        );
+        assert_eq!(c.get_schema("t1").expect("owned schema").table_name, "t1");
+    }
+
+    #[test]
     fn test_metadata_cache_ttl_expiry() {
         let c = MetadataCache::new(10, Duration::from_millis(1));
         let s = TableSchema {
@@ -196,11 +245,54 @@ mod tests {
     }
 
     #[test]
+    fn should_return_shared_payload_without_deep_clone_on_hit() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        c.cache_payload("1:users", &[1, 2, 3, 4]);
+
+        let first = c
+            .get_payload_shared("1:users")
+            .expect("shared payload should be present");
+        let second = c
+            .get_payload_shared("1:users")
+            .expect("shared payload should remain present");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "shared payload hits should clone only the Arc handle"
+        );
+        assert_eq!(
+            c.get_payload("1:users").expect("owned payload"),
+            vec![1, 2, 3, 4]
+        );
+    }
+
+    #[test]
     fn test_metadata_cache_payload_ttl_expiry() {
         let c = MetadataCache::new(10, Duration::from_millis(1));
         c.cache_payload("1:users", &[9, 8, 7]);
         std::thread::sleep(Duration::from_millis(10));
         assert!(c.get_payload("1:users").is_none());
+    }
+
+    #[test]
+    fn should_expire_shared_payload_and_schema() {
+        let c = MetadataCache::new(10, Duration::from_millis(1));
+        c.cache_payload("1:users", &[9, 8, 7]);
+        c.cache_schema(
+            "users",
+            TableSchema {
+                table_name: "users".to_string(),
+                columns: vec![],
+                cached_at: Instant::now(),
+            },
+        );
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert!(c.get_payload_shared("1:users").is_none());
+        assert!(c.get_schema_shared("users").is_none());
+        let stats = c.stats();
+        assert_eq!(stats.payload_entries, 0);
+        assert_eq!(stats.schema_entries, 0);
     }
 
     #[test]

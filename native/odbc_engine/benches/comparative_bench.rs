@@ -273,6 +273,25 @@ fn bench_select_cold_warm_streaming(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("streaming_batched_drain", |b| {
+        b.iter(|| {
+            let mut bytes = 0usize;
+            executor
+                .execute_streaming_batched(
+                    conn_ref,
+                    &sql,
+                    1024,
+                    |batch| {
+                        bytes += batch.len();
+                        Ok(())
+                    },
+                    None,
+                )
+                .unwrap();
+            black_box(bytes)
+        });
+    });
+
     group.finish();
 
     execute_command(conn_ref, &format!("DROP TABLE {}", table)).ok();

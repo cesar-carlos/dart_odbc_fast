@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -14,15 +14,22 @@ pub struct AuditEvent {
 }
 
 pub struct AuditLogger {
-    events: Arc<Mutex<Vec<AuditEvent>>>,
+    events: Arc<Mutex<VecDeque<AuditEvent>>>,
     enabled: Arc<AtomicBool>,
 }
 
 impl AuditLogger {
     pub fn new(enabled: bool) -> Self {
         Self {
-            events: Arc::new(Mutex::new(Vec::new())),
+            events: Arc::new(Mutex::new(VecDeque::new())),
             enabled: Arc::new(AtomicBool::new(enabled)),
+        }
+    }
+
+    fn push_event(events: &mut VecDeque<AuditEvent>, event: AuditEvent) {
+        events.push_back(event);
+        if events.len() > 10000 {
+            events.pop_front();
         }
     }
 
@@ -47,10 +54,7 @@ impl AuditLogger {
         };
 
         if let Ok(mut events) = self.events.lock() {
-            events.push(event);
-            if events.len() > 10000 {
-                events.remove(0);
-            }
+            Self::push_event(&mut events, event);
         }
     }
 
@@ -69,10 +73,7 @@ impl AuditLogger {
         };
 
         if let Ok(mut events) = self.events.lock() {
-            events.push(event);
-            if events.len() > 10000 {
-                events.remove(0);
-            }
+            Self::push_event(&mut events, event);
         }
     }
 
@@ -94,10 +95,7 @@ impl AuditLogger {
         };
 
         if let Ok(mut events) = self.events.lock() {
-            events.push(event);
-            if events.len() > 10000 {
-                events.remove(0);
-            }
+            Self::push_event(&mut events, event);
         }
     }
 

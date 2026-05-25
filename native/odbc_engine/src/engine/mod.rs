@@ -45,7 +45,8 @@ pub use sqlserver_json::{
 };
 pub use statement::StatementHandle;
 pub use streaming::{
-    start_multi_async_stream, start_multi_batched_stream, AsyncStreamStatus, AsyncStreamingState,
+    start_multi_async_stream, start_multi_async_stream_pooled, start_multi_batched_stream,
+    start_multi_batched_stream_pooled, AsyncStreamStatus, AsyncStreamingState,
     BatchedStreamingState, StreamCopyResult, StreamState, StreamingExecutor, StreamingState,
     MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };

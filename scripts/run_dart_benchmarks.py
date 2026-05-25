@@ -100,6 +100,10 @@ def has_dsn() -> bool:
     return False
 
 
+def env_truthy(key: str) -> bool:
+    return os.environ.get(key, "").strip().lower() in ("1", "true", "yes")
+
+
 def bench_out_dir(root: Path) -> Path:
     out = root / "bench_baselines"
     out.mkdir(parents=True, exist_ok=True)
@@ -192,13 +196,42 @@ def compare(root: Path, tag: str, kind: str) -> int:
     return run(cmd, root)
 
 
+def run_criterion(cmd: list[str], cwd: Path) -> int:
+    fail_on_regression = env_truthy("BENCHMARK_FAIL_ON_CRITERION_REGRESSION")
+    saw_regression = False
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        if "Performance has regressed." in line:
+            saw_regression = True
+        print(line, end="")
+    code = process.wait()
+    if code != 0:
+        return code
+    if fail_on_regression and saw_regression:
+        print_error(
+            "Criterion reported a performance regression "
+            "(BENCHMARK_FAIL_ON_CRITERION_REGRESSION=1)."
+        )
+        return 1
+    return 0
+
+
 def run_rust_micro(root: Path) -> int:
     native = root / "native" / "odbc_engine"
     if not shutil.which("cargo"):
         print_error("cargo not found")
         return 1
     print_step("Rust micro benches (bulk, metadata, columnar)")
-    code = run(
+    code = run_criterion(
         [
             "cargo",
             "bench",
@@ -214,7 +247,7 @@ def run_rust_micro(root: Path) -> int:
     if code != 0:
         return code
     print_step("Rust columnar_v2_placeholder (--features columnar-v2)")
-    code = run(
+    code = run_criterion(
         ["cargo", "bench", "--bench", "columnar_v2_placeholder", "--features", "columnar-v2"],
         native,
     )

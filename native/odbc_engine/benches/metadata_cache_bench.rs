@@ -44,11 +44,11 @@ fn benchmark_cache_hit_vs_miss(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_hit_vs_miss");
 
     group.bench_function("cache_hit", |b| {
-        b.iter(|| black_box(cache.get_schema(hit_key.as_str())));
+        b.iter(|| black_box(cache.get_schema_shared_for_benchmark(hit_key.as_str())));
     });
 
     group.bench_function("cache_miss", |b| {
-        b.iter(|| black_box(cache.get_schema(miss_key.as_str())));
+        b.iter(|| black_box(cache.get_schema_shared_for_benchmark(miss_key.as_str())));
     });
 
     group.finish();
@@ -69,11 +69,11 @@ fn benchmark_cache_payload_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("payload_operations");
 
     group.bench_function("payload_hit", |b| {
-        b.iter(|| black_box(cache.get_payload(hit_key.as_str())));
+        b.iter(|| black_box(cache.get_payload_shared_for_benchmark(hit_key.as_str())));
     });
 
     group.bench_function("payload_miss", |b| {
-        b.iter(|| black_box(cache.get_payload(miss_key.as_str())));
+        b.iter(|| black_box(cache.get_payload_shared_for_benchmark(miss_key.as_str())));
     });
 
     let rotation_keys: Vec<String> = (0..200).map(|i| format!("conn:payload_rot_{i}")).collect();
@@ -84,7 +84,7 @@ fn benchmark_cache_payload_operations(c: &mut Criterion) {
             let key = &rotation_keys[rot % rotation_keys.len()];
             rot = rot.wrapping_add(1);
             cache.cache_payload(key, &data);
-            black_box(cache.get_payload(key));
+            black_box(cache.get_payload_shared_for_benchmark(key));
         });
     });
 
@@ -111,7 +111,7 @@ fn benchmark_cache_scaling(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("get_schema", size), size, |b, _| {
             b.iter(|| {
                 for &idx in &lookup_indices {
-                    black_box(cache.get_schema(keys[idx].as_str()));
+                    black_box(cache.get_schema_shared_for_benchmark(keys[idx].as_str()));
                 }
             });
         });
@@ -139,7 +139,7 @@ fn benchmark_payload_scaling(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("get_payload", size), size, |b, _| {
             b.iter(|| {
                 for &idx in &lookup_indices {
-                    black_box(cache.get_payload(keys[idx].as_str()));
+                    black_box(cache.get_payload_shared_for_benchmark(keys[idx].as_str()));
                 }
             });
         });
@@ -158,14 +158,14 @@ fn benchmark_eviction_at_capacity(c: &mut Criterion) {
     }
 
     group.bench_function("get_schema_mid_at_capacity", |b| {
-        b.iter(|| black_box(cache.get_schema(keys[250].as_str())));
+        b.iter(|| black_box(cache.get_schema_shared_for_benchmark(keys[250].as_str())));
     });
 
     group.bench_function("insert_then_get_overflow_key", |b| {
         let overflow_key = "conn:table_overflow";
         b.iter(|| {
             cache.cache_schema(overflow_key, small_schema(999_999));
-            black_box(cache.get_schema(overflow_key));
+            black_box(cache.get_schema_shared_for_benchmark(overflow_key));
         });
     });
 
@@ -216,7 +216,7 @@ fn benchmark_repeated_query_simulation(c: &mut Criterion) {
                 let table_idx = query_num % 10;
                 let key = format!("conn:table_{table_idx}");
 
-                if cache.get_schema(&key).is_none() {
+                if cache.get_schema_shared_for_benchmark(&key).is_none() {
                     let schema = TableSchema {
                         table_name: format!("table_{table_idx}"),
                         columns: vec![

@@ -18,6 +18,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical DRT1/OUT1/MULT matrix, live-driver flags and stale backlog wording.
 - CI and local validation now include DSN-free docs/example smoke tests, with
   `doc/TESTING.md` owning the canonical live-driver opt-in flags.
+- Native FFI sync parameter paths now borrow parameter buffers only for the
+  duration of the call instead of copying them first; async paths still take an
+  owned copy for worker safety. Streaming chunk reads now share internal copy
+  helpers, and multi-result row-count frames avoid an extra small payload
+  allocation. FFI buffer writes now go through shared internal helpers, and
+  `bulk_operations_bench` includes a deterministic `streaming_copy_next_chunk`
+  guardrail.
+- Native metadata cache hits now use shared internal schema/payload storage so
+  catalog cache reads avoid deep clones on the hot path. Catalog FFI cache hits
+  copy the shared payload directly into the caller output buffer while keeping
+  the existing ABI and Dart API unchanged.
+- Benchmark tooling now distinguishes materialised streaming from batched
+  streaming in `comparative_bench`, and `scripts/run_dart_benchmarks.py` can
+  opt in to failing on Criterion regression reports with
+  `BENCHMARK_FAIL_ON_CRITERION_REGRESSION=1`.
+
+### Fixed
+
+- Native FFI no longer replays cached results after a `-2` buffer-too-small
+  response; retries now execute through the normal call path without hidden
+  pending-result state.
+- Synchronous parameterized FFI entrypoints now reject `NULL` parameter buffers
+  when `params_len > 0`, matching the async parameter validation contract.
+- Batched, async, and multi-result streaming FFI entrypoints now accept checked
+  out pool connection IDs and keep pool busy accounting active until the stream
+  worker finishes.
+- Connection-string validation now rejects extra closing braces instead of
+  accepting them through saturating brace-depth arithmetic.
+- Columnar and compressed columnar query paths now reuse singleton pipelines,
+  and telemetry export no longer holds the global telemetry mutex while the
+  exporter performs blocking work.
 
 ## [3.8.1] - 2026-05-22
 

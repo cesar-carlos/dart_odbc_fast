@@ -18,8 +18,8 @@ use crate::engine::{
     list_primary_keys, list_tables, recover_prepared_xids, resume_prepared, AsyncStreamStatus,
     AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
     MetadataCache, OdbcConnection, OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding,
-    SavepointDialect, StatementHandle, StreamCopyResult, StreamState, StreamingExecutor,
-    Transaction, TransactionAccessMode, XaTransaction, Xid,
+    SavepointDialect, SharedHandleManager, StatementHandle, StreamCopyResult, StreamState,
+    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
@@ -38,10 +38,8 @@ use crate::security::AuditLogger;
 use crate::versioning::{abi_version::AbiVersion, api_version::ApiVersion};
 use log::LevelFilter;
 use rayon::prelude::*;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::ffi::CStr;
-use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -468,19 +466,90 @@ fn take_runnable_connection(state: &mut GlobalState, conn_id: u32) -> Result<Run
 
 fn restore_pooled_connection(state: &mut GlobalState, conn_id: u32, target: RunnableConnection) {
     if let RunnableConnection::Pooled { pool_id, .. } = target {
-        if let Some(count) = state.pooled_busy_counts.get_mut(&pool_id) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                state.pooled_busy_counts.remove(&pool_id);
-            }
-        }
-        if let Some(count) = state.pooled_connection_busy_counts.get_mut(&conn_id) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                state.pooled_connection_busy_counts.remove(&conn_id);
-            }
+        decrement_pooled_busy_counts(state, pool_id, conn_id);
+    }
+}
+
+fn decrement_pooled_busy_counts(state: &mut GlobalState, pool_id: u32, conn_id: u32) {
+    if let Some(count) = state.pooled_busy_counts.get_mut(&pool_id) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            state.pooled_busy_counts.remove(&pool_id);
         }
     }
+    if let Some(count) = state.pooled_connection_busy_counts.get_mut(&conn_id) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            state.pooled_connection_busy_counts.remove(&conn_id);
+        }
+    }
+}
+
+enum StreamStartTarget {
+    Regular {
+        handles: SharedHandleManager,
+    },
+    Pooled {
+        pool_id: u32,
+        pooled: SharedPooledConnection,
+    },
+}
+
+struct StreamReservation {
+    stream_id: u32,
+    target: StreamStartTarget,
+}
+
+fn reserve_stream_start(state: &mut GlobalState, conn_id: u32) -> Result<StreamReservation> {
+    let target = if let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) {
+        StreamStartTarget::Regular { handles }
+    } else if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
+        *state.pooled_busy_counts.entry(entry.pool_id).or_insert(0) += 1;
+        *state
+            .pooled_connection_busy_counts
+            .entry(conn_id)
+            .or_insert(0) += 1;
+        StreamStartTarget::Pooled {
+            pool_id: entry.pool_id,
+            pooled: entry.pooled,
+        }
+    } else {
+        return Err(OdbcError::InvalidHandle(conn_id));
+    };
+
+    let stream_id = allocate_stream_id(state, conn_id);
+    if stream_id == 0 {
+        if let StreamStartTarget::Pooled { pool_id, .. } = &target {
+            decrement_pooled_busy_counts(state, *pool_id, conn_id);
+        }
+        return Err(OdbcError::InternalError(
+            "Failed to allocate stream ID".to_string(),
+        ));
+    }
+
+    Ok(StreamReservation { stream_id, target })
+}
+
+fn pooled_stream_completion(conn_id: u32, pool_id: u32) -> Box<dyn FnOnce() + Send + 'static> {
+    Box::new(move || {
+        if let Some(mut state) = try_lock_global_state() {
+            decrement_pooled_busy_counts(&mut state, pool_id, conn_id);
+        }
+    })
+}
+
+fn release_pooled_stream_reservation(conn_id: u32, target: &StreamStartTarget) {
+    if let StreamStartTarget::Pooled { pool_id, .. } = target {
+        if let Some(mut state) = try_lock_global_state() {
+            decrement_pooled_busy_counts(&mut state, *pool_id, conn_id);
+        }
+    }
+}
+
+fn insert_stream(state: &mut GlobalState, stream_id: u32, conn_id: u32, stream: StreamKind) -> u32 {
+    state.streams.insert(stream_id, stream);
+    state.stream_connections.insert(stream_id, conn_id);
+    stream_id
 }
 
 fn has_active_transaction_for_connection(state: &GlobalState, conn_id: u32) -> bool {
@@ -572,26 +641,20 @@ where
 
     match result {
         Ok(data) => {
-            metrics.record_query(start.elapsed());
-            if data.len() > buffer_len as usize {
+            let status = write_connection_output_buffer(
+                &mut state,
+                conn_id,
+                &data,
+                out_buffer,
+                buffer_len,
+                out_written,
+            );
+            if status == FFI_OK {
+                metrics.record_query(start.elapsed());
+            } else {
                 metrics.record_error();
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!(
-                        "Buffer too small: need {} bytes, got {}",
-                        data.len(),
-                        buffer_len
-                    ),
-                );
-                set_out_written_needed(out_written, data.len());
-                return -2;
             }
-            unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                *out_written = data.len() as c_uint;
-            }
-            0
+            status
         }
         Err(e) => {
             metrics.record_error();
@@ -619,7 +682,6 @@ struct GlobalState {
     statements: HashMap<u32, StatementHandle>,
     streams: HashMap<u32, StreamKind>,
     stream_connections: HashMap<u32, u32>, // Map stream_id -> conn_id
-    pending_result_buffers: HashMap<PendingResultKey, PendingResultBuffer>,
     pools: HashMap<u32, Arc<ConnectionPool>>,
     pooled_connections: HashMap<u32, PooledConnectionState>, // pooled_conn_id -> pooled state
     pooled_busy_counts: HashMap<u32, usize>,                 // pool_id -> active pooled FFI calls
@@ -646,43 +708,9 @@ struct GlobalState {
     audit_logger: Arc<AuditLogger>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum PendingResultKey {
-    ExecQuery {
-        conn_id: u32,
-        sql_hash: u64,
-    },
-    ExecQueryParams {
-        conn_id: u32,
-        sql_hash: u64,
-        params_hash: u64,
-        result_encoding: u32,
-    },
-    ExecQueryMultiParams {
-        conn_id: u32,
-        sql_hash: u64,
-        params_hash: u64,
-    },
-    ExecQueryMulti {
-        conn_id: u32,
-        sql_hash: u64,
-    },
-    Execute {
-        stmt_id: u32,
-        params_hash: u64,
-        timeout_override_ms: u32,
-        fetch_size: u32,
-    },
-}
-
-struct PendingResultBuffer {
-    data: Vec<u8>,
-    created_at: Instant,
-}
-
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
+static FFI_PLUGIN_REGISTRY: OnceLock<PluginRegistry> = OnceLock::new();
 const CANCEL_UNSUPPORTED_NATIVE_CODE: i32 = 5001;
-const PENDING_RESULT_TTL: Duration = Duration::from_secs(2);
 
 /// FFI return codes (Fase 1 - padronizacao). Documented for consistency; literals used at call sites.
 #[allow(dead_code)]
@@ -708,104 +736,118 @@ fn set_out_written_needed(out_written: *mut c_uint, needed: usize) {
     }
 }
 
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn prune_pending_results_for_connection(
-    state: &mut GlobalState,
-    conn_id: u32,
-    stmts_to_drop: &[u32],
-) {
-    state.pending_result_buffers.retain(|key, _| match key {
-        PendingResultKey::ExecQuery {
-            conn_id: key_conn, ..
-        }
-        | PendingResultKey::ExecQueryParams {
-            conn_id: key_conn, ..
-        }
-        | PendingResultKey::ExecQueryMultiParams {
-            conn_id: key_conn, ..
-        }
-        | PendingResultKey::ExecQueryMulti {
-            conn_id: key_conn, ..
-        } => *key_conn != conn_id,
-        PendingResultKey::Execute { stmt_id, .. } => !stmts_to_drop.contains(stmt_id),
-    });
-}
-
-fn try_write_pending_result(
-    state: &mut GlobalState,
-    key: &PendingResultKey,
+fn write_ffi_output_buffer(
+    data: &[u8],
     out_buffer: *mut u8,
     buffer_len: c_uint,
     out_written: *mut c_uint,
-    conn_id_for_error: Option<u32>,
-) -> Option<c_int> {
-    let entry = state.pending_result_buffers.remove(key)?;
-    if entry.created_at.elapsed() > PENDING_RESULT_TTL {
-        let message = "Pending result expired; retry the query with a larger initial buffer";
-        if let Some(conn_id) = conn_id_for_error {
-            set_connection_error(state, conn_id, message.to_string());
-        } else {
-            set_error(state, message.to_string());
-        }
-        set_out_written_zero(out_written);
-        return Some(-1);
+) -> c_int {
+    if out_buffer.is_null() || out_written.is_null() {
+        return FFI_ERR;
+    }
+    if data.len() > buffer_len as usize {
+        set_out_written_needed(out_written, data.len());
+        return FFI_ERR_BUFFER_TOO_SMALL;
     }
 
-    if entry.data.len() > buffer_len as usize {
-        let needed = entry.data.len();
-        state.pending_result_buffers.insert(key.clone(), entry);
-        if let Some(conn_id) = conn_id_for_error {
-            set_connection_error(
-                state,
-                conn_id,
-                format!(
-                    "Buffer too small: need {} bytes, got {}",
-                    state
-                        .pending_result_buffers
-                        .get(key)
-                        .map(|e| e.data.len())
-                        .unwrap_or(needed),
-                    buffer_len
-                ),
-            );
-        } else {
-            set_error(
-                state,
-                format!(
-                    "Buffer too small: need {} bytes, got {}",
-                    state
-                        .pending_result_buffers
-                        .get(key)
-                        .map(|e| e.data.len())
-                        .unwrap_or(needed),
-                    buffer_len
-                ),
-            );
-        }
-        set_out_written_needed(out_written, needed);
-        return Some(-2);
-    }
-
+    // SAFETY: null pointers were rejected above, `data.len() <= buffer_len`,
+    // and `u8` has no alignment requirement.
     unsafe {
-        std::ptr::copy_nonoverlapping(entry.data.as_ptr(), out_buffer, entry.data.len());
-        *out_written = entry.data.len() as c_uint;
+        std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
+        *out_written = data.len() as c_uint;
     }
-    Some(0)
+    FFI_OK
 }
 
-fn stash_pending_result(state: &mut GlobalState, key: PendingResultKey, data: Vec<u8>) {
-    state.pending_result_buffers.insert(
-        key,
-        PendingResultBuffer {
-            data,
-            created_at: Instant::now(),
-        },
-    );
+fn write_connection_output_buffer(
+    state: &mut GlobalState,
+    conn_id: u32,
+    data: &[u8],
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    if data.len() > buffer_len as usize {
+        set_connection_error(
+            state,
+            conn_id,
+            format!(
+                "Buffer too small: need {} bytes, got {}",
+                data.len(),
+                buffer_len
+            ),
+        );
+    }
+    write_ffi_output_buffer(data, out_buffer, buffer_len, out_written)
+}
+
+fn build_catalog_cache_key(conn_id: u32, table: &str) -> String {
+    let conn_id = conn_id.to_string();
+    let mut key = String::with_capacity(conn_id.len() + 1 + table.len());
+    key.push_str(&conn_id);
+    key.push(':');
+    key.push_str(table);
+    key
+}
+
+fn validate_param_buffer_shape(
+    params_buffer: *const u8,
+    params_len: c_uint,
+) -> std::result::Result<(), &'static str> {
+    if params_buffer.is_null() {
+        if params_len > 0 {
+            Err("params_buffer is null but params_len is greater than zero")
+        } else {
+            Ok(())
+        }
+    } else {
+        Ok(())
+    }
+}
+
+/// Borrows an optional FFI parameter buffer only for the callback duration.
+///
+/// # Safety
+///
+/// When `params_buffer` is non-null and `params_len > 0`, the caller must
+/// guarantee the memory is valid for reads of `params_len` bytes for the full
+/// duration of `callback`. The callback must not store the borrowed slice.
+unsafe fn with_optional_param_buffer<R>(
+    params_buffer: *const u8,
+    params_len: c_uint,
+    callback: impl FnOnce(&[u8]) -> R,
+) -> std::result::Result<R, &'static str> {
+    validate_param_buffer_shape(params_buffer, params_len)?;
+    if params_buffer.is_null() || params_len == 0 {
+        return Ok(callback(&[]));
+    }
+
+    // SAFETY: guaranteed by the caller contract above; the slice is scoped to
+    // this function and cannot outlive the callback invocation.
+    let params = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+    Ok(callback(params))
+}
+
+/// Copies an optional FFI parameter buffer for work that outlives the FFI call.
+///
+/// # Safety
+///
+/// Same caller obligations as [`with_optional_param_buffer`].
+unsafe fn read_param_buffer_owned(
+    params_buffer: *const u8,
+    params_len: c_uint,
+) -> std::result::Result<Vec<u8>, &'static str> {
+    // SAFETY: forwarded from this function's safety contract. The callback
+    // copies immediately, so no borrowed FFI pointer escapes.
+    unsafe { with_optional_param_buffer(params_buffer, params_len, |params| params.to_vec()) }
+}
+
+fn set_invalid_param_buffer_error(state: &mut GlobalState, conn_id: u32, message: &str) {
+    set_connection_error(state, conn_id, message.to_string());
+}
+
+fn ffi_plugin_registry() -> &'static PluginRegistry {
+    FFI_PLUGIN_REGISTRY.get_or_init(PluginRegistry::default)
 }
 
 fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
@@ -828,7 +870,6 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             statements: HashMap::new(),
             streams: HashMap::new(),
             stream_connections: HashMap::new(),
-            pending_result_buffers: HashMap::new(),
             pools: HashMap::new(),
             pooled_connections: HashMap::new(),
             pooled_busy_counts: HashMap::new(),
@@ -1150,7 +1191,10 @@ fn validate_connection_string_format(s: &str) -> Option<String> {
     for ch in s.chars() {
         match ch {
             '{' => brace_depth = brace_depth.saturating_add(1),
-            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '}' if brace_depth == 0 => {
+                return Some("Unbalanced braces in connection string".to_string());
+            }
+            '}' => brace_depth -= 1,
             _ => {}
         }
     }
@@ -1370,7 +1414,6 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 state.stream_connections.remove(&stream_id);
             }
             state.async_requests.free_for_connection(conn_id);
-            prune_pending_results_for_connection(&mut state, conn_id, &stmts_to_drop);
             drop(state);
 
             for txn in transactions {
@@ -2520,17 +2563,7 @@ pub extern "C" fn odbc_audit_get_events(
             }
         };
 
-        if data.len() > buffer_len as usize {
-            set_out_written_needed(out_written, data.len());
-            return -2;
-        }
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
-            *out_written = data.len() as c_uint;
-        }
-
-        0
+        write_ffi_output_buffer(&data, buffer, buffer_len, out_written)
     })
 }
 
@@ -2580,17 +2613,7 @@ pub extern "C" fn odbc_audit_get_status(
         };
         drop(state);
 
-        if data.len() > buffer_len as usize {
-            set_out_written_needed(out_written, data.len());
-            return -2;
-        }
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
-            *out_written = data.len() as c_uint;
-        }
-
-        0
+        write_ffi_output_buffer(&data, buffer, buffer_len, out_written)
     })
 }
 
@@ -2660,17 +2683,7 @@ pub extern "C" fn odbc_metadata_cache_stats(
             }
         };
 
-        if data.len() > buffer_len as usize {
-            set_out_written_needed(out_written, data.len());
-            return -2;
-        }
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), buffer, data.len());
-            *out_written = data.len() as c_uint;
-        }
-
-        0
+        write_ffi_output_buffer(&data, buffer, buffer_len, out_written)
     })
 }
 
@@ -2782,7 +2795,7 @@ pub extern "C" fn odbc_detect_driver(
             Ok(s) => s,
             Err(_) => return 0,
         };
-        let registry = PluginRegistry::default();
+        let registry = ffi_plugin_registry();
         let name = registry
             .detect_driver(conn_str_rust)
             .unwrap_or_else(|| "unknown".to_string());
@@ -3025,7 +3038,7 @@ pub extern "C" fn odbc_build_upsert_sql(
             .as_ref()
             .map(|v| v.iter().map(String::as_str).collect());
 
-        let registry = PluginRegistry::default();
+        let registry = ffi_plugin_registry();
         let result = match registry.build_upsert_sql(
             conn_str_rs,
             table_rs,
@@ -3108,7 +3121,7 @@ pub extern "C" fn odbc_append_returning_sql(
             .filter(|s| !s.is_empty())
             .collect();
 
-        let registry = PluginRegistry::default();
+        let registry = ffi_plugin_registry();
         let r = match registry.append_returning_sql(conn_str_rs, sql_rs, verb, &cols) {
             Some(r) => r,
             None => return -3,
@@ -3192,7 +3205,7 @@ pub extern "C" fn odbc_get_session_init_sql(
             }
         };
 
-        let registry = PluginRegistry::default();
+        let registry = ffi_plugin_registry();
         let stmts = registry
             .session_init_sql(conn_str_rs, &opts)
             .unwrap_or_default();
@@ -3252,20 +3265,6 @@ pub extern "C" fn odbc_exec_query(
 
         let metrics = Arc::clone(&state.metrics);
         let start = Instant::now();
-        let pending_key = PendingResultKey::ExecQuery {
-            conn_id,
-            sql_hash: hash_bytes(sql_str.as_bytes()),
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buf,
-            buf_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -3316,29 +3315,20 @@ pub extern "C" fn odbc_exec_query(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buf_len as usize {
+                let status = write_connection_output_buffer(
+                    &mut state,
+                    conn_id,
+                    &data,
+                    out_buf,
+                    buf_len,
+                    out_written,
+                );
+                if status == FFI_OK {
+                    metrics.record_query(elapsed);
+                } else {
                     metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!("Buffer too small: need {} bytes, got {}", data_len, buf_len),
-                    );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
                 }
-
-                metrics.record_query(elapsed);
-
-                // Safety: `out_buf` must be valid for writes of `data.len()` bytes
-                // `out_written` must be valid for writes of size_of::<c_uint>() bytes
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buf, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-
-                0
+                status
             }
             Err(e) => {
                 metrics.record_error();
@@ -3408,17 +3398,18 @@ pub extern "C" fn odbc_execute_async_params(
             return 0;
         }
 
-        if params_buffer.is_null() && params_len > 0 {
-            let Some(mut state) = try_lock_global_state() else {
+        // SAFETY: FFI caller owns `params_buffer`; this async path copies the
+        // bytes before returning, so no foreign pointer is retained.
+        let params_slice = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
+            Ok(params_slice) => params_slice,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
                 return 0;
-            };
-            set_connection_error(
-                &mut state,
-                conn_id,
-                "params_buffer is null but params_len is greater than zero".to_string(),
-            );
-            return 0;
-        }
+            }
+        };
 
         let c_str = unsafe { CStr::from_ptr(sql) };
         let sql_str = match c_str.to_str() {
@@ -3426,11 +3417,10 @@ pub extern "C" fn odbc_execute_async_params(
             Err(_) => return 0,
         };
 
-        let params = if params_buffer.is_null() || params_len == 0 {
+        let params = if params_slice.is_empty() {
             None
         } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            Some(raw.to_vec())
+            Some(params_slice)
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3471,17 +3461,18 @@ pub extern "C" fn odbc_execute_async_params_options(
             return 0;
         }
 
-        if params_buffer.is_null() && params_len > 0 {
-            let Some(mut state) = try_lock_global_state() else {
+        // SAFETY: FFI caller owns `params_buffer`; this async path copies the
+        // bytes before returning, so no foreign pointer is retained.
+        let params_slice = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
+            Ok(params_slice) => params_slice,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
                 return 0;
-            };
-            set_connection_error(
-                &mut state,
-                conn_id,
-                "params_buffer is null but params_len is greater than zero".to_string(),
-            );
-            return 0;
-        }
+            }
+        };
 
         let c_str = unsafe { CStr::from_ptr(sql) };
         let sql_str = match c_str.to_str() {
@@ -3489,11 +3480,10 @@ pub extern "C" fn odbc_execute_async_params_options(
             Err(_) => return 0,
         };
 
-        let params = if params_buffer.is_null() || params_len == 0 {
+        let params = if params_slice.is_empty() {
             None
         } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            Some(raw.to_vec())
+            Some(params_slice)
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -3570,20 +3560,11 @@ pub extern "C" fn odbc_async_get_result(
 
         match result {
             Ok(data) => {
-                if data.len() > buffer_len as usize {
-                    let needed = data.len() as c_uint;
+                let status = write_ffi_output_buffer(&data, out_buffer, buffer_len, out_written);
+                if status == FFI_ERR_BUFFER_TOO_SMALL {
                     let _ = state.async_requests.restore_result(request_id, Ok(data));
-                    unsafe {
-                        *out_written = needed;
-                    }
-                    return -2;
                 }
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
+                status
             }
             Err(e) => {
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
@@ -3656,129 +3637,113 @@ pub extern "C" fn odbc_exec_query_params(
             Err(_) => return -1,
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-        let params_hash = if params_buffer.is_null() || params_len == 0 {
-            0
-        } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            hash_bytes(raw)
-        };
-        let pending_key = PendingResultKey::ExecQueryParams {
-            conn_id,
-            sql_hash: hash_bytes(sql_str.as_bytes()),
-            params_hash,
-            result_encoding: 0,
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buffer,
-            buffer_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
-
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
-            Ok(target) => target,
-            Err(e) => {
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
-                set_out_written_zero(out_written);
+        let execute_with_params = |params_slice: &[u8]| {
+            let Some(mut state) = try_lock_global_state() else {
                 return -1;
-            }
-        };
-        drop(state);
+            };
 
-        let params_slice = if params_buffer.is_null() || params_len == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
-        };
+            let metrics = Arc::clone(&state.metrics);
+            let start = Instant::now();
 
-        let result = match &mut target {
-            RunnableConnection::Regular(conn_arc) => {
-                let mut conn_guard = match conn_arc.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
-                            return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
-                        set_out_written_zero(out_written);
-                        return -1;
-                    }
-                };
-                if params_slice.is_empty() {
-                    execute_query_with_cached_connection(&mut conn_guard, sql_str)
-                } else {
-                    execute_query_with_param_buffer(conn_guard.connection(), sql_str, params_slice)
+            let mut target = match take_runnable_connection(&mut state, conn_id) {
+                Ok(target) => target,
+                Err(e) => {
+                    set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    set_out_written_zero(out_written);
+                    return -1;
                 }
-            }
-            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => {
+            };
+            drop(state);
+
+            let result = match &mut target {
+                RunnableConnection::Regular(conn_arc) => {
+                    let mut conn_guard = match conn_arc.lock() {
+                        Ok(g) => g,
+                        Err(_) => {
+                            let Some(mut state) = try_lock_global_state() else {
+                                return -1;
+                            };
+                            set_connection_error(
+                                &mut state,
+                                conn_id,
+                                "Failed to lock connection".to_string(),
+                            );
+                            set_out_written_zero(out_written);
+                            return -1;
+                        }
+                    };
                     if params_slice.is_empty() {
-                        execute_query_with_connection(conn_guard.get_connection(), sql_str)
+                        execute_query_with_cached_connection(&mut conn_guard, sql_str)
                     } else {
                         execute_query_with_param_buffer(
-                            conn_guard.get_connection(),
+                            conn_guard.connection(),
                             sql_str,
                             params_slice,
                         )
                     }
                 }
-                Err(_) => Err(OdbcError::InternalError(
-                    "Failed to lock pooled connection".to_string(),
-                )),
-            },
-        };
+                RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                    Ok(conn_guard) => {
+                        if params_slice.is_empty() {
+                            execute_query_with_connection(conn_guard.get_connection(), sql_str)
+                        } else {
+                            execute_query_with_param_buffer(
+                                conn_guard.get_connection(),
+                                sql_str,
+                                params_slice,
+                            )
+                        }
+                    }
+                    Err(_) => Err(OdbcError::InternalError(
+                        "Failed to lock pooled connection".to_string(),
+                    )),
+                },
+            };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target);
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
+            restore_pooled_connection(&mut state, conn_id, target);
 
-        match result {
-            Ok(data) => {
-                let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
+            match result {
+                Ok(data) => {
+                    let elapsed = start.elapsed();
+                    let status = write_connection_output_buffer(
                         &mut state,
                         conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data_len, buffer_len
-                        ),
+                        &data,
+                        out_buffer,
+                        buffer_len,
+                        out_written,
                     );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
+                    if status == FFI_OK {
+                        metrics.record_query(elapsed);
+                    } else {
+                        metrics.record_error();
+                    }
+                    status
                 }
-
-                metrics.record_query(elapsed);
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
+                Err(e) => {
+                    metrics.record_error();
+                    let structured = e.to_structured();
+                    set_connection_structured_error(&mut state, conn_id, structured);
+                    set_out_written_zero(out_written);
+                    -1
                 }
-
-                0
             }
-            Err(e) => {
-                metrics.record_error();
-                let structured = e.to_structured();
-                set_connection_structured_error(&mut state, conn_id, structured);
+        };
+
+        // SAFETY: FFI caller must keep `params_buffer` readable for this call.
+        // The borrowed slice is scoped to the callback and never stored.
+        match unsafe { with_optional_param_buffer(params_buffer, params_len, execute_with_params) }
+        {
+            Ok(status) => status,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
                 set_out_written_zero(out_written);
                 -1
             }
@@ -3821,125 +3786,105 @@ pub extern "C" fn odbc_exec_query_params_options(
             Err(_) => return -1,
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-        let params_hash = if params_buffer.is_null() || params_len == 0 {
-            0
-        } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            hash_bytes(raw)
-        };
-        let pending_key = PendingResultKey::ExecQueryParams {
-            conn_id,
-            sql_hash: hash_bytes(sql_str.as_bytes()),
-            params_hash,
-            result_encoding,
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buffer,
-            buffer_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
-
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
-            Ok(target) => target,
-            Err(e) => {
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
-                set_out_written_zero(out_written);
+        let execute_with_params = |params_slice: &[u8]| {
+            let Some(mut state) = try_lock_global_state() else {
                 return -1;
-            }
-        };
-        drop(state);
+            };
 
-        let params_slice = if params_buffer.is_null() || params_len == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
-        };
+            let metrics = Arc::clone(&state.metrics);
+            let start = Instant::now();
 
-        let result = match &mut target {
-            RunnableConnection::Regular(conn_arc) => {
-                let conn_guard = match conn_arc.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
+            let mut target = match take_runnable_connection(&mut state, conn_id) {
+                Ok(target) => target,
+                Err(e) => {
+                    set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    set_out_written_zero(out_written);
+                    return -1;
+                }
+            };
+            drop(state);
+
+            let result = match &mut target {
+                RunnableConnection::Regular(conn_arc) => {
+                    let conn_guard = match conn_arc.lock() {
+                        Ok(g) => g,
+                        Err(_) => {
+                            let Some(mut state) = try_lock_global_state() else {
+                                return -1;
+                            };
+                            set_connection_error(
+                                &mut state,
+                                conn_id,
+                                "Failed to lock connection".to_string(),
+                            );
+                            set_out_written_zero(out_written);
                             return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
-                        set_out_written_zero(out_written);
-                        return -1;
-                    }
-                };
-                execute_query_with_param_buffer_encoding(
-                    conn_guard.connection(),
-                    sql_str,
-                    params_slice,
-                    encoding,
-                )
-            }
-            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => execute_query_with_param_buffer_encoding(
-                    conn_guard.get_connection(),
-                    sql_str,
-                    params_slice,
-                    encoding,
-                ),
-                Err(_) => Err(OdbcError::InternalError(
-                    "Failed to lock pooled connection".to_string(),
-                )),
-            },
-        };
+                        }
+                    };
+                    execute_query_with_param_buffer_encoding(
+                        conn_guard.connection(),
+                        sql_str,
+                        params_slice,
+                        encoding,
+                    )
+                }
+                RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                    Ok(conn_guard) => execute_query_with_param_buffer_encoding(
+                        conn_guard.get_connection(),
+                        sql_str,
+                        params_slice,
+                        encoding,
+                    ),
+                    Err(_) => Err(OdbcError::InternalError(
+                        "Failed to lock pooled connection".to_string(),
+                    )),
+                },
+            };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target);
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
+            restore_pooled_connection(&mut state, conn_id, target);
 
-        match result {
-            Ok(data) => {
-                let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
+            match result {
+                Ok(data) => {
+                    let elapsed = start.elapsed();
+                    let status = write_connection_output_buffer(
                         &mut state,
                         conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data_len, buffer_len
-                        ),
+                        &data,
+                        out_buffer,
+                        buffer_len,
+                        out_written,
                     );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
+                    if status == FFI_OK {
+                        metrics.record_query(elapsed);
+                    } else {
+                        metrics.record_error();
+                    }
+                    status
                 }
-
-                metrics.record_query(elapsed);
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
+                Err(e) => {
+                    metrics.record_error();
+                    let structured = e.to_structured();
+                    set_connection_structured_error(&mut state, conn_id, structured);
+                    set_out_written_zero(out_written);
+                    -1
                 }
-
-                0
             }
-            Err(e) => {
-                metrics.record_error();
-                let structured = e.to_structured();
-                set_connection_structured_error(&mut state, conn_id, structured);
+        };
+
+        // SAFETY: FFI caller must keep `params_buffer` readable for this call.
+        // The borrowed slice is scoped to the callback and never stored.
+        match unsafe { with_optional_param_buffer(params_buffer, params_len, execute_with_params) }
+        {
+            Ok(status) => status,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
                 set_out_written_zero(out_written);
                 -1
             }
@@ -3980,20 +3925,6 @@ pub extern "C" fn odbc_exec_query_multi(
 
         let metrics = Arc::clone(&state.metrics);
         let start = Instant::now();
-        let pending_key = PendingResultKey::ExecQueryMulti {
-            conn_id,
-            sql_hash: hash_bytes(sql_str.as_bytes()),
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buffer,
-            buffer_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -4038,30 +3969,20 @@ pub extern "C" fn odbc_exec_query_multi(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buffer_len as usize {
+                let status = write_connection_output_buffer(
+                    &mut state,
+                    conn_id,
+                    &data,
+                    out_buffer,
+                    buffer_len,
+                    out_written,
+                );
+                if status == FFI_OK {
+                    metrics.record_query(elapsed);
+                } else {
                     metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data_len, buffer_len
-                        ),
-                    );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
                 }
-
-                metrics.record_query(elapsed);
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-
-                0
+                status
             }
             Err(e) => {
                 metrics.record_error();
@@ -4102,35 +4023,59 @@ pub extern "C" fn odbc_exec_query_multi_params(
             Err(_) => return -1,
         };
 
-        let params: Vec<ParamValue> = if params_buffer.is_null() || params_len == 0 {
-            vec![]
-        } else {
-            let params_slice =
-                unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            match deserialize_param_buffer(params_slice) {
-                Ok(ParamList::Legacy(p)) => p,
-                Ok(ParamList::Directed(b)) => {
-                    if b.iter().any(|x| x.direction != ParamDirection::Input) {
-                        let Some(mut s) = try_lock_global_state() else {
-                            return -1;
-                        };
-                        set_connection_error(
-                        &mut s,
-                        conn_id,
-                        "odbc_exec_query_multi_params: OUTPUT/INOUT not supported (use odbc_exec_query with DRT1)"
-                            .to_string(),
-                    );
-                        return -1;
+        // SAFETY: FFI caller must keep `params_buffer` readable while the
+        // callback deserializes it. The borrowed slice is not stored.
+        let params = match unsafe {
+            with_optional_param_buffer(
+                params_buffer,
+                params_len,
+                |params_slice| -> std::result::Result<Vec<ParamValue>, c_int> {
+                    if params_slice.is_empty() {
+                        Ok(vec![])
+                    } else {
+                        match deserialize_param_buffer(params_slice) {
+                            Ok(ParamList::Legacy(p)) => Ok(p),
+                            Ok(ParamList::Directed(b)) => {
+                                if b.iter().any(|x| x.direction != ParamDirection::Input) {
+                                    let Some(mut s) = try_lock_global_state() else {
+                                        return Err(-1);
+                                    };
+                                    set_connection_error(
+                                        &mut s,
+                                        conn_id,
+                                        "odbc_exec_query_multi_params: OUTPUT/INOUT not supported (use odbc_exec_query with DRT1)"
+                                            .to_string(),
+                                    );
+                                    return Err(-1);
+                                }
+                                Ok(b.iter().map(|x| x.value.clone()).collect())
+                            }
+                            Err(e) => {
+                                let Some(mut s) = try_lock_global_state() else {
+                                    return Err(-1);
+                                };
+                                set_connection_error(
+                                    &mut s,
+                                    conn_id,
+                                    format!("Invalid params: {}", e),
+                                );
+                                Err(-1)
+                            }
+                        }
                     }
-                    b.iter().map(|x| x.value.clone()).collect()
-                }
-                Err(e) => {
-                    let Some(mut s) = try_lock_global_state() else {
-                        return -1;
-                    };
-                    set_connection_error(&mut s, conn_id, format!("Invalid params: {}", e));
+                },
+            )
+        } {
+            Ok(Ok(params)) => params,
+            Ok(Err(status)) => return status,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
                     return -1;
-                }
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
+                set_out_written_zero(out_written);
+                return -1;
             }
         };
 
@@ -4140,27 +4085,6 @@ pub extern "C" fn odbc_exec_query_multi_params(
 
         let metrics = Arc::clone(&state.metrics);
         let start = Instant::now();
-        let params_hash = if params_buffer.is_null() || params_len == 0 {
-            0
-        } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            hash_bytes(raw)
-        };
-        let pending_key = PendingResultKey::ExecQueryMultiParams {
-            conn_id,
-            sql_hash: hash_bytes(sql_str.as_bytes()),
-            params_hash,
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buffer,
-            buffer_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -4209,27 +4133,20 @@ pub extern "C" fn odbc_exec_query_multi_params(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buffer_len as usize {
+                let status = write_connection_output_buffer(
+                    &mut state,
+                    conn_id,
+                    &data,
+                    out_buffer,
+                    buffer_len,
+                    out_written,
+                );
+                if status == FFI_OK {
+                    metrics.record_query(elapsed);
+                } else {
                     metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data_len, buffer_len
-                        ),
-                    );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
                 }
-                metrics.record_query(elapsed);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
+                status
             }
             Err(e) => {
                 metrics.record_error();
@@ -4297,26 +4214,16 @@ pub extern "C" fn odbc_catalog_columns(
             return -1;
         };
 
-        let cache_key = format!("{}:{}", conn_id, table_str);
-        if let Some(cached_data) = state.metadata_cache.get_payload(&cache_key) {
-            if cached_data.len() > buffer_len as usize {
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!(
-                        "Buffer too small: need {} bytes, got {}",
-                        cached_data.len(),
-                        buffer_len
-                    ),
-                );
-                set_out_written_needed(out_written, cached_data.len());
-                return -2;
-            }
-            unsafe {
-                std::ptr::copy_nonoverlapping(cached_data.as_ptr(), out_buffer, cached_data.len());
-                *out_written = cached_data.len() as c_uint;
-            }
-            return 0;
+        let cache_key = build_catalog_cache_key(conn_id, table_str);
+        if let Some(cached_data) = state.metadata_cache.get_payload_shared(&cache_key) {
+            return write_connection_output_buffer(
+                &mut state,
+                conn_id,
+                cached_data.as_ref(),
+                out_buffer,
+                buffer_len,
+                out_written,
+            );
         }
 
         let metrics = Arc::clone(&state.metrics);
@@ -4364,27 +4271,22 @@ pub extern "C" fn odbc_catalog_columns(
 
         match result {
             Ok(data) => {
-                metrics.record_query(start.elapsed());
+                let elapsed = start.elapsed();
                 state.metadata_cache.cache_payload(&cache_key, &data);
-                if data.len() > buffer_len as usize {
+                let status = write_connection_output_buffer(
+                    &mut state,
+                    conn_id,
+                    &data,
+                    out_buffer,
+                    buffer_len,
+                    out_written,
+                );
+                if status == FFI_OK {
+                    metrics.record_query(elapsed);
+                } else {
                     metrics.record_error();
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data.len(),
-                            buffer_len
-                        ),
-                    );
-                    set_out_written_needed(out_written, data.len());
-                    return -2;
                 }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
-                }
-                0
+                status
             }
             Err(e) => {
                 metrics.record_error();
@@ -4613,52 +4515,22 @@ pub extern "C" fn odbc_execute(
             return -1;
         }
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        let (conn_id, sql_str, stored_timeout_sec) = match state.statements.get(&stmt_id) {
-            Some(s) => (s.conn_id(), s.sql().to_string(), s.timeout_sec()),
-            None => {
-                drop(state);
-                let Some(mut s) = try_lock_global_state() else {
-                    return -1;
-                };
-                set_error(&mut s, format!("Invalid statement ID: {}", stmt_id));
+        let (conn_id, sql_str, stored_timeout_sec) = {
+            let Some(state) = try_lock_global_state() else {
                 return -1;
+            };
+            match state.statements.get(&stmt_id) {
+                Some(s) => (s.conn_id(), s.sql().to_string(), s.timeout_sec()),
+                None => {
+                    drop(state);
+                    let Some(mut s) = try_lock_global_state() else {
+                        return -1;
+                    };
+                    set_error(&mut s, format!("Invalid statement ID: {}", stmt_id));
+                    return -1;
+                }
             }
         };
-
-        let params_slice: &[u8] = if params_buffer.is_null() || params_len == 0 {
-            &[]
-        } else {
-            unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }
-        };
-
-        let metrics = Arc::clone(&state.metrics);
-        let start = Instant::now();
-        let params_hash = if params_buffer.is_null() || params_len == 0 {
-            0
-        } else {
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            hash_bytes(raw)
-        };
-        let pending_key = PendingResultKey::Execute {
-            stmt_id,
-            params_hash,
-            timeout_override_ms,
-            fetch_size,
-        };
-        if let Some(code) = try_write_pending_result(
-            &mut state,
-            &pending_key,
-            out_buffer,
-            buffer_len,
-            out_written,
-            Some(conn_id),
-        ) {
-            return code;
-        }
 
         let timeout_sec = if timeout_override_ms > 0 {
             Some(((timeout_override_ms as usize) / 1000).max(1))
@@ -4671,86 +4543,104 @@ pub extern "C" fn odbc_execute(
             None
         };
 
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
-            Ok(target) => target,
-            Err(e) => {
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+        let execute_with_params = |params_slice: &[u8]| {
+            let Some(mut state) = try_lock_global_state() else {
                 return -1;
-            }
-        };
-        drop(state);
+            };
 
-        let result = match &mut target {
-            RunnableConnection::Regular(conn_arc) => {
-                let conn_guard = match conn_arc.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
+            let metrics = Arc::clone(&state.metrics);
+            let start = Instant::now();
+
+            let mut target = match take_runnable_connection(&mut state, conn_id) {
+                Ok(target) => target,
+                Err(e) => {
+                    set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    return -1;
+                }
+            };
+            drop(state);
+
+            let result = match &mut target {
+                RunnableConnection::Regular(conn_arc) => {
+                    let conn_guard = match conn_arc.lock() {
+                        Ok(g) => g,
+                        Err(_) => {
+                            let Some(mut state) = try_lock_global_state() else {
+                                return -1;
+                            };
+                            set_connection_error(
+                                &mut state,
+                                conn_id,
+                                "Failed to lock connection".to_string(),
+                            );
                             return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
-                        return -1;
-                    }
-                };
-                execute_query_with_param_buffer_and_timeout(
-                    conn_guard.connection(),
-                    &sql_str,
-                    params_slice,
-                    timeout_sec,
-                    fetch_size_opt,
-                )
-            }
-            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => execute_query_with_param_buffer_and_timeout(
-                    conn_guard.get_connection(),
-                    &sql_str,
-                    params_slice,
-                    timeout_sec,
-                    fetch_size_opt,
-                ),
-                Err(_) => Err(OdbcError::InternalError(
-                    "Failed to lock pooled connection".to_string(),
-                )),
-            },
-        };
+                        }
+                    };
+                    execute_query_with_param_buffer_and_timeout(
+                        conn_guard.connection(),
+                        &sql_str,
+                        params_slice,
+                        timeout_sec,
+                        fetch_size_opt,
+                    )
+                }
+                RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+                    Ok(conn_guard) => execute_query_with_param_buffer_and_timeout(
+                        conn_guard.get_connection(),
+                        &sql_str,
+                        params_slice,
+                        timeout_sec,
+                        fetch_size_opt,
+                    ),
+                    Err(_) => Err(OdbcError::InternalError(
+                        "Failed to lock pooled connection".to_string(),
+                    )),
+                },
+            };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target);
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
+            restore_pooled_connection(&mut state, conn_id, target);
 
-        match result {
-            Ok(data) => {
-                let elapsed = start.elapsed();
-                let data_len = data.len();
-                if data.len() > buffer_len as usize {
-                    metrics.record_error();
-                    stash_pending_result(&mut state, pending_key, data);
-                    set_connection_error(
+            match result {
+                Ok(data) => {
+                    let elapsed = start.elapsed();
+                    let status = write_connection_output_buffer(
                         &mut state,
                         conn_id,
-                        format!(
-                            "Buffer too small: need {} bytes, got {}",
-                            data_len, buffer_len
-                        ),
+                        &data,
+                        out_buffer,
+                        buffer_len,
+                        out_written,
                     );
-                    set_out_written_needed(out_written, data_len);
-                    return -2;
+                    if status == FFI_OK {
+                        metrics.record_query(elapsed);
+                    } else {
+                        metrics.record_error();
+                    }
+                    status
                 }
-                metrics.record_query(elapsed);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
-                    *out_written = data.len() as c_uint;
+                Err(e) => {
+                    metrics.record_error();
+                    set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    -1
                 }
-                0
             }
-            Err(e) => {
-                metrics.record_error();
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+        };
+
+        // SAFETY: FFI caller must keep `params_buffer` readable for this call.
+        // The borrowed slice is scoped to the callback and never stored.
+        match unsafe { with_optional_param_buffer(params_buffer, params_len, execute_with_params) }
+        {
+            Ok(status) => status,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
+                set_out_written_zero(out_written);
                 -1
             }
         }
@@ -4808,12 +4698,6 @@ pub extern "C" fn odbc_close_statement(stmt_id: c_uint) -> c_int {
         };
 
         if state.statements.remove(&stmt_id).is_some() {
-            state.pending_result_buffers.retain(|key, _| match key {
-                PendingResultKey::Execute {
-                    stmt_id: key_stmt, ..
-                } => *key_stmt != stmt_id,
-                _ => true,
-            });
             0
         } else {
             set_error(&mut state, format!("Invalid statement ID: {}", stmt_id));
@@ -4832,9 +4716,6 @@ pub extern "C" fn odbc_clear_all_statements() -> c_int {
         };
 
         state.statements.clear();
-        state
-            .pending_result_buffers
-            .retain(|key, _| !matches!(key, PendingResultKey::Execute { .. }));
         0
     })
 }
@@ -5002,27 +4883,18 @@ pub extern "C" fn odbc_stream_start_batched(
             Err(_) => return 0,
         };
 
-        let Some(state) = try_lock_global_state() else {
+        let Some(mut state) = try_lock_global_state() else {
             return 0;
         };
 
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
+        let reservation = match reserve_stream_start(&mut state, conn_id) {
+            Ok(reservation) => reservation,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return 0;
             }
         };
 
-        let handles = conn.get_handles();
         let fetch_size = if fetch_size > 0 {
             fetch_size as usize
         } else {
@@ -5038,38 +4910,37 @@ pub extern "C" fn odbc_stream_start_batched(
         drop(state);
 
         let executor = StreamingExecutor::new(chunk_size);
-        match executor.start_batched_stream(handles, conn_id, sql_owned, fetch_size, chunk_size) {
+        let start_result = match &reservation.target {
+            StreamStartTarget::Regular { handles } => executor.start_batched_stream(
+                handles.clone(),
+                conn_id,
+                sql_owned,
+                fetch_size,
+                chunk_size,
+            ),
+            StreamStartTarget::Pooled { pool_id, pooled } => executor.start_batched_stream_pooled(
+                Arc::clone(pooled),
+                sql_owned,
+                fetch_size,
+                chunk_size,
+                Some(pooled_stream_completion(conn_id, *pool_id)),
+            ),
+        };
+
+        match start_result {
             Ok(batched_state) => {
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
-                let stream_id = {
-                    let mut id = 0u32;
-                    for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-                        let candidate = state.next_stream_id;
-                        state.next_stream_id = state.next_stream_id.wrapping_add(1);
-                        if candidate != 0 && !state.streams.contains_key(&candidate) {
-                            id = candidate;
-                            break;
-                        }
-                    }
-                    if id == 0 {
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to allocate stream ID".to_string(),
-                        );
-                        return 0;
-                    }
-                    id
-                };
-                state
-                    .streams
-                    .insert(stream_id, StreamKind::Batched(batched_state));
-                state.stream_connections.insert(stream_id, conn_id);
-                stream_id
+                insert_stream(
+                    &mut state,
+                    reservation.stream_id,
+                    conn_id,
+                    StreamKind::Batched(batched_state),
+                )
             }
             Err(e) => {
+                release_pooled_stream_reservation(conn_id, &reservation.target);
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
@@ -5110,15 +4981,14 @@ pub extern "C" fn odbc_stream_start_async(
             return 0;
         };
 
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                set_error(&mut state, format!("Invalid connection ID: {}", conn_id));
+        let reservation = match reserve_stream_start(&mut state, conn_id) {
+            Ok(reservation) => reservation,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return 0;
             }
         };
 
-        let handles = conn.get_handles();
         let fetch_size = if fetch_size > 0 {
             fetch_size as usize
         } else {
@@ -5134,38 +5004,37 @@ pub extern "C" fn odbc_stream_start_async(
         drop(state);
 
         let executor = StreamingExecutor::new(chunk_size);
-        match executor.start_async_stream(handles, conn_id, sql_owned, fetch_size, chunk_size) {
+        let start_result = match &reservation.target {
+            StreamStartTarget::Regular { handles } => executor.start_async_stream(
+                handles.clone(),
+                conn_id,
+                sql_owned,
+                fetch_size,
+                chunk_size,
+            ),
+            StreamStartTarget::Pooled { pool_id, pooled } => executor.start_async_stream_pooled(
+                Arc::clone(pooled),
+                sql_owned,
+                fetch_size,
+                chunk_size,
+                Some(pooled_stream_completion(conn_id, *pool_id)),
+            ),
+        };
+
+        match start_result {
             Ok(async_state) => {
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
-                let stream_id = {
-                    let mut id = 0u32;
-                    for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-                        let candidate = state.next_stream_id;
-                        state.next_stream_id = state.next_stream_id.wrapping_add(1);
-                        if candidate != 0 && !state.streams.contains_key(&candidate) {
-                            id = candidate;
-                            break;
-                        }
-                    }
-                    if id == 0 {
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to allocate stream ID".to_string(),
-                        );
-                        return 0;
-                    }
-                    id
-                };
-                state
-                    .streams
-                    .insert(stream_id, StreamKind::AsyncBatched(async_state));
-                state.stream_connections.insert(stream_id, conn_id);
-                stream_id
+                insert_stream(
+                    &mut state,
+                    reservation.stream_id,
+                    conn_id,
+                    StreamKind::AsyncBatched(async_state),
+                )
             }
             Err(e) => {
+                release_pooled_stream_reservation(conn_id, &reservation.target);
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
@@ -5213,25 +5082,16 @@ pub extern "C" fn odbc_stream_multi_start_batched(
             Ok(s) => s,
             Err(_) => return 0,
         };
-        let Some(state) = try_lock_global_state() else {
+        let Some(mut state) = try_lock_global_state() else {
             return 0;
         };
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                drop(state);
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Invalid connection ID: {}", conn_id),
-                );
+        let reservation = match reserve_stream_start(&mut state, conn_id) {
+            Ok(reservation) => reservation,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return 0;
             }
         };
-        let handles = conn.get_handles();
         let chunk_size = if chunk_size > 0 {
             chunk_size as usize
         } else {
@@ -5240,22 +5100,37 @@ pub extern "C" fn odbc_stream_multi_start_batched(
         let sql_owned = sql_str.to_string();
         drop(state);
 
-        match crate::engine::start_multi_batched_stream(handles, conn_id, sql_owned, chunk_size) {
+        let start_result = match &reservation.target {
+            StreamStartTarget::Regular { handles } => crate::engine::start_multi_batched_stream(
+                handles.clone(),
+                conn_id,
+                sql_owned,
+                chunk_size,
+            ),
+            StreamStartTarget::Pooled { pool_id, pooled } => {
+                crate::engine::start_multi_batched_stream_pooled(
+                    Arc::clone(pooled),
+                    sql_owned,
+                    chunk_size,
+                    Some(pooled_stream_completion(conn_id, *pool_id)),
+                )
+            }
+        };
+
+        match start_result {
             Ok(batched_state) => {
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
-                let stream_id = allocate_stream_id(&mut state, conn_id);
-                if stream_id == 0 {
-                    return 0;
-                }
-                state
-                    .streams
-                    .insert(stream_id, StreamKind::Batched(batched_state));
-                state.stream_connections.insert(stream_id, conn_id);
-                stream_id
+                insert_stream(
+                    &mut state,
+                    reservation.stream_id,
+                    conn_id,
+                    StreamKind::Batched(batched_state),
+                )
             }
             Err(e) => {
+                release_pooled_stream_reservation(conn_id, &reservation.target);
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
@@ -5292,14 +5167,13 @@ pub extern "C" fn odbc_stream_multi_start_async(
         let Some(mut state) = try_lock_global_state() else {
             return 0;
         };
-        let conn = match state.connections.get(&conn_id) {
-            Some(c) => c,
-            None => {
-                set_error(&mut state, format!("Invalid connection ID: {}", conn_id));
+        let reservation = match reserve_stream_start(&mut state, conn_id) {
+            Ok(reservation) => reservation,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return 0;
             }
         };
-        let handles = conn.get_handles();
         let chunk_size = if chunk_size > 0 {
             chunk_size as usize
         } else {
@@ -5308,22 +5182,37 @@ pub extern "C" fn odbc_stream_multi_start_async(
         let sql_owned = sql_str.to_string();
         drop(state);
 
-        match crate::engine::start_multi_async_stream(handles, conn_id, sql_owned, chunk_size) {
+        let start_result = match &reservation.target {
+            StreamStartTarget::Regular { handles } => crate::engine::start_multi_async_stream(
+                handles.clone(),
+                conn_id,
+                sql_owned,
+                chunk_size,
+            ),
+            StreamStartTarget::Pooled { pool_id, pooled } => {
+                crate::engine::start_multi_async_stream_pooled(
+                    Arc::clone(pooled),
+                    sql_owned,
+                    chunk_size,
+                    Some(pooled_stream_completion(conn_id, *pool_id)),
+                )
+            }
+        };
+
+        match start_result {
             Ok(async_state) => {
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
-                let stream_id = allocate_stream_id(&mut state, conn_id);
-                if stream_id == 0 {
-                    return 0;
-                }
-                state
-                    .streams
-                    .insert(stream_id, StreamKind::AsyncBatched(async_state));
-                state.stream_connections.insert(stream_id, conn_id);
-                stream_id
+                insert_stream(
+                    &mut state,
+                    reservation.stream_id,
+                    conn_id,
+                    StreamKind::AsyncBatched(async_state),
+                )
             }
             Err(e) => {
+                release_pooled_stream_reservation(conn_id, &reservation.target);
                 let Some(mut state) = try_lock_global_state() else {
                     return 0;
                 };
@@ -5512,7 +5401,8 @@ pub extern "C" fn odbc_stream_close(stream_id: c_uint) -> c_int {
             return -1;
         };
 
-        if state.streams.remove(&stream_id).is_some() {
+        if let Some(stream) = state.streams.remove(&stream_id) {
+            stream.cancel();
             state.stream_connections.remove(&stream_id);
             0
         } else {
@@ -6541,170 +6431,6 @@ mod tests {
     }
 
     #[test]
-    fn pending_result_keys_do_not_collide_for_query_params_and_multi_params() {
-        let conn_id = 42;
-        let sql_hash = hash_bytes(b"SELECT ?");
-        let params_hash = hash_bytes(b"params");
-        let query_key = PendingResultKey::ExecQueryParams {
-            conn_id,
-            sql_hash,
-            params_hash,
-            result_encoding: 0,
-        };
-        let multi_key = PendingResultKey::ExecQueryMultiParams {
-            conn_id,
-            sql_hash,
-            params_hash,
-        };
-
-        assert_ne!(query_key, multi_key);
-
-        let mut keys = HashSet::new();
-        assert!(keys.insert(query_key));
-        assert!(keys.insert(multi_key));
-        assert_eq!(keys.len(), 2);
-    }
-
-    #[test]
-    #[serial(ffi_last_error)]
-    fn prune_pending_results_for_connection_removes_multi_params() {
-        odbc_init();
-        let target_conn = next_test_invalid_id();
-        let other_conn = next_test_invalid_id();
-        let sql_hash = hash_bytes(b"SELECT ?");
-        let params_hash = hash_bytes(b"params");
-        let target_multi_params = PendingResultKey::ExecQueryMultiParams {
-            conn_id: target_conn,
-            sql_hash,
-            params_hash,
-        };
-        let target_query_params = PendingResultKey::ExecQueryParams {
-            conn_id: target_conn,
-            sql_hash,
-            params_hash,
-            result_encoding: 0,
-        };
-        let target_multi = PendingResultKey::ExecQueryMulti {
-            conn_id: target_conn,
-            sql_hash,
-        };
-        let target_stmt = PendingResultKey::Execute {
-            stmt_id: target_conn,
-            params_hash,
-            timeout_override_ms: 0,
-            fetch_size: 0,
-        };
-        let other_multi_params = PendingResultKey::ExecQueryMultiParams {
-            conn_id: other_conn,
-            sql_hash,
-            params_hash,
-        };
-        let other_stmt = PendingResultKey::Execute {
-            stmt_id: other_conn,
-            params_hash,
-            timeout_override_ms: 0,
-            fetch_size: 0,
-        };
-
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        for key in [
-            target_multi_params.clone(),
-            target_query_params.clone(),
-            target_multi.clone(),
-            target_stmt.clone(),
-            other_multi_params.clone(),
-            other_stmt.clone(),
-        ] {
-            stash_pending_result(&mut state, key, vec![1]);
-        }
-
-        prune_pending_results_for_connection(&mut state, target_conn, &[target_conn]);
-
-        assert!(!state
-            .pending_result_buffers
-            .contains_key(&target_multi_params));
-        assert!(!state
-            .pending_result_buffers
-            .contains_key(&target_query_params));
-        assert!(!state.pending_result_buffers.contains_key(&target_multi));
-        assert!(!state.pending_result_buffers.contains_key(&target_stmt));
-        assert!(state
-            .pending_result_buffers
-            .contains_key(&other_multi_params));
-        assert!(state.pending_result_buffers.contains_key(&other_stmt));
-
-        state.pending_result_buffers.remove(&other_multi_params);
-        state.pending_result_buffers.remove(&other_stmt);
-    }
-
-    #[test]
-    #[serial(ffi_last_error)]
-    fn test_pending_result_replay_removes_buffer_after_success() {
-        odbc_init();
-        let key = PendingResultKey::ExecQueryMulti {
-            conn_id: 77,
-            sql_hash: hash_bytes(b"SELECT 1"),
-        };
-        let mut out = [0u8; 8];
-        let mut written: c_uint = 0;
-
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        stash_pending_result(&mut state, key.clone(), vec![1, 2, 3, 4]);
-        let code = try_write_pending_result(
-            &mut state,
-            &key,
-            out.as_mut_ptr(),
-            out.len() as c_uint,
-            &mut written,
-            Some(77),
-        );
-
-        assert_eq!(code, Some(0));
-        assert_eq!(written, 4);
-        assert_eq!(&out[..4], &[1, 2, 3, 4]);
-        assert!(!state.pending_result_buffers.contains_key(&key));
-    }
-
-    #[test]
-    #[serial(ffi_last_error)]
-    fn test_pending_result_replay_keeps_buffer_when_retry_too_small() {
-        odbc_init();
-        let key = PendingResultKey::Execute {
-            stmt_id: 11,
-            params_hash: hash_bytes(b"params"),
-            timeout_override_ms: 0,
-            fetch_size: 0,
-        };
-        let mut out = [0u8; 2];
-        let mut written: c_uint = 123;
-
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        stash_pending_result(&mut state, key.clone(), vec![9, 8, 7, 6]);
-        let code = try_write_pending_result(
-            &mut state,
-            &key,
-            out.as_mut_ptr(),
-            out.len() as c_uint,
-            &mut written,
-            Some(11),
-        );
-
-        assert_eq!(code, Some(-2));
-        assert_eq!(written, 4);
-        assert!(state.pending_result_buffers.contains_key(&key));
-        assert!(
-            get_connection_error(&state, Some(11)).contains("Buffer too small"),
-            "per-connection pending error should be written"
-        );
-    }
-
-    #[test]
     #[serial(ffi_last_error)]
     fn test_connection_errors_are_isolated_by_connection_id() {
         odbc_init();
@@ -6995,6 +6721,71 @@ mod tests {
 
         let result = odbc_metadata_cache_clear();
         assert_eq!(result, 0, "Metadata cache clear should succeed");
+    }
+
+    #[test]
+    fn should_build_catalog_cache_key_with_stable_format() {
+        assert_eq!(build_catalog_cache_key(42, "dbo.Users"), "42:dbo.Users");
+        assert_eq!(build_catalog_cache_key(0, ""), "0:");
+    }
+
+    #[test]
+    #[serial]
+    fn should_return_cached_catalog_columns_without_connection_lookup() {
+        odbc_init();
+        odbc_metadata_cache_enable(100, 300);
+
+        let conn_id = next_test_invalid_id();
+        let table = CString::new("dbo.Users").unwrap();
+        let payload = br#"[{"name":"id","type":4}]"#;
+        let cache_key = build_catalog_cache_key(conn_id, "dbo.Users");
+        {
+            let state = try_lock_global_state().expect("global state should lock");
+            state.metadata_cache.cache_payload(&cache_key, payload);
+        }
+
+        let mut buffer = vec![0u8; payload.len()];
+        let mut written: c_uint = 0;
+        let result = odbc_catalog_columns(
+            conn_id,
+            table.as_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+
+        assert_eq!(result, 0, "cached catalog payload should be returned");
+        assert_eq!(written as usize, payload.len());
+        assert_eq!(&buffer[..written as usize], payload);
+    }
+
+    #[test]
+    #[serial]
+    fn should_report_cached_catalog_columns_buffer_too_small() {
+        odbc_init();
+        odbc_metadata_cache_enable(100, 300);
+
+        let conn_id = next_test_invalid_id();
+        let table = CString::new("dbo.Users").unwrap();
+        let payload = br#"[{"name":"id","type":4}]"#;
+        let cache_key = build_catalog_cache_key(conn_id, "dbo.Users");
+        {
+            let state = try_lock_global_state().expect("global state should lock");
+            state.metadata_cache.cache_payload(&cache_key, payload);
+        }
+
+        let mut buffer = vec![0u8; 4];
+        let mut written: c_uint = 0;
+        let result = odbc_catalog_columns(
+            conn_id,
+            table.as_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+
+        assert_eq!(result, -2, "small buffer should keep FFI contract");
+        assert_eq!(written as usize, payload.len());
     }
 
     #[test]
@@ -7434,42 +7225,6 @@ mod tests {
             &mut written,
         );
         assert_eq!(second, -1);
-    }
-
-    #[test]
-    fn test_pending_result_expiry_returns_error_without_reexecute_signal() {
-        odbc_init();
-
-        let key = PendingResultKey::ExecQuery {
-            conn_id: 0,
-            sql_hash: next_test_invalid_id() as u64,
-        };
-        let mut output = vec![0u8; 32];
-        let mut written: c_uint = 123;
-
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        state.pending_result_buffers.insert(
-            key.clone(),
-            PendingResultBuffer {
-                data: b"expired".to_vec(),
-                created_at: Instant::now() - PENDING_RESULT_TTL - Duration::from_millis(1),
-            },
-        );
-
-        let result = try_write_pending_result(
-            &mut state,
-            &key,
-            output.as_mut_ptr(),
-            output.len() as c_uint,
-            &mut written,
-            Some(0),
-        );
-
-        assert_eq!(result, Some(-1));
-        assert_eq!(written, 0);
-        assert!(!state.pending_result_buffers.contains_key(&key));
     }
 
     #[test]
@@ -8738,6 +8493,76 @@ mod tests {
         assert_eq!(cr, 0);
     }
 
+    fn release_pooled_connection_with_retry(pooled_id: u32) {
+        for _ in 0..50 {
+            if odbc_pool_release_connection(pooled_id) == 0 {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("pooled connection {pooled_id} was not released after stream close");
+    }
+
+    fn fetch_and_close_stream(stream_id: u32) {
+        let mut buffer = vec![0u8; 4096];
+        let mut written: c_uint = 0;
+        let mut has_more: u8 = 0;
+        let fetch = odbc_stream_fetch(
+            stream_id,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+            &mut has_more,
+        );
+        assert_eq!(fetch, 0, "pooled stream fetch should succeed");
+        assert!(written > 0, "pooled stream should return data");
+        let close = odbc_stream_close(stream_id);
+        assert_eq!(close, 0, "pooled stream close should succeed");
+    }
+
+    fn run_pooled_stream_case<F>(pool_id: u32, start: F)
+    where
+        F: FnOnce(u32, *const c_char) -> u32,
+    {
+        let pooled_id = odbc_pool_get_connection(pool_id);
+        assert!(pooled_id > 0, "pool checkout should succeed");
+        let sql = CString::new("SELECT 1 AS n").unwrap();
+        let stream_id = start(pooled_id, sql.as_ptr());
+        assert!(stream_id > 0, "pooled stream start should succeed");
+        fetch_and_close_stream(stream_id);
+        release_pooled_connection_with_retry(pooled_id);
+    }
+
+    #[test]
+    #[serial(ffi_pool_txn)]
+    fn test_ffi_pooled_connection_supports_batched_and_async_streams() {
+        let Some(dsn) = ffi_test_dsn() else {
+            eprintln!("Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
+        assert!(pool_id > 0);
+
+        run_pooled_stream_case(pool_id, |pooled_id, sql| {
+            odbc_stream_start_batched(pooled_id, sql, 1, 4096)
+        });
+        run_pooled_stream_case(pool_id, |pooled_id, sql| {
+            odbc_stream_start_async(pooled_id, sql, 1, 4096)
+        });
+        run_pooled_stream_case(pool_id, |pooled_id, sql| {
+            odbc_stream_multi_start_batched(pooled_id, sql, 4096)
+        });
+        run_pooled_stream_case(pool_id, |pooled_id, sql| {
+            odbc_stream_multi_start_async(pooled_id, sql, 4096)
+        });
+
+        let close = odbc_pool_close(pool_id);
+        assert_eq!(close, 0);
+    }
+
     #[test]
     #[serial(ffi_pool_txn)]
     fn test_ffi_pooled_connection_supports_transactions() {
@@ -9026,6 +8851,85 @@ mod tests {
         assert!(written > 0);
 
         let _ = odbc_disconnect(conn_id);
+    }
+
+    #[test]
+    #[serial(ffi_last_error)]
+    fn should_reject_sync_param_ffi_when_buffer_null_and_len_nonzero() {
+        odbc_init();
+        let conn_id = next_test_invalid_id();
+        let sql = CString::new("SELECT 1").unwrap();
+        let mut buffer = vec![0u8; 128];
+        let mut written: c_uint = 99;
+
+        let query_result = odbc_exec_query_params(
+            conn_id,
+            sql.as_ptr(),
+            std::ptr::null(),
+            1,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(query_result, -1);
+        assert_eq!(written, 0);
+
+        written = 99;
+        let query_options_result = odbc_exec_query_params_options(
+            conn_id,
+            sql.as_ptr(),
+            std::ptr::null(),
+            1,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(query_options_result, -1);
+        assert_eq!(written, 0);
+
+        written = 99;
+        let multi_result = odbc_exec_query_multi_params(
+            conn_id,
+            sql.as_ptr(),
+            std::ptr::null(),
+            1,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(multi_result, -1);
+        assert_eq!(written, 0);
+
+        let stmt_id = next_test_invalid_id();
+        {
+            let Some(mut state) = try_lock_global_state() else {
+                panic!("Failed to lock global state");
+            };
+            state.statements.insert(
+                stmt_id,
+                StatementHandle::new(conn_id, "SELECT 1".to_string(), 0),
+            );
+        }
+
+        written = 99;
+        let execute_result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            1,
+            0,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(execute_result, -1);
+        assert_eq!(written, 0);
+
+        let Some(mut state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state.statements.remove(&stmt_id);
     }
 
     #[test]
@@ -9982,15 +9886,6 @@ mod tests {
     }
 
     #[test]
-    fn should_hash_bytes_deterministically() {
-        let a = hash_bytes(b"SELECT 1");
-        let b = hash_bytes(b"SELECT 1");
-        let c = hash_bytes(b"SELECT 2");
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-    }
-
-    #[test]
     fn should_parse_optional_c_string_pointers() {
         assert_eq!(ptr_to_opt_str(std::ptr::null()), None);
         let empty = CString::new("").unwrap();
@@ -10005,6 +9900,45 @@ mod tests {
     fn should_read_xa_buffer_as_empty_when_null_and_zero_length() {
         assert_eq!(xa_read_buffer(std::ptr::null(), 0), Some(Vec::new()));
         assert_eq!(xa_read_buffer(std::ptr::null(), 1), None);
+    }
+
+    #[test]
+    fn should_reject_optional_param_buffer_when_null_and_nonzero_length() {
+        let err = validate_param_buffer_shape(std::ptr::null(), 1).unwrap_err();
+        assert!(err.contains("params_buffer is null"));
+    }
+
+    #[test]
+    fn should_borrow_optional_param_buffer_as_empty_when_null_and_zero_length() {
+        // SAFETY: null with zero length is explicitly accepted by the helper.
+        let len = unsafe { with_optional_param_buffer(std::ptr::null(), 0, |params| params.len()) }
+            .unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn should_borrow_optional_param_buffer_bytes_when_pointer_valid() {
+        let data = [4u8, 5, 6];
+        // SAFETY: `data.as_ptr()` is valid for `data.len()` bytes during the
+        // callback and the callback does not store the slice.
+        let sum = unsafe {
+            with_optional_param_buffer(data.as_ptr(), data.len() as c_uint, |params| {
+                assert_eq!(params, data);
+                params.iter().copied().sum::<u8>()
+            })
+        }
+        .unwrap();
+        assert_eq!(sum, 15);
+    }
+
+    #[test]
+    fn should_copy_param_buffer_for_owned_async_paths() {
+        let data = [7u8, 8, 9];
+        // SAFETY: `data.as_ptr()` is valid for `data.len()` bytes and the
+        // helper copies the bytes immediately.
+        let params =
+            unsafe { read_param_buffer_owned(data.as_ptr(), data.len() as c_uint) }.unwrap();
+        assert_eq!(params, data);
     }
 
     #[test]
@@ -10120,6 +10054,26 @@ mod tests {
             "Driver={SQL Server Native Client 11.0};Server=localhost;Database=test;"
         )
         .is_none());
+    }
+
+    #[test]
+    fn should_reject_connection_string_with_extra_closing_brace() {
+        let err = validate_connection_string_format("DSN=test}");
+        assert!(
+            err.as_ref()
+                .is_some_and(|m| m.contains("Unbalanced braces")),
+            "expected extra closing brace rejection, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_reject_connection_string_with_extra_driver_closing_brace() {
+        let err = validate_connection_string_format("Driver={SQL Server}};Server=localhost");
+        assert!(
+            err.as_ref()
+                .is_some_and(|m| m.contains("Unbalanced braces")),
+            "expected extra driver brace rejection, got {err:?}"
+        );
     }
 
     #[test]

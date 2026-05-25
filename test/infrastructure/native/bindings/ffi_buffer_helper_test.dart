@@ -6,12 +6,14 @@ import 'package:test/test.dart';
 
 void main() {
   group('callWithBuffer', () {
-    test('grows directly to outWritten size when buffer is too small', () {
+    test('should invoke callback again when buffer is too small', () {
       var calls = 0;
+      final attemptedSizes = <int>[];
 
       final result = callWithBuffer(
         (buf, bufLen, outWritten) {
           calls++;
+          attemptedSizes.add(bufLen);
           if (bufLen < 6) {
             outWritten.value = 6;
             return -2;
@@ -25,6 +27,7 @@ void main() {
       );
 
       expect(calls, equals(2));
+      expect(attemptedSizes, equals([2, 6]));
       expect(result, equals([1, 2, 3, 4, 5, 6]));
     });
 

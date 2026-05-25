@@ -3,6 +3,7 @@ use crate::engine::core::{DiskSpillStream, DiskSpillWriter};
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
+use crate::pool::SharedPooledConnection;
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
@@ -44,11 +45,83 @@ pub enum AsyncStreamStatus {
     Error,
 }
 
+struct WorkerCompletion(Option<Box<dyn FnOnce() + Send + 'static>>);
+
+impl WorkerCompletion {
+    fn new(callback: Option<Box<dyn FnOnce() + Send + 'static>>) -> Self {
+        Self(callback)
+    }
+}
+
+impl Drop for WorkerCompletion {
+    fn drop(&mut self) {
+        if let Some(callback) = self.0.take() {
+            callback();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamCopyResult {
     Copied { written: usize, has_more: bool },
     End,
     BufferTooSmall { needed: usize },
+}
+
+fn current_batch_len(current_batch: &Option<Vec<u8>>) -> usize {
+    current_batch.as_ref().map_or(0, Vec::len)
+}
+
+fn take_current_batch_chunk(
+    current_batch: &mut Option<Vec<u8>>,
+    offset: &mut usize,
+    chunk_size: usize,
+    missing_batch_message: &'static str,
+) -> Result<Option<Vec<u8>>> {
+    let batch_len = current_batch
+        .as_ref()
+        .map(Vec::len)
+        .ok_or_else(|| OdbcError::InternalError(missing_batch_message.to_string()))?;
+    if *offset == 0 && chunk_size >= batch_len {
+        return Ok(current_batch.take());
+    }
+
+    let batch = current_batch
+        .as_ref()
+        .ok_or_else(|| OdbcError::InternalError(missing_batch_message.to_string()))?;
+    let end = (*offset).saturating_add(chunk_size).min(batch.len());
+    let chunk = batch[*offset..end].to_vec();
+    *offset = end;
+    Ok(Some(chunk))
+}
+
+fn copy_current_batch_chunk(
+    current_batch: &mut Option<Vec<u8>>,
+    offset: &mut usize,
+    chunk_size: usize,
+    out: &mut [u8],
+    has_more: bool,
+    missing_batch_message: &'static str,
+) -> Result<StreamCopyResult> {
+    let batch = current_batch
+        .as_ref()
+        .ok_or_else(|| OdbcError::InternalError(missing_batch_message.to_string()))?;
+    let end = (*offset).saturating_add(chunk_size).min(batch.len());
+    let needed = end - *offset;
+    if out.len() < needed {
+        return Ok(StreamCopyResult::BufferTooSmall { needed });
+    }
+
+    out[..needed].copy_from_slice(&batch[*offset..end]);
+    *offset = end;
+    if *offset >= batch.len() {
+        *current_batch = None;
+        *offset = 0;
+    }
+    Ok(StreamCopyResult::Copied {
+        written: needed,
+        has_more,
+    })
 }
 
 impl StreamingExecutor {
@@ -370,17 +443,12 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(BatchedStreamingState {
-            receiver: rx,
-            current_batch: None,
-            offset: 0,
+        Ok(BatchedStreamingState::new(
+            rx,
             chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
             cancel_requested,
-            _join: Some(join),
-        })
+            Some(join),
+        ))
     }
 
     /// Starts async cursor-based streaming with explicit poll support.
@@ -447,17 +515,131 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(AsyncStreamingState {
-            receiver: rx,
-            current_batch: None,
-            offset: 0,
+        Ok(AsyncStreamingState::new(
+            rx,
             chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
             cancel_requested,
-            _join: Some(join),
-        })
+            Some(join),
+        ))
+    }
+
+    /// Pooled-connection variant of [`Self::start_batched_stream`]. The
+    /// supplied completion callback runs when the worker exits, allowing the
+    /// FFI layer to release long-lived pool busy accounting after the ODBC
+    /// connection is no longer in use.
+    pub fn start_batched_stream_pooled(
+        &self,
+        pooled: SharedPooledConnection,
+        sql: String,
+        fetch_size: usize,
+        chunk_size: usize,
+        on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+    ) -> Result<BatchedStreamingState> {
+        let fetch_size = fetch_size.max(1);
+        let chunk_size = chunk_size.max(1);
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+
+        let join = std::thread::spawn({
+            let cancel = Arc::clone(&cancel_requested);
+            move || {
+                let _completion = WorkerCompletion::new(on_complete);
+                let Ok(conn_guard) = pooled.lock() else {
+                    let _ = tx.send(BatchedMessage::Error(
+                        "Failed to lock pooled connection".to_string(),
+                    ));
+                    return;
+                };
+                let executor = StreamingExecutor::new(chunk_size);
+                match executor.execute_streaming_batched(
+                    conn_guard.get_connection(),
+                    &sql,
+                    fetch_size,
+                    |batch| {
+                        tx.send(BatchedMessage::Batch(batch))
+                            .map_err(|e| OdbcError::InternalError(e.to_string()))
+                    },
+                    Some(cancel),
+                ) {
+                    Ok(()) => {
+                        let _ = tx.send(BatchedMessage::Done);
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let _ = tx.send(if msg.contains("cancelled") {
+                            BatchedMessage::Cancelled
+                        } else {
+                            BatchedMessage::Error(msg)
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(BatchedStreamingState::new(
+            rx,
+            chunk_size,
+            cancel_requested,
+            Some(join),
+        ))
+    }
+
+    /// Pooled-connection variant of [`Self::start_async_stream`].
+    pub fn start_async_stream_pooled(
+        &self,
+        pooled: SharedPooledConnection,
+        sql: String,
+        fetch_size: usize,
+        chunk_size: usize,
+        on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+    ) -> Result<AsyncStreamingState> {
+        let fetch_size = fetch_size.max(1);
+        let chunk_size = chunk_size.max(1);
+        let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+
+        let join = std::thread::spawn({
+            let cancel = Arc::clone(&cancel_requested);
+            move || {
+                let _completion = WorkerCompletion::new(on_complete);
+                let Ok(conn_guard) = pooled.lock() else {
+                    let _ = tx.send(BatchedMessage::Error(
+                        "Failed to lock pooled connection".to_string(),
+                    ));
+                    return;
+                };
+                let executor = StreamingExecutor::new(chunk_size);
+                match executor.execute_streaming_batched(
+                    conn_guard.get_connection(),
+                    &sql,
+                    fetch_size,
+                    |batch| {
+                        tx.send(BatchedMessage::Batch(batch))
+                            .map_err(|e| OdbcError::InternalError(e.to_string()))
+                    },
+                    Some(cancel),
+                ) {
+                    Ok(()) => {
+                        let _ = tx.send(BatchedMessage::Done);
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let _ = tx.send(if msg.contains("cancelled") {
+                            BatchedMessage::Cancelled
+                        } else {
+                            BatchedMessage::Error(msg)
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(AsyncStreamingState::new(
+            rx,
+            chunk_size,
+            cancel_requested,
+            Some(join),
+        ))
     }
 }
 
@@ -508,9 +690,10 @@ where
             .map_err(OdbcError::from)?
             .map(|n| n as i64)
             .unwrap_or(0);
-        on_item(frame_item(
+        let payload = rc.to_le_bytes();
+        on_item(frame_item_from_slice(
             MULTI_STREAM_ITEM_TAG_ROW_COUNT,
-            rc.to_le_bytes().to_vec(),
+            &payload,
         )?)?;
     }
 
@@ -562,9 +745,10 @@ where
                 .row_count()
                 .into_result(&stmt.as_stmt_ref())
                 .map_err(OdbcError::from)?;
-            on_item(frame_item(
+            let payload = (rc as i64).to_le_bytes();
+            on_item(frame_item_from_slice(
                 MULTI_STREAM_ITEM_TAG_ROW_COUNT,
-                (rc as i64).to_le_bytes().to_vec(),
+                &payload,
             )?)?;
         }
     }
@@ -637,6 +821,24 @@ fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+fn frame_item_from_slice(tag: u8, payload: &[u8]) -> Result<Vec<u8>> {
+    let payload_len: u32 = payload.len().try_into().map_err(|_| {
+        OdbcError::ResourceLimitReached(format!(
+            "multi-result stream item payload exceeds u32: {}",
+            payload.len()
+        ))
+    })?;
+    let capacity = payload
+        .len()
+        .checked_add(5)
+        .ok_or_else(|| OdbcError::ResourceLimitReached("stream item size overflow".to_string()))?;
+    let mut out = Vec::with_capacity(capacity);
+    out.push(tag);
+    out.extend_from_slice(&payload_len.to_le_bytes());
+    out.extend_from_slice(payload);
+    Ok(out)
+}
+
 /// Spawn a worker that streams a multi-result batch via `BatchedStreamingState`.
 /// Each emitted batch contains exactly one frame-encoded multi-result item;
 /// the consumer assembles items by reading `[tag: u8][len: u32][payload]`
@@ -668,6 +870,46 @@ pub fn start_multi_async_stream(
             EitherStream::Batched(_) => unreachable!(),
             EitherStream::Async(a) => a,
         }
+    })
+}
+
+/// Pooled-connection variant of [`start_multi_batched_stream`].
+pub fn start_multi_batched_stream_pooled(
+    pooled: SharedPooledConnection,
+    sql: String,
+    chunk_size: usize,
+    on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+) -> Result<BatchedStreamingState> {
+    spawn_multi_stream_worker_pooled(
+        pooled,
+        sql,
+        chunk_size,
+        /* async = */ false,
+        on_complete,
+    )
+    .map(|either| match either {
+        EitherStream::Batched(b) => b,
+        EitherStream::Async(_) => unreachable!(),
+    })
+}
+
+/// Pooled-connection variant of [`start_multi_async_stream`].
+pub fn start_multi_async_stream_pooled(
+    pooled: SharedPooledConnection,
+    sql: String,
+    chunk_size: usize,
+    on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+) -> Result<AsyncStreamingState> {
+    spawn_multi_stream_worker_pooled(
+        pooled,
+        sql,
+        chunk_size,
+        /* async = */ true,
+        on_complete,
+    )
+    .map(|either| match either {
+        EitherStream::Batched(_) => unreachable!(),
+        EitherStream::Async(a) => a,
     })
 }
 
@@ -731,29 +973,80 @@ fn spawn_multi_stream_worker(
     });
 
     if is_async {
-        Ok(EitherStream::Async(AsyncStreamingState {
-            receiver: rx,
-            current_batch: None,
-            offset: 0,
+        Ok(EitherStream::Async(AsyncStreamingState::new(
+            rx,
             chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
             cancel_requested,
-            _join: Some(join),
-        }))
+            Some(join),
+        )))
     } else {
-        Ok(EitherStream::Batched(BatchedStreamingState {
-            receiver: rx,
-            current_batch: None,
-            offset: 0,
+        Ok(EitherStream::Batched(BatchedStreamingState::new(
+            rx,
             chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
             cancel_requested,
-            _join: Some(join),
-        }))
+            Some(join),
+        )))
+    }
+}
+
+fn spawn_multi_stream_worker_pooled(
+    pooled: SharedPooledConnection,
+    sql: String,
+    chunk_size: usize,
+    is_async: bool,
+    on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+) -> Result<EitherStream> {
+    let chunk_size = chunk_size.max(1);
+    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+    let cancel_requested = Arc::new(AtomicBool::new(false));
+
+    let join = std::thread::spawn({
+        let cancel = Arc::clone(&cancel_requested);
+        move || {
+            let _completion = WorkerCompletion::new(on_complete);
+            let Ok(conn_guard) = pooled.lock() else {
+                let _ = tx.send(BatchedMessage::Error(
+                    "Failed to lock pooled connection".to_string(),
+                ));
+                return;
+            };
+            let mut on_item = |framed: Vec<u8>| -> Result<()> {
+                tx.send(BatchedMessage::Batch(framed))
+                    .map_err(|e| OdbcError::InternalError(e.to_string()))
+            };
+            match drive_multi_result_stream(
+                conn_guard.get_connection(),
+                &sql,
+                &mut on_item,
+                Some(cancel),
+            ) {
+                Ok(()) => {
+                    let _ = tx.send(BatchedMessage::Done);
+                }
+                Err(OdbcError::Cancelled) => {
+                    let _ = tx.send(BatchedMessage::Cancelled);
+                }
+                Err(e) => {
+                    let _ = tx.send(BatchedMessage::Error(e.to_string()));
+                }
+            }
+        }
+    });
+
+    if is_async {
+        Ok(EitherStream::Async(AsyncStreamingState::new(
+            rx,
+            chunk_size,
+            cancel_requested,
+            Some(join),
+        )))
+    } else {
+        Ok(EitherStream::Batched(BatchedStreamingState::new(
+            rx,
+            chunk_size,
+            cancel_requested,
+            Some(join),
+        )))
     }
 }
 
@@ -777,6 +1070,25 @@ pub struct BatchedStreamingState {
 }
 
 impl BatchedStreamingState {
+    fn new(
+        receiver: mpsc::Receiver<BatchedMessage>,
+        chunk_size: usize,
+        cancel_requested: Arc<AtomicBool>,
+        join: Option<JoinHandle<()>>,
+    ) -> Self {
+        Self {
+            receiver,
+            current_batch: None,
+            offset: 0,
+            chunk_size,
+            done: false,
+            stream_error: None,
+            cancelled: false,
+            cancel_requested,
+            _join: join,
+        }
+    }
+
     /// Requests cancellation of the batched stream. The worker checks this flag
     /// between batches and exits early when set.
     pub fn request_cancel(&self) {
@@ -791,7 +1103,7 @@ impl BatchedStreamingState {
             return Ok(None);
         }
 
-        let batch_len = self.current_batch.as_ref().map(|b| b.len()).unwrap_or(0);
+        let batch_len = current_batch_len(&self.current_batch);
         if self.current_batch.is_none() || self.offset >= batch_len {
             match self.receiver.recv() {
                 Ok(BatchedMessage::Batch(b)) => {
@@ -823,22 +1135,12 @@ impl BatchedStreamingState {
             }
         }
 
-        let batch_len = self.current_batch.as_ref().map(|b| b.len()).unwrap_or(0);
-        if self.offset == 0 && self.chunk_size >= batch_len {
-            return Ok(self.current_batch.take());
-        }
-
-        let b = self.current_batch.as_ref().ok_or_else(|| {
-            OdbcError::InternalError(
-                "Streaming state corrupted: no batch available after receiver processing"
-                    .to_string(),
-            )
-        })?;
-        let end = self.offset.saturating_add(self.chunk_size).min(b.len());
-        let chunk = b[self.offset..end].to_vec();
-        self.offset = end;
-
-        Ok(Some(chunk))
+        take_current_batch_chunk(
+            &mut self.current_batch,
+            &mut self.offset,
+            self.chunk_size,
+            "Streaming state corrupted: no batch available after receiver processing",
+        )
     }
 
     pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
@@ -849,7 +1151,7 @@ impl BatchedStreamingState {
             return Ok(StreamCopyResult::End);
         }
 
-        let batch_len = self.current_batch.as_ref().map_or(0, Vec::len);
+        let batch_len = current_batch_len(&self.current_batch);
         if self.current_batch.is_none() || self.offset >= batch_len {
             match self.receiver.recv() {
                 Ok(BatchedMessage::Batch(b)) => {
@@ -878,28 +1180,15 @@ impl BatchedStreamingState {
             }
         }
 
-        let batch = self.current_batch.as_ref().ok_or_else(|| {
-            OdbcError::InternalError(
-                "Streaming state corrupted: no batch available after receiver processing"
-                    .to_string(),
-            )
-        })?;
-        let end = self.offset.saturating_add(self.chunk_size).min(batch.len());
-        let needed = end - self.offset;
-        if out.len() < needed {
-            return Ok(StreamCopyResult::BufferTooSmall { needed });
-        }
-
-        out[..needed].copy_from_slice(&batch[self.offset..end]);
-        self.offset = end;
-        if self.offset >= batch.len() {
-            self.current_batch = None;
-            self.offset = 0;
-        }
-        Ok(StreamCopyResult::Copied {
-            written: needed,
-            has_more: self.has_more(),
-        })
+        let has_more = self.has_more();
+        copy_current_batch_chunk(
+            &mut self.current_batch,
+            &mut self.offset,
+            self.chunk_size,
+            out,
+            has_more,
+            "Streaming state corrupted: no batch available after receiver processing",
+        )
     }
 
     pub fn has_more(&self) -> bool {
@@ -908,17 +1197,7 @@ impl BatchedStreamingState {
 
     #[cfg(test)]
     fn from_receiver(receiver: mpsc::Receiver<BatchedMessage>, chunk_size: usize) -> Self {
-        Self {
-            receiver,
-            current_batch: None,
-            offset: 0,
-            chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
-            cancel_requested: Arc::new(AtomicBool::new(false)),
-            _join: None,
-        }
+        Self::new(receiver, chunk_size, Arc::new(AtomicBool::new(false)), None)
     }
 }
 
@@ -935,6 +1214,25 @@ pub struct AsyncStreamingState {
 }
 
 impl AsyncStreamingState {
+    fn new(
+        receiver: mpsc::Receiver<BatchedMessage>,
+        chunk_size: usize,
+        cancel_requested: Arc<AtomicBool>,
+        join: Option<JoinHandle<()>>,
+    ) -> Self {
+        Self {
+            receiver,
+            current_batch: None,
+            offset: 0,
+            chunk_size,
+            done: false,
+            stream_error: None,
+            cancelled: false,
+            cancel_requested,
+            _join: join,
+        }
+    }
+
     /// Requests cancellation of the async stream.
     pub fn request_cancel(&self) {
         self.cancel_requested.store(true, Ordering::Relaxed);
@@ -971,7 +1269,7 @@ impl AsyncStreamingState {
     }
 
     fn current_batch_len(&self) -> usize {
-        self.current_batch.as_ref().map_or(0, Vec::len)
+        current_batch_len(&self.current_batch)
     }
 
     /// Non-blocking poll status for async stream lifecycle.
@@ -1033,21 +1331,12 @@ impl AsyncStreamingState {
             }
         }
 
-        let batch_len = self.current_batch_len();
-        if self.offset == 0 && self.chunk_size >= batch_len {
-            return Ok(self.current_batch.take());
-        }
-
-        let b = self.current_batch.as_ref().ok_or_else(|| {
-            OdbcError::InternalError(
-                "Async stream state corrupted: no batch available after receiver processing"
-                    .to_string(),
-            )
-        })?;
-        let end = self.offset.saturating_add(self.chunk_size).min(b.len());
-        let chunk = b[self.offset..end].to_vec();
-        self.offset = end;
-        Ok(Some(chunk))
+        take_current_batch_chunk(
+            &mut self.current_batch,
+            &mut self.offset,
+            self.chunk_size,
+            "Async stream state corrupted: no batch available after receiver processing",
+        )
     }
 
     pub fn copy_next_chunk(&mut self, out: &mut [u8]) -> Result<StreamCopyResult> {
@@ -1087,28 +1376,15 @@ impl AsyncStreamingState {
             }
         }
 
-        let batch = self.current_batch.as_ref().ok_or_else(|| {
-            OdbcError::InternalError(
-                "Async stream state corrupted: no batch available after receiver processing"
-                    .to_string(),
-            )
-        })?;
-        let end = self.offset.saturating_add(self.chunk_size).min(batch.len());
-        let needed = end - self.offset;
-        if out.len() < needed {
-            return Ok(StreamCopyResult::BufferTooSmall { needed });
-        }
-
-        out[..needed].copy_from_slice(&batch[self.offset..end]);
-        self.offset = end;
-        if self.offset >= batch.len() {
-            self.current_batch = None;
-            self.offset = 0;
-        }
-        Ok(StreamCopyResult::Copied {
-            written: needed,
-            has_more: self.has_more(),
-        })
+        let has_more = self.has_more();
+        copy_current_batch_chunk(
+            &mut self.current_batch,
+            &mut self.offset,
+            self.chunk_size,
+            out,
+            has_more,
+            "Async stream state corrupted: no batch available after receiver processing",
+        )
     }
 
     pub fn has_more(&self) -> bool {
@@ -1117,17 +1393,7 @@ impl AsyncStreamingState {
 
     #[cfg(test)]
     fn from_receiver(receiver: mpsc::Receiver<BatchedMessage>, chunk_size: usize) -> Self {
-        Self {
-            receiver,
-            current_batch: None,
-            offset: 0,
-            chunk_size,
-            done: false,
-            stream_error: None,
-            cancelled: false,
-            cancel_requested: Arc::new(AtomicBool::new(false)),
-            _join: None,
-        }
+        Self::new(receiver, chunk_size, Arc::new(AtomicBool::new(false)), None)
     }
 }
 
@@ -1248,6 +1514,16 @@ pub struct StreamingState {
 }
 
 impl StreamingState {
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
+    pub fn from_bytes_for_benchmark(data: Vec<u8>, chunk_size: usize) -> Self {
+        Self {
+            data,
+            offset: 0,
+            chunk_size: chunk_size.max(1),
+        }
+    }
+
     pub fn fetch_next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
         if self.offset >= self.data.len() {
             return Ok(None);

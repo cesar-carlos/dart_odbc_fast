@@ -9,6 +9,10 @@ use std::sync::Arc;
 
 lazy_static::lazy_static! {
     static ref PIPELINE: Arc<QueryPipeline> = Arc::new(QueryPipeline::new(100));
+    static ref COLUMNAR_PIPELINE: Arc<QueryPipeline> =
+        Arc::new(QueryPipeline::with_columnar(100, false));
+    static ref COLUMNAR_COMPRESSED_PIPELINE: Arc<QueryPipeline> =
+        Arc::new(QueryPipeline::with_columnar(100, true));
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,8 +35,8 @@ impl ResultEncoding {
     fn pipeline(self) -> Arc<QueryPipeline> {
         match self {
             Self::RowMajor => Arc::clone(&PIPELINE),
-            Self::Columnar => Arc::new(QueryPipeline::with_columnar(100, false)),
-            Self::ColumnarCompressed => Arc::new(QueryPipeline::with_columnar(100, true)),
+            Self::Columnar => Arc::clone(&COLUMNAR_PIPELINE),
+            Self::ColumnarCompressed => Arc::clone(&COLUMNAR_COMPRESSED_PIPELINE),
         }
     }
 }
@@ -242,12 +246,16 @@ mod tests {
     }
 
     #[test]
-    fn result_encoding_pipeline_columnar_builds_distinct_pipeline() {
+    fn result_encoding_pipeline_columnar_uses_singletons() {
         let row = ResultEncoding::RowMajor.pipeline();
         let col = ResultEncoding::Columnar.pipeline();
+        let col_again = ResultEncoding::Columnar.pipeline();
         let compressed = ResultEncoding::ColumnarCompressed.pipeline();
+        let compressed_again = ResultEncoding::ColumnarCompressed.pipeline();
         assert!(!std::sync::Arc::ptr_eq(&row, &col));
         assert!(!std::sync::Arc::ptr_eq(&col, &compressed));
+        assert!(std::sync::Arc::ptr_eq(&col, &col_again));
+        assert!(std::sync::Arc::ptr_eq(&compressed, &compressed_again));
     }
 
     #[test]

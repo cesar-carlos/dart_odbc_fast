@@ -12,7 +12,7 @@ pub use exporters::{ConsoleExporter, TelemetryExporter};
 
 use crate::ffi::guard;
 use std::ffi::CString;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const ERROR_BUFFER_TOO_SMALL: i32 = 5;
 const MAX_TRACE_JSON_LEN: usize = 16 * 1024 * 1024;
@@ -21,7 +21,7 @@ const MAX_TRACE_JSON_LEN: usize = 16 * 1024 * 1024;
 static TELEMETRY_STATE: Mutex<Option<TelemetryState>> = Mutex::new(None);
 
 struct TelemetryState {
-    exporter: Option<Box<dyn TelemetryExporter + Send>>,
+    exporter: Option<Arc<Mutex<Box<dyn TelemetryExporter + Send>>>>,
     last_error: Option<String>,
 }
 
@@ -33,7 +33,7 @@ fn lock_telemetry_state(
 impl TelemetryState {
     fn new(exporter: Box<dyn TelemetryExporter + Send>) -> Self {
         Self {
-            exporter: Some(exporter),
+            exporter: Some(Arc::new(Mutex::new(exporter))),
             last_error: None,
         }
     }
@@ -129,30 +129,40 @@ pub unsafe extern "C" fn otel_export_trace(trace_json: *const u8, trace_len: usi
             return guard::FfiError::ResourceLimit.as_i32();
         }
 
-        let mut state = match lock_telemetry_state() {
-            Ok(state) => state,
-            Err(code) => return code,
-        };
-
         // Convert bytes to string
         let slice = unsafe { std::slice::from_raw_parts(trace_json, trace_len) };
         let json_str = match std::str::from_utf8(slice) {
             Ok(s) => s,
             Err(_) => {
-                if let Some(s) = state.as_mut() {
-                    s.set_error("Invalid UTF-8 in trace JSON".to_string());
+                if let Ok(mut state) = lock_telemetry_state() {
+                    if let Some(s) = state.as_mut() {
+                        s.set_error("Invalid UTF-8 in trace JSON".to_string());
+                    }
                 }
                 return 3;
             }
         };
 
-        let result = match state.as_ref().and_then(|s| s.exporter.as_ref()) {
-            Some(exporter) => exporter.export(json_str),
-            None => return 2,
+        let exporter = {
+            let state = match lock_telemetry_state() {
+                Ok(state) => state,
+                Err(code) => return code,
+            };
+            match state.as_ref().and_then(|s| s.exporter.as_ref()).cloned() {
+                Some(exporter) => exporter,
+                None => return 2,
+            }
+        };
+
+        let result = match exporter.lock() {
+            Ok(exporter) => exporter.export(json_str),
+            Err(_) => 4,
         };
         if result != 0 {
-            if let Some(s) = state.as_mut() {
-                s.set_error(format!("Export failed with code {}", result));
+            if let Ok(mut state) = lock_telemetry_state() {
+                if let Some(s) = state.as_mut() {
+                    s.set_error(format!("Export failed with code {}", result));
+                }
             }
         }
         result
@@ -255,6 +265,10 @@ pub extern "C" fn otel_shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_console_exporter() {
@@ -376,5 +390,61 @@ mod tests {
     fn should_return_error_when_get_last_error_pointers_null() {
         let result = unsafe { otel_get_last_error(std::ptr::null_mut(), std::ptr::null_mut()) };
         assert_eq!(result, 1);
+    }
+
+    struct SlowExporter {
+        entered: Mutex<Option<mpsc::Sender<()>>>,
+        release: Arc<AtomicBool>,
+    }
+
+    impl TelemetryExporter for SlowExporter {
+        fn export(&self, _trace_json: &str) -> i32 {
+            if let Some(sender) = self.entered.lock().expect("entered lock").take() {
+                sender.send(()).expect("send exporter entry signal");
+            }
+            while !self.release.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(10));
+            }
+            7
+        }
+    }
+
+    #[test]
+    fn export_trace_does_not_hold_global_state_lock_during_export() {
+        let release = Arc::new(AtomicBool::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        {
+            let mut state = lock_telemetry_state().expect("telemetry lock");
+            *state = Some(TelemetryState::new(Box::new(SlowExporter {
+                entered: Mutex::new(Some(entered_tx)),
+                release: Arc::clone(&release),
+            })));
+        }
+
+        let trace = br#"{"trace_id":"slow"}"#.to_vec();
+        let export_handle =
+            thread::spawn(move || unsafe { otel_export_trace(trace.as_ptr(), trace.len()) });
+
+        entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("exporter should start");
+
+        let (last_error_tx, last_error_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buffer = [0u8; 64];
+            let mut len = buffer.len();
+            let code = unsafe { otel_get_last_error(buffer.as_mut_ptr(), &mut len) };
+            last_error_tx.send(code).expect("send last_error code");
+        });
+
+        assert_eq!(
+            last_error_rx.recv_timeout(Duration::from_millis(200)),
+            Ok(0),
+            "otel_get_last_error should not wait for exporter.export"
+        );
+
+        release.store(true, Ordering::SeqCst);
+        assert_eq!(export_handle.join().expect("export thread"), 7);
+        otel_shutdown();
     }
 }

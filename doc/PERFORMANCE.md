@@ -39,6 +39,8 @@ From `native/odbc_engine`:
 cargo bench --bench bulk_operations_bench
 # Narrow a single Criterion case (useful when `encode_small_buffer_100_rows` is noisy):
 cargo bench --bench bulk_operations_bench -- encode_small_buffer_100_rows
+# Deterministic in-memory streaming copy guardrail (no DSN required):
+cargo bench --bench bulk_operations_bench -- streaming_copy_next_chunk
 cargo bench --bench comparative_bench
 cargo bench --bench metadata_cache_bench
 
@@ -66,6 +68,20 @@ on first run). After async runs, the script prints a short
 `fallbacksToBlocking` summary per scenario (columnar should trend to **0**
 once async encoding reaches the native async path).
 
+Rust micro-benches are local guardrails, not CI pass/fail thresholds. The FFI
+sync parameter path now borrows caller buffers only for the duration of each
+sync call; async calls still copy params into owned memory before handing work
+to background threads. Metadata cache hits keep schemas and opaque catalog
+payloads behind shared handles internally; the FFI catalog hot path copies the
+cached payload directly to the caller buffer without allocating an intermediate
+`Vec`. Validate workload-level impact with the DSN-gated `comparative_bench`
+when a local driver is available.
+
+`comparative_bench` keeps `select/streaming` as the legacy buffer-materialised
+streaming case and adds `select/streaming_batched_drain` for the true batched
+streaming path. Treat the former as a compatibility/materialisation signal and
+the latter as the bounded-memory streaming signal.
+
 Optional environment knobs:
 
 | Variable | Effect |
@@ -76,6 +92,7 @@ Optional environment knobs:
 | `BENCHMARK_MAX_P95_REGRESSION_PERCENT` | Passed to `tool/compare_benchmark_baseline.dart` |
 | `BENCHMARK_MAX_FALLBACKS_DELTA` | Max allowed increase in `fallbacksToBlocking` vs baseline |
 | `BENCHMARK_COMPARE_STRICT=1` | Fail if current JSON has scenarios not listed in baseline |
+| `BENCHMARK_FAIL_ON_CRITERION_REGRESSION=1` | Make `scripts/run_dart_benchmarks.py --rust-micro` fail when Criterion reports "Performance has regressed." |
 | `BENCHMARK_SAVE_RUST_MICRO_LOG=1` | Append a second Rust bench run log under `bench_baselines/` |
 
 `PERF_STRICT=1` with `dart test test/performance/` enables an extra timing check
@@ -214,6 +231,15 @@ To save a baseline before upgrading:
 ```powershell
 cargo bench --bench bulk_operations_bench --bench comparative_bench --bench metadata_cache_bench `
   | Out-File ..\..\bench_baselines\v3.5.3.txt
+```
+
+To repeat the focused native checks after cache or streaming changes:
+
+```powershell
+cargo bench --bench metadata_cache_bench
+cargo bench --bench comparative_bench -- select
+$env:BENCHMARK_FAIL_ON_CRITERION_REGRESSION="1"
+python scripts/run_dart_benchmarks.py --rust-micro
 ```
 
 ---
