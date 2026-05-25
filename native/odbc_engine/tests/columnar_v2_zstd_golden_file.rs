@@ -8,15 +8,16 @@ use std::path::PathBuf;
 
 fn build_v2_int_zstd() -> Vec<u8> {
     let mut buffer = RowBufferV2::new();
-    let rows: Vec<_> = (0i32..30).map(Some).collect();
-    buffer.set_row_count(30);
+    // 300 rows × 5 bytes each = 1500 bytes raw payload, exceeding the 1024-byte
+    // compression threshold so the zstd path is always taken.
+    let rows: Vec<_> = (0i32..300).map(Some).collect();
+    buffer.set_row_count(300);
     let metadata = ColumnMetadata {
         name: "n".to_string(),
         odbc_type: OdbcType::Integer,
     };
     buffer.add_column(metadata, ColumnData::Integer(rows));
     let vec = ColumnarEncoder::encode(&buffer, true).expect("encode");
-    // single column raw > 100 bytes so zstd path is used
     assert!(
         vec.windows(2).any(|w| w == [1, 1]),
         "expected zstd flag (1) and algorithm 1 in output"

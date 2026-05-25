@@ -26,14 +26,15 @@ void main() {
 
     group('executeQuery connection guard', () {
       test(
-        'should_return_failure_connection_error_when_executeQuery_has_null_connectionId',
+        'should_return_failure_connection_error_when_executeQuery_has_'
+        'null_connectionId',
         () async {
           final result = await service.executeQuery('SELECT 1');
           expect(result.isError(), isTrue);
           final err = result.exceptionOrNull();
           expect(err, isA<ConnectionError>());
           expect(
-            (err as ConnectionError).message,
+            (err! as ConnectionError).message,
             contains('No active connection'),
           );
           expect(mockRepo.executeQueryParamsCalled, isFalse);
