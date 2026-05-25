@@ -109,7 +109,10 @@ Future<Uri?> _getLibraryPath(
   //    caller explicitly opts in.
   final localArtifact = _findLocalArtifact(os, packageRoot, libName);
   if (localArtifact != null) {
-    print('[odbc_fast] Using local build artifact: ${localArtifact.toFilePath()}');
+    print(
+      '[odbc_fast] Using local build artifact: '
+      '${localArtifact.toFilePath()}',
+    );
     return localArtifact;
   }
 

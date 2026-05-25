@@ -190,8 +190,48 @@ jobs:
           path: uploads/${{ matrix.artifact }}
           retention-days: 1
 
-  create-release:
+  test-windows:
     needs: [verify, build-binaries]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      ODBC_FAST_PREFER_LOCAL_BUILD: "true"
+      ODBC_FAST_SKIP_DOWNLOAD: "true"
+      ODBC_TEST_DSN: ""
+      ODBC_DSN: ""
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.verify.outputs.release_tag }}
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Download Windows DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: odbc_engine.dll
+          path: native/target/release/
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Dart tests (unit-only, Windows)
+        run: >
+          dart test
+          test/application
+          test/domain
+          test/infrastructure
+          test/helpers/database_detection_test.dart
+          --concurrency=4
+
+  create-release:
+    needs: [verify, build-binaries, test-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

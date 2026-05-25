@@ -4,8 +4,8 @@
 //! columnar_v2_zstd_golden_matches_rust_encoder -- --ignored`.
 
 use odbc_engine::protocol::{
-    ColumnData, ColumnMetadata, ColumnarEncoder, OdbcType, RowBufferV2,
-    columnar_encoder::COMPRESSION_THRESHOLD_BYTES,
+    columnar_encoder::COMPRESSION_THRESHOLD_BYTES, ColumnData, ColumnMetadata, ColumnarEncoder,
+    OdbcType, RowBufferV2,
 };
 use std::path::PathBuf;
 

@@ -28,6 +28,10 @@ native/odbc_engine/include/odbc_engine.h
 *.sublime-project
 *.sublime-workspace
 
+# Test run artifacts
+*_output.txt
+*_report.txt
+
 # OS
 .DS_Store
 Thumbs.db
