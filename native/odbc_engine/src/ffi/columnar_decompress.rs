@@ -35,7 +35,12 @@ pub extern "C" fn odbc_columnar_decompress(
         if data_len as u64 > usize::MAX as u64 {
             return FfiError::ResourceLimit.as_i32();
         }
-        let slice = unsafe { std::slice::from_raw_parts(data, data_len as usize) };
+        let slice = unsafe {
+            // SAFETY: `data` is non-null (checked above) and `data_len` bytes are
+            // readable for the duration of this call; the slice does not outlive
+            // the function.
+            std::slice::from_raw_parts(data, data_len as usize)
+        };
         let ct = match CompressionType::from_u8(algorithm) {
             CompressionType::None => return FfiError::InvalidArgument.as_i32(),
             t => t,
@@ -56,9 +61,20 @@ pub extern "C" fn odbc_columnar_decompress(
             Ok(allocations) => allocations,
             Err(_) => return FfiError::InternalLock.as_i32(),
         };
+        // Guard against address reuse: if the same pointer address is already
+        // registered, the previous allocation was never freed. Returning an
+        // error here prevents silently clobbering the old entry, which would
+        // cause a use-after-free or double-free when the old caller calls free.
+        if allocations.contains_key(&(p as usize)) {
+            return FfiError::InternalLock.as_i32();
+        }
         allocations.insert(p as usize, (len, cap));
         std::mem::forget(v);
         unsafe {
+            // SAFETY: all three output pointers are non-null (checked above);
+            // `len` and `cap` fit in `c_uint` (checked above); we hold the
+            // allocations lock until after the assignments, so no other thread
+            // can observe the partially-initialised outputs.
             *out_data = p;
             *out_len = len as c_uint;
             *out_cap = cap as c_uint;
@@ -84,6 +100,11 @@ pub extern "C" fn odbc_columnar_decompress_free(p: *mut u8, len: c_uint, cap: c_
         };
         let _ = (len, cap);
         unsafe {
+            // SAFETY: `p` came from a `Vec::as_mut_ptr()` / `std::mem::forget` pair
+            // recorded in `DECOMPRESS_ALLOCATIONS`; `actual_len` and `actual_cap` are
+            // the original length and capacity stored at allocation time. Reconstructing
+            // the `Vec` transfers ownership back to Rust so it can be dropped normally.
+            // The entry was just removed from the map so no double-free is possible.
             let _ = Vec::from_raw_parts(p, actual_len, actual_cap);
         }
         0

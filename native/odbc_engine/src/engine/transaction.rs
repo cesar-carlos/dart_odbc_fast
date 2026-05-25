@@ -649,9 +649,15 @@ impl Transaction {
         if lock_timeout.is_engine_default() {
             return Ok(());
         }
-        let ms = lock_timeout
-            .millis()
-            .expect("is_engine_default just returned false; millis() must be Some");
+        let ms = match lock_timeout.millis() {
+            Some(ms) => ms,
+            None => {
+                // Unreachable: is_engine_default() returned false, so millis() must be Some.
+                return Err(OdbcError::InternalError(
+                    "apply_lock_timeout: LockTimeout invariant violated".to_string(),
+                ));
+            }
+        };
 
         match engine_id {
             ENGINE_SQLSERVER => {
@@ -682,9 +688,16 @@ impl Transaction {
                 // equivalent, so this leaks past the transaction; same
                 // caveat as SQL Server. Round sub-second requests up to
                 // 1s so we never silently relax the caller's bound.
-                let secs = lock_timeout
-                    .millis_as_seconds_rounded_up()
-                    .expect("override must round to a positive seconds value");
+                let secs = match lock_timeout.millis_as_seconds_rounded_up() {
+                    Some(s) => s,
+                    None => {
+                        return Err(OdbcError::InternalError(
+                            "apply_lock_timeout: millis_as_seconds_rounded_up returned None \
+                             for a non-default LockTimeout"
+                                .to_string(),
+                        ))
+                    }
+                };
                 let sql = format!("SET SESSION innodb_lock_wait_timeout = {}", secs);
                 conn.execute(&sql, (), None)
                     .map(|_| ())
@@ -693,9 +706,16 @@ impl Transaction {
             ENGINE_DB2 => {
                 // DB2: `SET CURRENT LOCK TIMEOUT` accepts integers in
                 // *seconds*. Same rounding policy as MySQL.
-                let secs = lock_timeout
-                    .millis_as_seconds_rounded_up()
-                    .expect("override must round to a positive seconds value");
+                let secs = match lock_timeout.millis_as_seconds_rounded_up() {
+                    Some(s) => s,
+                    None => {
+                        return Err(OdbcError::InternalError(
+                            "apply_lock_timeout: millis_as_seconds_rounded_up returned None \
+                             for a non-default LockTimeout"
+                                .to_string(),
+                        ))
+                    }
+                };
                 let sql = format!("SET CURRENT LOCK TIMEOUT {}", secs);
                 conn.execute(&sql, (), None)
                     .map(|_| ())

@@ -9,9 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documentation now separates delivered capabilities, manual opt-in validation
-  and product-gated work for MSDTC recovery, Oracle OCI XA, TVP, directed
-  output parameters and columnar v2 defaults.
+- Columnar encoder compression threshold raised from 100 bytes to 1 024 bytes
+  per column payload; sub-1 KB columns now skip the zstd round-trip whose
+  overhead exceeded the transfer savings at that size.
+- `odbc_pool_get_connection` now logs a `warn!` when the pool is closed between
+  the r2d2 checkout and the state re-lock so orphaned pooled connections become
+  visible in logs instead of being silently registered.
+- `odbc_transaction_begin_v3` documents the `savepoint_dispatch` concurrency
+  limitation (global state mutex held for the duration of savepoint SQL) with a
+  tracking comment (`ISSUE-TXN-SAVEPOINT-LOCK`) for the follow-up `Arc<Transaction>`
+  refactor.
+- `pool/mod.rs` `GLOBAL_POOL_ENV` now carries an explicit architecture note
+  explaining that pool connections and direct connections use independent ODBC
+  environments; environment-level settings applied via `odbc_init` do not
+  propagate to pool connections and vice-versa.
+- `Arena::allocate` and `Arena::allocate_aligned` now document their oversized
+  allocation strategy in their `# Safety` sections; the `unsafe impl Sync`
+  blocks carry explicit rationale comments.
 - Examples and internal comments were refreshed to match the current `xa-dtc`,
   DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR` and `ResultEncoding` behavior.
 - Documentation drift checks and opt-in example smoke tests now pin the
@@ -34,7 +48,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt in to failing on Criterion regression reports with
   `BENCHMARK_FAIL_ON_CRITERION_REGRESSION=1`.
 
+### Security
+
+- `SAFETY:` comments added to 15+ previously unannotated `unsafe` blocks across
+  `ffi/mod.rs` and `ffi/columnar_decompress.rs`, covering `set_out_written_zero`,
+  `set_out_written_needed`, `odbc_get_version`, `odbc_get_error`,
+  `odbc_get_structured_error`, `odbc_get_structured_error_for_connection`,
+  `odbc_get_metrics`, `odbc_get_cache_metrics`, `odbc_async_poll`,
+  `odbc_stream_poll_async`, `odbc_stream_fetch`, `odbc_pool_get_state`,
+  `odbc_pool_get_state_json`, `odbc_bulk_insert_array`,
+  `odbc_columnar_decompress`, `odbc_columnar_decompress_free`,
+  `odbc_pool_create`, `odbc_pool_create_with_options`, and `savepoint_dispatch`.
+  All existing `Safety:` comments at call sites were normalised to `// SAFETY:`.
+
 ### Fixed
+
+- `odbc_connect_with_timeout`: `timeout_ms = 0` now correctly maps to no login
+  timeout (driver default) instead of a 1-second minimum; sub-1000 ms values
+  are rounded up to 1 second as before.
+- `odbc_pool_release_connection` and `odbc_pool_close`: removed `.expect()` on
+  `HashMap::remove` so a race between pool inspection and removal returns an
+  explicit error instead of panicking (guarded by `FfiError::Panic` but now
+  avoids the path entirely).
+- `execute_multi_result_inner` and `execute_multi_result_with_params_inner`:
+  four `encode_multi(...).expect(...)` calls replaced with `try_encode_multi?`
+  so oversized multi-result payloads propagate `OdbcError::ResourceLimitReached`
+  to the Dart caller instead of panicking at the FFI boundary.
+- `run_buffered_connection_call`: `out_written` pointer is now zeroed on all
+  mutex-failure and connection-lock-failure paths; previously a subset of
+  those paths returned an error code without writing to `out_written`, leaving
+  the caller-supplied pointer with its original (stale) value.
+- `apply_lock_timeout` (MySQL/MariaDB and DB2 paths): two `.expect()` calls
+  replaced with `OdbcError::InternalError` returns; the conditions are
+  unreachable in practice but panics are not acceptable in production paths.
+- `odbc_columnar_decompress`: address-reuse guard added to `DECOMPRESS_ALLOCATIONS`
+  — if a freshly-allocated buffer address is already registered the function now
+  returns `FfiError::InternalLock` instead of silently clobbering the existing
+  entry, which would have caused a use-after-free or double-free on the old caller.
+- `odbc_transaction_begin_v3`: mutex-poison failure after a successful
+  `Transaction::begin` now logs an explicit `error!` message so operators can
+  identify that `conn_id` is permanently stuck in `transaction_begins_in_progress`
+  (the connection is blocked from new transactions until the process restarts).
+- `Arena::allocate(size > chunk_size)`: returned a pointer into a chunk that was
+  only `chunk_size` bytes; callers that wrote beyond `chunk_size` would silently
+  corrupt heap memory. Now allocates a dedicated oversized chunk of exactly `size`
+  bytes; the regular current chunk is preserved for subsequent smaller allocations.
+- `Arena::allocate_aligned(size > chunk_size)`: recursed infinitely because each
+  recursive call found the same oversized `size` exceeding the freshly-created
+  `chunk_size` chunk. Now handled with the same dedicated oversized-chunk path
+  as `allocate`.
+- `odbc_pool_set_size`: error message when the pool is closed or invalidated
+  during a concurrent resize now says "Pool was closed while resize was in
+  progress" instead of the generic "Invalid pool ID", making it easier to
+  distinguish a race from a missing-pool programming error.
 
 - Native FFI no longer replays cached results after a `-2` buffer-too-small
   response; retries now execute through the normal call path without hidden

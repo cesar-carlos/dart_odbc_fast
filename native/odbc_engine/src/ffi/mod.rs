@@ -605,6 +605,7 @@ where
     F: FnOnce(&odbc_api::Connection<'static>) -> Result<Vec<u8>>,
 {
     let Some(mut state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
         return -1;
     };
     let metrics = Arc::clone(&state.metrics);
@@ -613,6 +614,7 @@ where
         Ok(target) => target,
         Err(e) => {
             set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            set_out_written_zero(out_written);
             return -1;
         }
     };
@@ -623,9 +625,11 @@ where
             Ok(g) => g,
             Err(_) => {
                 let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
                     return -1;
                 };
                 set_connection_error(&mut state, conn_id, "Failed to lock connection".to_string());
+                set_out_written_zero(out_written);
                 return -1;
             }
         };
@@ -635,6 +639,7 @@ where
     };
 
     let Some(mut state) = try_lock_global_state() else {
+        set_out_written_zero(out_written);
         return -1;
     };
     restore_pooled_connection(&mut state, conn_id, target);
@@ -726,12 +731,16 @@ const MAX_ID_ALLOC_ATTEMPTS: u32 = 1000;
 /// Set out_written to 0 on error path when pointer is valid.
 fn set_out_written_zero(out_written: *mut c_uint) {
     if !out_written.is_null() {
+        // SAFETY: pointer is non-null (checked above); caller guarantees it
+        // is writable for the duration of this FFI call.
         unsafe { *out_written = 0 };
     }
 }
 
 fn set_out_written_needed(out_written: *mut c_uint, needed: usize) {
     if !out_written.is_null() {
+        // SAFETY: pointer is non-null (checked above); caller guarantees it
+        // is writable for the duration of this FFI call.
         unsafe { *out_written = needed.min(c_uint::MAX as usize) as c_uint };
     }
 }
@@ -1119,6 +1128,9 @@ pub extern "C" fn odbc_get_version(
         }
 
         unsafe {
+            // SAFETY: `buffer` and `out_written` are non-null (checked above);
+            // `bytes.len() <= buffer_len` (checked above); `buffer` is writable
+            // for `buffer_len` bytes per the caller's FFI contract.
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
             *out_written = bytes.len() as c_uint;
         }
@@ -1305,10 +1317,12 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
             Err(_) => return 0,
         };
 
-        let timeout_secs = if timeout_ms == 0 {
-            1u32
-        } else {
-            (timeout_ms / 1000).max(1)
+        // timeout_ms == 0 means "no timeout" (use driver default). Values below
+        // 1000 ms are rounded up to 1 second because the ODBC API accepts only
+        // whole seconds for the login timeout.
+        let timeout_secs = match timeout_ms {
+            0 => None,
+            ms => Some((ms / 1000).max(1)),
         };
 
         let Some(mut state) = try_lock_global_state() else {
@@ -1332,11 +1346,12 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
         };
         drop(state);
 
-        let result = crate::engine::OdbcConnection::connect_with_timeout(
-            handles,
-            conn_str_rust,
-            timeout_secs,
-        );
+        let result = match timeout_secs {
+            None => crate::engine::OdbcConnection::connect(handles, conn_str_rust),
+            Some(secs) => {
+                crate::engine::OdbcConnection::connect_with_timeout(handles, conn_str_rust, secs)
+            }
+        };
 
         let Some(mut state) = try_lock_global_state() else {
             return 0;
@@ -1600,6 +1615,19 @@ pub extern "C" fn odbc_transaction_begin_v3(
         };
 
         let Some(mut state) = try_lock_global_state() else {
+            // Global state mutex is poisoned. We cannot remove conn_id from
+            // transaction_begins_in_progress, which means future transaction
+            // begins on this connection will be permanently blocked with
+            // "Transaction begin already in progress". This is an
+            // unrecoverable library state; log the condition so operators
+            // are aware. The Transaction value returned by begin_with_lock_timeout
+            // (if successful) will attempt a best-effort auto-rollback via its
+            // Drop impl when it goes out of scope here.
+            log::error!(
+                "odbc_transaction_begin_v3: global state is poisoned after transaction begin \
+                 for conn_id {}; the connection is permanently blocked from new transactions",
+                conn_id
+            );
             return 0;
         };
         state.transaction_begins_in_progress.remove(&conn_id);
@@ -1745,6 +1773,16 @@ pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
 /// validation + dialect-aware quoting (B1 + A1 fix). The previous
 /// implementation used inline `format!("SAVEPOINT {}", name)` which bypassed
 /// the safety net and reintroduced SQL injection via the FFI surface.
+///
+/// ## Concurrency note
+///
+/// This dispatcher executes the ODBC savepoint SQL while holding the global
+/// state mutex. Savepoint operations (`SAVE TRANSACTION`, `SAVEPOINT`,
+/// `ROLLBACK TO SAVEPOINT`, `RELEASE SAVEPOINT`) are single-statement
+/// round-trips with bounded latency on all supported engines, so the lock
+/// hold time is short in practice. A full non-blocking refactor would require
+/// `Transaction` to be stored behind an `Arc` rather than by value, which is
+/// tracked as a follow-up improvement (ISSUE-TXN-SAVEPOINT-LOCK).
 fn savepoint_dispatch<F>(txn_id: c_uint, name: *const c_char, op: &str, action: F) -> c_int
 where
     F: Fn(&Transaction, &str) -> Result<()>,
@@ -1752,6 +1790,9 @@ where
     if name.is_null() {
         return 1;
     }
+    // SAFETY: `name` is non-null (checked above); caller guarantees it is a
+    // valid NUL-terminated C string that remains valid for the duration of
+    // this FFI call.
     let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
         Ok(s) => s,
         Err(_) => return 1,
@@ -2359,8 +2400,9 @@ pub extern "C" fn odbc_get_error(buffer: *mut c_char, buffer_len: c_uint) -> c_i
         let msg_bytes = error_msg.as_bytes();
         let copy_len = (msg_bytes.len() as c_uint).min(buffer_len - 1);
 
-        // Safety: `buffer` must be valid for writes of `copy_len + 1` bytes
-        // Caller ensures buffer is large enough (buffer_len > 0 verified above)
+        // SAFETY: `buffer` is non-null (checked above), writable for `buffer_len`
+        // bytes, and `copy_len < buffer_len`; `buffer.add(copy_len)` points to the
+        // null-terminator slot which is within the allocation.
         unsafe {
             std::ptr::copy_nonoverlapping(msg_bytes.as_ptr(), buffer as *mut u8, copy_len as usize);
             *buffer.add(copy_len as usize) = 0;
@@ -2394,6 +2436,7 @@ pub extern "C" fn odbc_get_structured_error(
         let Some(structured_error) = get_connection_structured_error(&state, None) else {
             // No structured error available.
             // Keep explicit contract: caller can fallback to odbc_get_error().
+            // SAFETY: `out_written` is non-null (checked above).
             unsafe {
                 *out_written = 0;
             }
@@ -2407,9 +2450,9 @@ pub extern "C" fn odbc_get_structured_error(
             return -2;
         }
 
-        // Safety: `buffer` must be valid for writes of `error_data.len()` bytes
-        // `out_written` must be valid for writes of size_of::<c_uint>() bytes
-        // Caller ensures pointers are valid (null checks above)
+        // SAFETY: `buffer` and `out_written` are non-null (checked above);
+        // `error_data.len() <= buffer_len` (checked above); `buffer` is writable
+        // for `buffer_len` bytes per the caller's FFI contract.
         unsafe {
             std::ptr::copy_nonoverlapping(error_data.as_ptr(), buffer, error_data.len());
             *out_written = error_data.len() as c_uint;
@@ -2445,6 +2488,7 @@ pub extern "C" fn odbc_get_structured_error_for_connection(
         let conn_filter = if conn_id == 0 { None } else { Some(conn_id) };
 
         let Some(structured_error) = get_connection_structured_error(&state, conn_filter) else {
+            // SAFETY: `out_written` is non-null (checked above).
             unsafe {
                 *out_written = 0;
             }
@@ -2458,6 +2502,8 @@ pub extern "C" fn odbc_get_structured_error_for_connection(
             return -2;
         }
 
+        // SAFETY: `buffer` and `out_written` are non-null (checked above);
+        // `error_data.len() <= buffer_len` (checked above).
         unsafe {
             std::ptr::copy_nonoverlapping(error_data.as_ptr(), buffer, error_data.len());
             *out_written = error_data.len() as c_uint;
@@ -2499,7 +2545,9 @@ pub extern "C" fn odbc_get_metrics(
         p[16..24].copy_from_slice(&up.as_secs().to_le_bytes());
         p[24..32].copy_from_slice(&tm.to_le_bytes());
         p[32..40].copy_from_slice(&am.to_le_bytes());
-        // Safety: buffer and out_written valid (null and size checks above).
+        // SAFETY: `buffer` and `out_written` are non-null (checked above);
+        // buffer has at least 40 bytes (checked above); the local array `p` is
+        // stack-allocated and aligned for `u8`.
         unsafe {
             std::ptr::copy_nonoverlapping(p.as_ptr(), buffer, 40);
             *out_written = 40;
@@ -2733,7 +2781,8 @@ pub extern "C" fn odbc_get_cache_metrics(
             None => {
                 // Return zeros if cache not set
                 let p = [0u8; 64];
-                // Safety: pointers were validated above and buffer size checked.
+                // SAFETY: `buffer` and `out_written` are non-null (checked above);
+                // buffer has at least 64 bytes (checked above).
                 unsafe {
                     std::ptr::copy_nonoverlapping(p.as_ptr(), buffer, 64);
                     *out_written = 64;
@@ -2752,7 +2801,8 @@ pub extern "C" fn odbc_get_cache_metrics(
         p[48..56].copy_from_slice(&(metrics.memory_usage_bytes as u64).to_le_bytes());
         p[56..64].copy_from_slice(&metrics.avg_executions_per_stmt.to_le_bytes());
 
-        // Safety: pointers were validated above and buffer size checked.
+        // SAFETY: `buffer` and `out_written` are non-null (checked above);
+        // buffer has at least 64 bytes (checked above).
         unsafe {
             std::ptr::copy_nonoverlapping(p.as_ptr(), buffer, 64);
             *out_written = 64;
@@ -3524,6 +3574,7 @@ pub extern "C" fn odbc_async_poll(request_id: c_uint, out_status: *mut c_int) ->
 
         match state.async_requests.poll(request_id) {
             Some(status) => {
+                // SAFETY: `out_status` is non-null (checked above).
                 unsafe {
                     *out_status = status;
                 }
@@ -5264,7 +5315,7 @@ pub extern "C" fn odbc_stream_poll_async(stream_id: c_uint, out_status: *mut c_i
         };
 
         let status = stream.poll_status();
-        // Safety: out_status checked for null above.
+        // SAFETY: `out_status` is non-null (checked above).
         unsafe {
             *out_status = status;
         }
@@ -5307,7 +5358,12 @@ pub extern "C" fn odbc_stream_fetch(
         };
         drop(state);
 
-        let out_slice = unsafe { std::slice::from_raw_parts_mut(out_buf, buf_len as usize) };
+        let out_slice = unsafe {
+            // SAFETY: `out_buf` is non-null (checked above); caller guarantees
+            // the buffer is writable for `buf_len` bytes for the duration of
+            // this call. The slice does not outlive this function.
+            std::slice::from_raw_parts_mut(out_buf, buf_len as usize)
+        };
         let fetch_result = stream.copy_next_chunk(out_slice);
 
         let Some(mut state) = try_lock_global_state() else {
@@ -5320,6 +5376,9 @@ pub extern "C" fn odbc_stream_fetch(
                 written,
                 has_more: more,
             }) => {
+                // SAFETY: `out_written` and `has_more` are non-null (checked
+                // above); both writes are within the single-element allocation
+                // guaranteed by the caller's FFI contract.
                 unsafe {
                     *out_written = written as c_uint;
                     *has_more = if more { 1 } else { 0 };
@@ -5423,7 +5482,8 @@ pub extern "C" fn odbc_pool_create(conn_str: *const c_char, max_size: c_uint) ->
             return 0;
         }
 
-        // Safety: `conn_str` must be a valid null-terminated C string pointer
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees it
+        // is a valid NUL-terminated C string for the duration of this call.
         let c_str = unsafe { CStr::from_ptr(conn_str) };
         let conn_str_rust = match c_str.to_str() {
             Ok(s) => s,
@@ -5453,6 +5513,8 @@ pub extern "C" fn odbc_pool_create_with_options(
         if conn_str.is_null() {
             return 0;
         }
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees it
+        // is a valid NUL-terminated C string for the duration of this call.
         let c_str = unsafe { CStr::from_ptr(conn_str) };
         let conn_str_rust = match c_str.to_str() {
             Ok(s) => s,
@@ -5462,6 +5524,8 @@ pub extern "C" fn odbc_pool_create_with_options(
         let opts = if options_json.is_null() {
             crate::pool::PoolOptions::default()
         } else {
+            // SAFETY: `options_json` is non-null (checked above); caller
+            // guarantees it is a valid NUL-terminated C string.
             let s = match unsafe { CStr::from_ptr(options_json).to_str() } {
                 Ok(s) => s,
                 Err(_) => return 0,
@@ -5567,6 +5631,19 @@ pub extern "C" fn odbc_pool_get_connection(pool_id: c_uint) -> c_uint {
 
         match pooled_wrapper {
             Ok(pooled_wrapper) => {
+                // Guard against the pool being closed between the checkout and
+                // the state re-lock. The connection is physically valid (the
+                // local `pool_arc` keeps r2d2 alive) but its pool_id no longer
+                // exists in state.pools. Register it so the caller can use and
+                // release it normally; the orphaned pooled_free_ids entry will
+                // be ignored on future checkouts since the pool is gone.
+                if !state.pools.contains_key(&pool_id) {
+                    log::warn!(
+                        "odbc_pool_get_connection: pool {} was closed while connection was \
+                         being checked out; connection is usable but pool is orphaned",
+                        pool_id
+                    );
+                }
                 let conn_id = state
                     .pooled_free_ids
                     .get_mut(&pool_id)
@@ -5658,10 +5735,19 @@ pub extern "C" fn odbc_pool_release_connection(connection_id: c_uint) -> c_int {
             return 1;
         }
 
-        let entry = state
-            .pooled_connections
-            .remove(&connection_id)
-            .expect("pooled connection existence checked above");
+        let entry = match state.pooled_connections.remove(&connection_id) {
+            Some(e) => e,
+            None => {
+                set_error(
+                    &mut state,
+                    format!(
+                        "pooled connection {} disappeared before removal",
+                        connection_id
+                    ),
+                );
+                return -1;
+            }
+        };
         let transactions = take_transactions_for_connection(&mut state, connection_id);
         state
             .statements
@@ -5748,8 +5834,8 @@ pub extern "C" fn odbc_pool_get_state(
             .count() as u32;
         let idle = max_size.saturating_sub(active);
 
-        // Safety: `out_size` and `out_idle` are valid for writes of size_of::<c_uint>() bytes each.
-        // Caller ensures pointers are valid (null checks above).
+        // SAFETY: `out_size` and `out_idle` are non-null (checked above); each
+        // write covers a single `c_uint`-sized slot as guaranteed by the caller.
         unsafe {
             *out_size = max_size;
             *out_idle = idle;
@@ -5820,6 +5906,9 @@ pub extern "C" fn odbc_pool_get_state_json(
             return -2;
         }
 
+        // SAFETY: `buffer` and `out_written` are non-null (checked above);
+        // `bytes.len() + 1 <= buffer_len` (checked above); `buffer.add(bytes.len())`
+        // points to the null-terminator slot which is within the allocation.
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
             *buffer.add(bytes.len()) = 0;
@@ -5915,7 +6004,16 @@ pub extern "C" fn odbc_pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c
             return -1;
         }
         if !state.pools.contains_key(&pool_id) {
-            set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+            // Pool was closed or invalidated between the two lock acquisitions.
+            // The newly-recreated pool object is discarded here; the resize is
+            // effectively a no-op because the pool no longer exists.
+            set_error(
+                &mut state,
+                format!(
+                    "Pool {} was closed while resize was in progress; resize aborted",
+                    pool_id
+                ),
+            );
             return -1;
         }
         state.pools.insert(pool_id, Arc::new(pool));
@@ -5957,10 +6055,16 @@ pub extern "C" fn odbc_pool_close(pool_id: c_uint) -> c_int {
         // checked-out wrappers are rolled back, restored and dropped.
         // r2d2 returns a `PooledConnection` that releases back to the pool on
         // Drop; holding this Arc preserves pool internals until wrappers drop.
-        let pool = state
-            .pools
-            .remove(&pool_id)
-            .expect("pool existence checked above");
+        let pool = match state.pools.remove(&pool_id) {
+            Some(p) => p,
+            None => {
+                set_error(
+                    &mut state,
+                    format!("pool {} disappeared before removal", pool_id),
+                );
+                return -1;
+            }
+        };
         let conn_ids: Vec<u32> = state
             .pooled_connections
             .iter()
@@ -6089,6 +6193,7 @@ pub extern "C" fn odbc_bulk_insert_array(
 
         match result {
             Ok(total) => {
+                // SAFETY: `rows_inserted` is non-null (checked at function entry).
                 unsafe {
                     *rows_inserted = total as c_uint;
                 }

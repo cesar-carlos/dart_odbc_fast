@@ -7,10 +7,9 @@ use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{
-    encode_multi, has_null_param, param_values_to_input_params,
-    param_values_to_input_params_with_descriptions, param_values_to_input_params_with_inference,
-    row_buffer_to_columnar, ColumnarEncoder, MultiResultItem, OdbcType, ParamValue, RowBuffer,
-    RowBufferEncoder,
+    has_null_param, param_values_to_input_params, param_values_to_input_params_with_descriptions,
+    param_values_to_input_params_with_inference, row_buffer_to_columnar, try_encode_multi,
+    ColumnarEncoder, MultiResultItem, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
@@ -430,7 +429,7 @@ impl ExecutionEngine {
                 let mut all_items = Vec::with_capacity(1 + drain.len());
                 all_items.push(first_item);
                 all_items.extend(drain);
-                let multi_body = encode_multi(&all_items);
+                let multi_body = try_encode_multi(&all_items)?;
                 Ok(RowBufferEncoder::append_output_footer(
                     multi_body, &out_vals,
                 ))
@@ -613,7 +612,7 @@ impl ExecutionEngine {
         }
 
         self.drive_more_results(&mut stmt, &mut all_items)?;
-        Ok(encode_multi(&all_items))
+        try_encode_multi(&all_items)
     }
 
     fn execute_multi_result_with_params_inner(
@@ -656,7 +655,7 @@ impl ExecutionEngine {
             }
 
             self.drive_more_results(&mut prealloc, &mut all_items)?;
-            return Ok(encode_multi(&all_items));
+            return try_encode_multi(&all_items);
         }
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
@@ -702,7 +701,7 @@ impl ExecutionEngine {
         }
 
         self.drive_more_results(&mut stmt, &mut all_items)?;
-        Ok(encode_multi(&all_items))
+        try_encode_multi(&all_items)
     }
 
     /// Walk every additional result set produced by `stmt` after the first

@@ -5,6 +5,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 static GLOBAL_POOL_ENV: OnceLock<std::result::Result<Environment, String>> = OnceLock::new();
+// NOTE: This is a *separate* ODBC Environment from the one initialised by
+// `odbc_init` (which lives in `GlobalState::env`). Pool connections and
+// direct connections therefore use independent ODBC environments. Any
+// driver-level environment settings applied to the direct-connection
+// environment do NOT automatically propagate to pool connections, and
+// vice-versa. This is intentional (pools are self-contained) but callers
+// should be aware that environment-level configuration must be applied
+// consistently on both paths if it matters for their workload.
 const POOL_TEST_ON_CHECKOUT_ENV: &str = "ODBC_POOL_TEST_ON_CHECKOUT";
 const POOL_HEALTH_CHECK_QUERY_ENV: &str = "ODBC_POOL_HEALTH_CHECK_QUERY";
 const DEFAULT_TEST_ON_CHECKOUT: bool = true;

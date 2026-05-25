@@ -52,7 +52,8 @@ impl ColumnarEncoder {
         output.extend_from_slice(col_name_bytes);
 
         let raw_payload_size = Self::estimate_column_payload_size(col_block)?;
-        if !use_compression || raw_payload_size <= 100 {
+        // Skip compression for small payloads where zstd overhead exceeds transfer savings.
+        if !use_compression || raw_payload_size <= 1024 {
             output.push(0);
             output.extend_from_slice(
                 &checked_u32(raw_payload_size, "column payload length")?.to_le_bytes(),
