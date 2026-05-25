@@ -516,7 +516,15 @@ void main() {
     });
 
     test('should_invoke_pool_metadata_and_version_ffis_on_production', () {
-      final bindings = FakeOdbcBindings.production();
+      final bindings = FakeOdbcBindings.custom(
+        overrides: TestOdbcBindingsOverrides(
+          poolCreate: (_, __) => 1,
+          poolGetConnection: (_) => 2,
+          poolReleaseConnection: (_) => 1,
+          poolHealthCheck: (_) => 1,
+          poolClose: (_) => 1,
+        ),
+      );
       final connStr = 'DSN=x'.toNativeUtf8().cast<odbc_bindings.Utf8>();
       final outBuf = calloc<ffi.Uint8>(128);
       final outWritten = calloc<ffi.Uint32>();
