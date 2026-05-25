@@ -1,8 +1,10 @@
 # Columnar protocol v2 — design sketch
 
-> **Status (2026-04):** **Default wire format is still v1 (row-major).**
-> The Rust engine can emit **columnar v2** when the execution pipeline is built
-> with `ExecutionEngine::with_columnar` / `use_columnar: true` — see
+> **Status (2026-05, package `3.8.1`):** row-major v1 remains the default, but
+> public parameterized query paths can opt into **columnar v2** with
+> `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`. The Rust
+> engine emits v2 when the execution pipeline is built with
+> `ExecutionEngine::with_columnar` / `use_columnar: true` — see
 > `native/odbc_engine/src/engine/core/execution_engine.rs` and
 > `native/odbc_engine/src/protocol/columnar_encoder.rs` (`ColumnarEncoder`).
 > The Dart side decodes v2 in `binary_protocol.dart` (`_parseColumnarV2`):
@@ -10,14 +12,14 @@
 > compression** (zstd/LZ4) uses the same on-disk format as
 > `columnar_encoder.rs` + `protocol/compression.rs`; the Dart path resolves
 > compressed column payloads via the native engine’s `odbc_columnar_decompress`
-> FFI (see PENDING §1.4, `doc/Features/PENDING_IMPLEMENTATIONS.md`).
+> FFI (see PENDING section 2.3, `doc/Features/PENDING_IMPLEMENTATIONS.md`).
 > Small anchors also live under the Cargo feature `columnar-v2` (`odbc_engine::columnar_v2` magic/version constants; `columnar_v2_placeholder` bench) and
 > `lib/.../columnar_v2_flags.dart` (`isLikelyColumnarV2Header`). The historical
 > standalone Dart “orphan” parser was removed in v3.1.0; the **layout** in
 > this file remains the canonical description.
 >
-> Revisit a **default** switch to v2 when a benchmark shows v1 is the
-> bottleneck (see *If this comes back* below).
+> Revisit a **default** switch to v2 only after workload-level benchmarks show
+> v1 is the bottleneck (see *If the default were switched to v2* below).
 
 ## Criterion benches (local)
 
@@ -31,7 +33,7 @@ From `native/odbc_engine` (or `-p odbc_engine` at the repo root):
 Interpretation: higher throughput in the `v1` vs `v2` group is *encoder-side*
 only; end-to-end gains depend on the driver and payload. Use the same
 `CompressionType` ids (1 = zstd, 2 = lz4) as Dart
-`columnarDecompressWithNative` / PENDING §1.4.
+`columnarDecompressWithNative` / PENDING section 2.3.
 
 ## What it does
 

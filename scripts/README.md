@@ -89,6 +89,9 @@ python scripts/validate_all.py
 
 # Apenas verificar artefatos
 python scripts/validate_all.py --artifacts-only
+
+# Apenas contratos de documentacao e smoke tests de exemplos opt-in (sem DSN)
+python scripts/validate_all.py --docs-examples-only
 ```
 
 **Substitui**: `validate_all.ps1`

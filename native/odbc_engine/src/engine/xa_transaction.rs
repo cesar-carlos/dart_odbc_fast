@@ -13,7 +13,7 @@
 //! | PostgreSQL            | SQL: `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ implemented |
 //! | MySQL / MariaDB       | SQL: `XA START / END / PREPARE / COMMIT / ROLLBACK / RECOVER` | ✅ implemented |
 //! | DB2                   | SQL: native `XA*` family                   | ✅ implemented    |
-//! | SQL Server            | Requires MSDTC enlistment (Windows COM, `SQL_ATTR_ENLIST_IN_DTC` + `ITransaction*`) | ⚠️ stub — returns `UnsupportedFeature` with TODO; planned as a follow-up that needs the `windows-sys` crate and a separate build configuration |
+//! | SQL Server            | Requires MSDTC enlistment (Windows COM, `SQL_ATTR_ENLIST_IN_DTC` + `ITransaction*`) | ✅ lifecycle on Windows with `--features xa-dtc`; advanced `Reenlist` / RM recovery remains operational scope |
 //! | Oracle                | PL/SQL: `DBMS_XA` package (`SYS.DBMS_XA_XID`, `XA_START / END / PREPARE / COMMIT / ROLLBACK`); recovery via `DBA_PENDING_TRANSACTIONS` | ✅ implemented (10g+) — needs `EXECUTE` on `DBMS_XA` plus `FORCE [ANY] TRANSACTION` |
 //! | SQLite / Snowflake / others | No 2PC support                       | ❌ rejected with `UnsupportedFeature` |
 //!
@@ -1313,30 +1313,27 @@ fn parse_ascii_int<T: std::str::FromStr>(bytes: &[u8]) -> Option<T> {
     std::str::from_utf8(bytes).ok()?.trim().parse::<T>().ok()
 }
 
+const XA_SQLSERVER_DTC_ACTIVE_FALLBACK: &str = "\
+XA / 2PC on SQL Server: lifecycle support is active through the `xa-dtc` \
+MSDTC path, but this operation reached the SQL fallback. Advanced MSDTC \
+recovery / Reenlist is outside the crate; see \
+doc/Features/PENDING_IMPLEMENTATIONS.md section 2.1.";
+const XA_SQLSERVER_DTC_REQUIRED: &str = "\
+XA / 2PC on SQL Server requires MSDTC enlistment via Windows COM \
+(SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)). Build with \
+`--features xa-dtc` on a Windows host with MSDTC enabled to activate the \
+integration; see doc/Features/PENDING_IMPLEMENTATIONS.md section 2.1 for \
+prerequisites.";
+
 fn unsupported_sqlserver() -> OdbcError {
-    // The MSDTC integration ships in `engine::xa_dtc` as Phase 1
-    // (Sprint 4.3b): the COM ceremony is implemented but **wiring
-    // into this `apply_xa_*` matrix** (translating XaTransaction
-    // lifecycle calls to ITransaction::Commit/Abort and enlisting
-    // the ODBC connection via `SQL_ATTR_ENLIST_IN_DTC`) is Phase 2.
-    // The error wording reflects whichever phase the build is in.
+    // SQL Server MSDTC lifecycle is handled before the SQL-emitter matrix when
+    // built on Windows with `xa-dtc`. Reaching this fallback means either the
+    // feature/platform is unavailable or a recovery-style call has no in-crate
+    // MSDTC mapping.
     if cfg!(all(target_os = "windows", feature = "xa-dtc")) {
-        OdbcError::UnsupportedFeature(
-            "XA / 2PC on SQL Server: the `xa-dtc` feature ships the \
-             MSDTC COM scaffolding (engine::xa_dtc) but Phase 2 wiring \
-             into the apply_xa_* matrix is pending. Track \
-             doc/Features/PENDING_IMPLEMENTATIONS.md §1.1 for follow-ups."
-                .to_string(),
-        )
+        OdbcError::UnsupportedFeature(XA_SQLSERVER_DTC_ACTIVE_FALLBACK.to_string())
     } else {
-        OdbcError::UnsupportedFeature(
-            "XA / 2PC on SQL Server requires MSDTC enlistment via Windows \
-             COM (SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)). \
-             Build with `--features xa-dtc` on a Windows host with MSDTC \
-             enabled to activate the integration — see \
-             doc/Features/PENDING_IMPLEMENTATIONS.md §1.1 for prerequisites."
-                .to_string(),
-        )
+        OdbcError::UnsupportedFeature(XA_SQLSERVER_DTC_REQUIRED.to_string())
     }
 }
 
@@ -1344,7 +1341,8 @@ fn unsupported_other(engine_id: &str) -> OdbcError {
     OdbcError::UnsupportedFeature(format!(
         "XA / 2PC is not supported on engine {:?}. Supported engines: \
          postgres, mysql, mariadb, db2, oracle (via DBMS_XA). SQL Server \
-         requires MSDTC enlistment (xa-dtc feature, Phase 2 pending).",
+         requires MSDTC enlistment (Windows + xa-dtc feature; advanced \
+         recovery is operational scope).",
         engine_id,
     ))
 }
@@ -1569,6 +1567,8 @@ mod tests {
         // pins the universal substring so a refactor can't accidentally
         // drop the actionable hint.
         assert!(s.contains("MSDTC"));
+        assert!(s.contains("xa-dtc"));
+        assert!(s.contains("section 2.1"));
         assert!(s.contains("PENDING_IMPLEMENTATIONS"));
     }
 

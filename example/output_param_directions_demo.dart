@@ -1,6 +1,11 @@
 // Demonstrates DRT1 [serializeDirectedParams] and
-// [IOdbcService.executeQueryDirectedParams] (MVP: integer `OUT`/`INOUT` in
-// the native engine; see `doc/notes/TYPE_MAPPING.md` §3.1).
+// [IOdbcService.executeQueryDirectedParams].
+//
+// Native support covers scalar/text `OUT` / `INOUT`, `OUT1` result trailers,
+// `MULT + OUT1` for stored procedures that return extra result items, and the
+// Oracle-only `ParamValueRefCursorOut` marker. Binary `OUT` / `INOUT`, TVP and
+// the exhaustive `SqlDataType` x direction matrix remain product-gated; see
+// `doc/notes/TYPE_MAPPING.md` section 3.1.
 //
 // Run: `dart run example/output_param_directions_demo.dart`
 // Optional: set `ODBC_TEST_DSN` (see `example/common.dart`) to run a live
@@ -34,6 +39,45 @@ void main() async {
   AppLogger.info(
     'Legacy v0 from directed (input-only): ${inOnly.length} params',
   );
+
+  final textOut = serializeDirectedParams([
+    DirectedParam(
+      value: '',
+      type: SqlDataType.nVarChar(length: 128),
+      direction: ParamDirection.output,
+    ),
+    const DirectedParam(
+      value: 1,
+      type: SqlDataType.int32,
+      direction: ParamDirection.inOut,
+    ),
+  ]);
+  AppLogger.info(
+    'DRT1 scalar/text OUT+INOUT sample: ${textOut.length} bytes',
+  );
+
+  final oracleRefCursor = serializeDirectedParams([
+    const DirectedParam(
+      value: ParamValueRefCursorOut(),
+      direction: ParamDirection.output,
+    ),
+  ]);
+  AppLogger.info(
+    'DRT1 Oracle REF CURSOR marker sample: ${oracleRefCursor.length} bytes '
+    '(rows arrive later in QueryResult.refCursorResults via RC1 trailer)',
+  );
+
+  try {
+    serializeDirectedParams([
+      DirectedParam(
+        value: <int>[1, 2, 3],
+        type: SqlDataType.varBinary(),
+        direction: ParamDirection.output,
+      ),
+    ]);
+  } on Object catch (e) {
+    AppLogger.info('Binary OUT is intentionally rejected: $e');
+  }
 
   final dsn = requireExampleDsn();
   if (dsn == null) {
@@ -69,6 +113,11 @@ void main() async {
         'out=${ok.outputParamValues.length}',
       ),
       (e) => AppLogger.severe('query: $e'),
+    );
+    AppLogger.info(
+      'For live OUT1 and MULT + OUT1 stored-procedure checks, run '
+      'test/e2e/mssql_directed_out_test.dart or '
+      'test/e2e/mssql_directed_out_multi_rset_test.dart with their opt-in env.',
     );
   } finally {
     await service.disconnect(connId);

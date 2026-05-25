@@ -19,6 +19,7 @@ jobs:
       RUN_PERF_TESTS: "0"
       ODBC_TEST_DSN: ""
       ODBC_DSN: ""
+      ODBC_EXAMPLE_DISABLE_DSN: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -90,6 +91,9 @@ jobs:
           test/domain
           test/infrastructure
           test/helpers/database_detection_test.dart
+
+      - name: Run docs and opt-in example smoke tests
+        run: dart test test/documentation test/example
 
       - name: Dart protocol performance guard (no DSN)
         run: dart test test/performance/protocol_performance_test.dart

@@ -1,6 +1,11 @@
 # Driver Capabilities Matrix
 
-> **Last updated for:** v3.5.3 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
+> **Last updated for:** v3.8.1 + `[Unreleased]` — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
+
+**Owns:** delivered engine capability claims, plugin trait coverage and the
+capability x engine matrix. Wire/type details belong in
+[`doc/notes/TYPE_MAPPING.md`](notes/TYPE_MAPPING.md); backlog and infra-gated
+work belongs in [`doc/Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md).
 
 Driver-specific behaviour is grouped into seven opt-in
 **capability traits** (introduced in v3.0.0, extended through v3.5.x). Each plugin implements only what makes sense for its
@@ -65,10 +70,10 @@ SQL Server XA uses MSDTC enlistment via Windows COM (`ITransaction`\*
   the DTC branch and participates in the cross-vendor `apply_xa_*` matrix
   on **Windows** only; there is no Linux/MSDTC path. Optional **hardening**
   (recovery edge cases, paid Windows CI, `IResourceManager::Reenlist` tuning)
-  remains in `[PENDING_IMPLEMENTATIONS.md` §1.1](Features/PENDING_IMPLEMENTATIONS.md).
+  remains in [PENDING_IMPLEMENTATIONS.md section 2.1](Features/PENDING_IMPLEMENTATIONS.md).
   †† Optional OCI XA _shim_ (`--features xa-oci`) is **not** the production
   path (Oracle uses `DBMS_XA`); the deferred OCI work is summarised in
-  `[PENDING_IMPLEMENTATIONS.md` §1.2](Features/PENDING_IMPLEMENTATIONS.md).
+  [PENDING_IMPLEMENTATIONS.md section 3.1](Features/PENDING_IMPLEMENTATIONS.md).
 
 ## OdbcType variants (v3.0 additions)
 
@@ -149,7 +154,7 @@ final stmts = features.getSessionInitSql(
 
 ## Dart — `SqlDataType` kinds and directional parameters
 
-- **27** `SqlDataType` _kind_ strings shipped in `lib/infrastructure/native/protocol/param_value.dart` (30 was the design target; 27 are implemented as of v3.5.3 — including `geometry`, `intervalYearToMonth`, and `json` / `json_validated`). See
+- **30** `SqlDataType` _kind_ strings shipped in `lib/infrastructure/native/protocol/param_value.dart` (the v3.x scalar/semantic typed-parameter design target is complete, including `geometry`, `intervalYearToMonth`, `xml` / `xml_validated`, and `json` / `json_validated`). See
   `doc/notes/TYPE_MAPPING.md` §1.3 for the full table.
 - **Directional API:** `ParamDirection`, `DirectedParam` — DRT1 / `OUT1` and
   engine bind for **scalar** `OUT` / `INOUT` (see `TYPE_MAPPING` §3.1);
@@ -161,5 +166,8 @@ final stmts = features.getSessionInitSql(
   — with the active Oracle plugin, the engine materializes cursors (strip `?` +
   `more_results`; see `TYPE_MAPPING` §3.1.1, `ref_cursor_oracle`); other drivers
   return `ref_cursor_out_oracle_only` when `RefCursorOut` is used.
-- **Columnar v2 (results):** opt-in Rust `columnar-v2` _feature_ + Dart
-  `columnarV2Flags` — production results remain row-major v1.
+  The canonical shape-by-direction matrix is `TYPE_MAPPING` §3.1.2.
+- **Columnar v2 (results):** public parameterized query APIs expose
+  `ResultEncoding.columnar` and `ResultEncoding.columnarCompressed`; Dart
+  decodes v2 and compressed v2 through `odbc_columnar_decompress`. Row-major v1
+  remains the default until a workload opts in and benchmarks it.

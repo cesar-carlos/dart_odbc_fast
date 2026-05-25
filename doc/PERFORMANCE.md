@@ -284,8 +284,18 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 ## Known open work (active tracking)
 
-These items are tracked in [`Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md):
+These performance-sensitive items are tracked outside the feature backlog:
 
 - **True chunk-by-chunk streaming** — `engine::streaming::execute_streaming` still materialises results internally before chunking (audit C7). Multi-result streaming FFI (`odbc_stream_multi_*`) added in v3.3.0 improves the surface but the per-cursor materialisation remains.
 - **`Mutex<GlobalState>` granularisation** — the most critical pool path was unblocked; the rest of the FFI surface still serialises. Profiling under >16 concurrent callers will show this.
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
+
+Feature-level open work is tracked in
+[`Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md):
+
+- **Columnar v2 default decision** - `ResultEncoding.columnar` and
+  `ResultEncoding.columnarCompressed` are available, but row-major v1 stays the
+  default until live workload benchmarks justify switching.
+- **Live E2E / driver certification** - MSDTC, Oracle ref cursor and directed
+  `OUT` coverage remain host-side opt-in because they depend on local drivers,
+  DSNs and database privileges.

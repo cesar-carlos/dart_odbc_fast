@@ -21,15 +21,17 @@
 //   - MySQL / MariaDB (XA START / END / PREPARE / COMMIT / RECOVER) ✅
 //   - DB2 (same SQL grammar as MySQL) ✅
 //   - Oracle 10g+ (SYS.DBMS_XA PL/SQL + DBA_PENDING_TRANSACTIONS) ✅ (v3.4.1)
-//   - SQL Server (requires MSDTC; build with `--features xa-dtc`) — stub
+//   - SQL Server (MSDTC; Windows build with `--features xa-dtc`) ✅
+//     Basic lifecycle is supported; `Reenlist` / RM recovery remains
+//     operational follow-up work.
 //   - SQLite / Snowflake / others — UnsupportedFeature (no 2PC)
 //
 // Run: dart run example/xa_2pc_demo.dart
 //
 // Requires `EXAMPLE_DSN` (or `ODBC_TEST_DSN`) pointing at PostgreSQL,
-// MySQL, DB2, MariaDB or Oracle. The demo gates on `supportsXa` and
-// skips with a friendly message when the loaded native library
-// predates Sprint 4.3.
+// MySQL, DB2, MariaDB, Oracle, or SQL Server on a Windows `xa-dtc` build.
+// The demo gates on `supportsXa` and skips with a friendly message when the
+// loaded native library predates Sprint 4.3.
 //
 // Required Oracle privileges (when DSN points at Oracle): the
 // connecting user needs EXECUTE on SYS.DBMS_XA (default for SYSTEM),

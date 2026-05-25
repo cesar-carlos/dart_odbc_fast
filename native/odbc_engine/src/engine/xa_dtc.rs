@@ -3,29 +3,28 @@
 //!
 //! ## Status
 //!
-//! **Phase 1: COM plumbing landed; live MSDTC validation deferred.**
+//! **Lifecycle path landed; live MSDTC validation remains opt-in.**
 //!
 //! This module builds the canonical MSDTC enlistment path on top of
 //! the `windows` crate's auto-generated `ITransactionDispenser` /
 //! `ITransaction` COM bindings. Compiles, clippy-clean and
 //! unit-tested for everything that doesn't require a live MSDTC
-//! service (handle lifecycle, error wording, gating).
+//! service (handle lifecycle, error wording, gating). The regular
+//! [`crate::engine::xa_transaction`] lifecycle uses this module on
+//! Windows when `xa-dtc` is enabled.
 //!
-//! **Runtime behaviour against an actual MSDTC service has not been
-//! validated end-to-end** — the dev box that produced this commit
-//! did not have MSDTC enabled. Treat this as Sprint 4.3b Phase 1 of
-//! 2: code lands; live validation (`Phase 2`) needs a Windows host
-//! with `sc query MSDTC` reporting `RUNNING` and a SQL Server target
-//! reachable from the same machine. Phase 2 also wires
-//! `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, ITransaction*)` into
-//! the regular `apply_xa_*` matrix in `xa_transaction.rs`.
+//! Runtime validation against an actual MSDTC service is deliberately
+//! opt-in because it needs a Windows host with `sc query MSDTC`
+//! reporting `RUNNING` and a SQL Server target reachable from the
+//! same machine. The in-crate scope is the lifecycle happy path;
+//! `Reenlist` / resource-manager recovery is documented as operational
+//! follow-up work in `doc/Features/PENDING_IMPLEMENTATIONS.md`.
 //!
 //! ## Build / activation
 //!
-//! - Compile with `--features xa-dtc`. Without the feature the
-//!   `apply_xa_*` matrix in [`crate::engine::xa_transaction`] keeps
-//!   returning the existing `UnsupportedFeature` stub for SQL Server,
-//!   so the default build is byte-identical to today.
+//! - Compile with `--features xa-dtc`. Without the feature SQL Server
+//!   XA returns `UnsupportedFeature`, so the default non-Windows build
+//!   does not depend on MSDTC.
 //! - The `windows` crate is platform-gated to Windows targets; even
 //!   with `xa-dtc` enabled this module is a no-op on Linux/macOS.
 //! - Requires the **MSDTC Windows service** running on the host
@@ -216,20 +215,11 @@ fn begin_msdtc_transaction(dispenser: &ITransactionDispenser, _xid: &Xid) -> Res
 
 /// Public entry point: begin a new MSDTC-enlisted XA branch.
 ///
-/// **Phase 1 caveat**: this performs the COM ceremony (CoInitialize +
+/// This performs the COM ceremony (CoInitialize +
 /// DtcGetTransactionManagerEx + ITransactionDispenser::BeginTransaction)
 /// and surfaces any MSDTC-side failure, then returns a [`DtcXaBranch`]
-/// wrapping the live `ITransaction*`. Wiring the branch into the
-/// existing `XaTransaction` lifecycle inside `xa_transaction.rs`
-/// (specifically, the `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC,
-/// ITransaction*)` call against the ODBC connection handle) is
-/// **Phase 2** of this sprint and tracked in
-/// `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.1.
-///
-/// Phase 1 deliverable: COM plumbing is correct, reachable from the
-/// `xa-dtc` feature, and falls back cleanly to `UnsupportedFeature`
-/// when MSDTC is unreachable — so a host without MSDTC keeps
-/// building and behaving as today.
+/// wrapping the live `ITransaction*`. `XaTransaction::start` enlists the ODBC
+/// connection with this branch through `SQL_ATTR_ENLIST_IN_DTC`.
 pub fn begin_dtc_branch(xid: &Xid) -> Result<DtcXaBranch> {
     let dispenser = acquire_transaction_dispenser()?;
     let transaction = begin_msdtc_transaction(&dispenser, xid)?;

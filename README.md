@@ -73,7 +73,7 @@ for the remaining backlog.
   | MySQL / MariaDB       | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
   | DB2                   | ✅ same SQL grammar as MySQL                 |
   | **Oracle**            | ✅ **`SYS.DBMS_XA` PL/SQL** + `DBA_PENDING_TRANSACTIONS` (v3.4.1); needs `EXECUTE` on `DBMS_XA` + `FORCE [ANY] TRANSACTION` |
-  | SQL Server (MSDTC)    | ✅ Windows + `--features xa-dtc` (DTC enlist + XA branch); Linux/CI still unsupported — see `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.1 |
+  | SQL Server (MSDTC)    | ✅ Windows + `--features xa-dtc` (DTC enlist + XA branch); Linux/CI still unsupported — see `doc/Features/PENDING_IMPLEMENTATIONS.md` section 2.1 |
   | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
 
 1RM optimisation (`commit_one_phase`) skips the prepare-log write
@@ -90,7 +90,7 @@ Current Dart limitation: XA/2PC is available through the sync/native backend
 (`NativeOdbcConnection`, `OdbcService(useAsync: false)`). The async worker
 backend does not expose `XaTransactionHandle` lifecycle methods yet.
 
-### `SqlDataType` extras (17 new kinds, 27 total)
+### `SqlDataType` extras (30 total)
 
 Cross-engine: `smallInt`, `bigInt`, `tinyInt`, `bit`, `text`, `xml`,
 `json` (with optional `validate:true` round-trip), `uuid` (canonical
@@ -99,15 +99,17 @@ SQL Server convention), `interval` (`Duration` → portable
 `'<n> seconds'` form).
 
 Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
-`hierarchyId` / `geography`, Oracle `raw` / `bfile`. See
+`hierarchyId` / `geography` / `geometry`, Oracle `raw` / `bfile`, and
+portable interval helpers including `intervalYearToMonth`. See
   [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
-  27-kind matrix with validation and wire-encoding details.
+  30-kind matrix with validation and wire-encoding details.
 
 ### Directed parameters, `OUT1`, `MULT`, and columnar v2
 
 - **DRT1** request buffer + **`IOdbcService.executeQueryDirectedParams`**
   for mixed `IN` / `OUT` / `INOUT` (see
-  [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1). Results can carry
+  [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1 and the canonical
+  shape-by-direction matrix in §3.1.2). Results can carry
   **`QueryResult.outputParamValues`** when the engine appends an `OUT1`
   footer. When `SQLMoreResults` yields additional items, the engine emits a
   **`MULT`** envelope followed by `OUT1`; the first result set still maps to
@@ -1054,6 +1056,7 @@ dart_odbc_fast/
 
 - [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 wire layout
 - [doc/notes/REF_CURSOR_ORACLE_ROADMAP.md](doc/notes/REF_CURSOR_ORACLE_ROADMAP.md) — Oracle ref cursor contract
+- [doc/notes/TVP_DESIGN_GATE.md](doc/notes/TVP_DESIGN_GATE.md) - decisions required before TVP work starts
 - [doc/notes/ROADMAP_PENDENTES.md](doc/notes/ROADMAP_PENDENTES.md) — ordered epic backlog (PT)
 
 ## CI/CD

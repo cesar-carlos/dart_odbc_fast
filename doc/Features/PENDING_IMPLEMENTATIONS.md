@@ -1,126 +1,144 @@
-# Implementações pendentes
+# Implementacoes pendentes
 
-Lista **mínima** do que continua fora de escopo de produto *neste momento*,
-após o plano *Backlog fechado v3.x* (Fases 0–7 + documentação canónica). O que
-já foi entregue regista-se no `CHANGELOG.md` e, quando aplicável, em
-`doc/CAPABILITIES_v3.md` e `doc/notes/TYPE_MAPPING.md`.
+Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
+maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.8.1` e ao
+`CHANGELOG.md` `[Unreleased]`.
 
-**Referência de versão:** alinhada ao `pubspec.yaml` e ao `CHANGELOG.md`
-secção `[Unreleased]`.
+Esta lista nao repete entregas ja fechadas. Quando uma pendencia virar codigo
+ou documentacao canonica, atualizar `CHANGELOG.md`, `doc/CAPABILITIES_v3.md`,
+`doc/notes/TYPE_MAPPING.md` e reduzir a secao correspondente aqui.
 
-**Ordem sugerida de *epics* (não substitui esta lista):**
-[`doc/notes/ROADMAP_PENDENTES.md`](../notes/ROADMAP_PENDENTES.md).
+**Responsabilidade deste arquivo:** backlog de produto/infra e maturacao
+operacional. Contratos de tipo/wire vivem em `doc/notes/TYPE_MAPPING.md`;
+capabilities entregues vivem em `doc/CAPABILITIES_v3.md`; flags live canonicos
+vivem em `doc/TESTING.md`.
 
----
+## 1. Entregue no repo
 
-## 1. Onde ainda há trabalho (nativo / produto)
+- **SQL Server MSDTC happy path:** `xa-dtc` no Windows cobre criacao da branch
+  MSDTC, `SQL_ATTR_ENLIST_IN_DTC`, `xa_end`/unenlist, `prepare` como estado
+  coordenado pelo DTC, `commitPrepared`, `rollback`, `commitOnePhase` e cleanup
+  em `Drop`. O que fica aberto e recovery operacional avancado, nao o ciclo
+  basico.
+- **Oracle XA suportado por produto:** o caminho suportado continua sendo
+  `SYS.DBMS_XA` via ODBC/PLSQL. O shim OCI existe como scaffold documentado e
+  nao substitui `DBMS_XA`.
+- **DRT1 / OUT1 / MULT:** `executeQueryDirectedParams` e o motor nativo suportam
+  escalares/texto para `OUT`/`INOUT`, `OUT1` em single-result e `MULT + OUT1`
+  quando `SQLMoreResults` produz itens adicionais.
+- **Oracle REF CURSOR:** `ParamValueRefCursorOut`, tag 6, trailer `RC1\0`,
+  `QueryResult.refCursorResults` e o caminho Oracle `strip ?` +
+  `SQLMoreResults` existem. O que falta e certificacao ampla de drivers e
+  casos PL/SQL menos comuns.
+- **Columnar v2:** o motor emite v2 sob opt-in de `ResultEncoding.columnar` /
+  `ResultEncoding.columnarCompressed`, e o Dart decodifica v2 com zstd/LZ4 via
+  `odbc_columnar_decompress`.
 
-### 1.1 SQL Server — MSDTC (recuperação avançada)
+### 1.1 Implementado vs certificado em driver live
 
-A integração DTC (enlist, ciclo, prepare/commit) está implementada atrás de
-`--features xa-dtc` (Windows). *Reenlist* / *resource-manager* recovery
-**não** vivem dentro do *crate* — ver o aviso de *scope* e a coluna
-“o que a *app* pode fazer / mensagem” em
-[`doc/development/msdtc-recovery.md`](../development/msdtc-recovery.md).
-**Fechado em documentação (eng):** mapeamento de expectativas e erros; não há
-*Reenlist* no processo. **Pendente (operacional, fora do repo se não houver
-prioridade),** se o produto exigir: testes *runtime* reais, *tuning* com
-falhas *exóticas*, runners Windows em CI pago. **Runbook (anfitrião Windows):** secção
-*Local runbook* em
-[`msdtc-recovery.md`](../development/msdtc-recovery.md) — dois testes
-`#[ignore]` no *binário* `regression_test` (*rollback* após *prepare* e
-*commit* após *prepare*; *filter* `xa_dtc_sqlserver_`, ver tabela;
-`--ignored`, `ENABLE_E2E_TESTS=1`, DSN). **CI opcional (manual, sem E2E DTC):**
-[`.github/workflows/windows_xa_dtc_build.yml`](../../.github/workflows/windows_xa_dtc_build.yml) —
-*clippy*, *build* `xa-dtc`, `cargo test --lib`, e compilação de *integration
-tests* (`--no-run`); **não** inicia o serviço MSDTC nem fala com SQL Server.
-**Não** existe no repositório um *job* agendado que execute os dois testes
-`xa_dtc_sqlserver_*` com DSN *live* (isso seria **CI Windows pago** ou *runner*
-*ad hoc* se o produto o financiar — fora do *default* *open source*).
+| Area | Protocolo/codigo | Unit/regression | Certificacao live |
+| ---- | ---------------- | --------------- | ----------------- |
+| SQL Server MSDTC lifecycle | Implementado em Windows com `xa-dtc`. | `cargo test --lib --features xa-dtc` e `cargo test --no-run --features xa-dtc --tests`. | Manual via `doc/TESTING.md` opt-in flags. |
+| SQL Server `OUT` escalar | DRT1 + `OUT1` implementado. | Dart protocolo/repository tests. | Manual via `doc/TESTING.md` opt-in flags. |
+| SQL Server `MULT + OUT1` | MULT envelope + `OUT1` implementado. | `d1_drt1_multi_result_wire` e Dart multi-result parser/repository tests. | Manual via `doc/TESTING.md` opt-in flags. |
+| PostgreSQL `OUT` escalar | Mesmo DRT1 scalar/text path. | Dart/Rust unit coverage do wire/bind shape. | Manual via `doc/TESTING.md` opt-in flags. |
+| Oracle `REF CURSOR` | `ParamValueRefCursorOut` + `RC1\0` implementado. | Rust/Dart protocol and parser coverage. | Manual via `doc/TESTING.md` opt-in flags. |
+| Columnar v2 | `ResultEncoding.columnar` / `columnarCompressed` implementados. | Dart/Rust golden and decoder tests. | Manual: DSN real + benchmarks antes de mudar default. |
 
-### 1.2 Oracle — caminho OCI XA (paridade com `DBMS_XA`)
+Matriz canonica de direcoes: [`TYPE_MAPPING.md` secao 3.1.2](../notes/TYPE_MAPPING.md).
 
-**Decisão de produto:** manter o caminho `SYS.DBMS_XA` como *única*
-implementação suportada. O *shim* `xa-oci` permanece *deferido* até existir
-API estável de partilha de sessão OCI com a pilha `odbc-api` / ODBC (detalhes
-no módulo `xa_oci` e comentários em `native/odbc_engine/src/engine/xa_oci.rs`).
-**Checklist por *release* (governação):** confirmar que a política *DBMS_XA*
-*vs.* *shim* não mudou; se houver pedido de código OCI partilhado, reabrir
-discussão antes de *merge*.
+## 2. Aberto, mas operacional ou opt-in
 
-Rever em cada *release* se a política se mantém (roadmap:
-[`ROADMAP_PENDENTES.md`](../notes/ROADMAP_PENDENTES.md) ordem 3).
+### 2.1 SQL Server MSDTC recovery avancado
 
-### 1.3 Parâmetros de saída — extensão além do MVP
+Nao ha `Reenlist` / resource-manager recovery dentro do crate. O modelo atual
+entrega o ciclo feliz e deixa recovery de transacoes in-doubt para MSDTC,
+SQL Server e operadores. Se o produto exigir recovery automatizado no processo,
+abrir um design separado para:
 
-DRT1, `OUT1`, `executeQueryDirectedParams`, escalares e **teor textual**
-estão em `doc/notes/TYPE_MAPPING.md` §3.1; pré-validação *slug* alinhada no
-*client* Dart (`validateDirectedOutInOut`). **Já entregue:** o *path* DRT1
-suporta o caso clássico *single-result* (`ODBC` + `OUT1`) e, quando
-`SQLMoreResults` produz itens adicionais, o motor emite `MULT` + `OUT1`; no
-Dart, o primeiro *result set* continua em `QueryResult.columns` / `rows` /
-`rowCount` e a cauda vai para `QueryResult.additionalResults`. **REF CURSOR
-(Oracle):** *wire* tag 6, *trailer* `RC1\0` e `QueryResult.refCursorResults` no
-Dart; *motor* com plugin Oracle: *strip* de `?` + `SQLMoreResults` (ver
-`ref_cursor_oracle`, §3.1.1, nota
-[`REF_CURSOR_ORACLE_ROADMAP`](../notes/REF_CURSOR_ORACLE_ROADMAP.md)). **Ainda
-em aberto (produto / maturação):** certificação *driver* a *driver* além da
-matriz, *edge* de PL/SQL, e tabela `SqlDataType`×direcção completa além de
-`ParamValue` sob carga.
+- contrato de `xa_recover` em SQL Server, considerando que MSDTC usa UoW propria
+  e nao o X/Open `Xid` como chave primaria;
+- comportamento apos falha de processo, restart do servico MSDTC e falhas entre
+  prepare/commit;
+- testes live em host Windows com MSDTC rodando.
 
-### 1.4 Columnar v2 (compressão e paridade de *bench*)
+Runbook local: [`doc/development/msdtc-recovery.md`](../development/msdtc-recovery.md).
+Testes opt-in: `xa_dtc_sqlserver_*` com `--features xa-dtc`, `ODBC_TEST_DSN`
+e os flags canonicos de live-driver em [`doc/TESTING.md`](../TESTING.md).
 
-O motor emite v2; o Dart decodifica v2. **Compressão por coluna:** o parser
-chama o FFI `odbc_columnar_decompress` (zstd=1, lz4=2) do mesmo *crate*.
-*Benchmark* Criterion v1 vs v2 (com e sem *zstd*):
-`native/odbc_engine/benches/columnar_v1_v2_encode.rs` — comandos em
-[`columnar_protocol_sketch.md`](../notes/columnar_protocol_sketch.md) (*Criterion
-benches*). *Golden* `test/fixtures/columnar_v2_int32_zstd.golden`. O *client*
-Dart inclui **mensagens** *hint* na `FormatException` quando a descompressão
-nativa falha (*DLL* em falta, *payload* inválido). Especificação:
-[`doc/notes/columnar_protocol_sketch.md`](../notes/columnar_protocol_sketch.md).
+CI atual: [`.github/workflows/windows_xa_dtc_build.yml`](../../.github/workflows/windows_xa_dtc_build.yml)
+faz compile/clippy/lib tests/no-run no Windows, mas nao inicia MSDTC nem fala
+com SQL Server.
 
----
+### 2.2 Oracle REF CURSOR maturacao
 
-## 2. Infra e DX (opcional)
+O caminho principal existe. Continuam abertos:
 
-**TVP** (SQL Server *table-valued parameters*) e matriz completa
-`SqlDataType`×direcção **não** estão no *roadmap* curto salvo prioridade de
-produto — ver *Non-goals* em `TYPE_MAPPING` e ordem 4 em
-[`ROADMAP_PENDENTES.md`](../notes/ROADMAP_PENDENTES.md).
+- preencher a tabela de certificacao em `doc/notes/TYPE_MAPPING.md` para drivers
+  reais, por exemplo Instant Client ODBC 19/21/23;
+- ampliar `native/odbc_engine/tests/e2e_oracle_ref_cursor_test.rs` quando houver
+  novos cenarios PL/SQL com row counts intermediarios, cursores vazios ou
+  multiplos cursores em ordem incomum;
+- manter o teste como opt-in fora do CI Ubuntu padrao, usando os flags
+  canonicos de [`doc/TESTING.md`](../TESTING.md).
 
-Fora de *escopo* OCI adicional (além de §1.2) — a lista mantém o *guidance*,
-incluindo *fixtures* de *protocol* e testes *opt-in* (ver
-`doc/development/docker-test-stack.md`).
+### 2.3 Columnar v2 default e benchmarks live
 
-- **E2E Windows MSDTC** — dois testes *integration* *opt-in* `xa_dtc_sqlserver_*`
-  (passo `-- --ignored` ao `cargo test`); requerem anfitrião Windows real,
-  MSDTC a correr e DSN; ver *Local runbook* em `msdtc-recovery.md`. Não correm
-  no CI *ubuntu* predefinido.
-- **E2E lento** — o *pool* E2E usa *timeout* curto (5s) no código para falhar
-  rápido; ver `doc/development/docker-test-stack.md` (secção
-  *E2E env, slow DSN*). `e2e_savepoint_test` e semelhantes usam
-  `ENABLE_E2E_TESTS=1` quando apropriado.
-- **E2E PostgreSQL `OUT`** — teste Dart *opt-in* com `E2E_PG_DIRECTED_OUT=1` e
-  `ODBC_TEST_DSN` (procedimento `public.odbc_e2e_directed_out`, `CALL` DRT1);
-  corre no **anfitrião** (Dart + ODBC), não no `test-runner` do stack Docker; não
-  faz parte do CI *ubuntu* predefinido.
-- **E2E SQL Server `OUT` + multi-result** — teste Dart *opt-in* com
-  `E2E_MSSQL_DIRECTED_OUT_MULTI=1` e `ODBC_TEST_DSN`
-  (`test/e2e/mssql_directed_out_multi_rset_test.dart`); valida o caminho
-  `MULT` + `OUT1` com dois `SELECT` e `OUTPUT`. Corre no **anfitrião**
-  (Dart + ODBC), não no `test-runner` do stack Docker; não faz parte do
-  CI *ubuntu* predefinido.
+Columnar v2 esta disponivel, mas row-major v1 continua default. Antes de mudar
+o default para qualquer workload:
 
----
+- rodar `native/odbc_engine/benches/columnar_v1_v2_encode.rs`;
+- comparar queries largas em DSNs reais usando `ResultEncoding.columnar` e
+  `ResultEncoding.columnarCompressed`;
+- manter o golden `test/fixtures/columnar_v2_int32_zstd.golden` e os hints de
+  erro do FFI de descompressao.
 
-## 3. Critérios para voltar a listar itens aqui
+Especificacao: [`doc/notes/columnar_protocol_sketch.md`](../notes/columnar_protocol_sketch.md).
 
-1. Não houver ainda rasto claro no `CHANGELOG.md`.
-2. Haja impacto de produto (API, semântica, ou CI bloqueada).
+### 2.4 E2E host-side
 
-*Última actualização: 2026-04-24: DRT1 + `OUT1` + `MULT` alinhados com
-`TYPE_MAPPING` / `CHANGELOG`; `QueryResult.additionalResults` e
-`QueryResult.refCursorResults` reflectidos; PENDING §1.1 (*CI* DTC *live*
-explícito como *ad hoc*); §1.2 *checklist* *release* OCI XA; §1.4 *DX*
-descompressão; §2 *scope* TVP / `SqlDataType`.*
+Estes testes existem, mas sao deliberadamente manuais porque dependem de driver
+ODBC local, DSN e permissao no banco. A grafia canonica dos flags opt-in vive em
+[`doc/TESTING.md`](../TESTING.md); os alvos sao:
+
+- PostgreSQL `OUT`: `test/e2e/postgres_directed_out_test.dart`;
+- SQL Server `OUT`: `test/e2e/mssql_directed_out_test.dart`;
+- SQL Server `OUT + MULT`: `test/e2e/mssql_directed_out_multi_rset_test.dart`;
+- Oracle ref cursor: `native/odbc_engine/tests/e2e_oracle_ref_cursor_test.rs`.
+
+## 3. Deferido por decisao de produto
+
+### 3.1 OCI XA integrado ao fluxo principal
+
+Manter `SYS.DBMS_XA` como unica implementacao Oracle XA suportada em produto.
+O modulo `xa_oci` permanece scaffold/deferred ate existir uma forma segura de
+compartilhar a mesma sessao fisica OCI usada pela pilha ODBC/`odbc-api`.
+
+Se houver pedido de OCI-only, reabrir design antes de merge: o problema central
+e sessao compartilhada, nao apenas carregar `libclntsh`/`oci.dll`.
+
+### 3.2 TVP e matriz completa `SqlDataType` x direcao
+
+TVP e cobertura exaustiva de `SqlDataType` para `OUT`/`INOUT` nao entram sem
+design fechado. A especificacao gated vive em
+[`doc/notes/TVP_DESIGN_GATE.md`](../notes/TVP_DESIGN_GATE.md).
+
+O estado atual continua:
+
+- escalares/texto DRT1 entregues;
+- `Binary` em `OUT`/`INOUT` rejeitado com slug estavel
+  `DIRECTED_PARAM|binary_out_inout_not_implemented`;
+- `ParamValueRefCursorOut` suportado apenas no caminho Oracle;
+- `request.output` estilo `node-mssql` e TVP ainda fora da API publica.
+
+## 4. Criterios para remover itens daqui
+
+Remover ou encurtar uma secao quando:
+
+1. existir rastro claro no `CHANGELOG.md`;
+2. o contrato estiver refletido em `doc/CAPABILITIES_v3.md` e
+   `doc/notes/TYPE_MAPPING.md`;
+3. os exemplos e comandos opt-in estiverem atualizados;
+4. o item nao exigir mais decisao externa de produto/infra.
+
+Ultima atualizacao: 2026-05-25.

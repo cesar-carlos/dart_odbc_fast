@@ -6,6 +6,7 @@ Validates Rust + Dart + artifacts.
 Usage:
     python scripts/validate_all.py
     python scripts/validate_all.py --artifacts-only
+    python scripts/validate_all.py --docs-examples-only
 """
 
 import argparse
@@ -57,10 +58,27 @@ def find_command(name: str) -> bool:
 
 
 def run_command(cmd: list, cwd: Path = None, capture: bool = False) -> tuple[int, str]:
+    resolved = shutil.which(cmd[0])
+    if resolved:
+        cmd = [resolved, *cmd[1:]]
+    use_shell = os.name == "nt" and Path(cmd[0]).suffix.lower() in {".bat", ".cmd"}
+    command = subprocess.list2cmdline(cmd) if use_shell else cmd
     if capture:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            shell=use_shell,
+        )
         return result.returncode, result.stdout + result.stderr
-    result = subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        shell=use_shell,
+    )
     return result.returncode, ""
 
 
@@ -96,6 +114,11 @@ def main():
         action="store_true",
         help="Quick artifact check only (skip Rust/Dart validation)",
     )
+    parser.add_argument(
+        "--docs-examples-only",
+        action="store_true",
+        help="Run only DSN-free documentation and opt-in example smoke tests",
+    )
     args = parser.parse_args()
 
     root_dir = Path(__file__).parent.parent
@@ -105,13 +128,27 @@ def main():
         os.environ["PATH"] = f"{cargo_bin}{os.pathsep}{os.environ['PATH']}"
 
     os.chdir(root_dir)
+    os.environ.setdefault("ODBC_EXAMPLE_DISABLE_DSN", "1")
 
     print_header("=== ODBC Fast Validation ===")
     print()
 
     all_passed = True
     step = 1
-    total_steps = 1 if args.artifacts_only else 7
+    total_steps = 1 if args.artifacts_only or args.docs_examples_only else 8
+
+    if args.docs_examples_only:
+        print_step(f"[{step}/{total_steps}] Dart: docs/example smoke tests")
+        exit_code, _ = run_command(
+            ["dart", "test", "test/documentation", "test/example"],
+            cwd=root_dir,
+        )
+        if exit_code == 0:
+            print_success("  OK")
+            return 0
+
+        print_error("  FAILED")
+        return 1
 
     if not args.artifacts_only:
         if not find_command("cargo"):
@@ -185,6 +222,18 @@ def main():
                 "test/infrastructure",
                 "test/helpers/database_detection_test.dart",
             ],
+            cwd=root_dir,
+        )
+        if exit_code == 0:
+            print_success("  OK")
+        else:
+            print_error("  FAILED")
+            all_passed = False
+        step += 1
+
+        print_step(f"[{step}/{total_steps}] Dart: docs/example smoke tests")
+        exit_code, _ = run_command(
+            ["dart", "test", "test/documentation", "test/example"],
             cwd=root_dir,
         )
         if exit_code == 0:

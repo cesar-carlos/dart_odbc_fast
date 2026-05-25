@@ -2,7 +2,7 @@
 //!
 //! ## Status
 //!
-//! **Phase 1: dynamic-loading shim landed and unit-tested. Production
+//! **Deferred scaffold: dynamic-loading shim landed and unit-tested. Production
 //! Oracle XA flows through [`crate::engine::xa_transaction`] using the
 //! `DBMS_XA` PL/SQL package instead.**
 //!
@@ -222,17 +222,10 @@ fn ensure_loaded() -> Result<&'static OciXaSymbols> {
 /// the connection string passed to Oracle's XA registration), then
 /// `xa_start` a new branch with `xid`.
 ///
-/// **Phase 1 caveat**: this performs the OCI XA bookkeeping (load
-/// library + xa_open + xa_start) but the integration with the
-/// existing `XaTransaction` lifecycle in `xa_transaction.rs`
-/// (translating Phase 1 / Phase 2 calls to the OCI symbols) is
-/// **Phase 2** of this sprint and tracked in
-/// `doc/Features/PENDING_IMPLEMENTATIONS.md` §1.2.
-///
-/// Phase 1 deliverable: the dynamic-loading shim is correct,
-/// reachable from the `xa-oci` feature, and falls back cleanly to
-/// `UnsupportedFeature` when the OCI library isn't installed — so
-/// hosts without Oracle Instant Client keep building.
+/// This performs the OCI XA bookkeeping (load library + xa_open + xa_start).
+/// Integration with the existing Oracle ODBC `XaTransaction` lifecycle remains
+/// deferred because it requires sharing the same physical OCI session used by
+/// the ODBC driver. See `doc/Features/PENDING_IMPLEMENTATIONS.md` section 3.1.
 pub fn begin_oci_branch(info: &str, xid: &Xid, rmid: c_int) -> Result<OciXaBranch> {
     let symbols = ensure_loaded()?;
 

@@ -6,7 +6,10 @@ Execute any example from the project root:
 dart run example/<file>.dart
 ```
 
-All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment variable or `.env` in project root.
+All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment
+variable or `.env` in project root. Set `ODBC_EXAMPLE_DISABLE_DSN=1` for
+DSN-free smoke runs that should skip DB-dependent work even when a local `.env`
+exists.
 
 ## Cancellation note
 
@@ -32,6 +35,7 @@ All DB examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environme
 - [high_concurrency_worker_pool_demo.dart](high_concurrency_worker_pool_demo.dart): `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections and concurrent queries.
 - [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)` with native pool checkout/query/release and an explicit in-flight task limit from the resolved profile.
 - [async_concurrency_benchmark.dart](async_concurrency_benchmark.dart): Stopwatch benchmark comparing `workerCount: 1`, `workerCount: 4`, native pool with an in-flight limit, streaming, row-major vs columnar result encodings, and prepared reuse.
+- [columnar_result_encoding_demo.dart](columnar_result_encoding_demo.dart): opt-in `ResultEncoding.rowMajor`, `columnar`, and `columnarCompressed` comparison for a live DSN.
 - [streaming_performance_benchmark.dart](streaming_performance_benchmark.dart): focused streaming benchmark comparing `streamQuery` and `streamQueryBatched` with text/json/csv output.
 
 Run the high-concurrency demos from the project root:
@@ -94,6 +98,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 - [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti` and parameterized `executeQueryMultiParams`.
 - [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result consumption item-by-item with `streamQueryMulti`.
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.
+- [oracle_ref_cursor_demo.dart](oracle_ref_cursor_demo.dart): opt-in Oracle `ParamValueRefCursorOut` call that surfaces cursor row sets through `QueryResult.refCursorResults`.
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.
 
 ### Connection / pool
@@ -107,7 +112,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 - [run_in_transaction_demo.dart](run_in_transaction_demo.dart): high-level `runInTransaction<T>` helper covering success, failure, throw-to-rollback, and transaction options.
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit. Uses the high-level `OdbcService` API.
 - **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(NEW v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. `runWithBegin` now throws on commit failure instead of returning a false success path. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
-- **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA, in v3.4.2 with the `runWithStart` helper)*: full X/Open XA / 2PC lifecycle via `XaTransactionHandle` + `Xid`. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`), a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch — and a final section showing the exception-safe helper `XaTransactionHandle.runWithStart<T>` (mirror of `TransactionHandle.runWithBegin` for local transactions: drives end → prepare → commit_prepared on success, or the appropriate rollback path on any throw, without manual chaining). Works against PostgreSQL, MySQL/MariaDB, DB2 and **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL); skips with a friendly message when the loaded native library predates Sprint 4.3.
+- **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA, in v3.4.2 with the `runWithStart` helper)*: full X/Open XA / 2PC lifecycle via `XaTransactionHandle` + `Xid`. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`), a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch — and a final section showing the exception-safe helper `XaTransactionHandle.runWithStart<T>` (mirror of `TransactionHandle.runWithBegin` for local transactions: drives end → prepare → commit_prepared on success, or the appropriate rollback path on any throw, without manual chaining). Works against PostgreSQL, MySQL/MariaDB, DB2, **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL), and SQL Server on Windows builds with `--features xa-dtc`; advanced MSDTC `Reenlist` / RM recovery remains operational follow-up work.
 
 ### Schema introspection
 

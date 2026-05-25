@@ -4,11 +4,16 @@ import 'package:dotenv/dotenv.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 
 const _envPath = '.env';
+const _disableDsnEnv = 'ODBC_EXAMPLE_DISABLE_DSN';
 
 String _exampleEnvPath() =>
     '${Directory.current.path}${Platform.pathSeparator}$_envPath';
 
 String? loadExampleDsn() {
+  if (Platform.environment[_disableDsnEnv] == '1') {
+    return null;
+  }
+
   final fromEnv =
       Platform.environment['ODBC_TEST_DSN'] ?? Platform.environment['ODBC_DSN'];
   if (fromEnv != null && fromEnv.isNotEmpty) {

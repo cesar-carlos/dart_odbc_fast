@@ -1,6 +1,6 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v3.5.3
+> **Last updated for:** v3.8.1
 
 This document describes the test strategy, how to run each scope, and CI boundaries. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
 
@@ -15,15 +15,23 @@ This document describes the test strategy, how to run each scope, and CI boundar
 | Unit — domain         | `test/domain/`                              | Pure business rules; no native library required.                                                                |
 | Unit — application    | `test/application/`                         | Use-case orchestration; mocked boundaries.                                                                      |
 | Unit — infrastructure | `test/infrastructure/`                      | Protocol codecs, binary parsers, Dart-layer only.                                                               |
+| Documentation         | `test/documentation/`                       | DSN-free drift checks for docs, feature flags and stale wording.                                                |
+| Examples              | `test/example/`                             | DSN-free smoke tests for opt-in examples.                                                                       |
 | Helpers               | `test/helpers/database_detection_test.dart` | Driver detection heuristics.                                                                                    |
 | Integration           | `test/integration/`                         | Requires a live DSN (`ODBC_TEST_DSN`). T-SQL pool tests expect SQL Server.                                      |
-| E2E — directed OUT    | `test/e2e/`                                 | Opt-in via `E2E_PG_DIRECTED_OUT=1`, `E2E_MSSQL_DIRECTED_OUT_MULTI=1`, etc. Host with real ODBC driver required. |
+| E2E — directed OUT    | `test/e2e/`                                 | Host with real ODBC driver required; use the canonical opt-in flags below.                                     |
 | Slow / stress         | `test/stress/`                              | Run with `RUN_SKIPPED_TESTS=1`.                                                                                 |
 
 Run unit scopes:
 
 ```powershell
 dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart
+```
+
+Run the DSN-free documentation/example contract checks:
+
+```powershell
+python scripts/validate_all.py --docs-examples-only
 ```
 
 Run all non-integration tests:
@@ -80,8 +88,10 @@ The standard CI (`.github/workflows/ci.yml`) does **not** require a live databas
 | Rust tests             | `cargo test --workspace -- --test-threads=1`                                                           |
 | Dart analyze           | `dart analyze`                                                                                         |
 | Dart tests (unit only) | `dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart` |
+| Docs/example smoke     | `dart test test/documentation test/example`                                                            |
 
-Variables set in CI: `ENABLE_E2E_TESTS=0`, `RUN_SKIPPED_TESTS=0`, `ODBC_TEST_DSN=""`.
+Variables set in CI: `ENABLE_E2E_TESTS=0`, `RUN_SKIPPED_TESTS=0`,
+`ODBC_TEST_DSN=""`, `ODBC_EXAMPLE_DISABLE_DSN=1`.
 
 Other workflows:
 
@@ -129,7 +139,7 @@ Equivalent wrapper (from repo root, writes under `native/coverage/`): `python na
 
 ---
 
-## Environment variables reference
+## Canonical opt-in environment variables
 
 | Variable                       | Scope       | Purpose                                                      |
 | ------------------------------ | ----------- | ------------------------------------------------------------ |
@@ -140,8 +150,13 @@ Equivalent wrapper (from repo root, writes under `native/coverage/`): `python na
 | `ENABLE_SLOW_E2E_TESTS`        | Rust        | `1` — include stress/benchmark E2E tests.                    |
 | `ENABLE_MSDTC_XA_TESTS`        | Rust        | `1` — include MSDTC XA smoke tests (Windows, MSDTC running). |
 | `E2E_PG_DIRECTED_OUT`          | Dart        | `1` — PostgreSQL directed `OUT` E2E test.                    |
+| `E2E_MSSQL_DIRECTED_OUT`       | Dart        | `1` — SQL Server scalar directed `OUT` E2E test.              |
 | `E2E_MSSQL_DIRECTED_OUT_MULTI` | Dart        | `1` — SQL Server DRT1 + multi-result E2E test.               |
 | `E2E_ORACLE_REFCURSOR`         | Rust        | `1` — Oracle ref cursor E2E test.                            |
+| `ODBC_EXAMPLE_DISABLE_DSN`     | Examples    | `1` — force examples to skip DB work for DSN-free smoke runs. |
+
+Other docs and runbooks may link to this table, but this section owns the
+canonical spelling and opt-in meaning for live-driver flags.
 
 ---
 

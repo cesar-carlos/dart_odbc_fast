@@ -8,16 +8,15 @@
 > rely on **MSDTC** + **SQL Server** documentation and, where applicable,
 > manual intervention or a dedicated Windows *job* to drive `Reenlist` outside
 > the ODBC client process. This document records scenarios and *observability*
-> expectations, not a future PR commitment unless product reopens 1.1 in
+> expectations, not a future PR commitment unless product reopens section 2.1 in
 > [PENDING_IMPLEMENTATIONS.md](../Features/PENDING_IMPLEMENTATIONS.md).
 
 `native/odbc_engine/src/engine/xa_dtc.rs` implements the normal MSDTC path:
 COM init, `ITransactionDispenser::BeginTransaction`, and
 `SQLSetConnectAttr(SQL_ATTR_ENLIST_IN_DTC, …)`.
 
-**Phase 1 / 2** in that module describes what is in code today versus what
-still needs a _live_ Windows host with `sc query MSDTC` === `RUNNING` and
-connectivity to SQL Server.
+Live validation still needs a Windows host with `sc query MSDTC` === `RUNNING`
+and connectivity to SQL Server.
 
 ## Application-facing errors (enlist, no *Reenlist*)
 
@@ -64,14 +63,14 @@ add in-process *Reenlist*.
 3. **CI** — a **paid** or self-hosted **Windows** runner (with MSDTC
    service + optional SQL Server) is the only way to automate full E2E. The
    repository ships `#[ignore]` and env-gated tests; see
-   [PENDING §1.1](../Features/PENDING_IMPLEMENTATIONS.md) and, if present,
+   [PENDING section 2.1](../Features/PENDING_IMPLEMENTATIONS.md) and, if present,
    `.github/workflows` jobs with `workflow_dispatch` for `xa-dtc` builds.
 
 ## Where to look in code
 
 - `engine/xa_dtc.rs` — enlist / unenlist, COM, error strings.
 - `engine/xa_transaction.rs` — cross-vendor `apply_xa_*` matrix.
-- `PENDING_IMPLEMENTATIONS.md` §1.1 — backlog for tuning + CI when product
+- `PENDING_IMPLEMENTATIONS.md` section 2.1 — backlog for tuning + CI when product
   asks for it.
 - *Ordering* of MSDTC / Oracle / *misc* *epics* (non-MSDTC): see
   [`ROADMAP_PENDENTES.md`](../notes/ROADMAP_PENDENTES.md) (Fase 2 in that index).

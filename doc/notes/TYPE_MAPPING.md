@@ -2,11 +2,14 @@
 
 **Canonical reference** for data type mapping in `odbc_fast`.
 
+**Owns:** type mapping, typed parameter wire shapes, DRT1 / `OUT1` / `MULT`,
+Oracle ref-cursor wire details and columnar result protocol notes.
+
 > Working document under `doc/notes/`. Implementation status is marked
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-04-24 (Unreleased; DRT1 RowCount-first fix, Oracle *ref cursor* docs, DRT1 + `MULT` + `OUT1`, columnar v2 decode *hints*, certification table)
+**Last verified against code:** 2026-05-25 (`3.8.1` + `[Unreleased]`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 decode hints, certification table)
 
 ---
 
@@ -354,6 +357,22 @@ counts / *No_Data* *result sets* — see *Tarefas em aberto* in the roadmap), an
 broadening the opt-in *integration* `e2e_oracle_ref_cursor_test` if regressions
 appear (the test exists; CI *ubuntu* does not run it by default).
 
+### 3.1.2 Directional capability matrix (canonical)
+
+This table is the single source of truth for DRT1 / `OUT1` / `MULT` capability
+claims. Other docs should link here instead of repeating the matrix.
+
+| Parameter shape | `IN` | `OUT` | `INOUT` | Result trailers | Status |
+| --------------- | ---- | ----- | ------- | --------------- | ------ |
+| Scalar integer (`ParamValueInt32`, `ParamValueInt64`) | Supported through v0 and DRT1. | Supported through DRT1 and `OUT1`. | Supported through DRT1 and `OUT1`. | `OUT1`; `MULT + OUT1` when `SQLMoreResults` yields extra items. | Implemented; driver certification remains opt-in. |
+| Decimal text (`ParamValueDecimal`) | Supported. | Supported when non-empty. | Supported when non-empty. | `OUT1`; `MULT + OUT1`. | Implemented for the scalar/text bind path. |
+| Text (`ParamValueString`) | Supported. | Supported through text output buffers. | Supported through text input/output buffers. | `OUT1`; `MULT + OUT1`. | Implemented; SQL Server is best validated, other drivers are opt-in. |
+| Null shell (`ParamValueNull`) | Supported as input null. | Supported as an integer output shell. | Rejected with `DIRECTED_PARAM|inout_null`. | `OUT1` for valid `OUT` only. | Intentional narrow contract. |
+| Binary (`ParamValueBinary`) and binary typed aliases | Supported as input. | Rejected with `DIRECTED_PARAM|binary_out_inout_not_implemented`. | Rejected with `DIRECTED_PARAM|binary_out_inout_not_implemented`. | None. | Product-gated until a binary output wire/buffer design is approved. |
+| Oracle `ParamValueRefCursorOut` | Not an input value. | Oracle-only path strips the `?`, reads cursor result sets with `SQLMoreResults`, and emits `RC1\0`. | Rejected with `DIRECTED_PARAM|ref_cursor_out_invalid_direction`. | `RC1\0`; scalar `OUT1` does not include cursor payloads. | Implemented for Oracle ODBC pattern; live driver certification is opt-in. |
+| TVP / table-shaped values | Not implemented. | Not implemented. | Not implemented. | None. | Product-gated by [`TVP_DESIGN_GATE.md`](TVP_DESIGN_GATE.md). |
+| Exhaustive `SqlDataType` x direction matrix | 30 input kinds shipped. | Not claimed as exhaustive. | Not claimed as exhaustive. | Depends on the concrete `ParamValue` shape above. | Product-gated beyond scalar/text DRT1. |
+
 ### 3.2 Columnar protocol v2 (decode path)
 
 - **Emitter:** `ColumnarEncoder` in the Rust engine (opt-in
@@ -381,7 +400,8 @@ appear (the test exists; CI *ubuntu* does not run it by default).
 
 - No parity with the full `node-mssql` `request.output` surface — only the
   DRT1 + `OUT1` + repository/service flow above; not every ODBC output type.
-- Do not claim `TVP` (table-valued parameters) support.
+- Do not claim `TVP` (table-valued parameters) support. TVP remains
+  product-gated until [`TVP_DESIGN_GATE.md`](TVP_DESIGN_GATE.md) is closed.
 - Do not use `doc/api/` generated artifacts as source of truth for
   roadmap commitments.
 
@@ -390,6 +410,7 @@ appear (the test exists; CI *ubuntu* does not run it by default).
 ## References
 
 - `doc/Features/PENDING_IMPLEMENTATIONS.md` — backlog mínimo (PT).
+- `doc/notes/TVP_DESIGN_GATE.md` — decisions required before TVP work starts.
 - `doc/CAPABILITIES_v3.md` — capability × engine matrix.
 - `doc/notes/columnar_protocol_sketch.md` — v2 wire layout and history (§3.2).
 - <https://www.npmjs.com/package/mssql>

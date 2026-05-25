@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation now separates delivered capabilities, manual opt-in validation
+  and product-gated work for MSDTC recovery, Oracle OCI XA, TVP, directed
+  output parameters and columnar v2 defaults.
+- Examples and internal comments were refreshed to match the current `xa-dtc`,
+  DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR` and `ResultEncoding` behavior.
+- Documentation drift checks and opt-in example smoke tests now pin the
+  canonical DRT1/OUT1/MULT matrix, live-driver flags and stale backlog wording.
+- CI and local validation now include DSN-free docs/example smoke tests, with
+  `doc/TESTING.md` owning the canonical live-driver opt-in flags.
+
 ## [3.8.1] - 2026-05-22
 
 ### Added

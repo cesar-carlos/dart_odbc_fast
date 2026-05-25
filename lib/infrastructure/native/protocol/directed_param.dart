@@ -3,9 +3,12 @@ import 'dart:typed_data';
 import 'package:odbc_fast/domain/types/param_direction.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
-/// A parameter with an explicit [ParamDirection] for API surfaces that
-/// prepare the contract for `OUTPUT` / `INOUT` (native engine support is
-/// still being rolled in — see `doc/notes/TYPE_MAPPING.md` §3.1).
+/// A parameter with an explicit [ParamDirection] for the DRT1 wire path.
+///
+/// Native support covers scalar/text `OUT` / `INOUT`, `OUT1` result trailers,
+/// and Oracle `ParamValueRefCursorOut`. Binary `OUT` / `INOUT`, TVP, and the
+/// exhaustive `SqlDataType` x direction matrix remain product-gated; see
+/// `doc/notes/TYPE_MAPPING.md` section 3.1.
 ///
 /// When [direction] is [ParamDirection.input] and [type] is null, the
 /// payload serialises the same as an untyped value.
@@ -28,6 +31,18 @@ const List<int> drt1MagicBytes = [0x44, 0x52, 0x54, 0x31];
 /// `ValidationError` (TYPE_MAPPING §3.1).
 const String kDirectedParamErrorPrefix = 'DIRECTED_PARAM|';
 
+const String _refCursorInvalidDirectionSlug =
+    'ref_cursor_out_invalid_direction';
+const String _binaryOutInOutNotImplementedSlug =
+    'binary_out_inout_not_implemented';
+const String _inOutNullSlug = 'inout_null';
+const String _decimalOutInOutRequiresNonEmptySlug =
+    'decimal_inout_out_requires_non_empty';
+
+String _directedParamMessage(String slug, String detail) {
+  return '$kDirectedParamErrorPrefix$slug: $detail';
+}
+
 /// Client-side checks for DRT1 `OUT` / `INOUT` that the native engine will
 /// reject; fails fast with the same *slugs* as `output_aware_params.rs`.
 void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
@@ -39,8 +54,10 @@ void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
       throw ArgumentError.value(
         pv,
         'value',
-        '${kDirectedParamErrorPrefix}ref_cursor_out_invalid_direction: '
-        'ParamValueRefCursorOut is only valid for ParamDirection.output',
+        _directedParamMessage(
+          _refCursorInvalidDirectionSlug,
+          'ParamValueRefCursorOut is only valid for ParamDirection.output',
+        ),
       );
     }
     return;
@@ -49,9 +66,11 @@ void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
     throw ArgumentError.value(
       pv,
       'value',
-      '${kDirectedParamErrorPrefix}binary_out_inout_not_implemented: '
-      'OUT/INOUT for binary columns is not implemented; use Integer, '
-      'BigInt, String, or Decimal (see TYPE_MAPPING §3.1)',
+      _directedParamMessage(
+        _binaryOutInOutNotImplementedSlug,
+        'OUT/INOUT for binary columns is not implemented; use Integer, '
+        'BigInt, String, or Decimal (see TYPE_MAPPING §3.1)',
+      ),
     );
   }
   if (pv is ParamValueNull) {
@@ -59,9 +78,11 @@ void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
       throw ArgumentError.value(
         pv,
         'value',
-        '${kDirectedParamErrorPrefix}inout_null: INOUT with ParamValueNull '
-        'is not supported; pass Integer, BigInt, String, or non-empty '
-        'Decimal',
+        _directedParamMessage(
+          _inOutNullSlug,
+          'INOUT with ParamValueNull is not supported; pass Integer, BigInt, '
+          'String, or non-empty Decimal',
+        ),
       );
     }
     return;
@@ -71,8 +92,10 @@ void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
       throw ArgumentError.value(
         pv,
         'value',
-        '${kDirectedParamErrorPrefix}decimal_inout_out_requires_non_empty: '
-        'use a non-empty ParamValue::Decimal for OUT/INOUT or use String',
+        _directedParamMessage(
+          _decimalOutInOutRequiresNonEmptySlug,
+          'use a non-empty ParamValue::Decimal for OUT/INOUT or use String',
+        ),
       );
     }
   }

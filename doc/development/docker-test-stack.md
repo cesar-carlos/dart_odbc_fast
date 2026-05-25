@@ -173,7 +173,7 @@ pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_
 ## What about MSDTC (4.3b) and OCI (4.3c)?
 
 - **MSDTC** is a Windows COM service. The `test-runner` Linux container
-  cannot exercise the Phase 2 wiring — those tests must run on a
+  cannot exercise the Windows `xa-dtc` lifecycle path — those tests must run on a
   Windows host with `sc query MSDTC` reporting `RUNNING`. Docker only
   helps to provide the SQL Server endpoint (the `mssql` service above
   works with MSDTC enrolment from a Windows client). Step-by-step `cargo
@@ -239,4 +239,5 @@ typically lives behind a manual workflow trigger.
 - [`scripts/docker_e2e.ps1`](../../scripts/docker_e2e.ps1) /
   [`scripts/docker_e2e.sh`](../../scripts/docker_e2e.sh)
 - [`doc/Features/PENDING_IMPLEMENTATIONS.md`](../Features/PENDING_IMPLEMENTATIONS.md) —
-  work still open (MSDTC optional hardening, OCI *shim*, *OUTPUT* nativo, columnar v2)
+  delivered / opt-in / product-gated work (MSDTC recovery, OCI shim, TVP,
+  directed output maturity, columnar default)
