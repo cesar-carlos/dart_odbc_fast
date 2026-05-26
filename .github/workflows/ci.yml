@@ -179,7 +179,7 @@ jobs:
           --report-on=lib
 
       - name: Upload Dart coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage/lcov.info
           flags: dart
@@ -199,7 +199,7 @@ jobs:
           cargo tarpaulin -p odbc_engine --lib --tests --timeout 600 --out Html --out Lcov --output-dir coverage -- --test-threads=1
 
       - name: Upload Rust coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: native/coverage/lcov.info
           flags: rust
