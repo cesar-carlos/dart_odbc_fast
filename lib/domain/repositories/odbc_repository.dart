@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
@@ -266,6 +267,21 @@ abstract class IOdbcRepository {
     Map<String, Object?> namedParams,
   );
 
+  /// Executes a named-parameter SQL query and returns the result as a stream.
+  ///
+  /// Supports `@name` and `:name` syntax. Named placeholders are converted to
+  /// positional `?` placeholders before execution.
+  ///
+  /// Because the parameterized execute path does not support incremental
+  /// batched streaming at the FFI level, the full result is buffered and
+  /// yielded as a single [QueryResult] chunk. On failure, emits a single
+  /// `Failure` item and closes the stream.
+  Stream<Result<QueryResult>> streamQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  );
+
   /// Executes a SQL query that returns multiple result sets.
   ///
   /// Some databases support queries that return multiple result sets.
@@ -438,7 +454,30 @@ abstract class IOdbcRepository {
   Future<Result<OdbcMetrics>> getMetrics();
 
   /// Gets async worker-pool diagnostics when the backend is async.
+  ///
+  /// Returns `Failure(UnsupportedFeatureError)` in sync mode. Prefer
+  /// the infallible [getWorkerPoolStats] for new code: it returns
+  /// `null` in sync mode, which is friendlier for dashboards and
+  /// admin endpoints that prefer "stats not available" over a typed
+  /// failure.
+  @Deprecated(
+    'Use getWorkerPoolStats() — it returns null in sync mode instead of '
+    'a typed Failure. This API will be removed in a future major release.',
+  )
   Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
+
+  /// Convenience variant that returns `null` in sync mode instead of
+  /// `UnsupportedFeatureError`. Suitable for dashboards /
+  /// `IAdminService` consumers that prefer "stats not available" over
+  /// a typed failure. Infallible by design.
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats();
+
+  /// Broadcast stream of connection-lifecycle events
+  /// (`ConnectionLost`, `WorkerRecovered`, `AutoReconnectAttempted`,
+  /// `PoolResize`, `SlowQueryDetected`). See [OdbcEvent] for the full
+  /// sealed surface. Implementations must use a broadcast controller
+  /// so that multiple listeners can attach without blocking emission.
+  Stream<OdbcEvent> get events;
 
   /// Checks if the ODBC environment has been initialized.
   ///

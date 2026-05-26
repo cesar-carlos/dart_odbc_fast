@@ -15,10 +15,11 @@ import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
+
+import '../../helpers/fake_async_native_for_errors.dart';
 
 /// Single multi-stream row-count frame (tag + u32 len + i64).
 Uint8List _rowCountMultiStreamFrame(int n) {
@@ -47,136 +48,11 @@ Uint8List _malformedMultiResultBuffer() {
 // magic(4) + version(2) + reserved(2) + count(4)
 const int _headerV2Len = 12;
 
-/// Minimal async fake for repository error-mapping tests (no live ODBC).
-class _FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
-  _FakeAsyncNativeForRepositoryErrors() : super(requestTimeout: Duration.zero);
-
-  bool initializeSuccess = true;
-  bool disconnectSuccess = true;
-  bool connectReturnsZero = false;
-  bool cancelStatementSuccess = true;
-  String? validateConnectionStringResult = 'rejected by fake';
-  String errorMessage = 'disconnect failed';
-
-  StructuredError? globalStructuredError;
-  StructuredError? connectionStructuredError;
-
-  int prepareResult = 100;
-  int beginTransactionResult = 0;
-  int bulkInsertResult = 0;
-  int streamMultiStartBatchedResult = 0;
-  Uint8List? executePreparedResult;
-  Uint8List? executeQueryMultiResult;
-
-  List<StreamFetchResponse> streamFetchResponses = const [];
-
-  int _nextNativeConn = 50;
-  var _streamFetchCall = 0;
-
-  @override
-  Future<bool> initialize() async => initializeSuccess;
-
-  @override
-  Future<int> connect(String connectionString, {int timeoutMs = 0}) async {
-    if (connectReturnsZero) return 0;
-    return ++_nextNativeConn;
-  }
-
-  @override
-  Future<String?> validateConnectionString(String connectionString) async =>
-      validateConnectionStringResult;
-
-  @override
-  Future<bool> disconnect(int connectionId) async => disconnectSuccess;
-
-  @override
-  Future<String> getError() async => errorMessage;
-
-  @override
-  Future<StructuredError?> getStructuredError() async => globalStructuredError;
-
-  @override
-  Future<StructuredError?> getStructuredErrorForConnection(
-    int connectionId,
-  ) async =>
-      connectionStructuredError;
-
-  @override
-  Future<int> beginTransaction(
-    int connectionId,
-    int isolationLevel, {
-    int savepointDialect = 0,
-    int accessMode = 0,
-    int lockTimeoutMs = 0,
-  }) async =>
-      beginTransactionResult;
-
-  @override
-  Future<int> prepare(
-    int connectionId,
-    String sql, {
-    int timeoutMs = 0,
-  }) async =>
-      prepareResult;
-
-  @override
-  Future<Uint8List?> executePrepared(
-    int stmtId,
-    List<ParamValue>? params,
-    int timeoutOverrideMs,
-    int fetchSize, {
-    int? maxBufferBytes,
-  }) async =>
-      executePreparedResult;
-
-  @override
-  Future<bool> cancelStatement(int stmtId) async => cancelStatementSuccess;
-
-  @override
-  Future<int> bulkInsertArray(
-    int connectionId,
-    String table,
-    List<String> columns,
-    Uint8List dataBuffer,
-    int rowCount,
-  ) async =>
-      bulkInsertResult;
-
-  @override
-  Future<Uint8List?> executeQueryMulti(
-    int connectionId,
-    String sql, {
-    int? maxBufferBytes,
-  }) async =>
-      executeQueryMultiResult;
-
-  @override
-  Future<int> streamMultiStartBatched(
-    int connectionId,
-    String sql, {
-    int chunkSize = 64 * 1024,
-  }) async =>
-      streamMultiStartBatchedResult;
-
-  @override
-  Future<StreamFetchResponse> streamFetch(int streamId) async {
-    final responses = streamFetchResponses;
-    if (responses.isEmpty) {
-      return StreamFetchResponse(0, success: false, error: 'no fetch queued');
-    }
-    final index = _streamFetchCall++;
-    if (index >= responses.length) {
-      return StreamFetchResponse(0, success: false, error: 'fetch exhausted');
-    }
-    return responses[index];
-  }
-
-  @override
-  Future<bool> streamClose(int streamId) async => true;
-
-  @override
-  void dispose() {}
-}
+/// Local alias so existing call sites in this file keep using the short
+/// underscore-prefixed name. New tests should import the helper directly
+/// as [FakeAsyncNativeForRepositoryErrors] from `test/helpers/`.
+typedef _FakeAsyncNativeForRepositoryErrors
+    = FakeAsyncNativeForRepositoryErrors;
 
 void _expectValidationError<T extends Object>(
   Result<T> result,
@@ -1362,5 +1238,203 @@ void main() {
         );
       },
     );
+
+    group('streamQueryNamed', () {
+      test(
+        'should_yield_validation_failure_when_named_param_is_missing',
+        () async {
+          final chunks = await repository.streamQueryNamed(
+            connectionId,
+            'SELECT :x FROM t',
+            <String, Object?>{},
+          ).toList();
+
+          expect(chunks, hasLength(1));
+          final item = chunks.first;
+          expect(item.isError(), isTrue);
+          item.fold(
+            (_) => fail('Expected failure'),
+            (e) {
+              expect(e, isA<ValidationError>());
+              expect(
+                (e as ValidationError).message,
+                contains('Missing required parameters'),
+              );
+            },
+          );
+        },
+      );
+
+      test(
+        'should_yield_failure_when_connectionId_is_invalid',
+        () async {
+          final chunks = await repository.streamQueryNamed(
+            'nonexistent-connection',
+            'SELECT :x FROM t',
+            {'x': 1},
+          ).toList();
+
+          expect(chunks, hasLength(1));
+          expect(chunks.first.isError(), isTrue);
+        },
+      );
+
+      test(
+        'should_yield_exactly_one_chunk',
+        () async {
+          // Even on connection-not-found failure, exactly one item is emitted.
+          final count = await repository.streamQueryNamed(
+            'bad-conn',
+            'SELECT :a, :b FROM t',
+            {'a': 1, 'b': 2},
+          ).length;
+
+          expect(count, equals(1));
+        },
+      );
+    });
+
+    group('dispose & disconnect cleanup', () {
+      test(
+        'should_clear_dart_side_state_after_dispose',
+        () async {
+          // Establish a fresh repo + connection so we have state to clear.
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+          final connId =
+              (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+
+          // Sanity check: prepare succeeds against the live connection.
+          final beforePrepare = await localRepo.prepare(connId, 'SELECT 1');
+          expect(beforePrepare.isSuccess(), isTrue);
+
+          localRepo.dispose();
+
+          // After dispose, the same connectionId must read as invalid —
+          // proving the Dart-side _connectionIds map was cleared.
+          final afterPrepare = await localRepo.prepare(connId, 'SELECT 1');
+          expect(afterPrepare.isError(), isTrue);
+          afterPrepare.fold(
+            (_) => fail('Expected failure after dispose'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Invalid connection ID'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'should_clear_dart_state_when_disconnect_native_fails',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors()
+            ..disconnectSuccess = false;
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+          final connId =
+              (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+
+          final result = await localRepo.disconnect(connId);
+          expect(result.isError(), isTrue);
+
+          // Even though disconnect failed at the native layer, Dart-side
+          // state must have been cleared so the next op fails fast with
+          // ValidationError instead of misleading errors.
+          final next = await localRepo.prepare(connId, 'SELECT 1');
+          next.fold(
+            (_) => fail('Expected failure after failed disconnect'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Invalid connection ID'),
+            ),
+          );
+        },
+      );
+    });
+
+    group('dartSideMetrics', () {
+      test(
+        'should_report_zero_counters_for_fresh_repository',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          final metrics = localRepo.dartSideMetrics();
+          expect(metrics.connectionCount, 0);
+          expect(metrics.statementCount, 0);
+          expect(metrics.namedParamMetadataCount, 0);
+          expect(metrics.pooledConnectionCount, 0);
+          expect(metrics.poolCheckoutCount, 0);
+          expect(metrics.connectionOptionsCount, 0);
+        },
+      );
+
+      test(
+        'should_track_connection_count_after_connect',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          await localRepo.connect('Driver={Test}');
+          await localRepo.connect('Driver={Test}');
+
+          final metrics = localRepo.dartSideMetrics();
+          expect(metrics.connectionCount, 2);
+          expect(metrics.connectionOptionsCount, 2);
+        },
+      );
+
+      test(
+        'should_track_statementCount_and_namedParamMetadataCount',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          final connId =
+              (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+          // The fake returns the same stmtId (100) for every prepare, so the
+          // statement map is keyed once. Both prepareNamed and prepare write
+          // to the same metadata slot — what matters here is that the maps
+          // are populated, not the exact count for distinct stmts.
+          await localRepo.prepareNamed(connId, 'SELECT :x');
+
+          final metrics = localRepo.dartSideMetrics();
+          expect(metrics.statementCount, greaterThanOrEqualTo(1));
+          expect(metrics.namedParamMetadataCount, greaterThanOrEqualTo(1));
+        },
+      );
+
+      test(
+        'should_serialize_to_json_for_telemetry_exporters',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          final json = localRepo.dartSideMetrics().toJson();
+          expect(
+            json.keys,
+            containsAll([
+              'connectionCount',
+              'statementCount',
+              'namedParamMetadataCount',
+              'pooledConnectionCount',
+              'poolCheckoutCount',
+              'connectionOptionsCount',
+            ]),
+          );
+        },
+      );
+    });
   });
 }

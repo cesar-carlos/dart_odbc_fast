@@ -282,5 +282,59 @@ void main() {
       );
       locator.shutdown();
     });
+
+    group('lazy sync stack in async mode', () {
+      test(
+        'should_not_create_sync_stack_until_syncService_accessed_in_async_mode',
+        () {
+          // With async mode, the sync NativeOdbcConnection should only be
+          // created on demand, not during initialize().
+          final locator = ServiceLocator()
+            ..initialize(profile: OdbcUsageProfile.balanced);
+
+          // service → async path; sync stack not yet materialized.
+          expect(locator.isAsyncMode, isTrue);
+          expect(identical(locator.service, locator.asyncService), isTrue);
+
+          // Explicitly accessing syncService materializes the sync stack.
+          final sync = locator.syncService;
+          expect(sync, isNotNull);
+          // nativeConnection is now available (lazily created).
+          expect(locator.nativeConnection, isNotNull);
+
+          // Subsequent calls return the same instance (idempotent lazy init).
+          expect(identical(locator.syncService, sync), isTrue);
+          locator.shutdown();
+        },
+      );
+
+      test(
+        'should_create_sync_stack_eagerly_in_legacy_mode',
+        () {
+          // In legacy (non-async) mode, nativeConnection must be available
+          // immediately after initialize() without any extra access.
+          final locator = ServiceLocator()..initialize();
+          expect(locator.nativeConnection, isNotNull);
+          expect(locator.service, isNotNull);
+          locator.shutdown();
+        },
+      );
+
+      test(
+        'should_survive_re_initialize_with_async_then_legacy',
+        () {
+          final locator = ServiceLocator()
+            ..initialize(profile: OdbcUsageProfile.balanced);
+          expect(locator.isAsyncMode, isTrue);
+
+          // Re-initialize in legacy mode; sync stack must be created eagerly.
+          locator.initialize();
+          expect(locator.isAsyncMode, isFalse);
+          expect(locator.service, isNotNull);
+          expect(locator.nativeConnection, isNotNull);
+          locator.shutdown();
+        },
+      );
+    });
   });
 }

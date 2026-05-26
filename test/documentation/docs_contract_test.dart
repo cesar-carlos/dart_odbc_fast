@@ -75,6 +75,38 @@ void main() {
       expect(ci, contains('dart test test/documentation test/example'));
     });
 
+    test('should_ship_dart_layer_architecture_doc', () {
+      // Phase 4 PR4.4: doc/ARCHITECTURE.md mirrors the native engine's
+      // architecture doc but documents only the Dart side. Verify the
+      // file exists, is referenced from the README, and contains the
+      // essential structural anchors so future renames don't silently
+      // break the contract.
+      final architecture = _readRepoFile('doc/ARCHITECTURE.md');
+      expect(architecture, contains('Dart Layer Architecture'));
+      expect(architecture, contains('Sealed `OdbcBackend`'));
+      expect(architecture, contains('Sub-interfaces of `IOdbcService`'));
+      expect(architecture, contains('Repository runners'));
+      expect(architecture, contains('Event bus pipeline'));
+
+      final readme = _readRepoFile('README.md');
+      expect(readme, contains('doc/ARCHITECTURE.md'));
+    });
+
+    test('should_ship_codecov_threshold_and_dependabot_configs', () {
+      // PR4.1 + PR4.3: ensure the CI hardening configs ship alongside
+      // their docs so future edits don't drop one of them silently.
+      final codecov = _readRepoFile('.codecov.yml');
+      expect(codecov, contains('target: 80%'));
+      expect(codecov, contains('project'));
+      expect(codecov, contains('patch'));
+
+      final dependabot = _readRepoFile('.github/dependabot.yml');
+      expect(dependabot, contains('package-ecosystem: "pub"'));
+      expect(dependabot, contains('package-ecosystem: "cargo"'));
+      expect(dependabot, contains('package-ecosystem: "github-actions"'));
+      expect(dependabot, contains('weekly'));
+    });
+
     test('should_not_reintroduce_known_stale_feature_phrases', () {
       final paths = [
         'README.md',

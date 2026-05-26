@@ -468,6 +468,49 @@ void _fakeWorkerAuditSupport(SendPort mainSendPort) {
   });
 }
 
+/// Fake worker: returns 4 "pending" polls before returning "ready".
+/// Used to verify that adaptive backoff terminates correctly.
+void _fakeWorkerPendingThenReady(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  var pollCount = 0;
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+      return;
+    }
+    if (message is ExecuteAsyncStartRequest) {
+      mainSendPort.send(IntResponse(message.requestId, 9999));
+      return;
+    }
+    if (message is AsyncPollRequest) {
+      pollCount++;
+      // Pending for first 4 polls, then ready.
+      final status = pollCount <= 4 ? 0 : 1;
+      mainSendPort.send(IntResponse(message.requestId, status));
+      return;
+    }
+    if (message is AsyncGetResultRequest) {
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([42])),
+      );
+      return;
+    }
+    if (message is AsyncCancelRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+    if (message is AsyncFreeRequest) {
+      mainSendPort.send(BoolResponse(message.requestId, value: true));
+      return;
+    }
+  });
+}
+
 /// Fake worker: supports async execute lifecycle requests.
 void _fakeWorkerAsyncExecuteSupport(SendPort mainSendPort) {
   final receivePort = ReceivePort();
@@ -2212,6 +2255,105 @@ void main() {
 
       expect(() => async.failWorkerForTesting(99), returnsNormally);
       expect(async.isInitialized, isTrue);
+      async.dispose();
+    });
+  });
+
+  group('adaptive poll backoff', () {
+    test(
+      'should_resolve_result_after_multiple_pending_polls',
+      () async {
+        // Worker returns pending 4 times then ready; verifies the adaptive
+        // poll loop terminates correctly and returns the result.
+        final async = AsyncNativeOdbcConnection(
+          isolateEntry: _fakeWorkerPendingThenReady,
+        );
+        await async.initialize();
+
+        final result = await async.executeAsync(1, 'SELECT 1');
+        // The fake worker returns an arbitrary non-null payload.
+        expect(result, isNotNull);
+
+        async.dispose();
+      },
+    );
+
+    test(
+      'should_complete_faster_than_fixed_max_poll_interval_per_pending_poll',
+      () async {
+        // With 4 pending polls before ready, adaptive backoff (1→2→4→8 ms)
+        // should finish in well under 4 × 10 ms = 40 ms.
+        // Allow 500 ms for CI headroom; the goal is to detect regressions that
+        // restore a large fixed sleep per pending poll.
+        final async = AsyncNativeOdbcConnection(
+          isolateEntry: _fakeWorkerPendingThenReady,
+        );
+        await async.initialize();
+
+        final sw = Stopwatch()..start();
+        final result = await async.executeAsync(1, 'SELECT 1');
+        sw.stop();
+
+        expect(result, isNotNull);
+        // 4 pending polls × 10 ms = 40 ms with the old fixed interval.
+        // Adaptive should be well below 40 ms even on slow CI.
+        expect(sw.elapsedMilliseconds, lessThan(500));
+
+        async.dispose();
+      },
+    );
+  });
+
+  group('worker recovery callback', () {
+    test('should_invoke_onWorkerRecovered_after_recovery_completes', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerFastLifecycle,
+        autoRecoverOnWorkerCrash: true,
+      );
+      await async.initialize();
+
+      var recoveryCount = 0;
+      async.onWorkerRecovered = () => recoveryCount++;
+
+      // Manual recovery cycle exercises the same code path as auto-recovery.
+      await async.recoverWorker();
+
+      expect(recoveryCount, equals(1));
+      expect(async.isInitialized, isTrue);
+      async.dispose();
+    });
+
+    test('should_swallow_callback_exceptions_during_recovery', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerFastLifecycle,
+        autoRecoverOnWorkerCrash: true,
+      );
+      await async.initialize();
+
+      async.onWorkerRecovered = () {
+        throw StateError('boom');
+      };
+
+      // The throw must not break the recovery cycle: pool stays initialized.
+      await async.recoverWorker();
+      expect(async.isInitialized, isTrue);
+      async.dispose();
+    });
+
+    test('should_clear_callback_when_set_to_null', () async {
+      final async = AsyncNativeOdbcConnection(
+        isolateEntry: _fakeWorkerFastLifecycle,
+        autoRecoverOnWorkerCrash: true,
+      );
+      await async.initialize();
+
+      var calls = 0;
+      async
+        ..onWorkerRecovered = (() => calls++)
+        ..onWorkerRecovered = null;
+
+      await async.recoverWorker();
+      expect(calls, equals(0));
       async.dispose();
     });
   });

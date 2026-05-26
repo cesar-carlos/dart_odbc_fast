@@ -19,6 +19,8 @@ behavior and operational guidance.
 
 - [async_api_guide.md](./async_api_guide.md): async usage from Dart
   (execute/stream/recovery).
+- [profile_selection_guide.md](./profile_selection_guide.md): decision tree
+  for picking `OdbcUsageProfile` (Flutter, CLI, server, batch).
 - [cross_database.md](./cross_database.md): multi-db support, DSNs, quirks, CI
   matrix.
 - [performance_comparison.md](./performance_comparison.md): benchmark snapshots
@@ -32,6 +34,9 @@ behavior and operational guidance.
 
 - [plan_checklist_template.md](./plan_checklist_template.md): reusable
   completion checklist for future plans.
+- [zero_copy_ffi_evaluation.md](./zero_copy_ffi_evaluation.md): viability
+  analysis and prerequisites for zero-copy FFI result buffers (deferred
+  to a future release).
 
 ## Documentation policy
 
@@ -48,9 +53,12 @@ Primary source is code:
 
 Companion crate docs:
 
-- `native/odbc_engine/ARCHITECTURE.md`
-- `native/odbc_engine/E2E_TESTS_ENV_CONFIG.md`
-- `native/odbc_engine/MULTI_DATABASE_TESTING.md`
+- `native/odbc_engine/ARCHITECTURE.md` — internal architecture and module map.
+- `native/odbc_engine/tests/README.md` — test catalog and run instructions.
+
+Multi-database, DSN, and `.env` configuration is consolidated in
+[cross_database.md](./cross_database.md) (formerly split across
+`MULTI_DATABASE_TESTING.md` / `E2E_TESTS_ENV_CONFIG.md`, both removed).
 
 Docker test environment:
 

@@ -1063,10 +1063,22 @@ void _validateHierarchyIdLiteral(String s) {
 
 /// Cheap structural sanity check for `SqlDataType.xml(validate: true)`.
 /// Not a real XML parser — just rules out obvious mistakes (empty
-/// payload, missing root element brackets) without paying the cost of
-/// instantiating an actual parser. The engine remains the source of
-/// truth for full schema/well-formedness validation at execute-time.
+/// payload, missing root element brackets, unbalanced tags) without
+/// paying the cost of instantiating an actual parser. The engine
+/// remains the source of truth for full schema/well-formedness
+/// validation at execute-time.
+///
+/// Also caps the payload at [_xmlValidateMaxBytes] (4 MB, mirroring the
+/// JSON validator) so a hostile or buggy caller can't pin a thread on
+/// counting tags in a multi-gigabyte string.
 void _validateXmlShape(String raw) {
+  if (raw.length > _xmlValidateMaxBytes) {
+    throw ArgumentError(
+      'SqlDataType.xml(validate: true): payload is ${raw.length} '
+      'bytes which exceeds the validation limit of $_xmlValidateMaxBytes; '
+      'either pass a smaller payload or omit validate:true.',
+    );
+  }
   final s = raw.trim();
   if (s.isEmpty) {
     throw ArgumentError(
@@ -1084,7 +1096,28 @@ void _validateXmlShape(String raw) {
       'SqlDataType.xml(validate: true): payload must contain a closing ">"',
     );
   }
+  // Cheap balance check: count opening vs closing angle brackets.
+  // Skips inside CDATA/comment sections is intentional — this is a
+  // structural sanity check, not a conformance test.
+  var openCount = 0;
+  var closeCount = 0;
+  for (var i = 0; i < s.length; i++) {
+    final code = s.codeUnitAt(i);
+    if (code == 0x3C) openCount++; // '<'
+    if (code == 0x3E) closeCount++; // '>'
+  }
+  if (openCount != closeCount) {
+    throw ArgumentError(
+      'SqlDataType.xml(validate: true): unbalanced angle brackets '
+      '(< count=$openCount, > count=$closeCount)',
+    );
+  }
 }
+
+/// Cap for `SqlDataType.xml(validate: true)` — same 4 MB ceiling as JSON.
+/// Validation is opt-in; callers that need to send larger XML payloads
+/// should disable validation and rely on the engine.
+const int _xmlValidateMaxBytes = 4 * 1024 * 1024;
 
 /// Format an `INTERVAL`-typed value. `Duration` becomes
 /// `'<n> seconds'` (with millisecond precision preserved as a
@@ -1193,6 +1226,17 @@ String _toJsonString(Object? value, {required bool validate}) {
   }
 
   if (validate) {
+    // DoS guard: refuse to validate-parse extremely large payloads. Any JSON
+    // bigger than this is almost certainly a bug or hostile input; the engine
+    // will reject it anyway. Skipping validate gives the engine the chance to
+    // surface the real driver-level error instead of stalling on jsonDecode.
+    if (encoded.length > _jsonValidateMaxBytes) {
+      throw ArgumentError(
+        'SqlDataType.json(validate: true): payload is ${encoded.length} '
+        'bytes which exceeds the validation limit of $_jsonValidateMaxBytes; '
+        'either pass a smaller payload or omit validate:true.',
+      );
+    }
     try {
       jsonDecode(encoded);
     } on FormatException catch (e) {
@@ -1204,6 +1248,11 @@ String _toJsonString(Object? value, {required bool validate}) {
   }
   return encoded;
 }
+
+/// Cap for `SqlDataType.json(validate: true)` — 4 MB. JSON parameters above
+/// this are very unusual; the cap prevents pathological deeply-nested or
+/// gigantic input from forcing a multi-second parse on the calling thread.
+const int _jsonValidateMaxBytes = 4 * 1024 * 1024;
 
 /// Validate and canonicalise a UUID string. Accepts the canonical
 /// `8-4-4-4-12` form, the bare 32-hex form, and either wrapped in

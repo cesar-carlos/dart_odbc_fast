@@ -420,5 +420,49 @@ void main() {
         await locator!.syncService.disconnect(connection.id);
       },
     );
+
+    test('sync streamQueryNamed yields single chunk with correct rows',
+        () async {
+      if (skipReason != null || locator == null) return;
+
+      final conn = await locator!.syncService.connect(dsn);
+      final connection =
+          conn.getOrElse((_) => throw Exception('connect failed'));
+
+      final chunks = await locator!.syncService.streamQueryNamed(
+        connection.id,
+        'SELECT 1 AS n WHERE 1 = :v',
+        {'v': 1},
+      ).toList();
+
+      expect(chunks, hasLength(1));
+      expect(chunks.first.isSuccess(), isTrue);
+      final result =
+          chunks.first.getOrElse((_) => throw Exception('expected success'));
+      expect(result.rows, hasLength(1));
+      expect(result.rows.first.first.toString(), equals('1'));
+
+      await locator!.syncService.disconnect(connection.id);
+    });
+
+    test('sync streamQueryNamed yields failure for missing named param',
+        () async {
+      if (skipReason != null || locator == null) return;
+
+      final conn = await locator!.syncService.connect(dsn);
+      final connection =
+          conn.getOrElse((_) => throw Exception('connect failed'));
+
+      final chunks = await locator!.syncService.streamQueryNamed(
+        connection.id,
+        'SELECT 1 WHERE 1 = :missing',
+        <String, Object?>{},
+      ).toList();
+
+      expect(chunks, hasLength(1));
+      expect(chunks.first.isError(), isTrue);
+
+      await locator!.syncService.disconnect(connection.id);
+    });
   });
 }

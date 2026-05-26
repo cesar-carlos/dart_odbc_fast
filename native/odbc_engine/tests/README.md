@@ -192,9 +192,8 @@ if !is_database_type(DatabaseType::SqlServer) { return; }
    - Skip database-specific tests when not applicable
    - Run generic tests on any configured database
 
-**For complete documentation, see [MULTI_DATABASE_TESTING.md](MULTI_DATABASE_TESTING.md)**
-
-**DSN / `.env` configuration:** see [E2E_TESTS_ENV_CONFIG.md](../E2E_TESTS_ENV_CONFIG.md)
+**For complete multi-database documentation (DSNs, env vars, Docker, CI
+matrix, SQL quirks):** see [`../../doc/cross_database.md`](../../doc/cross_database.md).
 
 ## Test Strategy
 

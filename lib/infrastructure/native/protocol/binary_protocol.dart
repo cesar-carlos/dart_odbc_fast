@@ -1,31 +1,21 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/column_metadata.dart';
 import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
+export 'package:odbc_fast/domain/entities/column_metadata.dart';
+
 const Endian _littleEndian = Endian.little;
 
-/// Metadata for a single column in a query result.
-///
-/// Contains the column name and the **protocol type discriminant** (mirror
-/// of the Rust `OdbcType` enum, NOT the ODBC `SQL_*` type code).
-class ColumnMetadata {
-  /// Creates a new [ColumnMetadata] instance.
-  ///
-  /// The [name] is the column name as returned from the database.
-  /// The [odbcType] is the protocol discriminant (1..19); see [OdbcType]
-  /// for the canonical mapping.
-  const ColumnMetadata({required this.name, required this.odbcType});
-
-  /// Column name.
-  final String name;
-
-  /// Protocol type discriminant (matches `OdbcType.discriminant`).
-  final int odbcType;
-
-  /// Typed view of [odbcType]. Unknown discriminants degrade to
+/// Typed-view extension over the domain [ColumnMetadata]. Lives in
+/// the infrastructure layer because [OdbcType] is a wire-protocol
+/// concern; the domain stays free of FFI dependencies.
+extension ColumnMetadataTypedView on ColumnMetadata {
+  /// Typed view of `odbcType`. Unknown discriminants degrade to
   /// [OdbcType.varchar] (forward-compatible).
   OdbcType get type => OdbcType.fromDiscriminant(odbcType);
 }
@@ -153,7 +143,30 @@ class BinaryProtocolParser {
   ///
   /// Supports v1 row-major, v2 columnar, optional `OUT1` trailer, optional
   /// `RC1\0` ref-cursor trailer (each sub-message is a full v1 buffer).
-  static ParsedQueryMessage parseWithOutputs(Uint8List data) {
+  ///
+  /// When [lazyStrings] is `true`, text cells are wrapped in [LazyString]
+  /// instead of eagerly decoded. See [parse] for the rationale.
+  static ParsedQueryMessage parseWithOutputs(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
+    final previousLazy = _lazyStringsActive;
+    _lazyStringsActive = lazyStrings;
+    try {
+      return _parseWithOutputsInternal(data);
+    } finally {
+      _lazyStringsActive = previousLazy;
+    }
+  }
+
+  /// Active lazy-string mode for the current parse call. Mirrored as a
+  /// static field so the (already pure) `_decodeText` helper can read
+  /// it without threading the flag through every call site. Dart is
+  /// single-isolate, so no cross-isolate races to worry about. Reset
+  /// in the `finally` of [parseWithOutputs].
+  static bool _lazyStringsActive = false;
+
+  static ParsedQueryMessage _parseWithOutputsInternal(Uint8List data) {
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
@@ -236,9 +249,15 @@ class BinaryProtocolParser {
   /// Parses binary protocol data into a [ParsedRowBuffer] (v1 and v2;
   /// ignores a trailing `OUT1` block if present).
   ///
+  /// When [lazyStrings] is `true`, every text cell is wrapped in a
+  /// [LazyString] instead of eagerly decoded to `String`. Equality
+  /// against literal `String` values keeps working
+  /// (`row[0] == 'foo'`); decode happens on first `.value` /
+  /// `toString()` access. Default keeps eager decoding for compat.
+  ///
   /// Throws [FormatException] if the data is invalid or malformed.
-  static ParsedRowBuffer parse(Uint8List data) {
-    return parseWithOutputs(data).rowBuffer;
+  static ParsedRowBuffer parse(Uint8List data, {bool lazyStrings = false}) {
+    return parseWithOutputs(data, lazyStrings: lazyStrings).rowBuffer;
   }
 
   static ParsedRowBuffer _parseRowMajorV1(Uint8List data) {
@@ -259,6 +278,23 @@ class BinaryProtocolParser {
     final columnCount = reader.readUint16();
     final rowCount = reader.readUint32();
     reader.readUint32();
+
+    // DoS guard: reject header values that cannot possibly fit in the buffer
+    // before allocating nested lists. Each row must consume at least 1 byte
+    // per column (null marker), so rowCount * columnCount is a safe lower
+    // bound on remaining payload size.
+    if (columnCount > data.length || rowCount > data.length) {
+      throw FormatException(
+        'v1 buffer header oversized: rows=$rowCount, cols=$columnCount, '
+        'buffer=${data.length}',
+      );
+    }
+    if (columnCount > 0 && rowCount > data.length ~/ columnCount) {
+      throw FormatException(
+        'v1 buffer header inconsistent: rows=$rowCount, cols=$columnCount '
+        'cannot fit in buffer=${data.length}',
+      );
+    }
 
     final columns = <ColumnMetadata>[];
     for (var i = 0; i < columnCount; i++) {
@@ -315,6 +351,21 @@ class BinaryProtocolParser {
     ).getUint32(0, _littleEndian);
     if (data.length < headerSizeColumnarV2 + paySize) {
       throw const FormatException('Columnar v2: truncated payload');
+    }
+    // DoS guard: refuse to allocate rows × cols nested lists when the header
+    // claims more cells than could possibly fit in the payload.
+    if (colCount > data.length || rowCount > data.length) {
+      throw FormatException(
+        'Columnar v2 header oversized: rows=$rowCount, cols=$colCount, '
+        'buffer=${data.length}',
+      );
+    }
+    if (colCount > 0 && rowCount > paySize) {
+      // Each cell occupies at least 1 byte in the payload (null bitmap).
+      throw FormatException(
+        'Columnar v2 header inconsistent: rows=$rowCount cannot fit in '
+        'payload=$paySize',
+      );
     }
     if (colCount == 0) {
       return ParsedRowBuffer(
@@ -626,7 +677,20 @@ class BinaryProtocolParser {
   /// sequences become U+FFFD. The byte stream always survives a round
   /// trip, the upstream issue is no longer masked as plausible-looking
   /// Western text, and CJK / GBK regression tests can pin the contract.
-  static String _decodeText(Uint8List data) {
+  /// Decodes a text cell payload to either a plain `String` (eager,
+  /// the default) or a `LazyString` (when `lazyStrings:true` was
+  /// passed to [parse] / [parseWithOutputs]).
+  ///
+  /// Returns `Object` instead of `dynamic` so the analyzer can still
+  /// catch accidental null returns or unrelated types. Callers that
+  /// need to treat the cell as a `String` rely on `LazyString`'s
+  /// `==` / `toString()` value-equality contract.
+  static Object _decodeText(Uint8List data) {
+    if (_lazyStringsActive) {
+      // Defensive copy — the [data] slice may be a view into a buffer
+      // that the caller will reuse; LazyString must own its bytes.
+      return LazyString(Uint8List.fromList(data));
+    }
     return utf8.decode(data, allowMalformed: true);
   }
 }

@@ -31,9 +31,13 @@ class PreparedStatement {
   final OdbcConnectionBackend _backend;
   final int _stmtId;
   final List<String>? _paramNamesForNamedExecution;
+  bool _closed = false;
 
   /// The prepared statement identifier.
   int get stmtId => _stmtId;
+
+  /// Whether [close] has already been called on this wrapper.
+  bool get isClosed => _closed;
 
   /// Executes prepared statement with optional parameters.
   ///
@@ -91,8 +95,12 @@ class PreparedStatement {
 
   /// Closes and releases a prepared statement.
   ///
-  /// Should be called when the statement is no longer needed.
+  /// Idempotent: subsequent calls after the first are no-ops, avoiding
+  /// spurious native errors when the wrapper is closed via multiple paths
+  /// (e.g. `runWith` block + explicit `close`).
   void close() {
+    if (_closed) return;
+    _closed = true;
     _backend.closeStatement(_stmtId);
   }
 }

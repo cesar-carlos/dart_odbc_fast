@@ -226,7 +226,7 @@ class XaTransactionHandle {
   ///
   /// - On Oracle, when [action] runs no DML the engine returns
   ///   `XA_RDONLY=3` from `xa_prepare` and silently auto-completes
-  ///   the branch. The [Rust apply_xa_prepare] tolerates this rc as
+  ///   the branch. The Rust `apply_xa_prepare` tolerates this rc as
   ///   success and the follow-up `xa_commit_prepared` tolerates the
   ///   resulting `XAER_NOTA=-4` as a no-op, so the helper completes
   ///   normally even for read-only branches. PG / MySQL / MariaDB /
@@ -236,6 +236,33 @@ class XaTransactionHandle {
   ///   failures are swallowed by design — they would obscure the
   ///   original throw — but the underlying engine logs them via the
   ///   structured-error channel.
+  ///
+  /// Lifecycle states (see [XaState]):
+  ///
+  /// - Throw before `xa_end`: branch is `Active`. Helper drives
+  ///   `xa_end` (to satisfy the engine's pre-condition for rollback)
+  ///   then `xa_rollback`.
+  /// - Throw between `xa_end` and `xa_prepare`: branch is `Idle`.
+  ///   Helper drives `xa_rollback`.
+  /// - Throw between `xa_prepare` and `xa_commit_prepared`: branch is
+  ///   `Prepared`. Helper drives `xa_rollback_prepared`.
+  ///
+  /// Concurrency:
+  ///
+  /// - This helper is not re-entrant on a single connection. The
+  ///   ODBC connection mutex serializes XA operations against any
+  ///   non-XA work on the same connection.
+  /// - Multiple branches against different connections of the same
+  ///   global transaction (multi-RM 2PC) are supported, but the
+  ///   caller is responsible for issuing matching `xid`s and
+  ///   coordinating the outer Transaction Manager.
+  ///
+  /// When to prefer [runWithStartOnePhase] instead:
+  ///
+  /// - Only when this branch is the **sole RM** in the global
+  ///   transaction. It fuses `prepare` + `commit` into
+  ///   `xa_commit_one_phase` to skip the extra round-trip; using
+  ///   it with multiple RMs breaks 2PC durability guarantees.
   ///
   /// Example:
   /// ```dart

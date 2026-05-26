@@ -144,6 +144,18 @@ Executes **batch SQL** (e.g. multiple statements, stored procedures) and returns
 - **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
 - **Output format**: `[count: 4 bytes LE][foreach item: tag(1) + len(4) LE + payload]`. Tag `0` = result set (payload = standard binary protocol); tag `1` = row count (payload = 8 bytes i64 LE). All results are returned via full `SQLMoreResults` iteration (batch SQL, stored procedures, multiple statements).
 
+### `odbc_exec_query_multi_params(conn_id, sql, params_buffer, params_len, out_buffer, buffer_len, out_written) -> int`
+
+Parameterized variant of `odbc_exec_query_multi`.
+
+- **Returns**: `0` on success; `-1` on error; `-2` if buffer too small.
+- **Parameters**: serialized `ParamValue` array; `NULL` / `params_len == 0`
+  runs without parameters.
+- **OUTPUT/INOUT**: not supported on this entry point. Use the directed-OUT
+  flow (`odbc_exec_query` with the DRT1 envelope) when output parameters are
+  needed.
+- **Output format**: same multi-result envelope as `odbc_exec_query_multi`.
+
 ### Async Execute (poll-based)
 
 ### `odbc_execute_async(conn_id, sql) -> unsigned int`
@@ -164,6 +176,18 @@ Starts non-blocking parameterized execution and returns a `request_id`.
 - **Compatibility**: Dart treats this symbol as optional and falls back to
   the existing worker execution path when an older native library does not
   export it.
+
+### `odbc_execute_async_params_options(conn_id, sql, params_buffer, params_len, result_encoding) -> unsigned int`
+
+Additive variant of `odbc_execute_async_params` that lets callers request a
+result wire encoding.
+
+- **Returns**: `request_id > 0` on success; `0` on failure.
+- **`result_encoding`**: `0` row-major v1 (default), `1` columnar v2,
+  `2` columnar v2 with per-column compression. Invalid encoding codes fall
+  back to row-major.
+- **Compatibility**: callers must resolve this symbol dynamically and fall
+  back to `odbc_execute_async_params` when unavailable.
 
 ### `odbc_async_poll(request_id, out_status) -> int`
 
@@ -337,6 +361,34 @@ streams; buffer-mode streams (`odbc_stream_start`) treat cancel as no-op.
 
 Releases the stream state (buffer or batched).
 
+### `odbc_stream_multi_start_batched(conn_id, sql, chunk_size) -> unsigned int`
+
+Starts a streaming multi-result batch. Each chunk emitted by
+`odbc_stream_fetch` carries one frame:
+
+```
+[tag: u8] [len: u32 LE] [payload: len bytes]
+```
+
+- `tag = 0` payload is a `binary_protocol` row-buffer.
+- `tag = 1` payload is `i64 LE` row count.
+
+Decode incrementally with `MultiResultStreamDecoder` (Dart) as bytes
+accumulate. Reuses `odbc_stream_fetch`, `odbc_stream_cancel`, and
+`odbc_stream_close`.
+
+- **Returns**: `stream_id > 0` on success; `0` on failure or when the
+  loaded native library predates v3.3.0.
+
+### `odbc_stream_multi_start_async(conn_id, sql, chunk_size) -> unsigned int`
+
+Async variant of `odbc_stream_multi_start_batched`. Status is observable
+through the existing `odbc_stream_poll_async`; data flows via
+`odbc_stream_fetch`.
+
+- **Returns**: `stream_id > 0` on success; `0` on failure or when the
+  loaded native library predates v3.3.0 (or lacks the async variant).
+
 ### Dart/worker usage (poll-based async stream)
 
 ```dart
@@ -477,13 +529,13 @@ Savepoint dialect (determines SQL syntax for savepoints):
 
 Returns `txn_id > 0` on success; `0` on failure.
 
-In v3.4+ this entry-point delegates internally to `odbc_transaction_begin_v2`
-with `access_mode = 0` (ReadWrite). v1 ABI is preserved byte-for-byte.
+This entry-point delegates internally to `odbc_transaction_begin_v2` with
+`access_mode = 0` (ReadWrite). The v1 ABI is preserved byte-for-byte.
 
 ### `odbc_transaction_begin_v2(conn_id, isolation_level, savepoint_dialect, access_mode) -> unsigned int`
 
-**Sprint 4.1 — added in v3.4 (Unreleased).** Same lifecycle as
-`odbc_transaction_begin` plus the SQL-92 access-mode hint.
+Same lifecycle as `odbc_transaction_begin` plus the SQL-92 access-mode
+hint. Added in v3.4.
 
 `access_mode`:
 
@@ -492,13 +544,12 @@ with `access_mode = 0` (ReadWrite). v1 ABI is preserved byte-for-byte.
   `SET TRANSACTION READ ONLY`. SQL Server / SQLite / Snowflake silently
   no-op (logged at debug); enforce with `DENY` grants instead.
 
-Returns `txn_id > 0` on success; `0` on failure. In v3.5+ delegates to
+Returns `txn_id > 0` on success; `0` on failure. Delegates to
 `odbc_transaction_begin_v3` with `lock_timeout_ms = 0`.
 
 ### `odbc_transaction_begin_v3(conn_id, isolation_level, savepoint_dialect, access_mode, lock_timeout_ms) -> unsigned int`
 
-**Sprint 4.2 — added in v3.5 (Unreleased).** Same lifecycle as `_v2`
-plus a per-transaction lock timeout.
+Same lifecycle as `_v2` plus a per-transaction lock timeout. Added in v3.5.
 
 `lock_timeout_ms` (`0` = engine default; any positive value is the
 maximum number of milliseconds a statement inside the transaction
@@ -521,7 +572,7 @@ Commits and ends the transaction.
 
 Rolls back and ends the transaction.
 
-## XA / 2PC (Sprint 4.3 — Unreleased)
+## XA / 2PC
 
 X/Open distributed-transaction lifecycle for engines that support
 2PC at the SQL level: PostgreSQL, MySQL/MariaDB, DB2. SQL Server
@@ -609,9 +660,20 @@ Releases the savepoint (RELEASE SAVEPOINT for SQL-92; no-op for SQL Server).
 
 ### `odbc_pool_create(conn_str, max_size) -> unsigned int`
 
-Creates a pool in global state.
+Creates a pool in global state with default `PoolOptions`.
 
 Returns `pool_id > 0` on success; `0` on failure.
+
+### `odbc_pool_create_with_options(conn_str, max_size, options_json) -> unsigned int`
+
+Creates a pool with explicit eviction / timeout options.
+
+- **`options_json`** (UTF-8 NUL-terminated): JSON with optional fields
+  `idle_timeout_ms`, `max_lifetime_ms`, `connection_timeout_ms`. Pass
+  `NULL` or `""` to use defaults.
+- **Returns**: `pool_id > 0` on success; `0` on failure.
+- **Compatibility**: callers must resolve this symbol dynamically and fall
+  back to `odbc_pool_create` when unavailable.
 
 ### `odbc_pool_get_connection(pool_id) -> unsigned int`
 
@@ -801,6 +863,57 @@ connection string (no active connection required).
 | PostgreSQL    | 2000               | all true   |
 | MySQL         | 1500               | all true   |
 | Unknown       | 1000               | all true   |
+
+### `odbc_get_connection_dbms_info(conn_id, buffer, buffer_len, out_written) -> int`
+
+Live DBMS introspection for an open connection. Calls
+`SQLGetInfo(SQL_DBMS_NAME)` and returns a JSON document with the
+server-reported product name, derived canonical engine, identifier limits
+and the same capabilities shape used by `odbc_get_driver_capabilities`.
+
+- **Returns**: `0` on success; `-1` on error (invalid handle / `SQLGetInfo`
+  failed); `-2` if `buffer_len` is too small (`out_written` reports the
+  required size).
+- **Use this** instead of the heuristic when the connection is already open;
+  it resolves DSN-only strings, custom drivers, and MariaDB vs MySQL
+  ambiguity. See `cross_database.md` for the field-by-field contract.
+
+## Plugin SQL helpers (driver-aware DML rewrites)
+
+These helpers run entirely on the Dart side: no live connection is required.
+The connection string is parsed only to select the right plugin.
+
+### `odbc_build_upsert_sql(conn_str, table, payload_json, out_buf, buf_len, out_written) -> int`
+
+Returns a dialect-specific UPSERT statement (e.g. SQL Server `MERGE`,
+PostgreSQL `ON CONFLICT`, MySQL `ON DUPLICATE KEY UPDATE`).
+
+- **`payload_json`**: UTF-8 JSON
+  `{ "columns": [...], "conflict": [...], "update": [...]? }`.
+- **Returns**: `0` on success; `-1` invalid argument; `-2` buffer too small;
+  `-3` unsupported plugin (engine not registered for that connection
+  string).
+
+### `odbc_append_returning_sql(conn_str, sql, verb, columns_csv, out_buf, buf_len, out_written) -> int`
+
+Appends a `RETURNING` (PostgreSQL/Oracle/SQLite) or `OUTPUT` (SQL Server)
+clause to an INSERT/UPDATE/DELETE statement.
+
+- **`verb`**: `0`=Insert, `1`=Update, `2`=Delete.
+- **`columns_csv`**: UTF-8 comma-separated column names.
+- **Returns**: `0` on success; `-1` invalid argument; `-2` buffer too small;
+  `-3` unsupported plugin.
+
+### `odbc_get_session_init_sql(conn_str, options_json, out_buf, buf_len, out_written) -> int`
+
+Returns the post-connect session-init SQL statements for the connection's
+plugin as a JSON array of strings (e.g. `SET application_name`,
+`SET search_path`, `SET timezone`).
+
+- **`options_json`**: UTF-8 JSON of `SessionOptions`
+  `{ "application_name"?, "timezone"?, "charset"?, "schema"?, "extra_sql"? }`
+  or null/empty for plugin defaults.
+- **Returns**: `0` on success; `-1` invalid argument; `-2` buffer too small.
 
 ## Minimal usage example (C-style)
 

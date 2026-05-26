@@ -1,0 +1,42 @@
+# Dependabot configuration for `dart_odbc_fast`.
+#
+# Three ecosystems are tracked weekly:
+#   - pub      — Dart package dependencies (pubspec.yaml at the root).
+#   - cargo    — Rust crate dependencies for the native engine.
+#   - github-actions — workflow action versions in `.github/workflows`.
+#
+# Schedule is weekly on Monday so updates arrive in a single batch
+# rather than throughout the week. PRs target the default branch and
+# follow the normal CI gate (analyze + tests + coverage).
+
+version: 2
+updates:
+  - package-ecosystem: "pub"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "dart"
+
+  - package-ecosystem: "cargo"
+    directory: "/native/odbc_engine"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"

@@ -190,6 +190,38 @@ async.dispose();
 - **Worker crash**: com `autoRecoverOnWorkerCrash: true`, o recovery invalida todas as conexões; reconecte após o crash.
 - **Queue cheia**: quando `maxPendingRequests` e excedido, a chamada falha com `AsyncErrorCode.resourceExhausted` antes de ser enviada para o worker.
 
+### Recovery flow (worker crash → callback → repository state cleanup)
+
+Quando `autoRecoverOnWorkerCrash: true`, o pool reage ao crash do worker isolate
+disparando o callback registrado via `setOnWorkerRecovered`. O
+`OdbcRepositoryImpl` se auto-registra no construtor para limpar todos os mapas
+Dart-side (connection ids, statement ids, named-param metadata, pool checkouts)
+imediatamente após o `dispose + initialize`, garantindo que operações
+subsequentes contra ids zumbis falhem rápido com `ValidationError` em vez de
+disparar erros confusos no driver.
+
+```mermaid
+sequenceDiagram
+  participant App as Application
+  participant Repo as OdbcRepositoryImpl
+  participant Async as AsyncNativeOdbcConnection
+  participant Worker as Worker Isolate
+  App->>Repo: executeQuery / streamQuery
+  Repo->>Async: forward request
+  Async->>Worker: WorkerRequest (via SendPort)
+  Worker--xAsync: ISOLATE CRASH
+  Async->>Async: handleWorkerCrash (autoRecover)
+  Async->>Async: dispose + initialize (new isolate)
+  Async->>Repo: onWorkerRecovered() callback
+  Repo->>Repo: clear connectionIds, statementIds, namedParam, poolCheckouts
+  Repo-->>App: previous Future fails with workerTerminated
+  App->>Repo: re-connect / re-prepare with new ids
+```
+
+Para inspecionar o estado Dart-side em produção use
+`OdbcRepositoryImpl.dartSideMetrics()` — retorna contadores de connections,
+statements, named-param metadata e pool checkouts.
+
 ---
 
 ## Migration Guide: Sync → Async

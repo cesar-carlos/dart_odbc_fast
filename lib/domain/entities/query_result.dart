@@ -1,3 +1,7 @@
+import 'package:odbc_fast/domain/entities/column_metadata.dart';
+
+export 'package:odbc_fast/domain/entities/column_metadata.dart';
+
 /// One item from a multi-result directed response.
 ///
 /// Callers should pattern-match on the concrete sub-type:
@@ -55,6 +59,10 @@ class QueryResult {
   ///
   /// The [columns] list must match the order of values in each row of [rows].
   /// The [rowCount] should equal the length of [rows].
+  ///
+  /// [columnsMetadata] is optional rich metadata (type discriminant via
+  /// `ColumnMetadata`) populated by the parser when available; legacy
+  /// callers and ad-hoc construction can leave it `null`.
   const QueryResult({
     required this.columns,
     required this.rows,
@@ -62,10 +70,21 @@ class QueryResult {
     this.outputParamValues = const <dynamic>[],
     this.refCursorResults = const <QueryResult>[],
     this.additionalResults = const <DirectedMultiItem>[],
+    this.columnsMetadata,
   });
 
   /// Column names in the order they appear in the query result.
   final List<String> columns;
+
+  /// Optional rich metadata per column (name + protocol type
+  /// discriminant). Populated when the result came through the binary
+  /// protocol parser; remains `null` for results constructed from
+  /// streams that don't carry metadata or for tests/ad-hoc callers.
+  ///
+  /// When non-null, has the same length as [columns]. See
+  /// [ColumnMetadata] for the discriminant table and the
+  /// `ColumnMetadataTypedView` extension for the `OdbcType` view.
+  final List<ColumnMetadata>? columnsMetadata;
 
   /// Row data as a list of lists, where each inner list represents one row.
   ///

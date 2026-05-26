@@ -54,4 +54,40 @@ void main() {
       expect(result.additionalResults.last, isA<DirectedResultItem>());
     });
   });
+
+  group('QueryResult.columnsMetadata', () {
+    test('defaults to null for legacy callers', () {
+      const r = QueryResult(columns: ['id'], rows: [], rowCount: 0);
+      expect(r.columnsMetadata, isNull);
+    });
+
+    test('accepts metadata when provided by parser', () {
+      const meta = <ColumnMetadata>[
+        ColumnMetadata(name: 'id', odbcType: 2),
+      ];
+      const r = QueryResult(
+        columns: ['id'],
+        rows: [],
+        rowCount: 0,
+        columnsMetadata: meta,
+      );
+      expect(r.columnsMetadata, hasLength(1));
+      expect(r.columnsMetadata!.first.name, equals('id'));
+      expect(r.columnsMetadata!.first.odbcType, equals(2));
+    });
+
+    test('matches columns length when populated', () {
+      const meta = <ColumnMetadata>[
+        ColumnMetadata(name: 'a', odbcType: 1),
+        ColumnMetadata(name: 'b', odbcType: 2),
+      ];
+      const r = QueryResult(
+        columns: ['a', 'b'],
+        rows: [],
+        rowCount: 0,
+        columnsMetadata: meta,
+      );
+      expect(r.columnsMetadata!.length, equals(r.columns.length));
+    });
+  });
 }

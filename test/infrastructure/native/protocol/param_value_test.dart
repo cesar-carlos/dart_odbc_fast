@@ -404,6 +404,36 @@ void main() {
       ])[0];
       expect((p as ParamValueString).value, equals('{"oops"'));
     });
+
+    test('validate=true rejects payload above the 4 MB DoS cap', () {
+      // Build a >4 MB JSON string. We use a flat array of zeros — encoded
+      // length is ~2 bytes per entry, so 3M entries ≈ 6 MB.
+      final huge = '[${List.filled(3000000, '0').join(',')}]';
+      expect(huge.length, greaterThan(4 * 1024 * 1024));
+
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.json(validate: true), huge),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('exceeds the validation limit'),
+          ),
+        ),
+      );
+    });
+
+    test('validate=false accepts oversized JSON without parsing', () {
+      // The DoS cap only applies when validate:true. Without validation we
+      // pass through the bytes; the engine is the authoritative validator.
+      final huge = '[${List.filled(3000000, '0').join(',')}]';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.json(), huge),
+      ])[0];
+      expect(p, isA<ParamValueString>());
+    });
   });
 
   group('SqlDataType.uuid', () {
@@ -764,6 +794,52 @@ void main() {
           throwsA(isA<ArgumentError>()),
         );
       }
+    });
+
+    test('validate=true rejects unbalanced angle brackets', () {
+      // 2 opens, 1 close → must be flagged before reaching the engine.
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.xml(validate: true), '<root<inner>text'),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('unbalanced angle brackets'),
+          ),
+        ),
+      );
+    });
+
+    test('validate=true rejects payload above the 4 MB DoS cap', () {
+      // Build a >4 MB structurally-valid XML string with balanced tags.
+      final inner = 'x' * (5 * 1024 * 1024);
+      final huge = '<root>$inner</root>';
+      expect(huge.length, greaterThan(4 * 1024 * 1024));
+
+      expect(
+        () => paramValuesFromObjects([
+          typedParam(SqlDataType.xml(validate: true), huge),
+        ]),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('exceeds the validation limit'),
+          ),
+        ),
+      );
+    });
+
+    test('validate=false accepts oversized XML without parsing', () {
+      // Same payload, no validate flag → bytes pass through to the engine.
+      final inner = 'x' * (5 * 1024 * 1024);
+      final huge = '<root>$inner</root>';
+      final p = paramValuesFromObjects([
+        typedParam(SqlDataType.xml(), huge),
+      ])[0];
+      expect(p, isA<ParamValueString>());
     });
   });
 

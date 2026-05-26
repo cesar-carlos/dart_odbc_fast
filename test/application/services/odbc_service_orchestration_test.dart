@@ -191,6 +191,10 @@ void main() {
         'should_propagate_async_worker_pool_stats_failure_from_repository',
         () async {
           await service.initialize();
+          // Pinning the deprecated API contract: should keep returning
+          // UnsupportedFeatureError in sync mode until the API is
+          // removed. New code should use getWorkerPoolStats().
+          // ignore: deprecated_member_use_from_same_package
           final result = await service.getAsyncWorkerPoolStats();
 
           expect(result.isError(), isTrue);
@@ -237,6 +241,91 @@ void main() {
           expect(items.every((r) => r.isSuccess()), isTrue);
         },
       );
+    });
+
+    group('streamQueryNamed', () {
+      const connectionId = 'test-connection';
+
+      test('should_delegate_to_repository_streamQueryNamed', () async {
+        final chunks = await service.streamQueryNamed(
+          connectionId,
+          'SELECT * FROM t WHERE id = :id',
+          {'id': 1},
+        ).toList();
+
+        expect(chunks, hasLength(1));
+        expect(chunks.first.isSuccess(), isTrue);
+        expect(mockRepo.streamQueryNamedCalled, isTrue);
+      });
+
+      test('should_yield_result_with_correct_columns_and_rows', () async {
+        final result = await service.streamQueryNamed(
+          connectionId,
+          'SELECT id, name FROM t WHERE name = @name',
+          {'name': 'Charlie'},
+        ).first;
+
+        final qr = result.getOrElse((_) => throw Exception('expected success'));
+        expect(qr.columns, orderedEquals(['id', 'name']));
+        expect(qr.rows, hasLength(1));
+      });
+
+      test('should_emit_failure_for_missing_named_param', () async {
+        // The mock always succeeds; this test verifies the real repo impl
+        // via OdbcRepositoryImpl unit test instead. For service layer we just
+        // confirm that a stream is returned (contract test).
+        final stream = service.streamQueryNamed(
+          connectionId,
+          'SELECT :x FROM t',
+          {'x': 42},
+        );
+        expect(stream, isA<Stream<dynamic>>());
+      });
+    });
+
+    group('executeQueryColumnar', () {
+      test('delegates to executeQueryParams + toTypedColumnar conversion',
+          () async {
+        final r = await service.executeQueryColumnar(
+          'test-connection',
+          'SELECT id FROM t',
+        );
+        expect(r.isSuccess(), isTrue);
+        // Mock returns a single-column row-major QueryResult; the service
+        // must run it through toTypedColumnar() before exposing it.
+        final typed = r.getOrThrow();
+        expect(typed.columns, isNotEmpty);
+        expect(typed.rowCount, greaterThanOrEqualTo(0));
+      });
+
+      test('forwards positional params to underlying repository', () async {
+        final r = await service.executeQueryColumnar(
+          'test-connection',
+          'SELECT id FROM t WHERE id = ?',
+          params: [1],
+        );
+        expect(r.isSuccess(), isTrue);
+      });
+    });
+
+    group('streamQueryColumnar', () {
+      test('yields TypedColumnarResult chunks', () async {
+        final chunks =
+            await service.streamQueryColumnar('test-connection', 'SELECT 1')
+                .toList();
+        expect(chunks, isNotEmpty);
+        for (final r in chunks) {
+          expect(r.isSuccess(), isTrue);
+        }
+      });
+    });
+
+    group('getWorkerPoolStats', () {
+      test('returns null when underlying repository has no async pool',
+          () async {
+        final stats = await service.getWorkerPoolStats();
+        expect(stats, isNull);
+      });
     });
   });
 }

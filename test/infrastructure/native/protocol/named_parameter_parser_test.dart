@@ -270,4 +270,67 @@ WHERE id = ?
       expect(e.toString(), equals('Missing: x'));
     });
   });
+
+  group('NamedParameterParser.extract — cache', () {
+    test('should return identical record for repeated SQL', () {
+      const sql = 'SELECT * FROM t WHERE id = @id';
+      final first = NamedParameterParser.extract(sql);
+      final second = NamedParameterParser.extract(sql);
+
+      // Cached hit returns the same object identity.
+      expect(identical(first, second), isTrue);
+    });
+
+    test('should return unmodifiable paramNames list', () {
+      const sql = 'SELECT * FROM t WHERE x = :x';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        () => result.paramNames.toList(growable: true).add('y'),
+        returnsNormally,
+        reason: 'toList copy is mutable — ok',
+      );
+      // The original cached list must reject mutations.
+      expect(
+        () => result.paramNames.add('y'),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('should preserve correct parse result through cache', () {
+      const sql = 'UPDATE t SET name = @name WHERE id = :id';
+      final result = NamedParameterParser.extract(sql);
+
+      expect(
+        result.cleanedSql,
+        equals('UPDATE t SET name = ? WHERE id = ?'),
+      );
+      expect(result.paramNames, orderedEquals(['name', 'id']));
+
+      // Second call must return the same semantic result.
+      final cached = NamedParameterParser.extract(sql);
+      expect(cached.cleanedSql, equals(result.cleanedSql));
+      expect(cached.paramNames, orderedEquals(result.paramNames));
+    });
+
+    test('should evict oldest entry when cache exceeds 256 entries', () {
+      // Fill the cache with 256 distinct SQL strings.
+      for (var i = 0; i < 256; i++) {
+        NamedParameterParser.extract('SELECT :p$i FROM t$i');
+      }
+
+      // The very first SQL inserted is still present (cache is exactly full).
+      final beforeEviction = NamedParameterParser.extract('SELECT :p0 FROM t0');
+      expect(beforeEviction.paramNames, orderedEquals(['p0']));
+
+      // Adding one more entry must evict the oldest ('SELECT :p0 FROM t0').
+      NamedParameterParser.extract('SELECT :overflow FROM overflow_table');
+
+      // After eviction, a fresh parse still produces the correct result but
+      // the identity will have changed (new allocation).
+      final afterEviction = NamedParameterParser.extract('SELECT :p0 FROM t0');
+      expect(afterEviction.cleanedSql, equals('SELECT ? FROM t0'));
+      expect(afterEviction.paramNames, orderedEquals(['p0']));
+    });
+  });
 }

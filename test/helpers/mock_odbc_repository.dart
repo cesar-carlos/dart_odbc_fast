@@ -1,11 +1,13 @@
 /// Mock [IOdbcRepository] for testing OdbcService and related layers.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
@@ -40,6 +42,7 @@ class MockOdbcRepository implements IOdbcRepository {
   bool executeQueryParamsCalled = false;
   bool executeQueryParamBufferCalled = false;
   bool executeQueryNamedCalled = false;
+  bool streamQueryNamedCalled = false;
   bool executeQueryMultiFullCalled = false;
   bool beginTransactionCalled = false;
   bool commitTransactionCalled = false;
@@ -216,6 +219,25 @@ class MockOdbcRepository implements IOdbcRepository {
     executeQueryNamedCalled = true;
     _queryCount++;
     return const Success(
+      QueryResult(
+        columns: ['id', 'name'],
+        rows: [
+          [1, 'Charlie'],
+        ],
+        rowCount: 1,
+      ),
+    );
+  }
+
+  @override
+  Stream<Result<QueryResult>> streamQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  ) async* {
+    streamQueryNamedCalled = true;
+    _queryCount++;
+    yield const Success(
       QueryResult(
         columns: ['id', 'name'],
         rows: [
@@ -636,6 +658,45 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats() async => null;
+
+  /// Broadcast event bus exposed by the mock so tests can drive the
+  /// stream synchronously via [emitEvent]. Created lazily on first
+  /// access — mocks that never touch the event surface pay nothing.
+  StreamController<OdbcEvent>? _eventsController;
+
+  StreamController<OdbcEvent> _ensureEventsController() {
+    return _eventsController ??=
+        StreamController<OdbcEvent>.broadcast(sync: true);
+  }
+
+  /// Helper for tests: pushes [event] through the event bus so
+  /// listeners on [events] receive it synchronously. No-op when the
+  /// stream has been closed via [closeEvents].
+  void emitEvent(OdbcEvent event) {
+    final c = _eventsController;
+    if (c != null && c.isClosed) return;
+    _ensureEventsController().add(event);
+  }
+
+  /// Closes the internal event controller. Safe to call multiple
+  /// times; further [emitEvent] calls become no-ops.
+  Future<void> closeEvents() async {
+    final c = _eventsController;
+    if (c != null && !c.isClosed) {
+      await c.close();
+    }
+  }
+
+  @override
+  Stream<OdbcEvent> get events => _ensureEventsController().stream;
+
+  @override
+  @Deprecated(
+    'Use getWorkerPoolStats() — kept here only to satisfy the deprecated '
+    'IOdbcRepository.getAsyncWorkerPoolStats contract during the deprecation '
+    'window.',
+  )
   Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
     return const Failure(
       UnsupportedFeatureError(

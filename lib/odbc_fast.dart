@@ -56,15 +56,22 @@
 /// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
 library;
 
+export 'application/services/i_admin_service.dart';
+export 'application/services/i_pool_service.dart';
+export 'application/services/i_query_service.dart';
+export 'application/services/i_transaction_service.dart';
 export 'application/services/odbc_service.dart';
 export 'core/di/async_backpressure_mode.dart';
 export 'core/di/resolved_odbc_usage_profile.dart';
 export 'core/di/service_locator.dart';
 export 'core/utils/logger.dart';
 export 'domain/builders/connection_string_builder.dart';
+export 'domain/entities/column_metadata.dart';
 export 'domain/entities/connection.dart';
 export 'domain/entities/connection_options.dart';
+export 'domain/entities/dart_side_metrics.dart';
 export 'domain/entities/isolation_level.dart';
+export 'domain/entities/odbc_event.dart';
 export 'domain/entities/odbc_metrics.dart';
 export 'domain/entities/odbc_usage_profile.dart';
 export 'domain/entities/pool_state.dart';
@@ -77,6 +84,7 @@ export 'domain/entities/savepoint_dialect.dart';
 export 'domain/entities/schema_info.dart';
 export 'domain/entities/statement_options.dart';
 export 'domain/entities/transaction_access_mode.dart';
+export 'domain/entities/typed_columnar_result.dart';
 export 'domain/entities/xid.dart';
 export 'domain/errors/odbc_error.dart';
 export 'domain/errors/telemetry_error.dart';
@@ -95,11 +103,18 @@ export 'infrastructure/native/errors/async_error.dart';
 export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/pool_options.dart';
+// Re-export public-facing parser types only; BinaryProtocolParser, internal
+// magic numbers, and helpers stay private to the package boundary.
+export 'infrastructure/native/protocol/binary_protocol.dart'
+    show ColumnMetadata, ParsedRowBuffer;
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
 export 'infrastructure/native/protocol/columnar_v2_flags.dart';
 export 'infrastructure/native/protocol/directed_param.dart';
+export 'infrastructure/native/protocol/lazy_string.dart';
 export 'infrastructure/native/protocol/named_parameter_parser.dart';
 export 'infrastructure/native/protocol/param_value.dart';
+export 'infrastructure/native/protocol/typed_columnar_converter.dart'
+    show toTypedColumnar;
 export 'infrastructure/native/telemetry/telemetry_buffer.dart';
 export 'infrastructure/native/wrappers/catalog_query.dart';
 export 'infrastructure/native/wrappers/connection_pool.dart';

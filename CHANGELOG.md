@@ -5,6 +5,338 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Roadmap v3.x (additive + deprecation gradual)
+
+Roadmap em 3 fases aplicado seguindo as regras do projeto. Todas as
+mudanças são aditivas — nenhuma quebra de API pública. Suite Dart fica
+em zero `dynamic` no `OdbcRepositoryImpl` e ganha mais de 30 novos
+testes (1041 → 1100+ totais).
+
+A Fase 4 do roadmap continua aditiva. Suite total: **1247 testes**
+(1230 antes da Fase 4) + zero warnings em `dart analyze` para
+`lib/`, `test/` e `example/`.
+
+### Adicionado — Phase 4 (Runners, columnar surface, event bus, CI)
+
+- **[PR1.1] `OdbcCatalogRunner`.** Novo
+  `lib/infrastructure/repositories/runners/odbc_catalog_runner.dart`.
+  Os 6 métodos `catalog*` (`catalogTables`, `catalogColumns`,
+  `catalogTypeInfo`, `catalogPrimaryKeys`, `catalogForeignKeys`,
+  `catalogIndexes`) foram migrados do `OdbcRepositoryImpl` para o
+  runner via composição: o repositório mantém a API pública e
+  delega. Runner é stateless (recebe `OdbcBackend`, lookups e
+  helpers via construtor injection).
+- **[PR1.2] `OdbcBulkRunner`.** Novo runner para `bulkInsert` e
+  `bulkInsertParallel` (incluindo o caminho fallback single-conn
+  quando `parallelism <= 1`). Mesma forma de composição do catalog
+  runner.
+- **[PR1.3] Mais 3 call sites migrados para `_runBoolFfi`.**
+  `createSavepoint`, `rollbackToSavepoint` e `releaseSavepoint`
+  agora usam o helper centralizado, fechando o agrupamento da
+  família savepoint. `closeStatement`, `cancelStatement`,
+  `poolReleaseConnection` e `poolClose` permanecem manuais por
+  carregarem side-effects no caminho de sucesso (limpeza de maps);
+  documentado como follow-up.
+- **[PR1.4] Testes dos runners.** 17 novos testes
+  (`test/infrastructure/repositories/runners/`) verificando
+  validação de connection id, encaminhamento de argumentos,
+  conversão de erro e o fallback do `bulkInsertParallel`.
+- **[PR1] Resultado de tamanho.** `OdbcRepositoryImpl` saiu de 3517
+  para ~3120 linhas (~11% menor) sem mudança de API pública.
+- **[PR2.1] `executeQueryColumnar` + `streamQueryColumnar` no
+  service-level.** Novo par de métodos em `IQueryService` que
+  expõe `TypedColumnarResult` (column-major, com
+  `Int32List`/`Int64List`/`Float64List` para colunas numéricas).
+  Implementação em `OdbcService` aplica `toTypedColumnar()` ao
+  resultado do repositório. Decorator de telemetria propaga.
+- **[PR2.2] Flag `lazyStrings` opt-in no parser binário.**
+  `BinaryProtocolParser.parse()` e `parseWithOutputs()` aceitam
+  `lazyStrings: true`. Quando ativada, células de texto vêm como
+  `LazyString` (decoding sob demanda); compatível com `==` contra
+  `String` literais. Default permanece eager. A flag é
+  thread-safe-equivalente em Dart (single isolate) e restaurada
+  no `finally` para evitar leak entre chamadas.
+- **[PR2.3] `QueryResult.columnsMetadata`.** Campo opcional
+  aditivo em `QueryResult`. Populado pelo
+  `_parseBufferToQueryResult` a partir de
+  `ParsedRowBuffer.columns` (inclui `name` + tipo discriminador
+  do protocolo). Legacy callers ficam com `null`.
+- **[PR2.4] `IAdminService.getWorkerPoolStats()`.** Bridge
+  infalível das estatísticas internas
+  (`AsyncNativeOdbcConnection.getWorkerPoolStats()`) para o
+  service-level. Retorna `null` em modo sync (sem worker pool) em
+  vez de `Failure(UnsupportedFeatureError)`. Coexiste com o
+  `IOdbcRepository.getAsyncWorkerPoolStats()` original (que
+  permanece com `Failure` para callers existentes).
+- **[PR2.5] Testes do PR2.** 11 novos testes:
+  `executeQueryColumnar`/`streamQueryColumnar` em
+  `odbc_service_orchestration_test.dart`, grupo `lazyStrings flag`
+  em `binary_protocol_test.dart`, grupo `columnsMetadata` em
+  `query_result_test.dart`, e `getWorkerPoolStats` no orchestration.
+- **[PR3.1] Sealed `OdbcEvent`.** Novo
+  `lib/domain/entities/odbc_event.dart` com 5 variantes:
+  `ConnectionLost`, `WorkerRecovered`, `AutoReconnectAttempted`,
+  `PoolResize`, `SlowQueryDetected`. Cada variante é `final class`
+  com timestamp UTC + payload tipado. Re-exportado pelo barrel.
+- **[PR3.2] Stream<OdbcEvent> events no IAdminService.**
+  `OdbcRepositoryImpl` agora emite eventos em 4 pontos:
+  `_withReconnect` emite `ConnectionLost` ao detectar drop;
+  emite `AutoReconnectAttempted` a cada retry; o callback
+  `_onUnderlyingWorkerRecovered` emite `WorkerRecovered`;
+  `poolSetSize` emite `PoolResize` (capturando old/new size).
+  `OdbcService` cria um `StreamController` broadcast que faz
+  bridge do stream da repo, permitindo múltiplos consumers sem
+  back-pressure. Método `closeEvents()` para shutdown explícito.
+- **[PR3.3] 9 overloads `For` aceitando `Connection`.** Novas
+  extensions `IQueryServiceConnectionOverloads` e
+  `ITransactionServiceConnectionOverloads`. Métodos: `executeQueryFor`,
+  `executeQueryParamsFor`, `executeQueryNamedFor`,
+  `executeQueryColumnarFor`, `streamQueryFor`,
+  `streamQueryNamedFor`, `streamQueryColumnarFor`,
+  `beginTransactionFor`, `runInTransactionFor`. Removem o
+  `conn.id` plumbing nos call sites; aditivos (não substituem).
+- **[PR3.4] Migration demo.** Novo
+  `example/sub_interfaces_migration_demo.dart` mostrando V1
+  (depende de `IOdbcService`) versus V2 (depende só de
+  `IQueryService`). Smoke test no `opt_in_examples_smoke_test.dart`
+  garante que executa em modo describe-only.
+- **[PR3.5] Testes do event bus.** 10 novos testes:
+  `odbc_event_test.dart` (variantes + sealed exhaustiveness),
+  `odbc_service_event_bus_test.dart` (broadcast, multi-listener,
+  `closeEvents` cancela bridge, late subscriber).
+- **[PR4.1] `.codecov.yml` + `fail_ci_if_error: true`.** Coverage
+  threshold em 80% (project + patch) com 1% de drift band para
+  PRs não-test. Workflow falha se o upload Codecov falhar (sem
+  silent slips). Ignore patterns para `native/`, `example/`,
+  `test/` e gerados.
+- **[PR4.2] Bench baseline JSON em `sql_pointer_cache_bench_test`.**
+  Quando `BENCH_BASELINE_OUT` é setada, o teste emite o arquivo
+  no formato consumido por `tool/compare_benchmark_baseline.dart`
+  com 2 cenários (`sql_cache.cached_acquire` e
+  `sql_cache.baseline_alloc_free`). Opt-in: `dart test` casual
+  não polui o working tree.
+- **[PR4.3] `.github/dependabot.yml`.** Configuração weekly para
+  3 ecosistemas: `pub` (raiz), `cargo` (`/native/odbc_engine`),
+  `github-actions` (`/`). Limit de 5 PRs abertos por ecosistema,
+  todos com label `dependencies` + label específica.
+- **[PR4.4] `doc/ARCHITECTURE.md`.** Espelho Dart-side do
+  `native/odbc_engine/ARCHITECTURE.md`. Cobre: layering com
+  Mermaid, public API barrel, ServiceLocator (sync vs async
+  stack), sealed `OdbcBackend`, sub-interfaces de `IOdbcService`,
+  runners do repositório, event bus pipeline. Indexado a partir
+  do `README.md` raiz.
+- **[PR4.5] `docs_contract_test` reforçado.** Dois novos testes:
+  `should_ship_dart_layer_architecture_doc` (verifica seções e
+  link do README) e
+  `should_ship_codecov_threshold_and_dependabot_configs` (verifica
+  threshold 80% e os 3 ecosistemas dependabot).
+
+### Mudou — Phase 4
+
+- `IOdbcRepository` ganhou método `getWorkerPoolStats()` infalível
+  (Future<AsyncWorkerPoolStats?>); coexiste com o
+  `getAsyncWorkerPoolStats()` original.
+- `IOdbcRepository` ganhou `Stream<OdbcEvent> get events`. O mock
+  `MockOdbcRepository` retorna `Stream<OdbcEvent>.empty()` por padrão.
+- `BinaryProtocolParser._decodeText` mudou retorno interno de
+  `String` para `dynamic` (retorna `LazyString` quando
+  `lazyStrings:true`). Comportamento default preservado.
+- `QueryResult` ganhou campo opcional `columnsMetadata`. Construtor
+  é aditivo (parâmetro opcional named).
+
+### Future work — Phase 4 (não entregue por escopo)
+
+- **D1 — Statement cancellation end-to-end.** Requer mudanças no
+  Rust + ABI bump; planejado em PR dedicado.
+- **A3 — Steps 4-9 do split do repositório.** Runners adicionais
+  (Query, Transaction, Pool) seguirão o mesmo padrão de
+  `OdbcCatalogRunner` quando features novas naturalmente caírem em
+  cada categoria.
+- **G2 — Hooks per-connection.** Pode ser construído em cima do
+  event bus (filtro por `connectionId`); deferido até haver demanda
+  concreta.
+
+### Adicionado — Phase 4.1 (Improvements pass)
+
+Hardening adicional sobre a Fase 4. Suite mantém 1247 testes verdes,
+zero warnings em `dart analyze`. Novamente 100% aditivo / preservando
+compat.
+
+- **[Imp.1] `_runBoolFfiWithCleanup` helper.** Variante do
+  `_runBoolFfi` que recebe um callback `onSuccess()` invocado
+  no caminho de sucesso antes do `Success(unit)`. Migrados:
+  `closeStatement` (limpa metadata maps), `poolReleaseConnection`
+  (limpa connection ids + pool checkout), `poolClose` (limpa
+  todos os checkouts do pool). `cancelStatement` permanece manual
+  por carregar lógica de detecção de "unsupported feature".
+- **[Imp.2] `_runIntFfi` helper.** Para FFI calls que retornam
+  `int` com predicado de sucesso configurável. Migrados:
+  `poolCreate` (`id != 0`), `clearAllStatements` (`code == 0`,
+  combinado com `fold` para `Result<Unit>`).
+- **[Imp.3] `ColumnMetadata` movido para `lib/domain/entities/`.**
+  Era `dynamic` em `QueryResult.columnsMetadata` (anti-pattern por
+  acoplamento ao infrastructure). Agora é
+  `List<ColumnMetadata>?` fortemente tipado. O `OdbcType`
+  permanece em infrastructure como extension `ColumnMetadataTypedView`
+  (`col.type` ainda funciona). Re-exportado pelo barrel.
+- **[Imp.4] `_decodeText` retorna `Object` ao invés de `dynamic`.**
+  Trade-off conservador: o sealed `TextCell` completo seria
+  melhor mas exigiria mudar o contrato externo `List<List<dynamic>>`
+  das rows. `Object` já força não-null e o analyzer ainda checa
+  contra retornos acidentais.
+- **[Imp.5] `SlowQueryDetected` emission point implementado.** Novo
+  campo `ConnectionOptions.slowQueryThreshold` (com
+  `effectiveSlowQueryThreshold` defaulting a `queryTimeout * 0.8`).
+  `_withReconnect` aceita `sqlForSlowQueryDetection` opcional que,
+  quando combinado com threshold configurado, emite o evento via
+  helper `_maybeEmitSlowQuery`. Aplicado nos 5 call sites de
+  `_withReconnect` em `executeQuery*`. Best effort, nunca bloqueia.
+- **[Imp.6] `MockOdbcRepository.emitEvent()` helper.** Mocks de
+  testes podem agora driver o event bus syncronamente sem precisar
+  estender o mock. `closeEvents()` para shutdown explícito.
+- **[Imp.7] `OdbcEvent.toString()` em cada variante.** Cada um
+  dos 5 eventos (`ConnectionLost`, `WorkerRecovered`,
+  `AutoReconnectAttempted`, `PoolResize`, `SlowQueryDetected`)
+  ganhou implementação custom de `toString()` para debugging em
+  logs. `SlowQueryDetected` trunca SQL em 80 chars com elipse.
+- **[Imp.12] Workflow GitHub Actions
+  `.github/workflows/dart_bench_baseline.yml`.** Nova lane que
+  roda em PRs tocando `lib/infrastructure/native/`,
+  `test/performance/sql_pointer_cache_bench_test.dart` ou o
+  comparator. Usa `BENCH_BASELINE_OUT` (introduzido na Fase 4
+  PR4.2) para emitir JSON, compara contra
+  `bench_baselines/sql_cache.json` (quando presente) via
+  `tool/compare_benchmark_baseline.dart` e comenta no PR com a
+  tabela de resultados. Informacional na ausência de baseline.
+- **[Imp.13] Dartdoc snippets executáveis em APIs novas.**
+  `IQueryService.executeQueryColumnar`,
+  `IQueryServiceConnectionOverloads` (overloads `For`) e
+  `IAdminService.events` ganharam exemplos completos no
+  docstring (consumível por `dart doc` e renderizado no
+  pub.dev).
+
+### Mudou — Phase 4.1
+
+- `IOdbcRepository.getAsyncWorkerPoolStats()` marcado com
+  `@Deprecated`, recomendando `getWorkerPoolStats()` (que retorna
+  `null` em sync mode em vez de `Failure`). A janela de
+  deprecação se estende até a próxima major release. Mesma anotação
+  em `IOdbcService` e `TelemetryOdbcServiceDecorator`.
+- `BinaryProtocolParser._decodeText` retorna `Object` em vez de
+  `dynamic`. Não muda comportamento — só o tipo no source.
+- `QueryResult.columnsMetadata` é `List<ColumnMetadata>?` (era
+  `List<dynamic>?`). Mudança aditiva — o constructor já aceitava
+  qualquer lista; agora rejeita lista de tipo errado em
+  compile-time.
+- `ConnectionOptions` ganhou parâmetro nomeado opcional
+  `slowQueryThreshold`. Default permanece `null`; sem mudança de
+  comportamento para callers existentes.
+
+### Future work — Phase 4.1
+
+- **Split runners adicionais (Query, Transaction, Pool).**
+  Cancelados deste pass — requerem mover ou expor 8+ helpers
+  privados (`_streamNativeQueryWithFallback`, `_toQueryResult`,
+  `_optionsFor`, `_withReconnect`, `_parseBufferToQueryResult`,
+  `_streamingFailureFromException`,
+  `_convertNativeErrorToFailure`, etc.). Merecem plano dedicado
+  com design cuidadoso das fronteiras antes de mover código.
+- **`TextCell` sealed completo.** Versão minimal (`Object`)
+  entregue. Sealed completo exigiria mudar o contrato externo
+  `List<List<dynamic>>` para `List<List<Object>>` ou similar —
+  mudança quebrante.
+
+
+
+### Adicionado — Phase 1 (Tipagem + CI + Refactors seguros)
+
+- **[F1.1] `OdbcBackend` sealed class.** Novo
+  `lib/infrastructure/native/odbc_backend.dart` com variantes
+  `SyncBackend` e `AsyncBackend`. `OdbcRepositoryImpl` foi migrado
+  do antigo `final dynamic _native` (que tinha 100 casts `as`) para
+  pattern matching exaustivo via `_backend`. API pública preservada:
+  os dois construtores existentes continuam funcionando
+  (`OdbcRepositoryImpl(NativeOdbcConnection)` e
+  `OdbcRepositoryImpl(AsyncNativeOdbcConnection)`).
+- **[F1.2] Helper `_runBoolFfi` no repositório.** Centraliza o padrão
+  switch-sync-vs-async + null-check + `_convertNativeErrorToFailure`
+  para chamadas FFI que retornam `bool`. Usado em
+  `commitTransaction`, `rollbackTransaction` e `poolSetSize`.
+- **[F1.3] Coverage Dart no CI.** `.github/workflows/ci.yml` agora
+  roda `dart test --coverage` + `format_coverage` + upload Codecov no
+  job `coverage` (paralelo ao `cargo tarpaulin` para Rust).
+- **[F1.4] `FakeAsyncNativeForRepositoryErrors` em
+  `test/helpers/`.** Extraído do test file inline
+  `odbc_repository_impl_test.dart`, agora reusável por outros suites.
+- **[F1.5] `OdbcRepositoryImpl.dartSideMetrics()`.** Nova entity
+  `DartSideMetrics` exposta no barrel. Conta connection ids,
+  statement ids, named-param metadata, pooled connections e pool
+  checkouts. Útil em endpoints de health.
+- **[F1.6] Validação XML reforçada.** `_validateXmlShape` em
+  `param_value.dart` agora verifica balanço de tags (`<` vs `>`) e
+  aplica cap de 4 MB (mesmo padrão da validação JSON).
+- **[F1.7] Dartdoc completo de
+  `XaTransactionHandle.runWithStart`.** Documenta lifecycle states,
+  concorrência, e quando preferir `runWithStartOnePhase`.
+
+### Adicionado — Phase 2 (Performance aditiva + Observability)
+
+- **[F2.1] `SqlPointerCache` (LRU 256 entries).** Cache de
+  `Pointer<Utf8>` por SQL string em `lib/infrastructure/native/bindings/
+  sql_pointer_cache.dart`. Elimina `toNativeUtf8 + malloc.free` em
+  hot loops de SQL repetido. Acompanhado de microbenchmark
+  comprovando que o caminho cached é mais rápido que o legacy.
+- **[F2.2] `LazyString` aditiva.** Nova classe pública em
+  `lib/infrastructure/native/protocol/lazy_string.dart`. Wrapper
+  `Uint8List → String` com decodificação lazy + suporte a `==`
+  contra `String`. Building block para consumers que querem evitar
+  `utf8.decode` por célula em result sets grandes.
+- **[F2.3] Fuzz tests do `BinaryProtocolParser`.** 11k iterações
+  aleatórias (10k random bytes + 1k headers válidos com lengths
+  corrompidos). Defesa-em-profundidade sobre os DoS guards. Limita
+  cada parse a 100ms.
+- **[F2.4] Telemetry decorator instrumenta streams.** Helper
+  `_wrapStream<T>` emite eventos `stream.open` / `stream.close` /
+  `stream.error` com chunk count + duration. Aplicado em
+  `streamQuery`, `streamQueryMulti`, `streamQueryNamed`.
+- **[F2.5] Diagrama Mermaid stream + recovery.** Novo bloco em
+  `native/doc/async_api_guide.md` mostrando o caminho worker crash
+  → handleWorkerCrash → onWorkerRecovered → repository state cleanup.
+- **[F2.6] `profile_selection_guide.md`.** Decision tree completo
+  (Flutter / CLI / server / batch ETL) + tabela com defaults
+  resolvidos por profile + guia de quando override.
+
+### Adicionado — Phase 3 (Arquitetura aditiva)
+
+- **[F3.1] Sub-interfaces de `IOdbcService`.** Quatro novas
+  interfaces (`IQueryService`, `ITransactionService`, `IPoolService`,
+  `IAdminService`). `IOdbcService` agrega via `implements` —
+  consumers existentes não quebram, novos podem depender só do
+  subset que precisam (Interface Segregation Principle).
+- **[F3.2] `TypedColumnarResult` + `toTypedColumnar()`.** Nova
+  representação column-major com `Int32List`/`Int64List`/`Float64List`
+  para colunas numéricas (sem boxing). `QueryResult` row-major
+  permanece intacto. Conversão é opt-in via `toTypedColumnar(qr)`.
+- **[F3.3] Zero-copy FFI: avaliação documentada.** Novo
+  `native/doc/zero_copy_ffi_evaluation.md` com análise de viabilidade,
+  pré-requisitos (Finalizable + symbol release Rust, ABI bump,
+  cross-platform allocator audit) e decisão de adiar para
+  feature-flag em release futuro.
+- **[F3.4] `OdbcRepositoryState` extraído (Step 1 do split).** Maps
+  de estado e helpers (`clearStatementMetadataForConnection`,
+  `clearAll`, `validateStatementOwnership`, `dartSideMetrics`) movidos
+  para `lib/infrastructure/repositories/repository_state.dart`. Plano
+  completo do split (steps 2-9) documentado em
+  `native/doc/repository_split_plan.md`. Steps subsequentes ficam
+  para PRs dedicadas conforme a doc de plano.
+
+### Mudou
+
+- `lib/odbc_fast.dart` (barrel) ganha exports aditivos:
+  `DartSideMetrics`, `LazyString`, `TypedColumnarResult` (e
+  variantes), `toTypedColumnar`, `IQueryService`, `ITransactionService`,
+  `IPoolService`, `IAdminService`. Nenhum export existente removido.
+
 ## [3.9.0] - 2026-05-25
 
 ### Fixed (pool de conexão e controle de transação)

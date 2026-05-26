@@ -23,6 +23,7 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   int? lastExecutePreparedFetchSize;
   int? lastExecutePreparedMaxBufferBytes;
   bool closeStatementResult = true;
+  int closeStatementCallCount = 0;
   int clearAllStatementsResult = 0;
   PreparedStatementMetrics? getCacheMetricsResult;
   Uint8List? catalogTablesResult;
@@ -70,7 +71,10 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
   }
 
   @override
-  bool closeStatement(int stmtId) => closeStatementResult;
+  bool closeStatement(int stmtId) {
+    closeStatementCallCount++;
+    return closeStatementResult;
+  }
 
   @override
   int clearAllStatements() => clearAllStatementsResult;

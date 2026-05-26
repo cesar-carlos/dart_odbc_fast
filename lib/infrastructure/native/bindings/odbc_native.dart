@@ -12,6 +12,7 @@ import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as bindings;
+import 'package:odbc_fast/infrastructure/native/bindings/sql_pointer_cache.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
@@ -38,6 +39,17 @@ class OdbcNative {
       : _bindings = injected;
 
   final bindings.OdbcBindings _bindings;
+
+  /// Per-instance LRU cache of native UTF-8 SQL pointers. Skips the
+  /// `toNativeUtf8` + `malloc.free` round-trip on hot loops where the same
+  /// SQL string is sent repeatedly. Bypassed for one-off SQL because the
+  /// cache stays small (256 entries by default).
+  final SqlPointerCache _sqlCache = SqlPointerCache();
+
+  /// Diagnostic counters for the SQL pointer cache. Useful from benchmarks
+  /// to verify that hot paths actually hit. Not part of the public API
+  /// surface; consider it advisory.
+  ({int hits, int misses, int evictions}) get sqlCacheStats => _sqlCache.stats;
 
   /// Read-only access to the raw bindings. Use only for new capabilities
   /// implemented in companion modules (e.g. `driver_capabilities_v3.dart`).
@@ -173,15 +185,10 @@ class OdbcNative {
     if (!_bindings.supportsAsyncExecuteApi) {
       return null;
     }
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_execute_async(
-        connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _bindings.odbc_execute_async(connectionId, sqlPtr),
+    );
   }
 
   /// Starts non-blocking parameterized query execution.
@@ -559,17 +566,15 @@ class OdbcNative {
     String sql, {
     int chunkSize = _defaultStreamChunkSize,
   }) {
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      final streamId = _bindings.odbc_stream_start(
-        connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
-        chunkSize,
-      );
-      return streamId;
-    } finally {
-      malloc.free(sqlPtr);
-    }
+    return _withSql<int>(
+          sql,
+          (sqlPtr) => _bindings.odbc_stream_start(
+            connectionId,
+            sqlPtr,
+            chunkSize,
+          ),
+        ) ??
+        0;
   }
 
   /// Starts async batched streaming query execution.
@@ -585,17 +590,15 @@ class OdbcNative {
     if (!_bindings.supportsAsyncStreamApi) {
       return null;
     }
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_stream_start_async(
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _bindings.odbc_stream_start_async(
         connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
+        sqlPtr,
         fetchSize,
         chunkSize,
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+      ),
+    );
   }
 
   /// Polls async stream status.
@@ -1419,16 +1422,11 @@ class OdbcNative {
   ///
   /// Returns a statement ID on success, 0 on failure.
   int prepare(int connectionId, String sql, {int timeoutMs = 0}) {
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_prepare(
-        connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
-        timeoutMs,
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+    return _withSql<int>(
+          sql,
+          (sqlPtr) => _bindings.odbc_prepare(connectionId, sqlPtr, timeoutMs),
+        ) ??
+        0;
   }
 
   /// Executes a prepared statement with optional binary parameters.
@@ -1555,17 +1553,16 @@ class OdbcNative {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
   }) {
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_stream_start_batched(
-        connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
-        fetchSize,
-        chunkSize,
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+    return _withSql<int>(
+          sql,
+          (sqlPtr) => _bindings.odbc_stream_start_batched(
+            connectionId,
+            sqlPtr,
+            fetchSize,
+            chunkSize,
+          ),
+        ) ??
+        0;
   }
 
   /// Whether the loaded native library exports the M8 streaming
@@ -1591,16 +1588,14 @@ class OdbcNative {
     int chunkSize = 64 * 1024,
   }) {
     if (!_bindings.supportsMultiResultStream) return null;
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_stream_multi_start_batched(
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _bindings.odbc_stream_multi_start_batched(
         connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
+        sqlPtr,
         chunkSize,
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+      ),
+    );
   }
 
   /// Async variant of [streamMultiStartBatched]. Status is observable via
@@ -1611,16 +1606,14 @@ class OdbcNative {
     int chunkSize = 64 * 1024,
   }) {
     if (!_bindings.supportsAsyncMultiResultStream) return null;
-    final sqlPtr = sql.toNativeUtf8();
-    try {
-      return _bindings.odbc_stream_multi_start_async(
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _bindings.odbc_stream_multi_start_async(
         connectionId,
-        sqlPtr.cast<bindings.Utf8>(),
+        sqlPtr,
         chunkSize,
-      );
-    } finally {
-      malloc.free(sqlPtr);
-    }
+      ),
+    );
   }
 
   /// Creates a new connection pool.
@@ -1858,7 +1851,9 @@ class OdbcNative {
   /// Disposes of native resources.
   ///
   /// Should be called when the instance is no longer needed.
-  void dispose() {}
+  void dispose() {
+    _sqlCache.dispose();
+  }
 }
 
 extension on OdbcNative {
@@ -1872,12 +1867,12 @@ extension on OdbcNative {
     String sql,
     T? Function(ffi.Pointer<bindings.Utf8> ptr) f,
   ) {
-    final ptr = sql.toNativeUtf8();
-    try {
-      return f(ptr.cast<bindings.Utf8>());
-    } finally {
-      malloc.free(ptr);
-    }
+    // Pointer is owned by `_sqlCache`. Caller MUST NOT free it here; the
+    // cache releases on eviction or on `dispose()`. This trades a tiny,
+    // bounded memory footprint (max 256 SQL strings) for elimination of
+    // `toNativeUtf8 + malloc.free` on every repeat call.
+    final ptr = _sqlCache.acquire(sql);
+    return f(ptr);
   }
 
   T? _withParamsBuffer<T>(

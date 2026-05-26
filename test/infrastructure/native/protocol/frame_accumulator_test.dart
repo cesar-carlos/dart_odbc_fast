@@ -84,6 +84,47 @@ void main() {
       expect(accumulator.drainFrames().toList(), equals([frame]));
       expect(accumulator.length, equals(0));
     });
+
+    group('DoS guard', () {
+      test('should_throw_FormatException_when_frameLength_exceeds_max', () {
+        // Build a v1 header that declares a 1 GB payload.
+        final hugeFrame = Uint8List(BinaryProtocolParser.headerSize)
+          ..buffer.asByteData().setUint32(
+                0,
+                BinaryProtocolParser.magic,
+                Endian.little,
+              )
+          ..buffer.asByteData().setUint16(
+                4,
+                BinaryProtocolParser.protocolVersionRowMajor,
+                Endian.little,
+              )
+          // payloadSize = 1 GB → frame length far above the cap.
+          ..buffer
+              .asByteData()
+              .setUint32(12, 1024 * 1024 * 1024, Endian.little);
+
+        final acc = BinaryFrameAccumulator(maxFrameBytes: 4 * 1024)
+          ..add(hugeFrame);
+
+        expect(
+          () => acc.drainFrames().toList(),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('out of bounds'),
+            ),
+          ),
+        );
+      });
+
+      test('should_accept_frame_within_max', () {
+        final frame = _frame([1, 2, 3]);
+        final acc = BinaryFrameAccumulator(maxFrameBytes: 1024)..add(frame);
+        expect(acc.drainFrames().toList(), equals([frame]));
+      });
+    });
   });
 }
 

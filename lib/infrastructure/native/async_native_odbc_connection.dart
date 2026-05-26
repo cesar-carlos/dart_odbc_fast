@@ -404,6 +404,11 @@ class AsyncNativeOdbcConnection {
   static const _streamAsyncStatusError = -1;
   static const _streamAsyncStatusCancelled = -2;
 
+  // Adaptive poll backoff: starts at 1 ms and doubles each miss, capped at the
+  // caller-supplied pollInterval (default 10 ms). Fast queries see ~1 ms of
+  // added latency instead of a fixed 10 ms sleep.
+  static const _pollBackoffMin = Duration(milliseconds: 1);
+
   final Duration? _requestTimeout;
 
   /// Test hook: custom isolate entry. When set, used instead of [workerEntry].
@@ -435,6 +440,15 @@ class AsyncNativeOdbcConnection {
   /// requests. All previous connection IDs are invalid after recovery; callers
   /// must reconnect.
   final bool autoRecoverOnWorkerCrash;
+
+  /// Optional callback invoked after [_recoverWorkerInternal] completes a
+  /// successful auto-recovery. All Dart-side connection / statement / txn ids
+  /// captured before the crash are invalid; consumers (e.g. the repository)
+  /// should clear their own caches in this callback.
+  ///
+  /// Assign `null` to clear the callback. Errors thrown by the callback are
+  /// logged and swallowed so they cannot block the recovery cycle.
+  void Function()? onWorkerRecovered;
 
   final List<_WorkerChannel> _workers = [];
   bool _isInitialized = false;
@@ -608,12 +622,20 @@ class AsyncNativeOdbcConnection {
               onTimeout: () {
                 targetWorker.removePending(request.requestId);
                 targetWorker.timeouts++;
-                throw AsyncError(
+                final error = AsyncError(
                   code: AsyncErrorCode.requestTimeout,
                   message:
                       'Worker ${targetWorker.index} did not respond within '
                       '${effectiveTimeout.inSeconds}s',
                 );
+                // Complete the underlying Completer with the same error so any
+                // external listener on completer.future also resolves rather
+                // than dangling. Late worker responses are a no-op because the
+                // pendingRequests entry is already removed.
+                if (!completer!.isCompleted) {
+                  completer.completeError(error);
+                }
+                throw error;
               },
             );
       if (_responseHasError(response)) {
@@ -915,7 +937,10 @@ class AsyncNativeOdbcConnection {
       ExecutePreparedRequest(:final stmtId) ||
       CloseStatementRequest(:final stmtId) =>
         _workerForStatement(stmtId),
-      CancelStatementRequest() => _leastLoadedWorker(),
+      // Cancel must reach the worker that owns the prepared statement: each
+      // worker has its own NativeOdbcConnection and stmtId is local to it.
+      // Routing to _leastLoadedWorker() silently fails on multi-worker pools.
+      CancelStatementRequest(:final stmtId) => _workerForStatement(stmtId),
       CommitTransactionRequest(:final txnId) ||
       RollbackTransactionRequest(:final txnId) ||
       SavepointCreateRequest(:final txnId) ||
@@ -1119,6 +1144,18 @@ class AsyncNativeOdbcConnection {
   Future<void> _recoverWorkerInternal() async {
     dispose();
     await initialize();
+    final cb = onWorkerRecovered;
+    if (cb != null) {
+      try {
+        cb();
+      } on Object catch (e, st) {
+        AppLogger.warning(
+          'onWorkerRecovered callback threw; ignored to keep recovery alive',
+          e,
+          st,
+        );
+      }
+    }
   }
 
   /// Whether the worker isolate and ODBC environment are initialized.
@@ -1303,12 +1340,9 @@ class AsyncNativeOdbcConnection {
     return value;
   }
 
-  int _percentileLatency(Iterable<int> samples, int percentile) {
-    final sorted = samples.toList(growable: false)..sort();
-    if (sorted.isEmpty) return 0;
-    final index = ((sorted.length - 1) * percentile / 100).ceil();
-    return sorted[index];
-  }
+  // Delegates to the identical static implementation in _WorkerChannel.
+  int _percentileLatency(Iterable<int> samples, int percentile) =>
+      _WorkerChannel._percentile(samples, percentile);
 
   int get affinityEntryCountForTesting =>
       _connectionWorkerById.length +
@@ -1558,6 +1592,7 @@ class AsyncNativeOdbcConnection {
 
   Future<Uint8List?> _waitForAsyncResult(
     int requestId, {
+    // Kept for backward compatibility; used as the adaptive-backoff ceiling.
     Duration pollInterval = const Duration(milliseconds: 10),
     Duration? timeout,
     int? maxBufferBytes,
@@ -1565,6 +1600,8 @@ class AsyncNativeOdbcConnection {
     final effectiveTimeout =
         timeout ?? _requestTimeout ?? _defaultRequestTimeout;
     final timeoutStopwatch = Stopwatch()..start();
+    var delay = _pollBackoffMin;
+    final maxDelay = pollInterval;
 
     try {
       while (true) {
@@ -1582,7 +1619,14 @@ class AsyncNativeOdbcConnection {
               await asyncCancel(requestId);
               return null;
             }
-            await Future<void>.delayed(pollInterval);
+            await Future<void>.delayed(delay);
+            // Double the delay on each miss, capped at maxDelay.
+            if (delay < maxDelay) {
+              delay = Duration(
+                microseconds: (delay.inMicroseconds * 2)
+                    .clamp(0, maxDelay.inMicroseconds),
+              );
+            }
           case -1: // error
           case -2: // cancelled
             return null;
@@ -2607,13 +2651,24 @@ class AsyncNativeOdbcConnection {
     final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
     var completed = false;
+    var streamDelay = _pollBackoffMin;
+    final streamMaxDelay = pollInterval;
     try {
       while (true) {
         final status = await _streamPollAsync(streamId);
         if (status == _streamAsyncStatusPending) {
-          await Future<void>.delayed(pollInterval);
+          await Future<void>.delayed(streamDelay);
+          if (streamDelay < streamMaxDelay) {
+            streamDelay = Duration(
+              microseconds: (streamDelay.inMicroseconds * 2)
+                  .clamp(0, streamMaxDelay.inMicroseconds),
+            );
+          }
           continue;
         }
+        // Reset backoff when data is ready so subsequent polls for the next
+        // batch start fast again.
+        streamDelay = _pollBackoffMin;
         if (status == _streamAsyncStatusDone) {
           break;
         }

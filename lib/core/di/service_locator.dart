@@ -56,10 +56,12 @@ class ServiceLocator {
   ServiceLocator._internal();
   static final ServiceLocator _instance = ServiceLocator._internal();
 
-  // Sync dependencies (existing)
-  late NativeOdbcConnection _nativeConnection;
-  late IOdbcRepository _repository;
-  late OdbcService _service;
+  // Sync dependencies — created eagerly in legacy mode; in async mode they are
+  // created lazily on first access of [syncService], [nativeConnection], or
+  // [auditLogger], avoiding a redundant native environment init.
+  NativeOdbcConnection? _nativeConnection;
+  IOdbcRepository? _repository;
+  OdbcService? _service;
 
   // Async dependencies (new)
   late AsyncNativeOdbcConnection _asyncNativeConnection;
@@ -149,7 +151,11 @@ class ServiceLocator {
       if (_useAsync) {
         _asyncNativeConnection.dispose();
       }
-      _nativeConnection.dispose();
+      // Only dispose if the sync stack was actually created.
+      _nativeConnection?.dispose();
+      _nativeConnection = null;
+      _repository = null;
+      _service = null;
     }
 
     final resolvedUsageProfile = ResolvedOdbcUsageProfile(
@@ -169,9 +175,12 @@ class ServiceLocator {
     _useAsync = resolvedUsageProfile.useAsync;
     AppLogger.initialize();
 
-    _nativeConnection = NativeOdbcConnection();
-    _repository = OdbcRepositoryImpl(_nativeConnection);
-    _service = OdbcService(_repository);
+    if (!resolvedUsageProfile.useAsync) {
+      // Eagerly create the sync stack for legacy / non-async mode so that
+      // [service] and [syncService] are immediately available without extra
+      // guards. In async mode the sync stack is created lazily on first access.
+      _ensureSyncStack();
+    }
 
     if (resolvedUsageProfile.useAsync) {
       _asyncNativeConnection = AsyncNativeOdbcConnection(
@@ -204,6 +213,17 @@ class ServiceLocator {
     }
   }
 
+  // Creates the sync stack on demand. Safe to call multiple times; subsequent
+  // calls are no-ops once _nativeConnection is non-null.
+  void _ensureSyncStack() {
+    if (_nativeConnection != null) return;
+    final conn = NativeOdbcConnection();
+    _nativeConnection = conn;
+    final repo = OdbcRepositoryImpl(conn);
+    _repository = repo;
+    _service = OdbcService(repo);
+  }
+
   /// Gets the appropriate service based on initialization mode.
   ///
   /// If [initialize] was called with async mode, returns the async
@@ -217,7 +237,9 @@ class ServiceLocator {
   ///   initialized)
   OdbcService get service {
     _requireInitialized();
-    return _useAsync ? _asyncService : _service;
+    if (_useAsync) return _asyncService;
+    _ensureSyncStack();
+    return _service!;
   }
 
   /// Gets the sync [OdbcService] instance.
@@ -229,7 +251,8 @@ class ServiceLocator {
   /// Throws [StateError] if [initialize] has not been called.
   OdbcService get syncService {
     _requireInitialized();
-    return _service;
+    _ensureSyncStack();
+    return _service!;
   }
 
   /// Gets the async [OdbcService] instance.
@@ -257,24 +280,32 @@ class ServiceLocator {
   /// Throws [StateError] if [initialize] has not been called.
   IOdbcRepository get repository {
     _requireInitialized();
-    return _useAsync ? _asyncRepository : _repository;
+    if (_useAsync) return _asyncRepository;
+    _ensureSyncStack();
+    return _repository!;
   }
 
   /// Gets the [NativeOdbcConnection] instance.
   ///
   /// This is the underlying sync connection that both sync and async modes use.
   /// The async mode wraps this connection in an [AsyncNativeOdbcConnection].
+  /// In async mode the sync stack is created lazily on first access.
   ///
   /// Throws [StateError] if [initialize] has not been called.
   NativeOdbcConnection get nativeConnection {
     _requireInitialized();
-    return _nativeConnection;
+    _ensureSyncStack();
+    return _nativeConnection!;
   }
 
   /// Gets the typed native audit logger wrapper.
   ///
   /// Available after [initialize], and backed by [nativeConnection].
-  OdbcAuditLogger get auditLogger => _nativeConnection.auditLogger;
+  OdbcAuditLogger get auditLogger {
+    _requireInitialized();
+    _ensureSyncStack();
+    return _nativeConnection!.auditLogger;
+  }
 
   /// Gets async typed audit logger wrapper.
   ///
@@ -318,7 +349,11 @@ class ServiceLocator {
         _asyncNativeConnection.dispose();
         _useAsync = false;
       }
-      _nativeConnection.dispose();
+      // Only dispose sync stack if it was actually created.
+      _nativeConnection?.dispose();
+      _nativeConnection = null;
+      _repository = null;
+      _service = null;
     }
   }
 }

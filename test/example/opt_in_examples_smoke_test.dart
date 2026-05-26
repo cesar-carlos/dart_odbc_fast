@@ -49,5 +49,56 @@ void main() {
       },
       timeout: const Timeout(Duration(seconds: 60)),
     );
+
+    test(
+      'should_skip_stream_query_named_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/stream_query_named_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should_skip_backpressure_modes_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/backpressure_modes_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should_run_sub_interfaces_migration_demo_in_describe_only_mode',
+      () async {
+        // The demo doesn't connect to a DSN — it's purely describing the
+        // seam between V1 (depends on the aggregate) and V2 (depends on
+        // IQueryService). Smoke-test that it executes cleanly and shows
+        // both options.
+        final result = await _runExampleWithoutDsn(
+          'example/sub_interfaces_migration_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        final out = '${result.stdout}\n${result.stderr}';
+        expect(out, contains('IOdbcService'));
+        expect(out, contains('IQueryService'));
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
 }

@@ -1,0 +1,38 @@
+# Codecov configuration for `dart_odbc_fast`.
+#
+# Two coverage gates:
+#  - `project` — overall package coverage must stay >= 80%.
+#    A 1% drift band lets routine non-test PRs land without
+#    flapping the gate; bigger regressions fail the check.
+#  - `patch` — every PR's *new* code must hit >= 80% coverage.
+#    Keeps the regression direction always positive over time.
+#
+# `fail_ci_if_error` is set in the upload step (CI workflow), so a
+# failure to upload is a build failure too — no silent slips.
+
+coverage:
+  precision: 2
+  round: down
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+        if_not_found: success
+        if_ci_failed: error
+    patch:
+      default:
+        target: 80%
+        if_not_found: success
+        if_ci_failed: error
+  ignore:
+    - "native/**"
+    - "example/**"
+    - "test/**"
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false

@@ -124,8 +124,14 @@ jobs:
       RUN_PERF_TESTS: "0"
       ODBC_TEST_DSN: ""
       ODBC_DSN: ""
+      ODBC_EXAMPLE_DISABLE_DSN: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
 
       - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
@@ -143,20 +149,64 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
 
+      - name: Build Rust library (required for Dart FFI)
+        run: |
+          cd native
+          cargo build --release
+
+      - name: Install Dart dependencies
+        run: dart pub get
+
+      - name: Activate coverage tool
+        run: dart pub global activate coverage
+
+      - name: Run Dart tests with coverage
+        run: >
+          dart test --coverage=coverage
+          test/application
+          test/domain
+          test/infrastructure
+          test/core
+          test/helpers/database_detection_test.dart
+
+      - name: Format Dart coverage as LCOV
+        run: >
+          dart pub global run coverage:format_coverage
+          --lcov
+          --in=coverage
+          --out=coverage/lcov.info
+          --packages=.dart_tool/package_config.json
+          --report-on=lib
+
+      - name: Upload Dart coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          flags: dart
+          name: dart-coverage
+          fail_ci_if_error: true
+
+      - name: Upload Dart coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dart-coverage-report
+          path: coverage/
+
       - name: Rust coverage (lib + tests)
         run: |
           cd native
           cargo install --locked cargo-tarpaulin
           cargo tarpaulin -p odbc_engine --lib --tests --timeout 600 --out Html --out Lcov --output-dir coverage -- --test-threads=1
 
-      - name: Upload coverage to Codecov
+      - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: native/coverage/lcov.info
           flags: rust
           name: rust-coverage
+          fail_ci_if_error: true
 
-      - name: Upload coverage report
+      - name: Upload Rust coverage report
         uses: actions/upload-artifact@v4
         with:
           name: rust-coverage-report

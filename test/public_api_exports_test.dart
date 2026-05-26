@@ -51,5 +51,23 @@ void main() {
       expect(const SessionOptions().toJson(), isEmpty);
       expect(OdbcDriverFeatures, isNotNull);
     });
+
+    test('exports parsed row buffer types for catalog/streaming consumers', () {
+      // Both ColumnMetadata and ParsedRowBuffer must be reachable through
+      // the barrel so consumers of streamQuery / streamQueryBatched and
+      // CatalogQuery can name those types in their code.
+      const meta = ColumnMetadata(name: 'id', odbcType: 1);
+      expect(meta.name, equals('id'));
+
+      final buf = ParsedRowBuffer(
+        columns: const [meta],
+        rows: const [
+          [1],
+        ],
+        rowCount: 1,
+        columnCount: 1,
+      );
+      expect(buf.columnNames, orderedEquals(['id']));
+    });
   });
 }

@@ -1,0 +1,102 @@
+# Dart performance bench-baseline check.
+#
+# Runs the SQL pointer cache microbench in baseline-emit mode and
+# compares the produced JSON against a checked-in baseline. Triggers
+# only on PRs that touch `lib/infrastructure/native/` or the bench
+# itself, since that's where regressions in the cache are likely.
+#
+# The job is informational by default — if no baseline file exists
+# yet the PR comment shows the new numbers and exits 0. When a
+# baseline is committed under `bench_baselines/`, the comparator
+# enforces the configured regression thresholds.
+
+name: Dart bench baseline
+
+on:
+  pull_request:
+    paths:
+      - "lib/infrastructure/native/**"
+      - "test/performance/sql_pointer_cache_bench_test.dart"
+      - "tool/compare_benchmark_baseline.dart"
+      - ".github/workflows/dart_bench_baseline.yml"
+
+jobs:
+  sql-cache-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Get Dart deps
+        run: dart pub get
+
+      - name: Install ODBC (base)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev
+
+      - name: Run sql_pointer_cache bench (emit baseline JSON)
+        env:
+          BENCH_BASELINE_OUT: bench_baselines/sql_cache.current.json
+        run: |
+          mkdir -p bench_baselines
+          dart test test/performance/sql_pointer_cache_bench_test.dart \
+            --tags perf \
+            --reporter=expanded
+
+      - name: Show current bench output
+        run: cat bench_baselines/sql_cache.current.json
+
+      - name: Compare against checked-in baseline (if present)
+        id: compare
+        continue-on-error: true
+        run: |
+          if [ -f bench_baselines/sql_cache.json ]; then
+            dart run tool/compare_benchmark_baseline.dart \
+              --baseline bench_baselines/sql_cache.json \
+              --current bench_baselines/sql_cache.current.json \
+              --max-regression-percent 30 \
+              --max-p95-regression-percent 30
+          else
+            echo "::warning ::No bench_baselines/sql_cache.json baseline found; skipping comparison"
+          fi
+
+      - name: Comment bench numbers on PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## SQL pointer cache bench\n\n';
+            try {
+              const data = JSON.parse(
+                fs.readFileSync('bench_baselines/sql_cache.current.json', 'utf8')
+              );
+              body += '| Scenario | Elapsed (ms) | Throughput (ops/s) |\n';
+              body += '|---|---:|---:|\n';
+              for (const row of data) {
+                const ops = (row.queriesPerSecond / 1e6).toFixed(2);
+                body += `| ${row.scenario} | ${row.elapsedMs.toFixed(2)} | ${ops}M |\n`;
+              }
+            } catch (e) {
+              body += `Could not read bench output: ${e.message}\n`;
+            }
+            const compareStatus = '${{ steps.compare.outcome }}';
+            if (compareStatus === 'failure') {
+              body += '\n**Regression detected vs baseline.** See job log.\n';
+            } else if (compareStatus === 'success') {
+              body += '\nWithin baseline tolerance.\n';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

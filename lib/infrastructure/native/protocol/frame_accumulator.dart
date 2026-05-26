@@ -5,6 +5,16 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 
 /// Incrementally accumulates binary protocol bytes and yields complete frames.
 class BinaryFrameAccumulator {
+  BinaryFrameAccumulator({this.maxFrameBytes = defaultMaxFrameBytes});
+
+  /// Hard ceiling for a single frame to prevent OOM from a malformed header.
+  /// Matches the result-buffer ceiling used by `ConnectionOptions` (16 MB).
+  /// Frames legitimately larger than this should fail loudly rather than
+  /// trigger a multi-gigabyte allocation.
+  static const int defaultMaxFrameBytes = 16 * 1024 * 1024;
+
+  final int maxFrameBytes;
+
   final Queue<Uint8List> _chunks = Queue<Uint8List>();
   int _headOffset = 0;
   int _length = 0;
@@ -34,6 +44,14 @@ class BinaryFrameAccumulator {
       }
       final header = _peekBytes(headerSize);
       final frameLength = BinaryProtocolParser.messageLengthFromHeader(header);
+      // DoS guard: refuse to yield/allocate frames whose declared length
+      // exceeds the configured ceiling. A malformed wire header could
+      // otherwise force a multi-GB allocation in _takeBytes/_copyBytes.
+      if (frameLength < headerSize || frameLength > maxFrameBytes) {
+        throw FormatException(
+          'Frame length $frameLength out of bounds (max $maxFrameBytes)',
+        );
+      }
       if (length < frameLength) {
         break;
       }

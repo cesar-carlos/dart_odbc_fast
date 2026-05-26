@@ -1,6 +1,13 @@
+import 'dart:async';
+
+import 'package:odbc_fast/application/services/i_admin_service.dart';
+import 'package:odbc_fast/application/services/i_pool_service.dart';
+import 'package:odbc_fast/application/services/i_query_service.dart';
+import 'package:odbc_fast/application/services/i_transaction_service.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
@@ -9,6 +16,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -17,23 +25,47 @@ import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dar
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/typed_columnar_converter.dart'
+    show toTypedColumnar;
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
+
+export 'package:odbc_fast/application/services/i_admin_service.dart';
+export 'package:odbc_fast/application/services/i_pool_service.dart';
+export 'package:odbc_fast/application/services/i_query_service.dart';
+export 'package:odbc_fast/application/services/i_transaction_service.dart';
 
 /// Interface for ODBC service operations.
 ///
 /// Allows decorators and alternative implementations to be used
 /// interchangeably via dependency injection.
-abstract class IOdbcService {
+///
+/// Aggregates four narrower sub-interfaces:
+///
+/// - [IQueryService] — query / stream operations.
+/// - [ITransactionService] — local 2PC + XA lifecycle.
+/// - [IPoolService] — connection pool management.
+/// - [IAdminService] — initialization, metrics, capabilities.
+///
+/// New consumers are encouraged to depend on the narrowest sub-interface
+/// they need (Interface Segregation Principle). Existing code that types
+/// against `IOdbcService` keeps working unchanged because every member
+/// stays declared at the aggregate level.
+abstract class IOdbcService
+    implements IQueryService, ITransactionService, IPoolService, IAdminService {
+  @override
   Future<Result<void>> initialize();
 
+  @override
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
   });
 
+  @override
   Future<Result<void>> disconnect(String connectionId);
 
+  @override
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
@@ -42,17 +74,20 @@ abstract class IOdbcService {
   });
 
   /// Like [executeQueryParams] for `OUT` / `INOUT` (DRT1 on the wire).
+  @override
   Future<Result<QueryResult>> executeQueryDirectedParams(
     String connectionId,
     String sql,
     List<DirectedParam> params,
   );
 
+  @override
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
     String sql,
   );
 
+  @override
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
@@ -61,11 +96,13 @@ abstract class IOdbcService {
     Duration? lockTimeout,
   });
 
+  @override
   Future<Result<void>> commitTransaction(
     String connectionId,
     int txnId,
   );
 
+  @override
   Future<Result<void>> rollbackTransaction(
     String connectionId,
     int txnId,
@@ -107,6 +144,7 @@ abstract class IOdbcService {
   ///   accessMode: TransactionAccessMode.readWrite,
   /// );
   /// ```
+  @override
   Future<Result<T>> runInTransaction<T extends Object>(
     String connectionId,
     Future<Result<T>> Function(int txnId) action, {
@@ -207,15 +245,43 @@ abstract class IOdbcService {
   );
 
   /// Streams a multi-result batch one item at a time. New in v3.3.0 (M8).
+  @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
     String sql,
   );
 
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
     Map<String, Object?> namedParams,
+  );
+
+  /// Executes a named-parameter query and returns results as a stream.
+  ///
+  /// Supports `@name` and `:name` syntax. Because the parameterized execute
+  /// path does not support incremental batched streaming at the FFI level, the
+  /// result is buffered and yielded as a single [QueryResult] chunk. On
+  /// failure, emits a single `Failure` item and closes the stream.
+  @override
+  Stream<Result<QueryResult>> streamQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  );
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnar(
+    String connectionId,
+    String sql, {
+    List<dynamic>? params,
+  });
+
+  @override
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
   );
 
   Future<Result<QueryResult>> catalogTables({
@@ -246,24 +312,30 @@ abstract class IOdbcService {
     String table,
   );
 
+  @override
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize, {
     PoolOptions? options,
   });
 
+  @override
   Future<Result<Connection>> poolGetConnection(int poolId);
 
+  @override
   Future<Result<void>> poolReleaseConnection(String connectionId);
 
+  @override
   Future<Result<bool>> poolHealthCheck(int poolId);
 
   Future<Result<PoolState>> poolGetState(int poolId);
 
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
 
+  @override
   Future<Result<void>> poolSetSize(int poolId, int newMaxSize);
 
+  @override
   Future<Result<void>> poolClose(int poolId);
 
   Future<Result<int>> bulkInsert(
@@ -283,8 +355,13 @@ abstract class IOdbcService {
     int parallelism = 0,
   });
 
+  @override
   Future<Result<OdbcMetrics>> getMetrics();
 
+  @Deprecated(
+    'Use getWorkerPoolStats() — returns null in sync mode instead of '
+    'Failure. Will be removed in a future major release.',
+  )
   Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
 
   bool isInitialized();
@@ -297,11 +374,19 @@ abstract class IOdbcService {
 
   Future<Result<Map<String, String>>> getVersion();
 
+  @override
   Future<Result<void>> validateConnectionString(String connectionString);
 
+  @override
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   );
+
+  @override
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats();
+
+  @override
+  Stream<OdbcEvent> get events;
 
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId);
 
@@ -350,6 +435,7 @@ abstract class IOdbcService {
 
   Future<String?> detectDriver(String connectionString);
 
+  @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     List<dynamic>? params,
@@ -378,8 +464,31 @@ class OdbcService implements IOdbcService {
   /// Creates a new [OdbcService] instance.
   ///
   /// The `repository` parameter provides the ODBC repository implementation.
-  OdbcService(this._repository);
+  OdbcService(this._repository) {
+    // Bridge repository's event source onto the broadcast controller so
+    // multiple consumers can subscribe without coupling to the repo.
+    _repoEventsSub = _repository.events.listen(_eventsController.add);
+  }
   final IOdbcRepository _repository;
+
+  /// Broadcast stream of [OdbcEvent]s. Created eagerly in the constructor
+  /// and forwarded from the repository so every consumer of this service
+  /// sees the same lifecycle events.
+  final StreamController<OdbcEvent> _eventsController =
+      StreamController<OdbcEvent>.broadcast();
+  late final StreamSubscription<OdbcEvent> _repoEventsSub;
+
+  @override
+  Stream<OdbcEvent> get events => _eventsController.stream;
+
+  /// Closes the internal event bridge. Call from owners that explicitly
+  /// dispose the service. Safe to call multiple times.
+  Future<void> closeEvents() async {
+    await _repoEventsSub.cancel();
+    if (!_eventsController.isClosed) {
+      await _eventsController.close();
+    }
+  }
 
   @override
   Future<Result<void>> initialize() async {
@@ -792,6 +901,46 @@ class OdbcService implements IOdbcService {
   }
 
   @override
+  Stream<Result<QueryResult>> streamQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  ) {
+    return _repository.streamQueryNamed(connectionId, sql, namedParams);
+  }
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnar(
+    String connectionId,
+    String sql, {
+    List<dynamic>? params,
+  }) async {
+    final r = await _repository.executeQueryParams(
+      connectionId,
+      sql,
+      params ?? const <dynamic>[],
+      resultEncoding: ResultEncoding.columnar,
+    );
+    return r.fold(
+      (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
+      (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
+    );
+  }
+
+  @override
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) async* {
+    await for (final chunk in _repository.streamQuery(connectionId, sql)) {
+      yield chunk.fold(
+        (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
+        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
+      );
+    }
+  }
+
+  @override
   Future<Result<QueryResult>> catalogTables({
     required String connectionId,
     String catalog = '',
@@ -935,6 +1084,10 @@ class OdbcService implements IOdbcService {
   }
 
   @override
+  @Deprecated(
+    'Use getWorkerPoolStats() — returns null in sync mode. '
+    'Will be removed alongside IOdbcRepository.getAsyncWorkerPoolStats.',
+  )
   Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
     return _repository.getAsyncWorkerPoolStats();
   }
@@ -975,6 +1128,11 @@ class OdbcService implements IOdbcService {
     String connectionString,
   ) async {
     return _repository.getDriverCapabilities(connectionString);
+  }
+
+  @override
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats() {
+    return _repository.getWorkerPoolStats();
   }
 
   @override

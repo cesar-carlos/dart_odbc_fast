@@ -14,10 +14,25 @@
 class NamedParameterParser {
   NamedParameterParser._();
 
+  static const int _cacheMaxSize = 256;
+
+  // Insertion-order map used as a simple LRU: when full, evict the oldest key
+  // (keys.first). Keyed by raw SQL; values use unmodifiable param lists so
+  // callers cannot corrupt cached state through the returned reference.
+  static final Map<String, ({String cleanedSql, List<String> paramNames})>
+      _cache = {};
+
   /// Extracts named parameters and returns SQL with positional placeholders.
   ///
   /// `paramNames` preserves placeholder occurrence order, including repeats.
+  ///
+  /// Results are memoized by SQL text (up to 256 entries; oldest entry is
+  /// evicted when the limit is reached). The returned `paramNames` list is
+  /// unmodifiable.
   static ({String cleanedSql, List<String> paramNames}) extract(String sql) {
+    final cached = _cache[sql];
+    if (cached != null) return cached;
+
     final paramNames = <String>[];
     final cleanedSql = StringBuffer();
     var index = 0;
@@ -65,7 +80,15 @@ class NamedParameterParser {
       index++;
     }
 
-    return (cleanedSql: cleanedSql.toString(), paramNames: paramNames);
+    final result = (
+      cleanedSql: cleanedSql.toString(),
+      paramNames: List<String>.unmodifiable(paramNames),
+    );
+    if (_cache.length >= _cacheMaxSize) {
+      _cache.remove(_cache.keys.first);
+    }
+    _cache[sql] = result;
+    return result;
   }
 
   /// Converts [namedParams] to positional list following [paramNames] order.

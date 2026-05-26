@@ -1032,6 +1032,7 @@ dart_odbc_fast/
 
 ### Reference (current)
 
+- [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) — Dart layer architecture (layers, public barrel, ServiceLocator, sealed `OdbcBackend`, sub-interfaces, runners, event bus). Mirror of `native/odbc_engine/ARCHITECTURE.md`.
 - [doc/API_SURFACE.md](doc/API_SURFACE.md) — complete FFI surface (92 functions), public Rust API, Dart bindings
 - [doc/CAPABILITIES_v3.md](doc/CAPABILITIES_v3.md) — driver capability traits × engine matrix
 - [doc/BUILD.md](doc/BUILD.md) — build, library resolution, scripts

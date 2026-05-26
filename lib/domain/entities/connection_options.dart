@@ -34,6 +34,7 @@ class ConnectionOptions {
     this.autoReconnectOnConnectionLost = false,
     this.maxReconnectAttempts,
     this.reconnectBackoff,
+    this.slowQueryThreshold,
   });
 
   /// Preset timeouts and reconnect policy for a usage profile.
@@ -86,6 +87,15 @@ class ConnectionOptions {
   /// When null, [defaultReconnectBackoff] is used.
   final Duration? reconnectBackoff;
 
+  /// Threshold above which a query's wall-clock duration triggers a
+  /// `SlowQueryDetected` event on `IAdminService.events`. When `null`,
+  /// the runtime falls back to `queryTimeout * 0.8` if a query timeout
+  /// is set; otherwise no slow-query events are emitted.
+  ///
+  /// The threshold is observability-only — it does **not** cancel the
+  /// query. Useful for dashboards / alerting on regressions.
+  final Duration? slowQueryThreshold;
+
   /// Effective login timeout in milliseconds:
   /// [loginTimeout] ?? [connectionTimeout], or 0 if neither is set.
   int get loginTimeoutMs {
@@ -102,6 +112,16 @@ class ConnectionOptions {
   /// Effective delay between reconnect attempts.
   Duration get effectiveReconnectBackoff =>
       reconnectBackoff ?? defaultReconnectBackoff;
+
+  /// Effective slow-query threshold. Returns the explicit
+  /// [slowQueryThreshold] when set, otherwise 80% of [queryTimeout]
+  /// when a query timeout exists, otherwise `null` (no events).
+  Duration? get effectiveSlowQueryThreshold {
+    if (slowQueryThreshold != null) return slowQueryThreshold;
+    final timeout = queryTimeout;
+    if (timeout == null || timeout <= Duration.zero) return null;
+    return Duration(microseconds: (timeout.inMicroseconds * 0.8).round());
+  }
 
   /// Returns a human-readable validation message when options are invalid.
   ///

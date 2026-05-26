@@ -63,11 +63,24 @@ See `odbc_engine_overview.md` for a full map.
 
 ## 5) Documentation map
 
+Core references:
+
 - `ffi_api.md`: FFI reference and signatures.
 - `ffi_conventions.md`: return codes, pointer/out contracts, ID rules.
+- `odbc_engine_overview.md`: architecture and module map.
 - `data_paths.md`: execution and data flow internals.
+
+Usage and operations:
+
 - `async_api_guide.md`: async usage model from Dart.
-- `cross_database.md`: compatibility matrix and SQL quirks.
+- `cross_database.md`: compatibility matrix, DSN/env, Docker, CI.
+- `performance_comparison.md`: benchmark snapshots.
+- `bcp_dll_compatibility.md`: SQL Server BCP requirements.
+
+Planning and process:
+
+- `plan_checklist_template.md`: reusable checklist when opening a new plan
+  document under `native/doc/`.
 
 ## 6) Before merge checklist
 

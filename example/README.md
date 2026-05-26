@@ -35,6 +35,7 @@ exists.
 - [high_concurrency_worker_pool_demo.dart](high_concurrency_worker_pool_demo.dart): `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections and concurrent queries.
 - [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)` with native pool checkout/query/release and an explicit in-flight task limit from the resolved profile.
 - [async_concurrency_benchmark.dart](async_concurrency_benchmark.dart): Stopwatch benchmark comparing `workerCount: 1`, `workerCount: 4`, native pool with an in-flight limit, streaming, row-major vs columnar result encodings, and prepared reuse.
+- **[backpressure_modes_demo.dart](backpressure_modes_demo.dart)**: contrasts `AsyncBackpressureMode.failFast` (extra requests rejected with `resourceExhausted`) and `AsyncBackpressureMode.waitForSlot` (FIFO queueing until `backpressureTimeout`), and wires the `setOnWorkerRecovered` callback that fires after auto-recovery so higher layers can wipe stale ids.
 - [columnar_result_encoding_demo.dart](columnar_result_encoding_demo.dart): opt-in `ResultEncoding.rowMajor`, `columnar`, and `columnarCompressed` comparison for a live DSN.
 - [streaming_performance_benchmark.dart](streaming_performance_benchmark.dart): focused streaming benchmark comparing `streamQuery` and `streamQueryBatched` with text/json/csv output.
 
@@ -95,6 +96,8 @@ accumulation with small chunks, and streaming multi-result decoding.
 ### Queries / parameters
 
 - [named_parameters_demo.dart](named_parameters_demo.dart): named params with `@name` and `:name`, including repeated placeholders, `>5` named params, and prepared statement reuse.
+- **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — same single-chunk delivery as `executeQueryNamed`, but exposed as `Stream<Result<QueryResult>>` for uniform call sites and a typed failure stream item for missing named params.
+- **[sub_interfaces_migration_demo.dart](sub_interfaces_migration_demo.dart)**: side-by-side `IOdbcService` (full aggregate) vs `IQueryService` (narrow sub-interface) consumer, exercising the new `executeQueryFor(Connection conn, ...)` overload that drops the manual `conn.id` plumbing.
 - [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti` and parameterized `executeQueryMultiParams`.
 - [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result consumption item-by-item with `streamQueryMulti`.
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.

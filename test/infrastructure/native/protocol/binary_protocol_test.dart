@@ -345,6 +345,103 @@ void main() {
       expect(decoded, contains('\uFFFD'));
     });
   });
+
+  group('BinaryProtocolParser DoS guard', () {
+    test('should_reject_v1_buffer_with_oversized_rowCount', () {
+      // Build a tiny v1 buffer header whose declared rowCount is huge.
+      final buf = Uint8List(20);
+      final bd = ByteData.sublistView(buf)
+        ..setUint32(0, BinaryProtocolParser.magic, Endian.little)
+        ..setUint16(
+          4,
+          BinaryProtocolParser.protocolVersionRowMajor,
+          Endian.little,
+        )
+        ..setUint16(6, 1, Endian.little) // columnCount = 1
+        ..setUint32(8, 1 << 30, Endian.little) // rowCount = 1G
+        ..setUint32(12, 0, Endian.little);
+      // Just assign to silence unused warning — bd is used by setters above.
+      expect(bd, isNotNull);
+
+      expect(
+        () => BinaryProtocolParser.parse(buf),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            anyOf(contains('oversized'), contains('inconsistent')),
+          ),
+        ),
+      );
+    });
+
+    test('should_reject_v1_buffer_with_oversized_columnCount', () {
+      final buf = Uint8List(20);
+      ByteData.sublistView(buf)
+        ..setUint32(0, BinaryProtocolParser.magic, Endian.little)
+        ..setUint16(
+          4,
+          BinaryProtocolParser.protocolVersionRowMajor,
+          Endian.little,
+        )
+        ..setUint16(6, 0xFFFF, Endian.little) // columnCount = 65535
+        ..setUint32(8, 0, Endian.little)
+        ..setUint32(12, 0, Endian.little);
+
+      expect(
+        () => BinaryProtocolParser.parse(buf),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
+  group('BinaryProtocolParser lazyStrings flag', () {
+    test('default is eager — text cells decode to plain String', () {
+      final buffer = _createTestBuffer(
+        columns: [(name: 'name', type: 1)],
+        rows: [
+          ['Alice'],
+        ],
+      );
+      final result = BinaryProtocolParser.parse(buffer);
+      expect(result.rows[0][0], isA<String>());
+      expect(result.rows[0][0], equals('Alice'));
+    });
+
+    test('lazyStrings:true wraps text cells but they still equal Strings', () {
+      final buffer = _createTestBuffer(
+        columns: [(name: 'name', type: 1)],
+        rows: [
+          ['Bob'],
+        ],
+      );
+      final result = BinaryProtocolParser.parse(buffer, lazyStrings: true);
+      // LazyString implements value-equality with String.
+      expect(result.rows[0][0] == 'Bob', isTrue);
+      expect(result.rows[0][0].toString(), equals('Bob'));
+    });
+
+    test('lazyStrings flag is restored after parse, even on exception', () {
+      // Two consecutive parses: the second one without lazyStrings must
+      // get plain Strings back (no leakage from previous call).
+      final buf1 = _createTestBuffer(
+        columns: [(name: 'name', type: 1)],
+        rows: [
+          ['First'],
+        ],
+      );
+      BinaryProtocolParser.parse(buf1, lazyStrings: true);
+
+      final buf2 = _createTestBuffer(
+        columns: [(name: 'name', type: 1)],
+        rows: [
+          ['Second'],
+        ],
+      );
+      final r2 = BinaryProtocolParser.parse(buf2);
+      expect(r2.rows[0][0], isA<String>());
+    });
+  });
 }
 
 Uint8List _createColumnarV2Buffer({

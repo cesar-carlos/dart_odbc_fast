@@ -2,6 +2,7 @@ import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
@@ -10,8 +11,11 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
+import 'package:odbc_fast/domain/telemetry/entities.dart'
+    show TelemetrySeverity;
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
     show AsyncWorkerPoolStats;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
@@ -47,6 +51,63 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   TelemetryOdbcServiceDecorator(this._service, this._telemetry);
   final OdbcService _service;
   final SimpleTelemetryService _telemetry;
+
+  /// Wraps a Stream-returning service call with open/close telemetry events.
+  ///
+  /// Streams don't map cleanly to a single span (lifecycle is consumer-driven
+  /// and may outlive the service call), so we emit:
+  ///
+  /// - One `info` event when subscription begins (`stream.open`).
+  /// - One `info` event with chunk count + duration when the stream
+  ///   completes successfully (`stream.close`).
+  /// - One `error` event with chunk count + error message when the stream
+  ///   throws (`stream.error`); the error is rethrown.
+  ///
+  /// Per-chunk events are intentionally NOT emitted to avoid telemetry
+  /// amplification on large result sets. Callers that need per-chunk
+  /// observability should subscribe to the original service stream
+  /// directly via `IOdbcService` (without the decorator).
+  Stream<T> _wrapStream<T>(
+    String operation,
+    Stream<T> Function() factory,
+  ) async* {
+    final start = DateTime.now();
+    var chunkCount = 0;
+    await _telemetry.recordEvent(
+      name: '$operation.open',
+      severity: TelemetrySeverity.info,
+      message: 'stream subscription opened',
+      context: {'operation': operation},
+    );
+    try {
+      await for (final chunk in factory()) {
+        chunkCount++;
+        yield chunk;
+      }
+      await _telemetry.recordEvent(
+        name: '$operation.close',
+        severity: TelemetrySeverity.info,
+        message: 'stream completed normally',
+        context: {
+          'operation': operation,
+          'chunkCount': chunkCount,
+          'durationMs': DateTime.now().difference(start).inMilliseconds,
+        },
+      );
+    } on Object catch (e) {
+      await _telemetry.recordEvent(
+        name: '$operation.error',
+        severity: TelemetrySeverity.error,
+        message: 'stream failed: $e',
+        context: {
+          'operation': operation,
+          'chunkCount': chunkCount,
+          'durationMs': DateTime.now().difference(start).inMilliseconds,
+        },
+      );
+      rethrow;
+    }
+  }
 
   @override
   Future<Result<void>> initialize() async {
@@ -110,7 +171,10 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     String connectionId,
     String sql,
   ) {
-    return _service.streamQuery(connectionId, sql);
+    return _wrapStream(
+      'ODBC.streamQuery',
+      () => _service.streamQuery(connectionId, sql),
+    );
   }
 
   @override
@@ -351,9 +415,10 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     String connectionId,
     String sql,
   ) {
-    // Telemetry per-stream is tricky because a stream can be long-lived.
-    // We surface the underlying stream as-is and let the consumer decide.
-    return _service.streamQueryMulti(connectionId, sql);
+    return _wrapStream(
+      'ODBC.streamQueryMulti',
+      () => _service.streamQueryMulti(connectionId, sql),
+    );
   }
 
   @override
@@ -365,6 +430,45 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
     return _telemetry.inOperation(
       'ODBC.executeQueryNamed',
       () => _service.executeQueryNamed(connectionId, sql, namedParams),
+    );
+  }
+
+  @override
+  Stream<Result<QueryResult>> streamQueryNamed(
+    String connectionId,
+    String sql,
+    Map<String, Object?> namedParams,
+  ) {
+    return _wrapStream(
+      'ODBC.streamQueryNamed',
+      () => _service.streamQueryNamed(connectionId, sql, namedParams),
+    );
+  }
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnar(
+    String connectionId,
+    String sql, {
+    List<dynamic>? params,
+  }) async {
+    return _telemetry.inOperation(
+      'ODBC.executeQueryColumnar',
+      () => _service.executeQueryColumnar(
+        connectionId,
+        sql,
+        params: params,
+      ),
+    );
+  }
+
+  @override
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) {
+    return _wrapStream(
+      'ODBC.streamQueryColumnar',
+      () => _service.streamQueryColumnar(connectionId, sql),
     );
   }
 
@@ -559,6 +663,10 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
   }
 
   @override
+  @Deprecated(
+    'Use getWorkerPoolStats() — returns null in sync mode. '
+    'Will be removed alongside the IOdbcService deprecation.',
+  )
   Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
     return _telemetry.inOperation(
       'ODBC.getAsyncWorkerPoolStats',
@@ -621,6 +729,14 @@ class TelemetryOdbcServiceDecorator implements IOdbcService {
       () => _service.getDriverCapabilities(connectionString),
     );
   }
+
+  @override
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats() {
+    return _service.getWorkerPoolStats();
+  }
+
+  @override
+  Stream<OdbcEvent> get events => _service.events;
 
   @override
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {

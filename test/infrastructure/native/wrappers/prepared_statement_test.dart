@@ -61,6 +61,20 @@ void main() {
     test('close calls backend closeStatement', () {
       backend.closeStatementResult = true;
       stmt.close();
+      expect(backend.closeStatementCallCount, 1);
+    });
+
+    test('should_be_idempotent_when_close_is_called_multiple_times', () {
+      backend.closeStatementResult = true;
+      expect(stmt.isClosed, isFalse);
+      stmt.close();
+      expect(stmt.isClosed, isTrue);
+      stmt
+        ..close()
+        ..close();
+      // Native close must be invoked exactly once even after repeated calls.
+      expect(backend.closeStatementCallCount, 1);
+      expect(stmt.isClosed, isTrue);
     });
 
     test('executeNamed throws when paramNamesForNamedExecution is null', () {
