@@ -111,7 +111,7 @@ jobs:
           echo "ODBC_TEST_DSN=Driver={${SQLSERVER_ODBC_DRIVER}};Server=localhost,1433;Database=master;UID=sa;PWD=BenchOdbc123!;${SQLSERVER_ODBC_OPTIONS}" >> $GITHUB_ENV
 
       - name: Restore benchmark baseline
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: native/target/criterion
           key: benchmark-baseline-${{ runner.os }}-${{ hashFiles('native/odbc_engine/benches/comparative_bench.rs', 'native/odbc_engine/Cargo.toml') }}
