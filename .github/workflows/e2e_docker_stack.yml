@@ -94,7 +94,7 @@ jobs:
       # driver rejects cache export. setup-buildx-action provisions a
       # builder with the right driver so the cache backends work.
       - name: Set up Docker Buildx (docker-container driver)
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build test-runner image (BuildKit cache)
         uses: docker/build-push-action@v6
