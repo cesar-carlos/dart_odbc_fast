@@ -1,6 +1,8 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v3.8.1
+> **Last updated for:** v3.9.0 (pool/transaction hardening) + Unreleased
+> native engine follow-ups (`block-cursor-fetch` and `statement-handle-reuse`
+> default ON, `loom` opt-in via `RUSTFLAGS="--cfg loom"`).
 
 This document describes the test strategy, how to run each scope, and CI boundaries. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
 

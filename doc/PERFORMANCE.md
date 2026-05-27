@@ -1,8 +1,40 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v3.8 (usage profiles)
+> **Last updated for:** v3.9 (pool/transaction hardening) + Unreleased native
+> engine follow-ups (`block-cursor-fetch` and `statement-handle-reuse` now
+> default ON; FFI `GlobalState` sharded; `OwnedPreparedStatement` RAII for the
+> prepared cache; release/bench profiles tightened).
 
 This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload.
+
+---
+
+## Native engine fetch and prepared cache (current defaults)
+
+| Knob | Default | Effect |
+| ---- | ------- | ------ |
+| `block-cursor-fetch` feature | **enabled** | Cursor fetch goes through `engine::core::block_fetch::fetch_rows_into` (`BlockCursor` + `ColumnarAnyBuffer`) for queries whose columns can all be pre-bound. LOBs / `WLONGVARCHAR` without an advertised max length transparently fall back to the legacy per-row path. |
+| `statement-handle-reuse` feature | **enabled** | `CachedConnection` keeps a per-connection LRU of `OwnedPreparedStatement` (RAII guard around the `mem::transmute` that fabricates the `'static` lifetime). `execute_query_with_params` now rebinds on the cached statement when the param list is legacy/no-NULL. |
+| `ODBC_FAST_BLOCK_FETCH_BATCH` env var | `256` | Batch size for `BlockCursor::fetch_with_truncation_check`. Invalid or missing values fall back to the default. Cached via `OnceLock`, so `std::env::var` is not consulted per query. |
+
+Opt out at the crate level with
+`odbc_engine = { version = "...", default-features = false, features = ["test-helpers", "observability"] }`.
+
+The fetch dispatcher lives in `engine::fetch::fetch_cursor_into_row_buffer`
+and decides between the legacy per-row loop and the block path; a separate
+direct column-major path (`engine::core::columnar_fetch::fetch_columnar_into`)
+populates `RowBufferV2` for non-FOR-JSON queries when columnar encoding is
+requested, skipping the row-major intermediate. See
+[`native/odbc_engine/ARCHITECTURE.md`](../native/odbc_engine/ARCHITECTURE.md)
+for the dispatcher + sharded-state diagrams.
+
+The FFI hot path used to lock a single `Mutex<GlobalState>` for every entry
+point. Today metrics and the audit logger are `Arc` singletons (lock-free),
+the per-connection error map lives in a dedicated `RwLock`, async requests
+have their own `Mutex<AsyncRequestManager>`, and the legacy global error
+slot lives behind its own `RwLock<LegacyGlobalError>` with `log::error!`
+on poison. Lock ordering when more than one is taken is
+`Outer → AsyncReqs → Errors (write) → Errors (read)`.
 
 ---
 
@@ -49,7 +81,23 @@ cargo bench --bench columnar_v1_v2_encode
 
 # Columnar v2 wire constants smoke (requires --features columnar-v2)
 cargo bench --bench columnar_v2_placeholder --features columnar-v2
+
+# Native engine follow-up micro-benches (no DSN required):
+#   cell_reader_bench       — Integer/BigInt/Varchar/Binary/Date/Timestamp paths
+#   encoder_bench           — RowBufferEncoder + direct columnar vs row-major
+#   ffi_contention_bench    — synthetic N-thread FFI contention model
+#   prepared_cache_bench    — cache hit vs cold prepare, parameterized path
+cargo bench --bench cell_reader_bench
+cargo bench --bench encoder_bench
+cargo bench --bench ffi_contention_bench
+cargo bench --bench prepared_cache_bench
 ```
+
+Baselines are tracked in
+[`native/odbc_engine/benches/baselines/README.md`](../native/odbc_engine/benches/baselines/README.md).
+The cron workflow [`.github/workflows/native_bench_baseline.yml`](../.github/workflows/native_bench_baseline.yml)
+runs the four follow-up benches weekly on a fixed Linux runner and uploads
+the Criterion HTML as an artifact (non-blocking, no gating).
 
 Orchestrated Dart benches (loads `.env`, optional compare):
 
@@ -253,7 +301,7 @@ python scripts/run_dart_benchmarks.py --rust-micro
 | `PoolAutocommitCustomizer` sets `autocommit(true)` on every checkout                          | One extra ODBC call per checkout; eliminates the worst case where a connection returned mid-transaction silently affected the next caller.                                                                                                 |
 | `recv_timeout` + structured worker-disconnect error                                           | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover.                                                                                                                                            |
 | `read_exact` in disk-spill readback                                                           | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost.                                                                                                                                               |
-| `Mutex<GlobalState>` granularity                                                              | Most critical path (`odbc_pool_get_connection`) is unblocked. Remaining FFI surface still serialises through the global state; granularising further is tracked as future work.                                                            |
+| `Mutex<GlobalState>` granularity                                                              | Critical paths (pool checkout, metrics, audit, per-connection errors, async requests, legacy global error) are now off the outer mutex. The residual `GlobalState` only owns maps that require atomic cross-category transitions (connections / pools / transactions / streams / XA branches). |
 | Async presets via `ServiceLocator.initialize(profile: ...)`                                   | Default profile remains `legacy` for compatibility. Opt in to `balanced` for `workerCount = 2`, `maxPendingRequests = 24`, `backpressureMode = waitForSlot`, and `backpressureTimeout = 30s`; use another `OdbcUsageProfile` when the app shape is clearer. |
 | Direct `AsyncNativeOdbcConnection(...)` defaults                                              | Constructor defaults remain `workerCount = 1`, `maxPendingRequests = null`, and `backpressureMode = failFast`. Use `ServiceLocator` presets when you want profile-guided tuning instead of raw constructor defaults.                      |
 | Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | In services with native pools, keep the pending cap near `poolSize * 2` to `poolSize * 4` so the Dart worker queue does not hide saturation.                                                                                              |
@@ -313,7 +361,7 @@ serial vs worker-pool behavior with a local slow query instead of the default
 These performance-sensitive items are tracked outside the feature backlog:
 
 - **True chunk-by-chunk streaming** — `engine::streaming::execute_streaming` still materialises results internally before chunking (audit C7). Multi-result streaming FFI (`odbc_stream_multi_*`) added in v3.3.0 improves the surface but the per-cursor materialisation remains.
-- **`Mutex<GlobalState>` granularisation** — the most critical pool path was unblocked; the rest of the FFI surface still serialises. Profiling under >16 concurrent callers will show this.
+- **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex because their cleanup paths need atomic transitions (e.g. `disconnect` cancels active transactions and streams; XA commit clears branches in multiple maps). Splitting further requires a `with_disconnect_cleanup`-style helper that acquires the per-category locks in the documented canonical order. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
 
 Feature-level open work is tracked in

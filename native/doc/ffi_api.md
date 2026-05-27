@@ -263,7 +263,31 @@ Closes all tracked prepared statements and clears statement state.
 
 - **Returns**: `0` on success; non-zero on failure.
 
-**Statement handle reuse (opt-in)**: Build with `--features statement-handle-reuse` to enable LRU prepared-statement reuse per connection. This feature remains disabled by default. Without the feature, the prepared-statement cache/state is metadata and metrics only; it does not retain reusable ODBC statement handles. Keep the feature opt-in until your workload benchmark confirms gains.
+**Statement handle reuse (default ON since the Unreleased perf follow-ups)**:
+the `statement-handle-reuse` feature is now part of `default` in
+`odbc_engine`. Each `CachedConnection` keeps a per-connection LRU of
+`OwnedPreparedStatement` — an RAII guard that confines the
+`mem::transmute` used to fabricate a `'static` lifetime for
+`Prepared<StatementImpl<'_>>` in a single point of `unsafe`. Drop order
+is enforced by field declaration order in `CachedConnection`
+(`stmt_cache` declared before `conn`); a unit test
+(`from_borrowed_transmute_size_invariant_holds`) trips if a future
+`odbc-api` release changes the layout of `Prepared`. To opt out of the
+reuse path (and the `block-cursor-fetch` path below) use
+`default-features = false, features = ["test-helpers", "observability"]`.
+
+**Block-cursor fetch (default ON)**: the `block-cursor-fetch` feature is
+also part of `default` now. Cursor fetch routes through
+`engine::core::block_fetch::fetch_rows_into` (`BlockCursor` +
+`ColumnarAnyBuffer`) for queries whose columns can be pre-bound; LOBs and
+`WLONGVARCHAR` columns without an advertised max length transparently
+fall back to the legacy `cursor.next_row()` path. Batch size honours the
+`ODBC_FAST_BLOCK_FETCH_BATCH` environment variable (default `256`,
+invalid values fall back to the default) and is cached via `OnceLock`
+so `std::env::var` is not consulted on every query. A direct column-major
+path (`engine::core::columnar_fetch::fetch_columnar_into`) populates
+`RowBufferV2` directly when columnar encoding is requested and the
+result is not FOR JSON, skipping the row-major intermediate.
 
 ## Streaming (chunked copy-out over FFI)
 

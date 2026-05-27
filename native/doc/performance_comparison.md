@@ -147,26 +147,30 @@ xychart-beta
 
 ## Statement Reuse (Repetitive Queries)
 
-Feature flag `statement-handle-reuse` implements real prepared statement handle
-reuse using type-erased caching with explicit lifetime management. It is
-disabled by default; without the feature, cache counters/metadata do not
-represent reusable ODBC statement handles.
+Feature `statement-handle-reuse` is **default ON** since the Unreleased perf
+follow-ups. `CachedConnection` keeps a per-connection LRU of
+`OwnedPreparedStatement` — an RAII guard that confines the `mem::transmute`
+used to fabricate a `'static` lifetime in a single point of `unsafe`
+(`handles::owned_prepared::from_borrowed`). Drop order is enforced by field
+declaration order in `CachedConnection` (`stmt_cache` declared before `conn`);
+a unit test trips if a future `odbc-api` release changes the layout of
+`Prepared`. The cache is reused on the parameterised path too via
+`CachedConnection::execute_query_with_params` and the FFI helper
+`try_cached_legacy_params` (legacy `ParamValue` list without NULLs).
 
-**Status (2026-03-10):**
-- Implementation complete with unsafe lifetime extension and guaranteed drop order safety.
-- 730 unit tests passing with feature enabled.
-- E2E benchmark validation requires database connection (see validation commands below).
-
-**Expected gain:** >= 10% throughput improvement in repetitive query scenarios when feature is enabled.
+**Expected gain:** >= 10% throughput improvement in repetitive query
+scenarios on hot connections; the synthetic
+`prepared_cache_bench::parameterized_hit_path` group (
+`cache_hit_rebind_only` vs `prepare_every_call`) quantifies the upper bound.
 
 **Validation commands:**
 
 ```bash
-# Baseline (feature OFF)
-cargo test test_statement_reuse_repetitive_benchmark -- --ignored --nocapture
+# Cold prepare every call (opt out of the new default)
+cargo test test_statement_reuse_repetitive_benchmark --no-default-features --features test-helpers,observability -- --ignored --nocapture
 
-# With reuse (feature ON)
-cargo test test_statement_reuse_repetitive_benchmark --features statement-handle-reuse -- --ignored --nocapture
+# Default build (statement-handle-reuse + block-cursor-fetch ON)
+cargo test test_statement_reuse_repetitive_benchmark -- --ignored --nocapture
 ```
 
 **Requirements:**
@@ -181,7 +185,49 @@ cargo test test_statement_reuse_repetitive_benchmark --features statement-handle
 | Feature OFF | ~3764 | ~3776 | ~153 |
 | Feature ON (metadata only) | ~3455 | ~3519 | ~313 |
 
-The metadata-only implementation showed ~8% regression. Real handle reuse is expected to eliminate this overhead and achieve >= 10% gain.
+The metadata-only implementation showed ~8% regression. Real handle reuse
+(now the default) eliminates this overhead.
+
+---
+
+## BlockCursor row-major fetch + direct columnar
+
+Feature `block-cursor-fetch` is **default ON** as well. The fetch dispatcher
+in `engine::fetch::fetch_cursor_into_row_buffer` chooses between:
+
+- **Block path** (`engine::core::block_fetch::fetch_rows_into`):
+  `ColumnarAnyBuffer` bound via `cursor.bind_buffer`, then
+  `BlockCursor::fetch_with_truncation_check(true)` in batches of
+  `ODBC_FAST_BLOCK_FETCH_BATCH` rows (default `256`). `Date`, `Time`,
+  `Timestamp` columns now bind native `BufferDesc::Date / Time / Timestamp`
+  buffers and are formatted to ISO 8601 in-process, skipping the
+  driver-side WCHAR transcoding.
+- **Legacy per-row loop** when `plan_buffer_descs` decides the result is
+  not bindable (LOBs, `WLONGVARCHAR` without an advertised max length, or
+  per-cell buffers above 256 KiB).
+
+When the encoder asks for columnar output and the result is not FOR JSON,
+`engine::core::columnar_fetch::fetch_columnar_into` populates
+`RowBufferV2` directly from `ColumnarAnyBuffer` views, eliminating the
+row-major intermediate and the per-cell clones that
+`row_buffer_to_columnar` paid (`row_buffer_to_columnar` is marked
+`#[deprecated]` on the doc-comment; still used by `encode_for_bulk` and
+when `block-cursor-fetch` is off).
+
+Synthetic benches that quantify these paths (no DSN required):
+
+```bash
+cargo bench --bench cell_reader_bench       # Integer/BigInt/Varchar/Binary/Date/Timestamp
+cargo bench --bench encoder_bench           # direct_columnar_vs_via_row_major group
+cargo bench --bench prepared_cache_bench    # parameterized_hit_path group
+cargo bench --bench ffi_contention_bench    # synthetic N-thread FFI contention model
+```
+
+Baselines are tracked in
+[`native/odbc_engine/benches/baselines/README.md`](../odbc_engine/benches/baselines/README.md).
+The weekly cron in
+[`.github/workflows/native_bench_baseline.yml`](../../.github/workflows/native_bench_baseline.yml)
+runs all four on a fixed Linux runner and uploads Criterion HTML.
 
 ---
 

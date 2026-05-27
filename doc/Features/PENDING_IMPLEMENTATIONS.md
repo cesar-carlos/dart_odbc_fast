@@ -1,8 +1,11 @@
 # Implementacoes pendentes
 
 Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
-maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.8.1` e ao
-`CHANGELOG.md` `[Unreleased]`.
+maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.9.0` e ao
+`CHANGELOG.md` `[Unreleased]` (follow-ups de perf nativa:
+`block-cursor-fetch` / `statement-handle-reuse` agora default ON, sharding
+do `GlobalState`, `OwnedPreparedStatement`, env var
+`ODBC_FAST_BLOCK_FETCH_BATCH`).
 
 Esta lista nao repete entregas ja fechadas. Quando uma pendencia virar codigo
 ou documentacao canonica, atualizar `CHANGELOG.md`, `doc/CAPABILITIES_v3.md`,

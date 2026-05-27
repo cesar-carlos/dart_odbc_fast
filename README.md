@@ -6,7 +6,31 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 3.8.1
+## What's New in 3.9.0
+
+- **Pool & transaction hardening** — `poolGetConnection` now registers
+  ownership in dedicated `_poolCheckouts` / `_connectionPoolId` maps so
+  options, cleanup and pool membership work correctly for pooled
+  connections; `poolReleaseConnection` and `poolClose` sweep prepared
+  statements and Dart-side caches for the released IDs; transaction and
+  savepoint methods validate `connectionId` + `txnId` before any FFI call
+  and route async error reads to the correct worker isolate. See the
+  full audit in the [CHANGELOG](CHANGELOG.md).
+- **Native engine performance follow-ups (Unreleased)** — `block-cursor-fetch`
+  and `statement-handle-reuse` are now ON by default. Highlights:
+  `BlockCursor` + `ColumnarAnyBuffer` row-major fast path (batch size tunable
+  via `ODBC_FAST_BLOCK_FETCH_BATCH`, default `256`); direct column-major
+  fetch path skipping the row-major intermediate when the result is not
+  FOR JSON; `GlobalState` decomposed into sharded sub-locks (`ffi/state`);
+  `OwnedPreparedStatement` RAII guard around the per-connection prepared
+  cache (single point of `mem::transmute`, with a size-invariant tripwire
+  test); release/bench profiles set `lto = "fat"`, `codegen-units = 1`,
+  `opt-level = 3`. Wire format and ABI are unchanged — Dart consumers do
+  not need to do anything. Opt out with
+  `default-features = false, features = ["test-helpers", "observability"]`
+  in `Cargo.toml`.
+
+### Previously in 3.8.1
 
 - **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` keeps
   the existing sync default for compatibility, and now offers opt-in presets
@@ -16,7 +40,7 @@
   See [Quick Start](#quick-start-high-level-service) and
   [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
 
-Highlights of the current `3.8.1` release. See the
+Highlights of the current `3.9.0` release. See the
 [CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
@@ -389,7 +413,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.8.1
+  odbc_fast: ^3.9.0
 ```
 
 Then:

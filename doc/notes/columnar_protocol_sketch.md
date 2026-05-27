@@ -1,6 +1,6 @@
 # Columnar protocol v2 — design sketch
 
-> **Status (2026-05, package `3.8.1`):** row-major v1 remains the default, but
+> **Status (2026-05, package `3.9.0`):** row-major v1 remains the default, but
 > public parameterized query paths can opt into **columnar v2** with
 > `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`. The Rust
 > engine emits v2 when the execution pipeline is built with

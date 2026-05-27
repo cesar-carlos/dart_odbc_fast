@@ -54,8 +54,39 @@ registration.
 These are supporting utilities that impact performance/compatibility:
 
 - `engine::core::MetadataCache` (TTL + LRU) for table schemas
-- `engine::core::PreparedStatementCache` (LRU) keyed by SQL strings
+- `engine::core::PreparedStatementCache` (LRU bookkeeping + aggregated
+  counters keyed by SQL strings; the real per-connection handle cache
+  lives in `handles::CachedConnection::stmt_cache` and stores
+  `OwnedPreparedStatement` — see [`ARCHITECTURE.md`](../odbc_engine/ARCHITECTURE.md)
+  "Prepared statement reuse")
 - `engine::core::ProtocolEngine` + `ProtocolVersion` for protocol version negotiation
+
+### 1.3 Cursor → row buffer dispatcher
+
+`engine::fetch::fetch_cursor_into_row_buffer` is the single dispatcher used
+by every cursor-consuming path (sync, batched streaming, cached
+connection). It chooses between:
+
+- **Block path** — `engine::core::block_fetch::fetch_rows_into` binds a
+  `ColumnarAnyBuffer` and consumes the cursor via
+  `BlockCursor::fetch_with_truncation_check(true)` in batches of
+  `ODBC_FAST_BLOCK_FETCH_BATCH` rows (default `256`). `Date` / `Time` /
+  `Timestamp` columns use native `BufferDesc::Date / Time / Timestamp`
+  and ISO 8601 is produced in-process. Available when the
+  `block-cursor-fetch` feature is on (it is **default ON** in the current
+  release).
+- **Legacy path** — `cursor.next_row()` + `CellReader` per cell, used as
+  fallback when `plan_buffer_descs` rejects the bind (LOBs,
+  `WLONGVARCHAR` without an advertised max length, per-cell buffers
+  above 256 KiB), and as the only path when `block-cursor-fetch` is
+  disabled.
+
+When the encoder asks for columnar output and the query is not FOR JSON,
+`engine::core::columnar_fetch::fetch_columnar_into` populates
+`RowBufferV2` directly from `ColumnarAnyBuffer` views — skipping the
+row-major intermediate that `row_buffer_to_columnar` used to materialize.
+`row_buffer_to_columnar` is marked `#[deprecated]` on its doc-comment
+but kept for `encode_for_bulk` and when `block-cursor-fetch` is off.
 
 ## 2) Streaming
 

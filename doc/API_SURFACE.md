@@ -415,12 +415,16 @@ Métodos: `sqlstate()`, `native_code()`, `message()`, `is_retryable()`,
 |---|---|---|
 | `observability` | ✓ | `OtlpExporter` (HTTP via `ureq`). |
 | `test-helpers` | ✓ | `load_dotenv()` para carregar `.env` em testes. |
+| `block-cursor-fetch` | ✓ | `BlockCursor` + `ColumnarAnyBuffer` row-major fetch e rota colunar direta (`engine::core::block_fetch` / `columnar_fetch`). Batch tunável via `ODBC_FAST_BLOCK_FETCH_BATCH`. |
+| `statement-handle-reuse` | ✓ | LRU per-conexão de `OwnedPreparedStatement` (RAII que confina o `mem::transmute` em um único ponto). |
 | `sqlserver-bcp` | ✗ | `BulkCopyExecutor` (Windows + DLL `bcp.dll`). |
-| `statement-handle-reuse` | ✗ | LRU de `Prepared<'static>` (usa `transmute` — experimental). |
 | `ffi-tests` | ✗ | Habilita `tests/ffi_compatibility_test.rs` e expõe FFI no `lib`. |
 | `xa-dtc` | ✗ | XA / 2PC no SQL Server via MSDTC (Windows-only, COM + `windows` crate). |
 | `xa-oci` | ✗ | XA / 2PC no Oracle via `libclntsh` / `oci.dll` (carregado dinamicamente). |
 | `columnar-v2` | ✗ | Constantes de protocolo columnar v2 e bench de referência. |
+
+Para optar pelos perfis legados (caminho per-cell sem reuso de prepared):
+`odbc_engine = { version = "...", default-features = false, features = ["test-helpers", "observability"] }`.
 
 ---
 
@@ -470,7 +474,7 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 | Modos de streaming | 5 (sync buffer, batched mpsc, async Tokio, multi batched, multi async) |
 | Modos de bulk insert | 4 (`ArrayBinding`, `BulkCopy` BCP, `ParallelBulkInsert::Independent`, `ParallelBulkInsert::PerChunkTransactional`) |
 | Códigos `FfiError` | 10 |
-| Feature flags | 8 (`observability`, `test-helpers`, `sqlserver-bcp`, `statement-handle-reuse`, `ffi-tests`, `xa-dtc`, `xa-oci`, `columnar-v2`) |
+| Feature flags | 9 (`observability`, `test-helpers`, `block-cursor-fetch`, `statement-handle-reuse`, `sqlserver-bcp`, `ffi-tests`, `xa-dtc`, `xa-oci`, `columnar-v2`) |
 | `OdbcType` variantes | 19 (discriminantes 1–19 estáveis) |
 | `SqlDataType` kinds (Dart) | 27 implementados |
 
@@ -490,4 +494,7 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 ---
 
-*Atualizado para v3.8.0. Para cada funcionalidade com "fix" há um teste de regressão correspondente em `native/odbc_engine/tests/regression/`.*
+*Atualizado para v3.9.0 + Unreleased (perf nativa: `block-cursor-fetch` /
+`statement-handle-reuse` agora default ON, `GlobalState` sharded, fetch
+dispatcher em `engine::fetch`). Para cada funcionalidade com "fix" há um
+teste de regressão correspondente em `native/odbc_engine/tests/regression/`.*
