@@ -18,7 +18,12 @@ use odbc_engine::engine::{execute_multi_result, OdbcConnection, OdbcEnvironment}
 use odbc_engine::protocol::{decode_multi, MultiResultItem};
 
 fn dsn() -> Option<String> {
-    let _ = dotenvy::dotenv();
+    // `dotenvy` only ships with the `test-helpers` feature; see the
+    // matching guard in `m8_streaming_multi_result.rs::dsn`.
+    #[cfg(feature = "test-helpers")]
+    {
+        let _ = dotenvy::dotenv();
+    }
     if std::env::var("ENABLE_E2E_TESTS").as_deref() != Ok("1") {
         return None;
     }

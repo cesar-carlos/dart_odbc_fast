@@ -70,10 +70,56 @@ jobs:
           cd native
           cargo build --release --features sqlserver-bcp
 
+      - name: Build with block-cursor-fetch feature
+        run: |
+          cd native
+          cargo build --release --features block-cursor-fetch
+
+      - name: Build with statement-handle-reuse feature
+        run: |
+          cd native
+          cargo build --release --features statement-handle-reuse
+
       - name: Run Rust tests
         run: |
           cd native
           cargo test --workspace -- --test-threads=1
+
+      - name: Run Rust tests with block-cursor-fetch feature
+        run: |
+          cd native
+          cargo test --workspace --features block-cursor-fetch -- --test-threads=1
+
+      - name: Run Rust tests with statement-handle-reuse feature
+        run: |
+          cd native
+          cargo test --workspace --features statement-handle-reuse -- --test-threads=1
+
+  loom:
+    # Optional, non-blocking loom exploration of the FFI state lock
+    # interactions (sprint 4 follow-up C11). Runs in its own job because
+    # `--cfg loom` is incompatible with normal cargo test caching and
+    # the model-check is slow.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      CI: "true"
+      RUSTFLAGS: "--cfg loom"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust (pinned toolchain)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+      - name: Install ODBC (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+      - name: Run loom models
+        run: |
+          cd native/odbc_engine
+          cargo test --test loom_state_test --release -- --test-threads=1
 
       - name: Install dependencies
         run: dart pub get

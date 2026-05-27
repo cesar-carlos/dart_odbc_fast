@@ -16,7 +16,14 @@ use odbc_engine::engine::{
 };
 
 fn dsn() -> Option<String> {
-    let _ = dotenvy::dotenv();
+    // `dotenvy` only ships with the `test-helpers` feature; when the
+    // feature is off, callers must already have `ODBC_TEST_DSN` in
+    // their process env (and the e2e gate below short-circuits early
+    // when `ENABLE_E2E_TESTS` is not set).
+    #[cfg(feature = "test-helpers")]
+    {
+        let _ = dotenvy::dotenv();
+    }
     if std::env::var("ENABLE_E2E_TESTS").as_deref() != Ok("1") {
         return None;
     }

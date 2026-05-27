@@ -63,6 +63,5 @@ class ColumnMetadata {
   int get hashCode => Object.hash(name, odbcType);
 
   @override
-  String toString() =>
-      'ColumnMetadata(name: $name, odbcType: $odbcType)';
+  String toString() => 'ColumnMetadata(name: $name, odbcType: $odbcType)';
 }

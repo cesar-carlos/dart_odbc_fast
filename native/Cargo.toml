@@ -6,9 +6,23 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 
-# Release profile optimizations for workspace members
+# Release profile optimizations for workspace members.
+#
+# `lto = "fat"` and `codegen-units = 1` trade build time for runtime perf
+# (inlines across crate boundaries: odbc-api, zstd, lz4, our protocol).
+# `panic = "unwind"` is intentional — the FFI guard in `ffi/guard.rs` relies
+# on `catch_unwind` to translate Rust panics into stable error codes across
+# the Dart FFI boundary; switching to `abort` would silently break that.
 [profile.release]
-lto = "thin"
-codegen-units = 16
+lto = "fat"
+codegen-units = 1
 opt-level = 3
 strip = true
+panic = "unwind"
+
+# Bench profile mirrors release so Criterion numbers reflect the binary we
+# actually ship instead of a faster-to-build approximation.
+[profile.bench]
+lto = "fat"
+codegen-units = 1
+opt-level = 3

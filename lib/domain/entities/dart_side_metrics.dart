@@ -43,8 +43,7 @@ class DartSideMetrics {
 
   @override
   String toString() {
-    final body =
-        toJson().entries.map((e) => '${e.key}=${e.value}').join(', ');
+    final body = toJson().entries.map((e) => '${e.key}=${e.value}').join(', ');
     return 'DartSideMetrics($body)';
   }
 }

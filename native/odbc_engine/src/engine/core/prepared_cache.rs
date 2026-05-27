@@ -16,6 +16,20 @@ pub struct PreparedStatementMetrics {
     pub memory_usage_bytes: usize,
 }
 
+/// Aggregated bookkeeping for prepared-statement reuse across the engine.
+///
+/// **Sprint 4 (engine-perf plan) note.** The real per-connection cache
+/// of `Prepared` handles lives in
+/// [`crate::handles::CachedConnection`] via
+/// [`crate::handles::OwnedPreparedStatement`]. This type now exists only
+/// to expose the *aggregated* metrics (size, hits, misses, evictions,
+/// total executions) across every connection that an
+/// [`crate::engine::core::ExecutionEngine`] talks to. Recording happens
+/// in [`Self::record_prepare`] / [`Self::record_hit`] /
+/// [`Self::record_execution`] which are called from the connection
+/// path; the local `LruCache<String, ()>` is kept solely as the
+/// authoritative "tracked SQL" set so the existing FFI surface and
+/// tests that inspect cache size keep working.
 pub struct PreparedStatementCache {
     cache: Arc<Mutex<LruCache<String, ()>>>,
     max_size: usize,
@@ -41,6 +55,11 @@ impl PreparedStatementCache {
         }
     }
 
+    /// Record an SQL statement that has been prepared at least once on
+    /// some connection. Used to seed the bookkeeping counters; the actual
+    /// `Prepared` handle is owned by
+    /// [`crate::handles::OwnedPreparedStatement`] inside the originating
+    /// [`crate::handles::CachedConnection`].
     pub fn get_or_insert(&self, sql: &str) -> bool {
         let Ok(mut cache) = self.cache.lock() else {
             log::error!("PreparedStatementCache mutex poisoned");
@@ -55,6 +74,18 @@ impl PreparedStatementCache {
             cache.put(sql.to_string(), ());
             false
         }
+    }
+
+    /// Aggregate a cache hit reported by a per-connection cache.
+    pub fn record_hit(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Aggregate a cache miss + a fresh `SQLPrepare` reported by a
+    /// per-connection cache.
+    pub fn record_prepare(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        self.total_prepares.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_execution(&self) {

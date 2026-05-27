@@ -1,4 +1,6 @@
 mod cached_connection;
+#[cfg(feature = "statement-handle-reuse")]
+mod owned_prepared;
 
 pub use cached_connection::CachedConnection;
 
@@ -134,6 +136,7 @@ pub type SharedHandleManager = Arc<Mutex<HandleManager>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-helpers")]
     use crate::test_helpers::load_dotenv;
 
     #[test]
@@ -163,6 +166,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_handle_manager_create_connection() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")
@@ -191,6 +195,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_handle_manager_create_multiple_connections() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")
@@ -236,6 +241,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_handle_manager_remove_connection() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN")

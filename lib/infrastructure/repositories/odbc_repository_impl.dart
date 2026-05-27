@@ -571,9 +571,8 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     Future<Result<T>> Function() operation, {
     String? sqlForSlowQueryDetection,
   }) async {
-    final stopwatch = sqlForSlowQueryDetection != null
-        ? (Stopwatch()..start())
-        : null;
+    final stopwatch =
+        sqlForSlowQueryDetection != null ? (Stopwatch()..start()) : null;
     var result = await operation();
     _maybeEmitSlowQuery(
       connectionId: connectionId,
@@ -2358,8 +2357,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     }
     return _runIntFfi(
       sync: (n) => n.poolCreate(connectionString, maxSize, options: options),
-      async: (a) =>
-          a.poolCreate(connectionString, maxSize, options: options),
+      async: (a) => a.poolCreate(connectionString, maxSize, options: options),
       isSuccess: (id) => id != 0,
       errorFactory: _connectionErrorFactory,
       fallbackMessage: 'Failed to create pool',

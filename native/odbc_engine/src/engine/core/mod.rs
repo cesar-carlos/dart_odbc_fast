@@ -1,6 +1,10 @@
 pub mod array_binding;
 pub mod batch_executor;
+#[cfg(feature = "block-cursor-fetch")]
+pub mod block_fetch;
 pub mod bulk_copy;
+#[cfg(feature = "block-cursor-fetch")]
+pub mod columnar_fetch;
 pub mod connection_manager;
 pub mod disk_spill;
 pub mod driver_capabilities;

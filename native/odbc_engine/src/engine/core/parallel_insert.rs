@@ -212,6 +212,7 @@ fn collect_partial_failure(total: usize, errors: Vec<(usize, String)>) -> Result
 mod tests {
     use super::*;
     use crate::error::OdbcError;
+    #[cfg(feature = "test-helpers")]
     use crate::test_helpers::load_dotenv;
 
     #[test]
@@ -325,6 +326,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_parallel_bulk_insert_new() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -336,6 +338,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_parallel_bulk_insert_with_batch_size() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");

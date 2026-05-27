@@ -14,10 +14,21 @@ categories = ["database", "api-bindings"]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["test-helpers", "observability"]
+# `block-cursor-fetch` and `statement-handle-reuse` graduated to default in
+# the engine-perf follow-up cycle: the CI matrix now exercises every
+# feature combination on each PR and the synthetic Criterion benches
+# under `benches/` confirm the speedups without regressions. Consumers
+# that need to opt out can build with
+# `default-features = false, features = ["test-helpers", "observability"]`.
+default = [
+    "test-helpers",
+    "observability",
+    "block-cursor-fetch",
+    "statement-handle-reuse",
+]
 sqlserver-bcp = ["dep:libloading"]
 # Reuse ODBC prepared statement handles per connection (LRU cache).
-# Default off; enables repetitive prepare/execute workload improvements.
+# Promoted to default — see comment on `default` above.
 statement-handle-reuse = []
 # Full observability: OTLP exporter, metrics, tracing. Disable for minimal builds.
 observability = ["dep:ureq"]
@@ -31,6 +42,13 @@ xa-dtc = ["dep:windows"]
 xa-oci = ["dep:libloading"]
 # Columnar result protocol v2 placeholder and benches.
 columnar-v2 = []
+# Use BlockCursor + ColumnarAnyBuffer to fetch result sets in batches instead
+# of `cursor.next_row()` one cell at a time. Promoted to default — see
+# comment on `default` above. Coexists with the legacy per-row fetch
+# (cell_reader path) so any driver/schema that can't be expressed as a
+# bound columnar buffer (LOBs, WLONGVARCHAR without a known max width)
+# automatically falls back.
+block-cursor-fetch = []
 
 [dependencies]
 odbc-api = { version = "20.1.1", default-features = false, features = ["odbc_version_3_5"] }
@@ -64,15 +82,146 @@ windows = { version = "0.59", features = [
 env_logger = "0.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"
+# Loom is used only by the optional `loom_state_test` integration test
+# (sprint 4 follow-up C11) to explore every interleaving of the FFI
+# state's sub-locks. It is intentionally pinned and kept out of any
+# production build by living under `dev-dependencies`.
+loom = "0.7"
 
 [[test]]
 name = "ffi_compatibility_test"
 path = "tests/ffi_compatibility_test.rs"
 required-features = ["ffi-tests"]
 
+# All integration tests below pull in `tests/helpers/e2e.rs`, which calls
+# `odbc_engine::test_helpers::load_dotenv` to bootstrap DSN env vars.
+# That helper only exists when the `test-helpers` feature is enabled, so
+# the targets must list it as required — otherwise `--no-default-features`
+# builds break with an `unresolved import test_helpers` error chain.
+# (Engine perf follow-up: lint cleanup; see CHANGELOG entry under PR1.3
+# bookkeeping.)
+[[test]]
+name = "transaction_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "concurrent_access_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "cell_reader_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "integration_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_async_api_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_basic_connection_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_batch_executor_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_bcp_fallback_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_bcp_native_numeric_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_bulk_compare_benchmark_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_bulk_operations_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_bulk_transaction_stress_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_catalog_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_driver_capabilities_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_execution_engine_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_ffi_refactor_regression_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_multi_db_basic_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_oracle_ref_cursor_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_pool_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_savepoint_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_sqlserver_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_statement_reuse_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_streaming_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_structured_error_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_timeout_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_transaction_access_mode_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_transaction_lock_timeout_test"
+required-features = ["test-helpers"]
+
+[[test]]
+name = "e2e_xa_transaction_test"
+required-features = ["test-helpers"]
+
 [[bench]]
 name = "bulk_operations_bench"
 harness = false
+# `bulk_operations_bench` exercises a live ODBC pool, so it depends on
+# `load_dotenv` from the test-helpers feature.
+required-features = ["test-helpers"]
 
 [[bench]]
 name = "metadata_cache_bench"
@@ -81,6 +230,9 @@ harness = false
 [[bench]]
 name = "comparative_bench"
 harness = false
+# `comparative_bench` resolves SQL Server DSN env vars via `load_dotenv`,
+# the test-helpers feature provides it.
+required-features = ["test-helpers"]
 
 [[bench]]
 name = "columnar_v2_placeholder"
@@ -89,6 +241,22 @@ required-features = ["columnar-v2"]
 
 [[bench]]
 name = "columnar_v1_v2_encode"
+harness = false
+
+[[bench]]
+name = "cell_reader_bench"
+harness = false
+
+[[bench]]
+name = "encoder_bench"
+harness = false
+
+[[bench]]
+name = "ffi_contention_bench"
+harness = false
+
+[[bench]]
+name = "prepared_cache_bench"
 harness = false
 
 [build-dependencies]

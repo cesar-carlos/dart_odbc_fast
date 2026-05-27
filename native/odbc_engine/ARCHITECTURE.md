@@ -73,18 +73,93 @@ Domain-style types (errors, protocol types) live in `error` and `protocol` and s
 
 ## Module map
 
-| Module          | Role                                                                          |
-| --------------- | ----------------------------------------------------------------------------- |
-| `engine`        | Connections, queries, streaming, execution pipeline                           |
-| `engine::core`  | Pipeline, batch executor, prepared cache, metadata cache, driver capabilities |
-| `ffi`           | C API, `GlobalState`, metrics integration                                     |
-| `handles`       | ODBC handle management (env, connections)                                     |
-| `pool`          | r2d2 pool, pool ID, health checks                                             |
-| `protocol`      | Encoder, decoder, compression, arena                                          |
-| `error`         | `OdbcError`, `StructuredError`, `Result`, `ErrorCategory`                     |
-| `security`      | Secure buffers, zeroization                                                   |
-| `plugins`       | Driver registry and adapters                                                  |
-| `observability` | Metrics, logging, tracing                                                     |
+| Module                | Role                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `engine`              | Connections, queries, streaming, execution pipeline                                   |
+| `engine::core`        | Pipeline, batch executor, prepared cache, metadata cache, driver capabilities         |
+| `engine::core::block_fetch`    | `BlockCursor` + `ColumnarAnyBuffer` row-major fast path (feature `block-cursor-fetch`) |
+| `engine::core::columnar_fetch` | Direct column-major fetch into `RowBufferV2` (same feature, skips transpose)          |
+| `engine::fetch`       | Cursor → row-buffer dispatcher (legacy `next_row()` vs block-cursor)                  |
+| `ffi`                 | C API, residual `GlobalState`, metrics integration                                    |
+| `ffi::state`          | Sharded FFI state: lock-free immutables, dedicated `RwLock` for connection errors     |
+| `handles`             | ODBC handle management (env, connections, `CachedConnection`)                         |
+| `handles::owned_prepared` | RAII wrapper that confines the `mem::transmute` used by the per-connection cache  |
+| `pool`                | r2d2 pool, pool ID, health checks                                                     |
+| `protocol`            | Encoder, decoder, compression                                                         |
+| `error`               | `OdbcError`, `StructuredError`, `Result`, `ErrorCategory`                             |
+| `security`            | Secure buffers, zeroization                                                           |
+| `plugins`             | Driver registry and adapters                                                          |
+| `observability`       | Metrics, logging, tracing                                                             |
+
+## Fetch paths
+
+```mermaid
+flowchart TD
+    Cursor[odbc_api Cursor]
+    Dispatcher["engine::fetch::fetch_cursor_into_row_buffer"]
+    Legacy["legacy_fetch_loop (cursor.next_row + CellReader)"]
+    BlockFetch["block_fetch::fetch_rows_into (ColumnarAnyBuffer + WText/Date/Time/Timestamp/I32/I64)"]
+    ColumnarFetch["columnar_fetch::fetch_columnar_into (RowBufferV2 direct)"]
+    RowBuf[RowBuffer row-major]
+    V2[RowBufferV2 column-major]
+    Encoder[Wire bytes]
+
+    Cursor --> Dispatcher
+    Dispatcher -->|"feature off OR plan_buffer_descs = None"| Legacy
+    Dispatcher -->|"feature on AND all columns bindable"| BlockFetch
+    Cursor -.->|"use_columnar AND not FOR JSON"| ColumnarFetch
+    Legacy --> RowBuf
+    BlockFetch --> RowBuf
+    ColumnarFetch --> V2
+    RowBuf --> Encoder
+    V2 --> Encoder
+```
+
+Notes:
+
+- `block_fetch::plan_buffer_descs` decides whether the bind path is usable per query — LOB columns and `WLONGVARCHAR` without an advertised max length fall back to the legacy per-row path automatically.
+- `OdbcType::Date` / `Time` / `Timestamp` use native `BufferDesc::Date` / `Time` / `Timestamp` (sprint 4 follow-up B5) and are formatted to ISO 8601 in our code, skipping the driver-side WCHAR transcoding.
+- Batch size honours the `ODBC_FAST_BLOCK_FETCH_BATCH` env var (default 256). See `engine::core::block_fetch::configured_batch_size`.
+
+## FFI state sharding
+
+```mermaid
+flowchart LR
+    Immut["state::ffi_metrics()<br/>state::ffi_audit_logger()<br/>(OnceLock Arc, lock-free)"]
+    Errors["state::connection_errors_*<br/>(RwLock per-conn map)"]
+    AsyncReqs["ffi::async_requests<br/>(Mutex AsyncRequestManager)"]
+    Outer["GlobalState (residual outer Mutex)<br/>connections/pools/transactions/streams/xa_*"]
+
+    Caller["FFI entry point"]
+    Caller --> Immut
+    Caller --> Errors
+    Caller --> AsyncReqs
+    Caller --> Outer
+```
+
+Lock ordering canon (when more than one is held in the same scope): `Outer` → `AsyncReqs` → `Errors` write side → `Errors` read side. Immutables are lock-free and may be touched at any point. See `native/odbc_engine/src/ffi/state/mod.rs` for the full contract.
+
+## Prepared statement reuse
+
+```mermaid
+flowchart LR
+    Caller["FFI exec path (Regular conn)"]
+    Cached["CachedConnection (per conn_id)"]
+    Cache["stmt_cache LRU OwnedPreparedStatement"]
+    Conn["Connection 'static"]
+    Driver["odbc-api Connection.prepare"]
+    Owned["OwnedPreparedStatement<br/>(confines mem::transmute, single point of unsafe)"]
+
+    Caller --> Cached
+    Cached --> Cache
+    Cache -->|"hit"| Owned
+    Cache -->|"miss"| Driver
+    Driver --> Owned
+    Owned --> Conn
+```
+
+- `stmt_cache` is declared **before** `conn` in `CachedConnection` so drop glue runs `stmt_cache.drop()` first — the invariant the `OwnedPreparedStatement::from_borrowed` `# Safety` clause relies on. Reordering the fields trips the `from_borrowed_transmute_size_invariant_holds` tripwire test.
+- Sprint 4.2 wire-up extended the cache to the parameterised path through `CachedConnection::execute_query_with_params`; the FFI helper `try_cached_legacy_params` decides per-call whether the params are eligible (legacy list, no NULLs).
 
 ## Dependencies
 
@@ -132,8 +207,9 @@ Structured errors include SQLSTATE, native error code, and message:
 ## Conventions
 
 - **FFI**: No panics across the C boundary; use return codes and `odbc_get_error` / `odbc_get_structured_error`.
-- **Unsafe**: All `unsafe` blocks documented with `# Safety` or `// Safety` and preconditions.
-- **Locks**: Prefer `try_lock`/`lock().ok()` in FFI and caches; avoid `unwrap()` on mutexes in hot paths.
-- **Error handling**: Always use connection-specific error storage when `conn_id` is available; fall back to global error state only for functions without connection context.
+- **Unsafe**: All `unsafe` blocks documented with `# Safety` or `// Safety` and preconditions. The only remaining `mem::transmute` in the lifetime-fabrication path lives in `handles::owned_prepared::OwnedPreparedStatement::from_borrowed`.
+- **Locks**: Prefer `try_lock`/`lock().ok()` in FFI and caches; avoid `unwrap()` on mutexes in hot paths. Per-category sub-locks in `ffi::state` follow the canonical order documented above; never acquire them out of order while holding the residual outer mutex.
+- **Error handling**: Always use connection-specific error storage when `conn_id` is available; fall back to global error state only for functions without connection context. The dedicated `RwLock` in `ffi::state` logs `log::error!` on poison so silent diagnostic loss is observable.
+- **Defaults**: `block-cursor-fetch` and `statement-handle-reuse` ship enabled by default. Consumers can opt out via `default-features = false, features = ["test-helpers", "observability"]` in their `Cargo.toml`.
 
 

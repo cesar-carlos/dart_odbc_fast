@@ -1,4 +1,3 @@
-pub mod arena;
 pub mod bound_param;
 pub mod bulk_insert;
 pub mod columnar;
@@ -15,7 +14,6 @@ pub mod types;
 #[cfg(feature = "columnar-v2")]
 pub mod columnar_v2;
 
-pub use arena::Arena;
 pub use bound_param::{
     deserialize_param_buffer, is_directed_param_buffer, BoundParam, ParamDirection, ParamList,
 };

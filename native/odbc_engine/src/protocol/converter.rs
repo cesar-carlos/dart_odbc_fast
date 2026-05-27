@@ -39,6 +39,22 @@ fn decode_bigint_cell(
     }
 }
 
+/// Transpose a row-major [`RowBuffer`] into a column-major [`RowBufferV2`].
+///
+/// **Deprecation note (Sprint 2):** when the `block-cursor-fetch` feature
+/// is enabled the engine populates `RowBufferV2` directly from the cursor
+/// via [`crate::engine::core::columnar_fetch::fetch_columnar_into`],
+/// avoiding the per-cell `.clone()` cost this function pays. The function
+/// is retained because:
+///
+/// - It is still the path taken when `block-cursor-fetch` is OFF.
+/// - It backs `ColumnarEncoder::encode_for_bulk` which has no cursor
+///   context.
+/// - It serves as the byte-parity reference for
+///   `columnar_fetch::fetch_columnar_into` regression tests.
+///
+/// New code should prefer the direct path when both a cursor and the
+/// `block-cursor-fetch` feature are available.
 pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> Result<RowBufferV2> {
     let col_count = buffer.column_count();
     let mut v2 = RowBufferV2::with_capacity(col_count);

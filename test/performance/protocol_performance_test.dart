@@ -226,8 +226,7 @@ void main() {
       expect(
         legacyWatch.elapsedMicroseconds,
         lessThanOrEqualTo(maxAllowedLegacy),
-        reason:
-            'StringBuffer path should not be more than '
+        reason: 'StringBuffer path should not be more than '
             '${((noiseTolerance - 1) * 100).round()}% faster than '
             'interpolation; if it consistently is, switch error '
             'messages to StringBuffer.',

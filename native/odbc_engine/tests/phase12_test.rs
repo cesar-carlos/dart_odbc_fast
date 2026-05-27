@@ -20,16 +20,6 @@ mod tests {
     }
 
     #[test]
-    fn test_arena_allocator() {
-        let mut arena = Arena::new(1024);
-        let ptr = arena.allocate(100);
-        assert!(!ptr.is_null());
-
-        let ptr2 = arena.allocate(200);
-        assert!(!ptr2.is_null());
-    }
-
-    #[test]
     fn test_row_buffer_to_columnar() {
         let mut v1 = RowBuffer::new();
         v1.add_column("id".to_string(), OdbcType::Integer);

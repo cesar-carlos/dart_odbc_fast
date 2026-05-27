@@ -7,6 +7,35 @@ use crate::pool::SharedPooledConnection;
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
+
+/// Populate `row_buffer.columns` from `cursor` metadata and return the
+/// matching `Vec<OdbcType>` ordered by column index. Shared by all
+/// streaming entry points so the per-column inspection only lives in one
+/// place. Mirrors `ExecutionEngine::describe_columns` shape but does not
+/// route through a plugin (streaming has no plugin context yet).
+fn describe_streaming_columns<C>(
+    cursor: &mut C,
+    row_buffer: &mut RowBuffer,
+) -> Result<Vec<OdbcType>>
+where
+    C: ResultSetMetadata,
+{
+    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+    let cols_u16: u16 = cols_i16
+        .try_into()
+        .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+    let cols_usize: usize = cols_u16.into();
+    let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+    for col_idx in 1..=cols_u16 {
+        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+        let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+        let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
+        let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
+        row_buffer.add_column(col_name.to_string(), odbc_type);
+        column_types.push(odbc_type);
+    }
+    Ok(column_types)
+}
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -140,39 +169,12 @@ impl StreamingExecutor {
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
 
         if let Some(mut cursor) = cursor {
-            let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-            for col_idx in 1..=cols_u16 {
-                let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
-
-            let mut cell_reader = CellReader::new();
-            while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::with_capacity(column_types.len());
-
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-
-                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                    row_data.push(cell_data);
-                }
-
-                row_buffer.add_row(row_data);
-            }
+            let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+            let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
+                cursor,
+                &column_types,
+                &mut row_buffer,
+            )?;
 
             // FOR JSON normalisation — buffer-mode streaming materialises
             // the full result before encoding, so it's safe (and necessary,
@@ -206,39 +208,12 @@ impl StreamingExecutor {
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
 
         if let Some(mut cursor) = cursor {
-            let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-            let cols_u16: u16 = cols_i16
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-            let cols_usize: usize = cols_u16.into();
-
-            let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-            for col_idx in 1..=cols_u16 {
-                let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-                let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-                let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-                let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-                row_buffer.add_column(col_name.to_string(), odbc_type);
-                column_types.push(odbc_type);
-            }
-
-            let mut cell_reader = CellReader::new();
-            while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::with_capacity(column_types.len());
-
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-
-                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                    row_data.push(cell_data);
-                }
-
-                row_buffer.add_row(row_data);
-            }
+            let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+            let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
+                cursor,
+                &column_types,
+                &mut row_buffer,
+            )?;
 
             // FOR JSON normalisation — see execute_streaming above (closes #2).
             coalesce_for_json_rows(&mut row_buffer);
@@ -315,25 +290,10 @@ impl StreamingExecutor {
             None => return Ok(()),
         };
 
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
         let mut row_buffer = RowBuffer::new();
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
+        let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
 
         let mut first_batch = true;
-        let mut cell_reader = CellReader::new();
         loop {
             if cancel_requested
                 .as_ref()
@@ -343,23 +303,12 @@ impl StreamingExecutor {
             }
 
             row_buffer.rows.clear();
-            let mut rows_fetched = 0;
-
-            while rows_fetched < batch_size {
-                let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? else {
-                    break;
-                };
-                let mut row_data = Vec::with_capacity(column_types.len());
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-                    row_data.push(cell_data);
-                }
-                row_buffer.add_row(row_data);
-                rows_fetched += 1;
-            }
+            crate::engine::fetch::fetch_batch_into_row_buffer(
+                &mut cursor,
+                &column_types,
+                batch_size,
+                &mut row_buffer,
+            )?;
 
             if row_buffer.row_count() == 0 {
                 if first_batch {

@@ -6,14 +6,17 @@ use crate::protocol::ParamValue;
 use odbc_api::Connection;
 use std::sync::Arc;
 
+/// Borrowed query plan — describes a validated SQL string without owning
+/// it. Avoids one `String::from(sql)` per query in the hot path; the
+/// borrowed `&str` is always the same one the caller already owns.
 #[derive(Debug)]
-pub struct QueryPlan {
-    sql: String,
+pub struct QueryPlan<'a> {
+    sql: &'a str,
     use_cache: bool,
 }
 
-impl QueryPlan {
-    pub fn new(sql: String) -> Self {
+impl<'a> QueryPlan<'a> {
+    pub fn new(sql: &'a str) -> Self {
         Self {
             sql,
             use_cache: true,
@@ -21,7 +24,7 @@ impl QueryPlan {
     }
 
     pub fn sql(&self) -> &str {
-        &self.sql
+        self.sql
     }
 
     pub fn use_cache(&self) -> bool {
@@ -46,16 +49,12 @@ impl QueryPipeline {
         }
     }
 
-    pub fn parse_sql(&self, sql: &str) -> Result<QueryPlan> {
-        if sql.trim().is_empty() {
-            return Err(OdbcError::ValidationError(
-                "SQL query cannot be empty".to_string(),
-            ));
-        }
-        Ok(QueryPlan::new(sql.to_string()))
+    pub fn parse_sql<'a>(&self, sql: &'a str) -> Result<QueryPlan<'a>> {
+        validate_sql_not_empty(sql)?;
+        Ok(QueryPlan::new(sql))
     }
 
-    pub fn execute(&self, conn: &Connection<'static>, plan: QueryPlan) -> Result<Vec<u8>> {
+    pub fn execute(&self, conn: &Connection<'static>, plan: QueryPlan<'_>) -> Result<Vec<u8>> {
         self.execution_engine.execute_query(conn, plan.sql())
     }
 
@@ -70,7 +69,7 @@ impl QueryPipeline {
         cached: &mut CachedConnection,
         sql: &str,
     ) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine.execute_query_cached(cached, sql)
     }
 
@@ -80,7 +79,7 @@ impl QueryPipeline {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine
             .execute_query_with_params(conn, sql, params)
     }
@@ -93,7 +92,7 @@ impl QueryPipeline {
         timeout_sec: Option<usize>,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine.execute_query_with_params_and_timeout(
             conn,
             sql,
@@ -111,13 +110,13 @@ impl QueryPipeline {
         timeout_sec: Option<usize>,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine
             .execute_query_with_bound_params_and_timeout(conn, sql, bound, timeout_sec, fetch_size)
     }
 
     pub fn execute_multi(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine.execute_multi_result(conn, sql)
     }
 
@@ -127,7 +126,7 @@ impl QueryPipeline {
         sql: &str,
         params: &[crate::protocol::ParamValue],
     ) -> Result<Vec<u8>> {
-        self.parse_sql(sql)?;
+        validate_sql_not_empty(sql)?;
         self.execution_engine
             .execute_multi_result_with_params(conn, sql, params)
     }
@@ -137,26 +136,35 @@ impl QueryPipeline {
     }
 }
 
+fn validate_sql_not_empty(sql: &str) -> Result<()> {
+    if sql.trim().is_empty() {
+        return Err(OdbcError::ValidationError(
+            "SQL query cannot be empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_query_plan_new() {
-        let plan = QueryPlan::new("SELECT 1".to_string());
+        let plan = QueryPlan::new("SELECT 1");
         assert_eq!(plan.sql(), "SELECT 1");
         assert!(plan.use_cache());
     }
 
     #[test]
     fn test_query_plan_sql() {
-        let plan = QueryPlan::new("SELECT * FROM users".to_string());
+        let plan = QueryPlan::new("SELECT * FROM users");
         assert_eq!(plan.sql(), "SELECT * FROM users");
     }
 
     #[test]
     fn test_query_plan_use_cache() {
-        let plan = QueryPlan::new("SELECT 1".to_string());
+        let plan = QueryPlan::new("SELECT 1");
         assert!(plan.use_cache());
     }
 
@@ -253,7 +261,7 @@ mod tests {
 
     #[test]
     fn query_plan_debug_includes_sql_fragment() {
-        let plan = QueryPlan::new("SELECT 1".to_string());
+        let plan = QueryPlan::new("SELECT 1");
         let debug = format!("{plan:?}");
         assert!(debug.contains("SELECT 1"));
     }

@@ -310,9 +310,9 @@ void main() {
 
     group('streamQueryColumnar', () {
       test('yields TypedColumnarResult chunks', () async {
-        final chunks =
-            await service.streamQueryColumnar('test-connection', 'SELECT 1')
-                .toList();
+        final chunks = await service
+            .streamQueryColumnar('test-connection', 'SELECT 1')
+            .toList();
         expect(chunks, isNotEmpty);
         for (final r in chunks) {
           expect(r.isSuccess(), isTrue);

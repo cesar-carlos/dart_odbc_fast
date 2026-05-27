@@ -57,6 +57,32 @@ pub fn execute_query_with_cached_connection(
     PIPELINE.execute_direct_cached(cached, sql)
 }
 
+/// Cached counterpart of [`execute_query_with_params`].
+///
+/// Sprint 4.2: when the FFI call originates from a regular (non-pooled)
+/// connection it already has a `CachedConnection`, so we route the
+/// `PreparedStandard`-flavoured execute through the per-connection
+/// statement-handle cache instead of going through the raw connection
+/// path that re-prepares on every call. Pooled connections continue on
+/// the legacy route until they grow their own cache (follow-up).
+///
+/// The dispatcher delegates the heavy lifting to
+/// [`crate::handles::CachedConnection::execute_query_with_params`] so
+/// the cache lookup, fresh prepare, parameter binding, and result
+/// encoding all live in one place.
+pub fn execute_query_with_cached_connection_params(
+    cached: &mut CachedConnection,
+    sql: &str,
+    params: &[ParamValue],
+) -> Result<Vec<u8>> {
+    if sql.trim().is_empty() {
+        return Err(crate::error::OdbcError::ValidationError(
+            "SQL query cannot be empty".to_string(),
+        ));
+    }
+    cached.execute_query_with_params(sql, params)
+}
+
 pub fn execute_query_with_params(
     conn: &Connection<'static>,
     sql: &str,

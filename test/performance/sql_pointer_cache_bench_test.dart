@@ -113,8 +113,7 @@ void main() {
               'scenario': 'sql_cache.baseline_alloc_free',
               'elapsedMs': baselineMicros / 1000.0,
               'rowsPerSecond': 0,
-              'queriesPerSecond':
-                  _iterations / (baselineMicros / 1000000),
+              'queriesPerSecond': _iterations / (baselineMicros / 1000000),
               'latencyP95Micros': 0,
               'fallbacksToBlocking': 0,
             },

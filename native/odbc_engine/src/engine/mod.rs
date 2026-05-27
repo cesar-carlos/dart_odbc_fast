@@ -4,6 +4,7 @@ pub mod connection;
 pub mod core;
 pub mod dbms_info;
 pub mod environment;
+pub(crate) mod fetch;
 pub mod identifier;
 pub mod query;
 pub mod sqlserver_json;
@@ -35,10 +36,10 @@ pub use identifier::{
 };
 pub use query::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
-    execute_query_with_connection, execute_query_with_param_buffer,
-    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
-    execute_query_with_params, execute_query_with_params_and_timeout, get_global_metrics,
-    ResultEncoding,
+    execute_query_with_cached_connection_params, execute_query_with_connection,
+    execute_query_with_param_buffer, execute_query_with_param_buffer_and_timeout,
+    execute_query_with_param_buffer_encoding, execute_query_with_params,
+    execute_query_with_params_and_timeout, get_global_metrics, ResultEncoding,
 };
 pub use sqlserver_json::{
     coalesce_for_json_rows, is_for_json_result, SQLSERVER_FOR_JSON_COLUMN_NAME,

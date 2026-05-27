@@ -84,6 +84,7 @@ impl Default for ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-helpers")]
     use crate::test_helpers::load_dotenv;
 
     #[test]
@@ -105,6 +106,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_create_pool() {
         load_dotenv();
         let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -122,6 +124,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_create_multiple_pools() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -139,6 +142,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_get_pool() {
         load_dotenv();
         let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -171,6 +175,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_get_pool_state() {
         load_dotenv();
         let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -205,6 +210,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_close_pool() {
         load_dotenv();
         let connection_string = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");
@@ -241,6 +247,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_pool_id_increment() {
         load_dotenv();
         let conn_str = std::env::var("ODBC_TEST_DSN").expect("ODBC_TEST_DSN not set");

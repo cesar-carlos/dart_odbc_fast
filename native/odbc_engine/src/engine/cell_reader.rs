@@ -1,6 +1,6 @@
 use crate::error::{OdbcError, Result};
 use crate::protocol::OdbcType;
-use odbc_api::CursorRow;
+use odbc_api::{CursorRow, Nullable};
 
 #[derive(Default)]
 pub struct CellReader {
@@ -63,6 +63,10 @@ impl CellReader {
             .map(|value| value.map(wide_text_to_utf8_bytes))
     }
 
+    /// Reads a binary cell. The internal buffer is reused across calls so the
+    /// driver appends into already-allocated capacity; only the produced
+    /// `Vec<u8>` returned to the caller is freshly allocated (and sized to
+    /// the exact cell length to avoid wasting RAM in long result sets).
     fn read_binary(
         &mut self,
         row: &mut CursorRow<'_>,
@@ -74,47 +78,52 @@ impl CellReader {
             .map_err(OdbcError::from)?;
 
         if has_value {
-            let mut out = Vec::new();
-            std::mem::swap(&mut out, &mut self.binary_buf);
-            self.binary_buf = Vec::with_capacity(out.capacity());
-            Ok(Some(out))
+            // Tightly-sized copy so each cell only owns its own bytes; the
+            // shared `binary_buf` keeps its capacity for the next cell.
+            Ok(Some(self.binary_buf.as_slice().to_vec()))
         } else {
             Ok(None)
         }
     }
 
+    /// Fetches the cell directly as `SQL_C_SLONG` (driver-side conversion).
+    ///
+    /// Replaces the previous path of `SQLGetData(SQL_C_WCHAR)` → `String::from_utf16_lossy`
+    /// → `trim().parse::<i32>()` (5 allocations + 2 transcodings per cell)
+    /// with a single fixed-size FFI fetch into a stack-allocated `Nullable<i32>`.
+    /// `Integer` columns originate from `SQL_INTEGER` / `SQL_SMALLINT` /
+    /// `SQL_TINYINT` / `SQL_BIT`, all losslessly convertible to `i32` by the
+    /// driver. Drivers that surface dynamically-typed values (e.g. SQLite
+    /// affinity) under an `Integer` label will surface a clear conversion
+    /// error here instead of silently round-tripping the value as raw text.
     fn read_i32_as_le_bytes(
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
     ) -> Result<Option<Vec<u8>>> {
-        let wide_text = self.read_wide_text(row, column_number)?;
-        let Some(wide_text) = wide_text else {
-            return Ok(None);
-        };
-
-        let s = String::from_utf16_lossy(wide_text);
-        if let Ok(value) = s.trim().parse::<i32>() {
-            return Ok(Some(value.to_le_bytes().to_vec()));
+        let mut target: Nullable<i32> = Nullable::null();
+        row.get_data(column_number, &mut target)
+            .map_err(OdbcError::from)?;
+        match target.into_opt() {
+            None => Ok(None),
+            Some(value) => Ok(Some(value.to_le_bytes().to_vec())),
         }
-        Ok(Some(s.into_bytes()))
     }
 
+    /// Fetches the cell directly as `SQL_C_SBIGINT`. See [`Self::read_i32_as_le_bytes`]
+    /// for the rationale on bypassing the wide-text conversion path.
     fn read_i64_as_le_bytes(
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
     ) -> Result<Option<Vec<u8>>> {
-        let wide_text = self.read_wide_text(row, column_number)?;
-        let Some(wide_text) = wide_text else {
-            return Ok(None);
-        };
-
-        let s = String::from_utf16_lossy(wide_text);
-        if let Ok(value) = s.trim().parse::<i64>() {
-            return Ok(Some(value.to_le_bytes().to_vec()));
+        let mut target: Nullable<i64> = Nullable::null();
+        row.get_data(column_number, &mut target)
+            .map_err(OdbcError::from)?;
+        match target.into_opt() {
+            None => Ok(None),
+            Some(value) => Ok(Some(value.to_le_bytes().to_vec())),
         }
-        Ok(Some(s.into_bytes()))
     }
 
     fn read_wide_text(
@@ -133,24 +142,6 @@ impl CellReader {
             Ok(None)
         }
     }
-}
-
-#[cfg(test)]
-fn text_bytes_to_i32_le_bytes(bytes: &[u8]) -> Vec<u8> {
-    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
-    if let Ok(value) = s.parse::<i32>() {
-        return value.to_le_bytes().to_vec();
-    }
-    bytes.to_vec()
-}
-
-#[cfg(test)]
-fn text_bytes_to_i64_le_bytes(bytes: &[u8]) -> Vec<u8> {
-    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
-    if let Ok(value) = s.parse::<i64>() {
-        return value.to_le_bytes().to_vec();
-    }
-    bytes.to_vec()
 }
 
 pub fn read_cell_bytes(
@@ -172,7 +163,9 @@ fn wide_text_to_utf8_bytes(wide_buf: &[u16]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-helpers")]
     use crate::engine::{execute_query_with_cached_connection, OdbcConnection, OdbcEnvironment};
+    #[cfg(feature = "test-helpers")]
     use crate::test_helpers::load_dotenv;
 
     #[test]
@@ -193,54 +186,6 @@ mod tests {
     }
 
     #[test]
-    fn test_text_bytes_to_i32_le_bytes_valid_number() {
-        let out = text_bytes_to_i32_le_bytes(b"42");
-        assert_eq!(out, 42i32.to_le_bytes());
-    }
-
-    #[test]
-    fn test_text_bytes_to_i32_le_bytes_trimmed_negative() {
-        let out = text_bytes_to_i32_le_bytes(b"  -1  ");
-        assert_eq!(out, (-1i32).to_le_bytes());
-    }
-
-    #[test]
-    fn test_text_bytes_to_i32_le_bytes_empty_fallback() {
-        let out = text_bytes_to_i32_le_bytes(b"");
-        assert_eq!(out, b"");
-    }
-
-    #[test]
-    fn test_text_bytes_to_i32_le_bytes_non_numeric_fallback() {
-        let out = text_bytes_to_i32_le_bytes(b"abc");
-        assert_eq!(out, b"abc");
-    }
-
-    #[test]
-    fn test_text_bytes_to_i64_le_bytes_valid_number() {
-        let out = text_bytes_to_i64_le_bytes(b"42");
-        assert_eq!(out, 42i64.to_le_bytes());
-    }
-
-    #[test]
-    fn test_text_bytes_to_i64_le_bytes_fallback() {
-        let out = text_bytes_to_i64_le_bytes(b"not-a-number");
-        assert_eq!(out, b"not-a-number");
-    }
-
-    #[test]
-    fn test_text_bytes_to_i32_le_bytes_max_i32() {
-        let out = text_bytes_to_i32_le_bytes(b"2147483647");
-        assert_eq!(out, i32::MAX.to_le_bytes());
-    }
-
-    #[test]
-    fn test_text_bytes_to_i64_le_bytes_max_i64() {
-        let out = text_bytes_to_i64_le_bytes(b"9223372036854775807");
-        assert_eq!(out, i64::MAX.to_le_bytes());
-    }
-
-    #[test]
     fn cell_reader_default_matches_new() {
         let a = CellReader::default();
         let b = CellReader::new();
@@ -253,6 +198,7 @@ mod tests {
         assert!(wide_text_to_utf8_bytes(&[]).is_empty());
     }
 
+    #[cfg(feature = "test-helpers")]
     fn get_test_dsn() -> Option<String> {
         load_dotenv();
         std::env::var("ODBC_TEST_DSN")
@@ -262,6 +208,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_read_cell_bytes_integer() {
         let conn_str = get_test_dsn().expect("ODBC_TEST_DSN not set");
 
@@ -294,6 +241,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_read_cell_bytes_text() {
         let conn_str = get_test_dsn().expect("ODBC_TEST_DSN not set");
 
@@ -326,6 +274,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_read_cell_bytes_null() {
         let conn_str = get_test_dsn().expect("ODBC_TEST_DSN not set");
 
@@ -359,6 +308,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "test-helpers")]
     fn test_read_cell_bytes_bigint() {
         let conn_str = get_test_dsn().expect("ODBC_TEST_DSN not set");
 

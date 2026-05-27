@@ -42,9 +42,8 @@ class ReportRepositoryV1 {
       'SELECT id, occurred_at FROM events ORDER BY occurred_at DESC',
     );
     return r.fold(
-      (qr) => qr.rows
-          .map((row) => {'id': row[0], 'occurred_at': row[1]})
-          .toList(),
+      (qr) =>
+          qr.rows.map((row) => {'id': row[0], 'occurred_at': row[1]}).toList(),
       (_) => const [],
     );
   }
@@ -63,9 +62,8 @@ class ReportRepositoryV2 {
       'SELECT id, occurred_at FROM events ORDER BY occurred_at DESC',
     );
     return r.fold(
-      (qr) => qr.rows
-          .map((row) => {'id': row[0], 'occurred_at': row[1]})
-          .toList(),
+      (qr) =>
+          qr.rows.map((row) => {'id': row[0], 'occurred_at': row[1]}).toList(),
       (_) => const [],
     );
   }
@@ -95,8 +93,7 @@ class _InMemoryQueryService implements IQueryService {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw UnsupportedError(
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
         'demo fake exposes only executeQuery — '
         'this is the point of IQueryService',
       );

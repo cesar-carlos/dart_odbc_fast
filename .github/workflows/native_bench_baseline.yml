@@ -1,0 +1,61 @@
+name: Native bench baseline
+
+# Weekly cron job that runs the four synthetic Criterion benches in
+# native/odbc_engine/benches/ and publishes the HTML report as an
+# artefact. Non-blocking: this workflow never fails the build; it
+# exists only to give maintainers a trended view of perf-sensitive
+# code paths over time.
+#
+# Manual trigger (`workflow_dispatch`) is enabled so a maintainer can
+# refresh the snapshot after merging a perf PR without waiting for
+# the next scheduled run.
+
+"on":
+  schedule:
+    # Mondays at 06:00 UTC — outside peak CI hours, before the start
+    # of the European working week.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (pinned toolchain)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native -> target
+
+      - name: Install ODBC (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
+
+      - name: Run synthetic Criterion benches (default features)
+        run: |
+          cd native/odbc_engine
+          cargo bench --bench cell_reader_bench
+          cargo bench --bench encoder_bench
+          cargo bench --bench ffi_contention_bench
+          cargo bench --bench prepared_cache_bench
+
+      - name: Upload Criterion HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-criterion-report
+          path: native/odbc_engine/target/criterion/
+          if-no-files-found: warn
+          retention-days: 30

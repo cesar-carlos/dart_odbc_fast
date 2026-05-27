@@ -7,6 +7,430 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — Roadmap v3.x (additive + deprecation gradual)
 
+### Performance — Engine nativo, follow-ups dos 4 sprints (defaults flipados, perf micro-otimizações, hardening, native temporal, loom, Sprint 3 final)
+
+Continuação direta do plano `engine_perf_3_sprints_84fce471.plan.md`,
+agora seguindo o follow-up `engine_perf_follow-ups_b8f0b22a.plan.md`.
+Oito PRs em quatro fases, ordenados do menor risco/menor escopo (quick
+wins) ao maior (finalização do split do `GlobalState`).
+
+#### PR1.1 — Flip dos defaults (`block-cursor-fetch` + `statement-handle-reuse` on by default)
+
+Decidido após CI matrix verde nas 4 combinações de feature e suíte
+completa passando consistentemente: ambas as features de perf agora
+fazem parte do `default` do `Cargo.toml`. Quem precisa do
+comportamento legado (caminho per-cell + sem reuso de prepared) pode
+opt-out via:
+
+```toml
+odbc_engine = { version = "...", default-features = false, features = ["test-helpers", "observability"] }
+```
+
+O fallback automático do `block-cursor-fetch` para LOBs/MAX sem
+largura advertised continua intacto — drivers com schemas exóticos
+não sofrem regressão. O `statement-handle-reuse` continua com o
+`OwnedPreparedStatement` RAII que confina o `mem::transmute` em um
+único ponto de unsafe com drop-order garantido por declaração de
+campo em `CachedConnection`.
+
+#### PR1.2 — Perf micro-otimizações (`BlockCursor` batch via env var, plugin RwLock, catalog cache key)
+
+- **`ODBC_FAST_BLOCK_FETCH_BATCH` env var** (`block_fetch::configured_batch_size`):
+  permite tunar o `batch_size` do `BlockCursor` em runtime sem
+  recompilar. Default permanece `DEFAULT_BATCH_SIZE = 256`; valores
+  inválidos ou ausentes caem no default. Cache via `OnceLock` para
+  não pagar `std::env::var` a cada query.
+- **Plugin lookup sem `Mutex`**: `ExecutionEngine::active_plugin`
+  migrou de `Arc<Mutex<Option<Arc<dyn DriverPlugin>>>>` para
+  `Arc<RwLock<...>>`. Reads por query (`current_plugin()`,
+  `is_oracle_plugin_active()`) viram lock-free na ausência de
+  escrita; writes (`set_connection_string`) continuam serializados
+  mas são infrequentes.
+- **`build_catalog_cache_key` sem alocação extra**: substitui
+  `conn_id.to_string()` + `String::push_str` por um único
+  `write!(&mut key, "{}:{}", conn_id, table)` com `String::with_capacity`
+  reservada para o pior caso (10 dígitos + ':' + nome da tabela).
+  Reduz de 2 para 1 alloc por catalog lookup.
+
+#### PR1.3 — Safety hygiene (tripwire `mem::transmute`, log poison, init `ASYNC_REQUESTS`)
+
+- **Tripwire `size_of` em `OwnedPreparedStatement`**: novo unit test
+  `from_borrowed_transmute_size_invariant_holds` que valida que
+  `Prepared<StatementImpl<'static>>` e `OwnedPreparedStatement` têm
+  o mesmo tamanho. Se uma versão futura de `odbc-api` adicionar um
+  campo lifetime-dependent ao `Prepared`, o teste falha — orientando
+  o bug a quem deve corrigir antes de virar UB no cache.
+- **Log explícito em poison de `RwLock`**: `connection_errors_read`
+  e `_write` agora casam `PoisonError` e logam via `log::error!`
+  antes de retornar `None`. Diagnostic loss silencioso vira observável.
+- **Documentação + teste concorrente para init de `ASYNC_REQUESTS`**:
+  doc-comment em `async_requests()` esclarece que `OnceLock::get_or_init`
+  é thread-safe e o `Mutex` interno fica pronto imediatamente sem
+  handshake separado. Novo test em `ffi/mod.rs::tests::async_requests_concurrent_init_is_lossless`
+  exercita 16 threads × 32 inserts concorrentes via
+  `lock_async_requests()` e valida que nenhum insert é perdido na
+  race do primeiro acesso.
+
+#### PR2.1 — Sprint 4.2: cache real na rota de params
+
+`CachedConnection` ganhou `execute_query_with_params(sql, params)`
+que mirror o `execute_query_no_params` mas re-binda parâmetros a cada
+execute. O `OwnedPreparedStatement` é reusado por SQL key — re-bind
+por execução é o padrão ODBC normal. `execute_stmt_with_params`
+substitui o `param_values_to_input_params` + `stmt.execute` inline
+para evitar duplicação.
+
+Wire-up no FFI via novo helper `try_cached_legacy_params`:
+
+- Quando o param buffer é uma legacy `ParamValue` list sem NULLs
+  (plano `PreparedStandard`), roteia para o cache.
+- Para DRT1 (`OUT`/`INOUT`), listas com NULL (plano `PreparedNullAware`
+  que precisa de `parameter_descriptions`), ou erro de parse: cai no
+  dispatcher original (`execute_query_with_param_buffer`).
+- Pooled connections não têm cache hoje e continuam usando a rota
+  original (documentado como follow-up).
+
+`prepared_cache_bench` ganha o grupo `parameterized_hit_path` com
+duas variantes (`cache_hit_rebind_only` vs `prepare_every_call`)
+para medir o delta sintético.
+
+#### PR2.2 — Tipos nativos em `block_fetch` para temporal (Date, Time, Timestamp)
+
+`OdbcType::Date`/`Time`/`Timestamp` saem do caminho `WText` (UTF-16
+→ UTF-8) e passam por `BufferDesc::Date`/`Time`/`Timestamp` nativos
+do `odbc-api`. Os 3 novos formatadores em `block_fetch.rs`
+(`format_date_into`, `format_time_into`, `format_timestamp_into`)
+produzem ISO 8601 com:
+
+- `Date`: `YYYY-MM-DD` (10 bytes)
+- `Time`: `HH:MM:SS` (8 bytes, segundo-precisão)
+- `Timestamp`: `YYYY-MM-DD HH:MM:SS.ffffff` (26 bytes, microsegundo-precisão)
+
+A escolha de 6 dígitos para a fração de `Timestamp` cobre PostgreSQL,
+MySQL, MariaDB, Snowflake e Oracle. SQL Server expõe 100-ns (7 dígitos)
+no caminho WCHAR; o 7º dígito é dropped pelo formatador. Datetimes
+truncados desta forma continuam parseáveis pelos decoders Dart
+existentes (que toleram precisão variável).
+
+Wire format **não muda** — continua text bytes. Apenas eliminamos a
+passagem driver-WCHAR → `wide_buf` → UTF-16 → UTF-8 para esses 3
+tipos. Ganho proporcional ao número de colunas temporais no result
+set (caso comum em data warehouses).
+
+`cell_reader_bench` ganha grupos `encode_date_only` e
+`encode_timestamp_only`.
+
+#### PR3.1 — Hygiene (baselines Criterion, CI cron, docs nativas)
+
+- **`benches/baselines/README.md`**: documento o workflow de captura
+  de baselines via `cargo bench -- --save-baseline default`. Diretório
+  começa intencionalmente sem snapshots porque capturar em hardware
+  heterogêneo geraria baselines ruidosos — a captura inicial é
+  produzida pelo cron job do PR3.1 C10 no runner Linux de referência.
+- **`.github/workflows/native_bench_baseline.yml`** (cron semanal +
+  trigger manual via `workflow_dispatch`): roda os 4 benches sintéticos
+  em `ubuntu-latest` e publica o HTML do Criterion como artefato com
+  retenção de 30 dias. Sem gating — somente relatório.
+- **`ARCHITECTURE.md`**: tabela de módulos atualizada com
+  `engine::core::block_fetch`, `engine::core::columnar_fetch`,
+  `engine::fetch`, `ffi::state`, `handles::owned_prepared`. Três
+  diagramas mermaid novos: fetch paths (legacy vs block vs columnar),
+  FFI state sharding (locks por categoria + lock ordering), prepared
+  statement reuse (cache → owned wrapper → driver). Seção
+  "Conventions" atualizada com a regra de defaults flipados e a
+  política de poison logging.
+
+#### PR3.2 — Loom tests opcionais (`tests/loom_state_test.rs`)
+
+`loom = "0.7"` adicionado como dev-dependency e novo
+`tests/loom_state_test.rs` com 3 modelos formais:
+
+1. `errors_writer_reader_interleaving_never_loses_writes`: writer
+   insere uma entrada enquanto reader em paralelo observa — loom
+   explora todas as interleavings e confirma que o estado final
+   sempre contém o valor escrito.
+2. `outer_then_errors_does_not_deadlock_against_errors_only`: thread
+   A adquire na ordem canônica (`outer → errors`), thread B só
+   `errors`. Confirma ausência de ciclo.
+3. `arc_metrics_singleton_is_observed_by_every_thread`: duas threads
+   leem o mesmo `Arc<T>` lock-free — sanity-check de visibilidade.
+
+O arquivo é gated por `#![cfg(loom)]` então em builds normais é uma
+integração-test vazia. Para rodar: `RUSTFLAGS="--cfg loom" cargo test
+--test loom_state_test --release --features ...`. Novo job CI
+`loom` rodando esse comando em `ubuntu-latest` com
+`continue-on-error: true` (non-blocking, timeout 30 min).
+
+#### PR4.1 — Sprint 3 finalização (legacy global error em `RwLock` dedicado)
+
+`state.last_error` e `state.last_structured_error` saem da
+`GlobalState` e viram um `RwLock<LegacyGlobalError>` dedicado em
+`ffi::state`. Reads do legacy error (caminho comum: polling Dart-side
+depois de uma chamada FFI falhada) não precisam mais do outer mutex
+da `GlobalState`. Os helpers existentes (`set_connection_error`,
+`set_connection_structured_error`, `get_connection_error`,
+`get_connection_structured_error`, `set_error`, `get_error`)
+mantêm a mesma assinatura mas internalizam o split — `_state`
+unused é deixado para preservar o shape dos call sites enquanto
+nesse ciclo.
+
+Novos helpers públicos em `state`:
+
+- `legacy_global_error_read()` / `_write()`
+- `set_legacy_global_error(msg)`
+- `set_legacy_global_structured_error(err)`
+- `legacy_global_error_message()`
+- `legacy_global_structured_error()`
+
+`tests/state_locking_order_test.rs` ganha 3 testes novos
+(`legacy_error_message_round_trip`,
+`legacy_structured_error_overwrites_plain_message`,
+`legacy_error_message_defaults_to_no_error_string`) que pinam o
+contrato do split.
+
+Os 4 maps restantes (`connections`, `pools`, `transactions`,
+`streams`, mais `xa_*`/`statements`) continuam dentro da
+`GlobalState` porque requerem transições atômicas cross-categoria
+(disconnect remove conexão + cancela transactions/streams; commit
+de XA limpa branches em múltiplos maps). Mover esses corretamente
+exige um helper `with_disconnect_cleanup`-style que adquire locks
+na ordem canônica documentada — escopo grande o suficiente para
+merecer seu próprio plano. O `GlobalState` agora carrega apenas o
+estado que ainda precisa dessa atomicidade cross-categoria.
+
+### Performance — Engine nativo, plano de 4 sprints (BlockCursor, columnar direto, FFI sharding, prepared cache real)
+
+Entrega completa do plano de execução
+`engine_perf_3_sprints_84fce471.plan.md`. Cinco fases (1 baseline +
+4 entregas) com PRs independentes, feature flags onde apropriado
+para coexistência com o caminho legado, e benches Criterion
+sintéticos como linha-base reprodutível sem depender de DSN ODBC
+real. ABI exportada (símbolos em `odbc_exports.def`, cbindgen,
+bindings Dart) e wire format (`MAGIC = 0x4F444243`, MULT envelope,
+OUT1/RC1 trailers) **não mudam** — quem usa o engine via FFI não
+precisa fazer nada.
+
+**Sprint 0 — Baseline e safety net.**
+
+- 4 micro-benches Criterion sintéticos (`cell_reader_bench`,
+  `encoder_bench`, `ffi_contention_bench`, `prepared_cache_bench`)
+  em `native/odbc_engine/benches/`. Cada um isola uma fase e mede
+  delta antes/depois sem precisar de DSN ativo. Registrados no
+  `[[bench]]` block do `Cargo.toml`.
+- `encoder_bench` ganha shapes 1k/10k/100k × 1/10/50 colunas com
+  mistura row-major/colunar e o grupo
+  `direct_columnar_vs_via_row_major` que comprova o ganho do
+  Sprint 2 head-to-head.
+
+**Sprint 1 — `BlockCursor` row-major (feature `block-cursor-fetch`).**
+
+- Novo feature `block-cursor-fetch` (default OFF). Quando ligado,
+  o fetch passa por `engine/core/block_fetch.rs::fetch_rows_into`
+  que binda um `odbc_api::buffers::ColumnarAnyBuffer` no cursor e
+  consome o result set em batches de 256 linhas via
+  `BlockCursor::fetch_with_truncation_check(true)`. Reduz chamadas
+  `SQLFetch` + `SQLGetData` de O(rows × cols) para
+  O(rows / batch_size), com ganho esperado de 2–10x em SELECTs
+  grandes especialmente sobre rede.
+- Fallback automático para o caminho legado quando alguma coluna
+  não tem largura advertised (LOB, MAX) ou exigiria buffer inline
+  acima de 256 KiB por célula. A decisão é tomada **antes** do bind,
+  pelo helper `plan_buffer_descs`, então não há recuperação no meio
+  do fetch.
+- Novo módulo `engine/fetch.rs` com dispatcher único
+  `fetch_cursor_into_row_buffer` que centraliza o cfg-gate entre
+  legacy `cursor.next_row()` e block-cursor. 6 dos 8 call sites
+  originais (em `execution_engine.rs`, `streaming.rs`,
+  `cached_connection.rs`) agora chamam o dispatcher; os 2 restantes
+  (`encode_cursor`/`encode_cursor_v1` na rota multi-result) ficam
+  no per-cell porque emprestam o cursor por `&mut C` —
+  `BlockCursor::bind_buffer` exigiria propriedade.
+- Matriz CI: jobs novos em `.github/workflows/ci.yml` rodam
+  `cargo build` + `cargo test` com `--features block-cursor-fetch`
+  e com `--features statement-handle-reuse` separadamente para
+  bloquear regressões em ambos os perfis.
+
+**Sprint 2 — Caminho colunar direto do cursor (mesma feature flag).**
+
+- Novo `engine/core/columnar_fetch.rs::fetch_columnar_into`
+  popula `ColumnData::{Integer, BigInt, Varchar, Binary}` direto
+  dos views do `ColumnarAnyBuffer` (`AnySlice::as_nullable_slice`,
+  `as_w_text_view`, `as_bin_view`), **sem** materializar o
+  `RowBuffer` row-major intermediário. Elimina o
+  `.clone()` por célula que o `row_buffer_to_columnar` antigo
+  pagava em colunas Binary/Varchar (~50% menos RAM no path
+  colunar).
+- `encode_optional_cursor` em `execution_engine.rs` ganha
+  branch condicional: quando `use_columnar` está ligado, o
+  feature está on, e a query **não** é FOR JSON, vai pelo
+  caminho direto; senão cai no Sprint 1 (row-major +
+  `encode_query_result_payload`).
+- `row_buffer_to_columnar` marcado como deprecated no doc-comment
+  (ainda usado por `encode_for_bulk` e pela rota legacy/quando o
+  feature está off).
+- Regressão `tests/block_fetch_parity_test.rs` valida byte-a-byte
+  que `ColumnarEncoder::encode(direct_v2)` produz exatamente os
+  mesmos bytes que `ColumnarEncoder::encode(row_buffer_to_columnar(rb))`
+  em fixtures sintéticos com inteiros, varchar com nulls/unicode,
+  binary e mistura.
+
+**Sprint 3 — Decomposição conservadora do `Mutex<GlobalState>`.**
+
+- Novo módulo `native/odbc_engine/src/ffi/state/` com a estrutura
+  sharded por categoria. Lock ordering canônica documentada no
+  header do módulo: `GLOBAL_STATE → ASYNC_REQUESTS →
+  connection_errors`.
+- Imutáveis hoisteados para `OnceLock<Arc<_>>` (zero lock):
+  - `state::ffi_metrics() -> Arc<Metrics>`
+  - `state::ffi_audit_logger() -> Arc<AuditLogger>`
+- Per-connection error map em `RwLock<HashMap<u32, ConnectionError>>`
+  dedicado (escritores não bloqueiam outras categorias; leitores em
+  paralelo via `RwLock::read`):
+  - `state::set_connection_error`,
+    `state::set_connection_structured_error`,
+    `state::get_connection_error_message`,
+    `state::get_connection_structured_error`,
+    `state::clear_connection_error`.
+- `AsyncRequestManager` em `Mutex<AsyncRequestManager>` próprio
+  (em `ffi/mod.rs` por causa do acoplamento de tipos FFI). Polling
+  de requests async não bloqueia mais a fila de queries síncronas.
+- ~10 call sites em `ffi/mod.rs` migrados para os novos helpers:
+  os 9 `Arc::clone(&state.metrics)` viram `state::ffi_metrics()`;
+  todos os `state.audit_logger.X()` viram `state::ffi_audit_logger().X()`;
+  os 7 acessos diretos a `state.connection_errors` viram os helpers
+  do módulo; os 8 acessos a `state.async_requests` passam por
+  `lock_async_requests()`.
+- Funções `set_connection_error` / `set_connection_structured_error`
+  preservaram a assinatura `(&mut state, ...)` para minimizar churn
+  no chamador, mas internamente escrevem para o `RwLock` dedicado +
+  o `state.last_error` legado.
+- `tests/state_locking_order_test.rs` exercita as helpers sob
+  carga concorrente (8 threads × 200 writes, leitores em paralelo)
+  validando que não há deadlock e que escritas/leituras nunca
+  corrompem o slot por conexão. Atestações estáticas adicionais
+  garantem que `ffi_metrics`/`ffi_audit_logger` retornam o mesmo
+  `Arc` (singleton estável).
+
+**Sprint 4 — Prepared statement cache real
+(feature `statement-handle-reuse`).**
+
+- Novo `handles/owned_prepared.rs::OwnedPreparedStatement`
+  encapsula o `mem::transmute` que alarga o lifetime do
+  `Prepared<StatementImpl<'conn>>` para `'static`. O `unsafe`
+  fica confinado em **uma única função** (`from_borrowed`) com
+  contrato `# Safety` explícito; o acesso ao statement passa por
+  `with_mut(F)` que reborrow-a sob o lifetime da closure, não
+  vaza referência.
+- `CachedConnection` declara `stmt_cache` **antes** de `conn` para
+  que o drop glue execute `stmt_cache.drop()` primeiro,
+  satisfazendo o invariante de drop-order que o
+  `OwnedPreparedStatement::from_borrowed` exige. Documentado no
+  header da struct para que reviewers futuros não reordenem.
+- `PreparedStatementCache` em `engine/core/prepared_cache.rs`
+  promovido de "bookkeeping LRU" a agregador de métricas
+  cross-connection com novos métodos `record_hit()` e
+  `record_prepare()`. A LRU de bookkeeping interna permanece como
+  set autoritativo de SQLs tracked (para a FFI existente que
+  inspeciona tamanho/eviction). O cache real de handles
+  `Prepared` continua dentro de `CachedConnection` (per-conexão,
+  via `OwnedPreparedStatement`).
+- `tests/prepared_cache_invalidation_test.rs` cobre as novas
+  invariantes: contadores `record_hit`/`record_prepare`
+  independentes do `get_or_insert`; `record_execution` não afeta
+  size/hits; snapshot `get_metrics` consistente com counters
+  individuais; `clear` reseta a LRU mas preserva o histórico
+  cumulativo de `cache_misses` e `total_executions`.
+
+**Verificação local executada (Windows host):**
+
+- `cargo fmt --check` — sem diffs.
+- `cargo clippy --all-targets --all-features` — 0 warnings, 0 errors.
+- `cargo test --all-targets --no-fail-fast` — todos passam (1542
+  unit + integration).
+- `cargo test --all-targets --features block-cursor-fetch --no-fail-fast`
+  — todos passam.
+- `cargo test --all-targets --features statement-handle-reuse --no-fail-fast`
+  — todos passam.
+- `cargo test --all-targets --all-features --no-fail-fast` — todos
+  passam.
+- `dart analyze` no workspace inteiro: `No issues found!`.
+
+### Performance — Engine nativo (hot path SELECT, fetch e build)
+
+Otimizações ortogonais aplicadas ao engine Rust após análise de
+gargalos no caminho `fetch row → encode bytes → entregar ao Dart`.
+Todas as mudanças preservam a ABI exportada (símbolos, layouts, wire
+format) e o comportamento observável; quem usar o engine direto via
+FFI não precisa mudar nada.
+
+- **Leitura direta de inteiros (`CellReader`).** Colunas mapeadas
+  como `OdbcType::Integer` e `OdbcType::BigInt` agora vão buscar o
+  valor com `SQLGetData(SQL_C_SLONG)` / `SQL_C_SBIGINT` direto em um
+  `Nullable<i32>` / `Nullable<i64>` na stack. O caminho anterior fazia
+  `SQL_C_WCHAR` → `Vec<u16>` → `String::from_utf16_lossy` → `trim()`
+  → `parse::<i32>()` → `Vec<u8>`, custando 5 alocações + duas
+  transcodificações por célula numérica. Como `Integer` só recebe
+  `SQL_INTEGER / SMALLINT / TINYINT / BIT` e `BigInt` só recebe
+  `SQL_BIGINT`, a conversão lateral nunca era necessária. Drivers
+  com tipagem dinâmica (ex.: SQLite com `INTEGER`-affinity) que
+  ofereçam um valor não convertível para `i32` passam a falhar de
+  forma explícita em vez de devolver bytes textuais sob um rótulo
+  de coluna numérica (que já era inválido para o caminho colunar).
+  Removidos os helpers `text_bytes_to_i32_le_bytes` /
+  `text_bytes_to_i64_le_bytes` e seus testes; mantidos os testes
+  de unicode e fallback de UTF-16 → UTF-8 para colunas textuais.
+- **Reuso real do `binary_buf` em `CellReader::read_binary`.** A
+  versão anterior fazia `mem::swap` + `Vec::with_capacity(out.capacity())`,
+  realocando o buffer interno em **toda** célula binária. Agora o
+  `binary_buf` mantém capacidade entre células e cada célula
+  devolvida ao consumidor é uma cópia justa (`as_slice().to_vec()`)
+  para não desperdiçar RAM em result sets longos. Resultado: 1
+  alocação por célula em vez de 2, e capacidade amortizada na
+  coluna inteira.
+- **`QueryPlan` agora referencia o SQL em vez de cloná-lo.** O
+  pipeline alocava `String::from(sql)` em `parse_sql` e nunca
+  mutava a string. `QueryPlan<'a>` virou um wrapper de
+  `&'a str` e os call sites internos (`execute_with_params*`,
+  `execute_multi*`, `execute_direct_cached`, ...) chamam
+  `validate_sql_not_empty(sql)` em vez de construir um plano
+  descartado. Sem mudança de comportamento, uma alocação a menos
+  por query.
+- **Gate de logging por `log::log_enabled!` no `ExecutionEngine`.**
+  Adicionado `StructuredLogger::is_enabled(Level)` e centralizado
+  o setup do `SpanGuard` + `HashMap<span_id>` no helper
+  `log_query_start`. A construção do span (que aloca
+  `sql.to_string()` e toma o `Mutex<HashMap>` do `Tracer` duas
+  vezes, uma no `start` outra no `Drop`) só acontece quando o
+  logger está habilitado **e** o nível `Info` está ativo no `log`
+  crate. Em produção com logging desligado, é zero overhead por
+  query no caminho de tracing-bookkeeping.
+- **Profile de release/bench mais agressivo (`native/Cargo.toml`).**
+  - `lto = "thin"` → `lto = "fat"` (inlining cruzando `odbc-api`,
+    `zstd`, `lz4`, nosso protocolo);
+  - `codegen-units = 16` → `1` (mais oportunidade de inlining em
+    troca de tempo de build);
+  - `panic = "unwind"` explícito — `ffi/guard.rs` depende de
+    `catch_unwind` para traduzir pânicos em códigos de erro
+    estáveis no FFI; trocar para `abort` quebraria isso
+    silenciosamente. O comentário no manifesto explica a decisão;
+  - Novo `[profile.bench]` espelhando o release para que os
+    números do Criterion reflitam o binário que efetivamente
+    enviamos.
+- **Código morto removido.** O módulo `protocol/arena.rs`
+  (`Arena`, ~250 linhas + 17 testes) estava `pub use`'d no barrel
+  do protocolo mas sem nenhum consumidor real (`SemanticSearch`
+  + `grep` no workspace inteiro retornaram apenas os próprios
+  testes do módulo). Removido junto com a referência no
+  `tests/phase12_test.rs`.
+
+Verificação local:
+
+- `cargo check --all-targets`, `cargo clippy --all-targets`,
+  `cargo fmt --check` e `cargo test --all-targets --no-fail-fast`
+  passaram limpos na crate `odbc_engine` (1537 testes unitários +
+  todas as suítes de integração).
+- `dart analyze` no workspace: `No issues found!`.
+
 Roadmap em 3 fases aplicado seguindo as regras do projeto. Todas as
 mudanças são aditivas — nenhuma quebra de API pública. Suite Dart fica
 em zero `dynamic` no `OdbcRepositoryImpl` e ganha mais de 30 novos

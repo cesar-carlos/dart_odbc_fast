@@ -16,40 +16,45 @@
 use crate::error::{OdbcError, Result};
 #[cfg(feature = "statement-handle-reuse")]
 use lru::LruCache;
-use odbc_api::{Connection, Cursor, Prepared, ResultSetMetadata};
+use odbc_api::{Connection, Prepared, ResultSetMetadata};
 #[cfg(feature = "statement-handle-reuse")]
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::ops::Deref;
 
-use crate::engine::cell_reader::CellReader;
-use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
+use crate::protocol::{
+    param_values_to_input_params, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+};
+
+#[cfg(feature = "statement-handle-reuse")]
+use super::owned_prepared::OwnedPreparedStatement;
 
 /// Default cache size when statement-handle-reuse is enabled.
 #[cfg(feature = "statement-handle-reuse")]
 const DEFAULT_STMT_CACHE_SIZE: usize = 32;
 
-#[cfg(feature = "statement-handle-reuse")]
-type StaticPrepared = Prepared<odbc_api::handles::StatementImpl<'static>>;
-
-#[cfg(feature = "statement-handle-reuse")]
-struct CachedPrepared {
-    stmt: StaticPrepared,
-}
-
 /// Wrapper around Connection that optionally caches prepared statements.
 ///
 /// When `statement-handle-reuse` is disabled (default), always prepares fresh.
-/// When enabled, caches prepared statement handles for SQL reuse.
+/// When enabled, caches prepared statement handles for SQL reuse via
+/// [`OwnedPreparedStatement`], which moves the unsafe lifetime-fabrication
+/// into a typed RAII container (sprint 4 split).
+///
+/// ## Drop ordering invariant
+///
+/// `stmt_cache` is declared **before** `conn` so the auto-generated drop
+/// glue runs `stmt_cache.drop()` first. This is the invariant the
+/// [`OwnedPreparedStatement::from_borrowed`] safety contract relies on
+/// — never reorder these fields.
 pub struct CachedConnection {
+    #[cfg(feature = "statement-handle-reuse")]
+    stmt_cache: LruCache<String, OwnedPreparedStatement>,
     conn: Connection<'static>,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
     #[cfg(feature = "statement-handle-reuse")]
     cache_evictions: AtomicU64,
-    #[cfg(feature = "statement-handle-reuse")]
-    stmt_cache: LruCache<String, CachedPrepared>,
 }
 
 impl CachedConnection {
@@ -68,11 +73,11 @@ impl CachedConnection {
         let cap = NonZeroUsize::new(DEFAULT_STMT_CACHE_SIZE)
             .unwrap_or_else(|| NonZeroUsize::new(32).expect("32 is non-zero"));
         Self {
+            stmt_cache: LruCache::new(cap),
             conn,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             cache_evictions: AtomicU64::new(0),
-            stmt_cache: LruCache::new(cap),
         }
     }
 
@@ -105,13 +110,45 @@ impl CachedConnection {
         }
     }
 
+    /// Execute a parameterised query using cached prepared statement when
+    /// available. Sprint 4.2 extension: the same `OwnedPreparedStatement`
+    /// cache used by [`Self::execute_query_no_params`] now powers the
+    /// params path, eliminating the per-execute `SQLPrepare` round-trip
+    /// for repeated SQL in OLTP workloads.
+    ///
+    /// The parameter conversion (`param_values_to_input_params`) is done
+    /// on every call because parameter types and values typically change
+    /// between executes; only the `Prepared` handle itself is cached.
+    /// Null-aware and inference plans still go through the
+    /// non-cached `execute_query_with_params_inner` in
+    /// `ExecutionEngine` because they need per-call descriptor lookups
+    /// (`stmt.parameter_descriptions()`) and `conn.execute()` with
+    /// inferred parameter sets, neither of which compose with a cached
+    /// `Prepared` handle.
+    pub fn execute_query_with_params(
+        &mut self,
+        sql: &str,
+        params: &[ParamValue],
+    ) -> Result<Vec<u8>> {
+        #[cfg(feature = "statement-handle-reuse")]
+        {
+            self.execute_query_with_params_reuse(sql, params)
+        }
+
+        #[cfg(not(feature = "statement-handle-reuse"))]
+        {
+            let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
+            execute_stmt_with_params(&mut stmt, params)
+        }
+    }
+
     #[cfg(feature = "statement-handle-reuse")]
     fn execute_query_with_reuse(&mut self, sql: &str) -> Result<Vec<u8>> {
         let sql_key = sql.to_string();
 
         if let Some(cached) = self.stmt_cache.get_mut(&sql_key) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
-            return execute_stmt_to_buffer(&mut cached.stmt);
+            return cached.with_mut(execute_stmt_to_buffer);
         }
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
@@ -121,18 +158,53 @@ impl CachedConnection {
         let capacity = self.stmt_cache.cap().get();
         let should_count_eviction = self.stmt_cache.len() >= capacity;
 
-        // SAFETY: `CachedConnection` owns the `Connection<'static>` and the
-        // cache is cleared before `connection_mut` exposes mutable access or
-        // before the connection is dropped. Cached statements therefore never
-        // outlive or alias a mutated connection handle while this feature is
-        // enabled. Keep this feature experimental until `odbc-api` exposes a
-        // cache-friendly prepared statement lifetime.
-        let static_stmt: StaticPrepared = unsafe { std::mem::transmute(prepared) };
+        // SAFETY: see [`OwnedPreparedStatement::from_borrowed`]. The cache
+        // (`stmt_cache`) is declared before `conn` so it drops first; we
+        // also clear it whenever `connection_mut()` runs. The unsafe
+        // transmute that fakes `'static` is therefore confined to this
+        // single line of construction inside the wrapper.
+        let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
+        let result = owned.with_mut(execute_stmt_to_buffer)?;
 
-        let mut cached = CachedPrepared { stmt: static_stmt };
-        let result = execute_stmt_to_buffer(&mut cached.stmt)?;
+        self.stmt_cache.put(sql_key, owned);
 
-        self.stmt_cache.put(sql_key, cached);
+        if should_count_eviction {
+            self.cache_evictions.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(result)
+    }
+
+    #[cfg(feature = "statement-handle-reuse")]
+    fn execute_query_with_params_reuse(
+        &mut self,
+        sql: &str,
+        params: &[ParamValue],
+    ) -> Result<Vec<u8>> {
+        let sql_key = sql.to_string();
+
+        if let Some(cached) = self.stmt_cache.get_mut(&sql_key) {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            // Re-bind every execute: parameter values typically change
+            // between calls even when the SQL is identical, and ODBC
+            // allows re-binding on a cached prepared statement.
+            return cached.with_mut(|stmt| execute_stmt_with_params(stmt, params));
+        }
+
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+
+        let prepared = self.conn.prepare(sql).map_err(OdbcError::from)?;
+
+        let capacity = self.stmt_cache.cap().get();
+        let should_count_eviction = self.stmt_cache.len() >= capacity;
+
+        // SAFETY: see [`OwnedPreparedStatement::from_borrowed`] and the
+        // `execute_query_with_reuse` SAFETY note above — same invariant
+        // (cache drops before connection, single point of unsafe).
+        let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
+        let result = owned.with_mut(|stmt| execute_stmt_with_params(stmt, params))?;
+
+        self.stmt_cache.put(sql_key, owned);
 
         if should_count_eviction {
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
@@ -192,7 +264,28 @@ where
     S: odbc_api::handles::AsStatementRef,
 {
     let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+    encode_optional_cursor_to_buffer(cursor)
+}
 
+fn execute_stmt_with_params<S>(stmt: &mut Prepared<S>, params: &[ParamValue]) -> Result<Vec<u8>>
+where
+    S: odbc_api::handles::AsStatementRef,
+{
+    let parameters = param_values_to_input_params(params)?;
+    let cursor = stmt
+        .execute(parameters.as_slice())
+        .map_err(OdbcError::from)?;
+    encode_optional_cursor_to_buffer(cursor)
+}
+
+/// Shared cursor drainer used by both the no-params and params cached
+/// execution paths. Mirrors what `ExecutionEngine::encode_optional_cursor`
+/// does for the same shape, minus the plugin/FOR-JSON normalisation
+/// (which the engine layer is responsible for).
+fn encode_optional_cursor_to_buffer<C>(cursor: Option<C>) -> Result<Vec<u8>>
+where
+    C: odbc_api::Cursor + ResultSetMetadata,
+{
     let mut row_buffer = RowBuffer::new();
 
     if let Some(mut cursor) = cursor {
@@ -213,22 +306,11 @@ where
             column_types.push(odbc_type);
         }
 
-        let mut cell_reader = CellReader::new();
-        while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::with_capacity(column_types.len());
-
-            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                let col_number: u16 = (col_idx + 1)
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-
-                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                row_data.push(cell_data);
-            }
-
-            row_buffer.add_row(row_data);
-        }
+        let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
+            cursor,
+            &column_types,
+            &mut row_buffer,
+        )?;
     }
 
     RowBufferEncoder::encode_result(&row_buffer)

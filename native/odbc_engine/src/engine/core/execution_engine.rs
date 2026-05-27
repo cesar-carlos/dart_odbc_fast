@@ -16,7 +16,7 @@ use log::Level;
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 /// Returns true when the underlying ODBC error means "no more result sets",
 /// i.e. SQLSTATE 02000 ("no data") which corresponds to the SQL_NO_DATA return code.
@@ -125,7 +125,11 @@ pub struct ExecutionEngine {
     use_columnar: bool,
     use_compression: bool,
     plugin_registry: Option<Arc<PluginRegistry>>,
-    active_plugin: Arc<Mutex<Option<Arc<dyn DriverPlugin>>>>,
+    /// Per-query reads dominate writes (writes only happen on
+    /// `set_connection_string`, reads on every execute). An `RwLock`
+    /// lets concurrent queries observe the active plugin without
+    /// serialising on a `Mutex` (sprint 1 follow-up B7).
+    active_plugin: Arc<RwLock<Option<Arc<dyn DriverPlugin>>>>,
     metrics: Arc<Metrics>,
     tracer: Arc<Tracer>,
     logger: Arc<StructuredLogger>,
@@ -142,7 +146,7 @@ impl ExecutionEngine {
             use_columnar: false,
             use_compression: false,
             plugin_registry: Some(Arc::new(PluginRegistry::default())),
-            active_plugin: Arc::new(Mutex::new(None)),
+            active_plugin: Arc::new(RwLock::new(None)),
             metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
@@ -159,7 +163,7 @@ impl ExecutionEngine {
             use_columnar: true,
             use_compression,
             plugin_registry: Some(Arc::new(PluginRegistry::default())),
-            active_plugin: Arc::new(Mutex::new(None)),
+            active_plugin: Arc::new(RwLock::new(None)),
             metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
@@ -176,7 +180,7 @@ impl ExecutionEngine {
             use_columnar: false,
             use_compression: false,
             plugin_registry: Some(registry),
-            active_plugin: Arc::new(Mutex::new(None)),
+            active_plugin: Arc::new(RwLock::new(None)),
             metrics,
             tracer: Arc::new(Tracer::new()),
             logger: Arc::new(StructuredLogger::default()),
@@ -187,20 +191,40 @@ impl ExecutionEngine {
     pub fn set_connection_string(&self, connection_string: &str) {
         if let Some(ref registry) = self.plugin_registry {
             if let Some(plugin) = registry.get_for_connection(connection_string) {
-                if let Ok(mut active) = self.active_plugin.lock() {
+                if let Ok(mut active) = self.active_plugin.write() {
                     *active = Some(plugin);
                 }
             }
         }
     }
 
+    /// Starts a tracing span and emits a `log_query` event **only when the
+    /// structured logger would actually record it** at `Level::Info`.
+    ///
+    /// This is the hot path entry hook. The previous implementation always
+    /// allocated `sql.to_string()`, locked the tracer mutex twice (start
+    /// plus drop), built a `HashMap<String, String>` and inserted the span
+    /// id per query, even when no observer was consuming the events.
+    ///
+    /// Returning `Option<SpanGuard>` keeps the RAII semantics: when logging
+    /// is enabled the guard is bound by the caller via `let _span = ...`
+    /// and `Drop` cleans up; when disabled, we return `None` and skip every
+    /// allocation.
+    fn log_query_start(&self, sql: &str) -> Option<SpanGuard> {
+        if !self.logger.is_enabled(Level::Info) {
+            return None;
+        }
+        let span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
+        let mut metadata = HashMap::with_capacity(1);
+        metadata.insert("span_id".to_string(), span.span_id().to_string());
+        self.logger.log_query(Level::Info, sql, &metadata);
+        Some(span)
+    }
+
     pub fn execute_query(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
         use std::time::Instant;
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let result = self.execute_query_inner(conn, sql);
 
@@ -236,10 +260,7 @@ impl ExecutionEngine {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let plugin = self.current_plugin();
         let optimized_sql = self.optimize_sql_with_plugin(sql, plugin.as_deref());
@@ -279,10 +300,7 @@ impl ExecutionEngine {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let result =
             self.execute_query_with_params_inner(conn, sql, params, timeout_sec, fetch_size);
@@ -310,10 +328,7 @@ impl ExecutionEngine {
 
         use super::output_aware_params::bound_to_slots;
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let result: Result<Vec<u8>> = (|| {
             use super::ref_cursor_oracle::bound_has_ref_cursor;
@@ -349,24 +364,11 @@ impl ExecutionEngine {
                 if let Some(mut cursor) = initial_cursor {
                     let column_types =
                         self.describe_columns(&mut cursor, &mut row_buffer, plugin.as_deref())?;
-
-                    let mut cell_reader = CellReader::new();
-                    while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                        let mut row_data = Vec::with_capacity(column_types.len());
-
-                        for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                            let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                                OdbcError::InternalError("Invalid column number".to_string())
-                            })?;
-
-                            let cell_data =
-                                cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                            row_data.push(cell_data);
-                        }
-
-                        row_buffer.add_row(row_data);
-                    }
+                    let cursor = crate::engine::fetch::fetch_cursor_into_row_buffer(
+                        cursor,
+                        &column_types,
+                        &mut row_buffer,
+                    )?;
                     let _stmt_ref = cursor.into_stmt();
                     true
                 } else {
@@ -506,26 +508,59 @@ impl ExecutionEngine {
     {
         let mut row_buffer = RowBuffer::new();
 
-        if let Some(mut cursor) = cursor {
-            let column_types = self.describe_columns(&mut cursor, &mut row_buffer, plugin)?;
+        let Some(mut cursor) = cursor else {
+            // No cursor: encode an empty payload via the row-major path
+            // (preserves wire-shape for callers that distinguish "empty
+            // result set" from "no result set at all").
+            return encode_query_result_payload(
+                &row_buffer,
+                self.use_columnar,
+                self.use_compression,
+            );
+        };
 
-            let mut cell_reader = CellReader::new();
-            while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-                let mut row_data = Vec::with_capacity(column_types.len());
+        let column_types = self.describe_columns(&mut cursor, &mut row_buffer, plugin)?;
 
-                for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                    let col_number: u16 = (col_idx + 1).try_into().map_err(|_| {
-                        OdbcError::InternalError("Invalid column number".to_string())
-                    })?;
-
-                    let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-
-                    row_data.push(cell_data);
+        // Sprint 2 fast path: drain the cursor straight into a
+        // `RowBufferV2` (column-major) so we never materialise the
+        // row-major intermediate when the consumer asked for columnar
+        // bytes. Bypassed for FOR JSON queries because their post-fetch
+        // coalescing relies on the row-major shape.
+        #[cfg(feature = "block-cursor-fetch")]
+        {
+            if self.use_columnar && !crate::engine::sqlserver_json::is_for_json_result(&row_buffer)
+            {
+                if let Some(descs) =
+                    crate::engine::core::block_fetch::plan_buffer_descs(&mut cursor, &column_types)?
+                {
+                    // Move column names out of `row_buffer` (it's dropped
+                    // on return) into the columnar metadata vec, avoiding
+                    // a per-column `String::clone`.
+                    let column_metas: Vec<crate::protocol::columnar::ColumnMetadata> =
+                        std::mem::take(&mut row_buffer.columns)
+                            .into_iter()
+                            .map(|c| crate::protocol::columnar::ColumnMetadata {
+                                name: c.name,
+                                odbc_type: c.odbc_type,
+                            })
+                            .collect();
+                    let (_cursor, v2) = crate::engine::core::columnar_fetch::fetch_columnar_into(
+                        cursor,
+                        column_metas,
+                        &column_types,
+                        descs,
+                        crate::engine::core::block_fetch::configured_batch_size(),
+                    )?;
+                    return crate::protocol::ColumnarEncoder::encode(&v2, self.use_compression);
                 }
-
-                row_buffer.add_row(row_data);
             }
         }
+
+        let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
+            cursor,
+            &column_types,
+            &mut row_buffer,
+        )?;
 
         // FOR JSON normalisation — see execute_query_inner above (closes #2).
         coalesce_for_json_rows(&mut row_buffer);
@@ -537,10 +572,7 @@ impl ExecutionEngine {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let result = self.execute_multi_result_inner(conn, sql);
 
@@ -565,10 +597,7 @@ impl ExecutionEngine {
         use std::time::Instant;
 
         let start_time = Instant::now();
-        let _span = SpanGuard::new(Arc::clone(&self.tracer), sql.to_string());
-        let mut metadata = HashMap::new();
-        metadata.insert("span_id".to_string(), _span.span_id().to_string());
-        self.logger.log_query(Level::Info, sql, &metadata);
+        let _span = self.log_query_start(sql);
 
         let result = self.execute_multi_result_with_params_inner(conn, sql, params);
 
@@ -785,7 +814,7 @@ impl ExecutionEngine {
 
     fn is_oracle_plugin_active(&self) -> bool {
         self.active_plugin
-            .lock()
+            .read()
             .ok()
             .and_then(|g| g.as_ref().map(|p| p.name() == "oracle"))
             .unwrap_or(false)
@@ -910,6 +939,11 @@ impl ExecutionEngine {
         let mut row_buffer = RowBuffer::new();
         let plugin = self.current_plugin();
         let column_types = self.describe_columns(cursor, &mut row_buffer, plugin.as_deref())?;
+        // Per-cell loop is the only option here because the caller still
+        // borrows `cursor` mutably (it's passed by reference, not consumed)
+        // — `BlockCursor::bind_buffer` requires ownership. Ref-cursor
+        // payloads are typically small and not in any hot path, so leaving
+        // them on the legacy path costs nothing measurable.
         let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
             let mut row_data = Vec::with_capacity(column_types.len());
@@ -938,6 +972,10 @@ impl ExecutionEngine {
         let plugin = self.current_plugin();
         let column_types = self.describe_columns(cursor, &mut row_buffer, plugin.as_deref())?;
 
+        // Per-cell loop required: caller hands us `&mut C` because the
+        // multi-result path needs to keep operating on the statement after
+        // we drain this cursor. `BlockCursor::bind_buffer` would consume
+        // it, breaking that contract.
         let mut cell_reader = CellReader::new();
         while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
             let mut row_data = Vec::with_capacity(column_types.len());
@@ -971,7 +1009,7 @@ impl ExecutionEngine {
 
     fn current_plugin(&self) -> Option<Arc<dyn DriverPlugin>> {
         self.active_plugin
-            .lock()
+            .read()
             .ok()
             .and_then(|guard| guard.clone())
     }
@@ -1139,7 +1177,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={SQL Server};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "sqlserver");
@@ -1151,7 +1189,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={PostgreSQL};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "postgres");
@@ -1163,7 +1201,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={Oracle};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "oracle");
@@ -1175,7 +1213,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={Sybase};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "sybase");
@@ -1187,7 +1225,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={MSSQL};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "sqlserver");
@@ -1199,7 +1237,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={PostgreSQL};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "postgres");
@@ -1211,7 +1249,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={SQL Anywhere};Server=localhost;Database=test;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "sybase");
@@ -1223,7 +1261,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("Driver={UnknownDriver};Server=localhost;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_none());
     }
 
@@ -1232,7 +1270,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_none());
     }
 
@@ -1241,7 +1279,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
         engine.set_connection_string("DRIVER={SQL SERVER};SERVER=localhost;");
 
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
         if let Some(ref plugin) = *active_plugin {
             assert_eq!(plugin.name(), "sqlserver");
@@ -1253,7 +1291,7 @@ mod tests {
         let engine = ExecutionEngine::new(100);
 
         engine.set_connection_string("Driver={SQL Server};Server=localhost;");
-        let active_plugin1 = engine.active_plugin.lock().unwrap();
+        let active_plugin1 = engine.active_plugin.read().unwrap();
         assert!(active_plugin1.is_some());
         if let Some(ref plugin) = *active_plugin1 {
             assert_eq!(plugin.name(), "sqlserver");
@@ -1261,7 +1299,7 @@ mod tests {
         drop(active_plugin1);
 
         engine.set_connection_string("Driver={PostgreSQL};Server=localhost;");
-        let active_plugin2 = engine.active_plugin.lock().unwrap();
+        let active_plugin2 = engine.active_plugin.read().unwrap();
         assert!(active_plugin2.is_some());
         if let Some(ref plugin) = *active_plugin2 {
             assert_eq!(plugin.name(), "postgres");
@@ -1371,7 +1409,7 @@ mod tests {
         let engine = ExecutionEngine::with_plugin_registry(100, registry);
 
         engine.set_connection_string("Driver={SQL Server};Server=localhost;");
-        let active_plugin = engine.active_plugin.lock().unwrap();
+        let active_plugin = engine.active_plugin.read().unwrap();
         assert!(active_plugin.is_some());
     }
 
@@ -1595,7 +1633,7 @@ mod tests {
     fn should_activate_mariadb_plugin_from_connection_string() {
         let engine = ExecutionEngine::new(10);
         engine.set_connection_string("Driver={MariaDB};Server=localhost;Database=test;");
-        let active = engine.active_plugin.lock().unwrap();
+        let active = engine.active_plugin.read().unwrap();
         assert!(active.is_some());
         assert_eq!(active.as_ref().unwrap().name(), "mariadb");
     }
@@ -1604,7 +1642,7 @@ mod tests {
     fn should_activate_mysql_plugin_from_connection_string() {
         let engine = ExecutionEngine::new(10);
         engine.set_connection_string("Driver={MySQL ODBC 8.0 Driver};Server=localhost;");
-        let active = engine.active_plugin.lock().unwrap();
+        let active = engine.active_plugin.read().unwrap();
         assert!(active.is_some());
         assert_eq!(active.as_ref().unwrap().name(), "mysql");
     }

@@ -4,6 +4,7 @@
 
 pub mod columnar_decompress;
 pub mod guard;
+pub mod state;
 
 use crate::async_bridge;
 #[cfg(not(feature = "sqlserver-bcp"))]
@@ -12,19 +13,19 @@ use crate::engine::ArrayBinding;
 use crate::engine::BulkCopyExecutor;
 use crate::engine::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
-    execute_query_with_connection, execute_query_with_param_buffer,
-    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
-    get_global_metrics, get_type_info, list_columns, list_foreign_keys, list_indexes,
-    list_primary_keys, list_tables, recover_prepared_xids, resume_prepared, AsyncStreamStatus,
-    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
-    MetadataCache, OdbcConnection, OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding,
-    SavepointDialect, SharedHandleManager, StatementHandle, StreamCopyResult, StreamState,
-    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
+    execute_query_with_cached_connection_params, execute_query_with_connection,
+    execute_query_with_param_buffer, execute_query_with_param_buffer_and_timeout,
+    execute_query_with_param_buffer_encoding, get_global_metrics, get_type_info, list_columns,
+    list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
+    resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
+    DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
+    OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding, SavepointDialect,
+    SharedHandleManager, StatementHandle, StreamCopyResult, StreamState, StreamingExecutor,
+    Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 use crate::error::StructuredError;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedConnection;
-use crate::observability::Metrics;
 use crate::plugins::PluginRegistry;
 use crate::pool::{ConnectionPool, SharedPooledConnection};
 use crate::protocol::bound_param::ParamDirection;
@@ -34,7 +35,6 @@ use crate::protocol::{
 };
 #[cfg(feature = "sqlserver-bcp")]
 use crate::protocol::{bulk_insert::is_null, BulkColumnData};
-use crate::security::AuditLogger;
 use crate::versioning::{abi_version::AbiVersion, api_version::ApiVersion};
 use log::LevelFilter;
 use rayon::prelude::*;
@@ -54,14 +54,9 @@ pub const DEFAULT_CHUNK_SIZE: c_uint = 1024;
 const DEFAULT_METADATA_CACHE_SIZE: usize = 100;
 const DEFAULT_METADATA_CACHE_TTL_SECS: u64 = 300;
 
-/// Error information stored per connection to avoid race conditions
-#[derive(Debug, Clone)]
-struct ConnectionError {
-    simple_message: String,
-    structured: Option<StructuredError>,
-    #[allow(dead_code)] // Reserved for future use (error expiration, debugging)
-    timestamp: Instant,
-}
+// Sprint 3 split: `ConnectionError` lives in [`crate::ffi::state`].
+// Imports of the type stay local to call sites that still construct it
+// inline; the `state::` helpers are what production code uses.
 
 enum StreamKind {
     Buffer(StreamState),
@@ -346,8 +341,8 @@ fn run_async_query(
 
     let encoding = ResultEncoding::from_wire(result_encoding).unwrap_or(ResultEncoding::RowMajor);
 
-    state.audit_logger.log_query(conn_id, sql);
-    let metrics = Arc::clone(&state.metrics);
+    state::ffi_audit_logger().log_query(conn_id, sql);
+    let metrics = state::ffi_metrics();
     let start = Instant::now();
     let mut target = take_runnable_connection(&mut state, conn_id)?;
     drop(state);
@@ -608,7 +603,7 @@ where
         set_out_written_zero(out_written);
         return -1;
     };
-    let metrics = Arc::clone(&state.metrics);
+    let metrics = state::ffi_metrics();
     let start = Instant::now();
     let mut target = match take_runnable_connection(&mut state, conn_id) {
         Ok(target) => target,
@@ -702,18 +697,55 @@ struct GlobalState {
     /// uniquely identifies a branch through its whole lifecycle.
     next_xa_id: u32,
     next_stmt_id: u32,
-    // Legacy global error (for backward compatibility with functions without conn_id)
-    last_error: Option<String>,
-    last_structured_error: Option<StructuredError>,
-    // Per-connection errors (thread-safe isolation)
-    connection_errors: HashMap<u32, ConnectionError>,
-    async_requests: AsyncRequestManager,
     metadata_cache: MetadataCache,
-    metrics: Arc<Metrics>,
-    audit_logger: Arc<AuditLogger>,
+    //
+    // Fields hoisted out of this struct into dedicated locks/atomics.
+    // Access via helpers in [`crate::ffi::state`]:
+    //
+    // - `metrics` → [`state::ffi_metrics()`] (lock-free Arc, sprint 3)
+    // - `audit_logger` → [`state::ffi_audit_logger()`] (lock-free Arc, sprint 3)
+    // - `connection_errors` → [`state::connection_errors_read`] / `_write`
+    //   (dedicated `RwLock`, sprint 3)
+    // - `async_requests` → [`lock_async_requests()`] (dedicated `Mutex`, sprint 3)
+    // - `last_error` / `last_structured_error` → [`state::legacy_global_error_read`]
+    //   / `_write` and the convenience setters (dedicated `RwLock`,
+    //   sprint 4 follow-up A2)
+    //
+    // The remaining maps (`connections`, `pools`, `transactions`,
+    // `streams`, `xa_*`, `statements`) stay here for now: they need
+    // atomic cross-category transitions on connection close, transaction
+    // commit/rollback, and stream lifecycle. Splitting them further
+    // would require a coordinated multi-lock acquisition layer with
+    // documented lock ordering — captured as a separate future
+    // refactor entry in `engine_perf_follow-ups_b8f0b22a.plan.md`.
 }
 
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
+
+/// Sprint 3 split: dedicated lock for the async-request subsystem.
+/// Lives outside of `GlobalState` so polling, cancelling, and freeing
+/// async requests no longer contends with the outer mutex used by the
+/// rest of the FFI surface.
+static ASYNC_REQUESTS: OnceLock<Mutex<AsyncRequestManager>> = OnceLock::new();
+
+/// Returns the process-wide async-request manager mutex.
+///
+/// The `OnceLock::get_or_init` call is thread-safe — concurrent first
+/// callers race on the init closure and only one runs; the others
+/// observe the fully-initialised `Mutex<AsyncRequestManager>`. The
+/// inner `Mutex` is freshly constructed inside the closure so the lock
+/// is usable the instant `get_or_init` returns, with no separate
+/// "ready" handshake required.
+fn async_requests() -> &'static Mutex<AsyncRequestManager> {
+    ASYNC_REQUESTS.get_or_init(|| Mutex::new(AsyncRequestManager::new()))
+}
+
+/// Acquire the async-request manager lock. Returns `None` only when the
+/// inner mutex is poisoned (treated by FFI guards as an internal error).
+/// First-access thread-safety is documented on [`async_requests`].
+fn lock_async_requests() -> Option<std::sync::MutexGuard<'static, AsyncRequestManager>> {
+    async_requests().lock().ok()
+}
 static FFI_PLUGIN_REGISTRY: OnceLock<PluginRegistry> = OnceLock::new();
 const CANCEL_UNSUPPORTED_NATIVE_CODE: i32 = 5001;
 
@@ -768,6 +800,38 @@ fn write_ffi_output_buffer(
     FFI_OK
 }
 
+/// Sprint 4.2 helper: route a parameterised FFI call through the
+/// per-connection `CachedConnection` cache when the parameter buffer
+/// describes a plain legacy `ParamValue` list with no NULLs, falling
+/// back to the raw-connection dispatcher otherwise.
+///
+/// The fallback covers:
+///
+/// - Any DRT1-directed parameter buffer (`OUT` / `INOUT` slots).
+/// - Any legacy list that contains at least one `ParamValue::Null`,
+///   because the existing `PreparedNullAware` plan needs descriptor
+///   lookups (`stmt.parameter_descriptions()`) that the cached
+///   prepared-handle path does not perform.
+/// - Buffers that fail to deserialise (validation errors are surfaced
+///   via the fallback so the existing error reporting path stays
+///   responsible for them).
+fn try_cached_legacy_params(
+    cached: &mut crate::handles::CachedConnection,
+    sql: &str,
+    params_slice: &[u8],
+) -> Result<Vec<u8>> {
+    use crate::protocol::{deserialize_param_buffer, has_null_param, ParamList};
+
+    match deserialize_param_buffer(params_slice) {
+        Ok(ParamList::Legacy(params)) if !has_null_param(&params) => {
+            execute_query_with_cached_connection_params(cached, sql, &params)
+        }
+        // DRT1, null-aware, or parse error — defer to the existing
+        // dispatcher which knows how to handle every plan variant.
+        _ => execute_query_with_param_buffer(cached.connection(), sql, params_slice),
+    }
+}
+
 fn write_connection_output_buffer(
     state: &mut GlobalState,
     conn_id: u32,
@@ -790,12 +854,19 @@ fn write_connection_output_buffer(
     write_ffi_output_buffer(data, out_buffer, buffer_len, out_written)
 }
 
+/// Build a cache key of the form `"<conn_id>:<table>"` in a single
+/// allocation. Replaces the previous `conn_id.to_string()` + `String`
+/// concatenation that did two allocations per catalog lookup (sprint 1
+/// follow-up B8).
 fn build_catalog_cache_key(conn_id: u32, table: &str) -> String {
-    let conn_id = conn_id.to_string();
-    let mut key = String::with_capacity(conn_id.len() + 1 + table.len());
-    key.push_str(&conn_id);
-    key.push(':');
-    key.push_str(table);
+    use std::fmt::Write;
+    // `u32::MAX` formats to 10 chars; the `+ 1` accounts for the colon
+    // separator, and the `table.len()` reservation matches the worst
+    // case so `write!` never needs to realloc.
+    let mut key = String::with_capacity(10 + 1 + table.len());
+    // `write!` on `String` is infallible (`fmt::Error` is impossible for
+    // an in-memory writer); the `expect` documents that invariant.
+    write!(&mut key, "{}:{}", conn_id, table).expect("formatting into String never fails");
     key
 }
 
@@ -891,16 +962,10 @@ fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             next_txn_id: 1,
             next_xa_id: 1,
             next_stmt_id: 1,
-            last_error: None,
-            last_structured_error: None,
-            connection_errors: HashMap::new(),
-            async_requests: AsyncRequestManager::new(),
             metadata_cache: MetadataCache::new(
                 metadata_cache_size,
                 Duration::from_secs(metadata_cache_ttl_secs),
             ),
-            metrics: Arc::new(Metrics::new()),
-            audit_logger: Arc::new(AuditLogger::new(false)),
         }))
     })
 }
@@ -921,87 +986,77 @@ fn read_env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// Set error for a specific connection (thread-safe isolation)
-fn set_connection_error(state: &mut GlobalState, conn_id: u32, error: String) {
-    state.connection_errors.insert(
-        conn_id,
-        ConnectionError {
-            simple_message: error.clone(),
-            structured: None,
-            timestamp: Instant::now(),
-        },
-    );
-    // Also update global for backward compatibility
-    state.last_error = Some(error);
-    state.last_structured_error = None;
+/// Set error for a specific connection (thread-safe isolation).
+///
+/// Sprint 3 + sprint 4 follow-up A2 split: both the per-connection
+/// slot and the legacy global error now live in dedicated `RwLock`s
+/// outside `GlobalState`. The `state: &mut GlobalState` parameter is
+/// kept for call-site compatibility; this function no longer touches
+/// `GlobalState` directly. A future cleanup PR can drop the parameter
+/// after the surrounding refactor lands.
+fn set_connection_error(_state: &mut GlobalState, conn_id: u32, error: String) {
+    state::set_connection_error(conn_id, error.clone());
+    state::set_legacy_global_error(error);
 }
 
-/// Set structured error for a specific connection (thread-safe isolation)
-fn set_connection_structured_error(state: &mut GlobalState, conn_id: u32, error: StructuredError) {
-    state.connection_errors.insert(
-        conn_id,
-        ConnectionError {
-            simple_message: error.message.clone(),
-            structured: Some(error.clone()),
-            timestamp: Instant::now(),
-        },
-    );
-    // Also update global for backward compatibility
-    state.last_error = Some(error.message.clone());
-    state.last_structured_error = Some(error);
+/// Set structured error for a specific connection (thread-safe isolation).
+/// See note on [`set_connection_error`] for the storage split.
+fn set_connection_structured_error(_state: &mut GlobalState, conn_id: u32, error: StructuredError) {
+    state::set_connection_structured_error(conn_id, error.clone());
+    state::set_legacy_global_structured_error(error);
 }
 
-/// Set global error (for functions without conn_id like odbc_init)
-fn set_error(state: &mut GlobalState, error: String) {
-    state.last_error = Some(error);
-    state.last_structured_error = None;
+/// Set global error (for functions without conn_id like odbc_init).
+/// Sprint 4 follow-up A2: legacy global error lives in its own RwLock
+/// (see [`state::set_legacy_global_error`]). The `state` parameter is
+/// kept only to preserve the call-site shape.
+fn set_error(_state: &mut GlobalState, error: String) {
+    state::set_legacy_global_error(error);
 }
 
-/// Set global structured error (for functions without conn_id)
+/// Set global structured error (for functions without conn_id).
 #[allow(dead_code)] // Kept for backward compatibility with FFI functions
-fn set_structured_error(state: &mut GlobalState, error: StructuredError) {
-    state.last_error = Some(error.message.clone());
-    state.last_structured_error = Some(error);
+fn set_structured_error(_state: &mut GlobalState, error: StructuredError) {
+    state::set_legacy_global_structured_error(error);
 }
 
-/// Get error for a specific connection, or fallback to global error
-fn get_connection_error(state: &GlobalState, conn_id: Option<u32>) -> String {
+/// Get error for a specific connection, or fallback to global error.
+///
+/// Sprint 3 + sprint 4 follow-up A2: per-connection lookup hits the
+/// dedicated `RwLock` in [`state::get_connection_error_message`]; the
+/// global fallback hits the dedicated legacy-error `RwLock` via
+/// [`state::legacy_global_error_message`]. The `state: &GlobalState`
+/// parameter is unused now and stays only to preserve the existing
+/// call sites' shape.
+fn get_connection_error(_state: &GlobalState, conn_id: Option<u32>) -> String {
     if let Some(id) = conn_id {
-        if let Some(conn_err) = state.connection_errors.get(&id) {
-            return conn_err.simple_message.clone();
+        if let Some(msg) = state::get_connection_error_message(id) {
+            return msg;
         }
     }
-    // Fallback to global error
-    state
-        .last_error
-        .clone()
-        .unwrap_or_else(|| "No error".to_string())
+    state::legacy_global_error_message()
 }
 
 /// Get structured error for a specific connection.
 /// When conn_id is Some(id): returns that connection's error only (no fallback).
-/// When conn_id is None: returns global last_structured_error.
+/// When conn_id is None: returns the legacy global structured error.
 fn get_connection_structured_error(
-    state: &GlobalState,
+    _state: &GlobalState,
     conn_id: Option<u32>,
 ) -> Option<StructuredError> {
     if let Some(id) = conn_id {
-        if let Some(conn_err) = state.connection_errors.get(&id) {
-            return conn_err.structured.clone();
-        }
-        // Per-connection isolation: do not fallback to global when asking for a specific conn
-        return None;
+        // Per-connection isolation: do not fallback to global when asking for a specific conn.
+        return state::get_connection_structured_error(id);
     }
-    state.last_structured_error.clone()
+    state::legacy_global_structured_error()
 }
 
-/// Get global error (legacy function for backward compatibility)
+/// Get global error (legacy function for backward compatibility).
+/// Sprint 4 follow-up A2: backed by the dedicated legacy-error
+/// `RwLock` in `ffi::state`.
 #[allow(dead_code)] // Kept for backward compatibility with FFI functions
-fn get_error(state: &GlobalState) -> String {
-    state
-        .last_error
-        .clone()
-        .unwrap_or_else(|| "No error".to_string())
+fn get_error(_state: &GlobalState) -> String {
+    state::legacy_global_error_message()
 }
 
 fn serialize_audit_events(events: Vec<crate::security::audit::AuditEvent>) -> Result<Vec<u8>> {
@@ -1029,7 +1084,7 @@ fn serialize_audit_events(events: Vec<crate::security::audit::AuditEvent>) -> Re
     })
 }
 
-fn serialize_audit_status(audit_logger: &AuditLogger) -> Result<Vec<u8>> {
+fn serialize_audit_status(audit_logger: &crate::security::AuditLogger) -> Result<Vec<u8>> {
     let payload = serde_json::json!({
         "enabled": audit_logger.is_enabled(),
         "event_count": audit_logger.event_count(),
@@ -1288,7 +1343,7 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
                 state
                     .connection_strings
                     .insert(conn_id, conn_str_rust.to_string());
-                state.audit_logger.log_connection(conn_id, conn_str_rust);
+                state::ffi_audit_logger().log_connection(conn_id, conn_str_rust);
                 conn_id
             }
             Err(e) => {
@@ -1364,7 +1419,7 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
                 state
                     .connection_strings
                     .insert(conn_id, conn_str_rust.to_string());
-                state.audit_logger.log_connection(conn_id, conn_str_rust);
+                state::ffi_audit_logger().log_connection(conn_id, conn_str_rust);
                 conn_id
             }
             Err(e) => {
@@ -1428,8 +1483,10 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                 }
                 state.stream_connections.remove(&stream_id);
             }
-            state.async_requests.free_for_connection(conn_id);
             drop(state);
+            if let Some(mut async_mgr) = lock_async_requests() {
+                async_mgr.free_for_connection(conn_id);
+            }
 
             for txn in transactions {
                 let _ = txn.rollback();
@@ -1441,8 +1498,7 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
             };
             match disconnect_result {
                 Ok(_) => {
-                    // Remove connection error when disconnecting
-                    state.connection_errors.remove(&conn_id);
+                    state::clear_connection_error(conn_id);
                     0
                 }
                 Err(e) => {
@@ -2531,12 +2587,12 @@ pub extern "C" fn odbc_get_metrics(
             set_out_written_needed(out_written, 40);
             return -2;
         }
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-        let q = state.metrics.get_query_metrics();
-        let ec = state.metrics.get_error_count();
-        let up = state.metrics.uptime();
+        // Sprint 3 split: metrics is lock-free; no need to acquire the
+        // outer GlobalState mutex just to read it.
+        let metrics = state::ffi_metrics();
+        let q = metrics.get_query_metrics();
+        let ec = metrics.get_error_count();
+        let up = metrics.uptime();
         let tm = q.total_latency.as_millis().min(u64::MAX as u128) as u64;
         let am = q.average_latency().as_millis().min(u64::MAX as u128) as u64;
         let mut p = [0u8; 40];
@@ -2562,11 +2618,8 @@ pub extern "C" fn odbc_get_metrics(
 #[no_mangle]
 pub extern "C" fn odbc_audit_enable(enabled: c_int) -> c_int {
     crate::ffi_guard_int!({
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        state.audit_logger.set_enabled(enabled != 0);
+        // Sprint 3 split: audit logger is lock-free Arc; no outer lock needed.
+        state::ffi_audit_logger().set_enabled(enabled != 0);
         0
     })
 }
@@ -2590,18 +2643,13 @@ pub extern "C" fn odbc_audit_get_events(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-
         let take_limit: usize = if limit == 0 {
             usize::MAX
         } else {
             limit as usize
         };
-        let events = state.audit_logger.get_events(take_limit);
-        drop(state);
+        // Sprint 3 split: audit logger is lock-free Arc.
+        let events = state::ffi_audit_logger().get_events(take_limit);
 
         let data = match serialize_audit_events(events) {
             Ok(bytes) => bytes,
@@ -2620,11 +2668,8 @@ pub extern "C" fn odbc_audit_get_events(
 #[no_mangle]
 pub extern "C" fn odbc_audit_clear() -> c_int {
     crate::ffi_guard_int!({
-        let Some(state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        state.audit_logger.clear_events();
+        // Sprint 3 split: audit logger is lock-free Arc.
+        state::ffi_audit_logger().clear_events();
         0
     })
 }
@@ -2652,7 +2697,7 @@ pub extern "C" fn odbc_audit_get_status(
             return -1;
         };
 
-        let data = match serialize_audit_status(&state.audit_logger) {
+        let data = match serialize_audit_status(&state::ffi_audit_logger()) {
             Ok(bytes) => bytes,
             Err(_) => {
                 set_out_written_zero(out_written);
@@ -3311,9 +3356,9 @@ pub extern "C" fn odbc_exec_query(
             return -1;
         };
 
-        state.audit_logger.log_query(conn_id, sql_str);
+        state::ffi_audit_logger().log_query(conn_id, sql_str);
 
-        let metrics = Arc::clone(&state.metrics);
+        let metrics = state::ffi_metrics();
         let start = Instant::now();
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -3384,12 +3429,10 @@ pub extern "C" fn odbc_exec_query(
                 metrics.record_error();
                 let structured = e.to_structured();
                 set_connection_structured_error(&mut state, conn_id, structured);
-                let error_message = state
-                    .connection_errors
-                    .get(&conn_id)
-                    .map(|conn_error| conn_error.simple_message.clone())
+                // Per-conn error map moved to its own RwLock (sprint 3 split).
+                let error_message = state::get_connection_error_message(conn_id)
                     .unwrap_or_else(|| "Query execution failed".to_string());
-                state.audit_logger.log_error(Some(conn_id), &error_message);
+                state::ffi_audit_logger().log_error(Some(conn_id), &error_message);
                 set_out_written_zero(out_written);
                 -1
             }
@@ -3427,8 +3470,11 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
             return 0;
         }
 
-        state
-            .async_requests
+        drop(state);
+        let Some(mut async_mgr) = lock_async_requests() else {
+            return 0;
+        };
+        async_mgr
             .start_request(conn_id, sql_str, None, 0)
             .unwrap_or(0)
     })
@@ -3488,8 +3534,11 @@ pub extern "C" fn odbc_execute_async_params(
             return 0;
         }
 
-        state
-            .async_requests
+        drop(state);
+        let Some(mut async_mgr) = lock_async_requests() else {
+            return 0;
+        };
+        async_mgr
             .start_request(conn_id, sql_str, params, 0)
             .unwrap_or(0)
     })
@@ -3551,8 +3600,14 @@ pub extern "C" fn odbc_execute_async_params_options(
             return 0;
         }
 
-        state
-            .async_requests
+        drop(state);
+        // Sprint 3 split: async-request manager lives in its own Mutex
+        // so spawning a request does not contend with the rest of the
+        // FFI surface while the worker thread is still being installed.
+        let Some(mut async_mgr) = lock_async_requests() else {
+            return 0;
+        };
+        async_mgr
             .start_request(conn_id, sql_str, params, result_encoding)
             .unwrap_or(0)
     })
@@ -3568,11 +3623,11 @@ pub extern "C" fn odbc_async_poll(request_id: c_uint, out_status: *mut c_int) ->
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
+        let Some(async_mgr) = lock_async_requests() else {
             return -1;
         };
 
-        match state.async_requests.poll(request_id) {
+        match async_mgr.poll(request_id) {
             Some(status) => {
                 // SAFETY: `out_status` is non-null (checked above).
                 unsafe {
@@ -3599,12 +3654,12 @@ pub extern "C" fn odbc_async_get_result(
             return -1;
         }
 
-        let Some(mut state) = try_lock_global_state() else {
+        let Some(async_mgr) = lock_async_requests() else {
             set_out_written_zero(out_written);
             return -1;
         };
 
-        let Some((conn_id, result)) = state.async_requests.take_result(request_id) else {
+        let Some((conn_id, result)) = async_mgr.take_result(request_id) else {
             set_out_written_zero(out_written);
             return -1;
         };
@@ -3613,11 +3668,18 @@ pub extern "C" fn odbc_async_get_result(
             Ok(data) => {
                 let status = write_ffi_output_buffer(&data, out_buffer, buffer_len, out_written);
                 if status == FFI_ERR_BUFFER_TOO_SMALL {
-                    let _ = state.async_requests.restore_result(request_id, Ok(data));
+                    let _ = async_mgr.restore_result(request_id, Ok(data));
                 }
                 status
             }
             Err(e) => {
+                // Drop async_mgr lock before grabbing global state to record the structured
+                // error, preserving the canonical lock order (global → async).
+                drop(async_mgr);
+                let Some(mut state) = try_lock_global_state() else {
+                    set_out_written_zero(out_written);
+                    return -1;
+                };
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 set_out_written_zero(out_written);
                 -1
@@ -3631,10 +3693,10 @@ pub extern "C" fn odbc_async_get_result(
 #[no_mangle]
 pub extern "C" fn odbc_async_cancel(request_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(state) = try_lock_global_state() else {
+        let Some(async_mgr) = lock_async_requests() else {
             return -1;
         };
-        if state.async_requests.cancel(request_id) {
+        if async_mgr.cancel(request_id) {
             0
         } else {
             -1
@@ -3647,10 +3709,10 @@ pub extern "C" fn odbc_async_cancel(request_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_async_free(request_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
+        let Some(mut async_mgr) = lock_async_requests() else {
             return -1;
         };
-        if state.async_requests.free(request_id) {
+        if async_mgr.free(request_id) {
             0
         } else {
             -1
@@ -3693,7 +3755,7 @@ pub extern "C" fn odbc_exec_query_params(
                 return -1;
             };
 
-            let metrics = Arc::clone(&state.metrics);
+            let metrics = state::ffi_metrics();
             let start = Instant::now();
 
             let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -3726,11 +3788,16 @@ pub extern "C" fn odbc_exec_query_params(
                     if params_slice.is_empty() {
                         execute_query_with_cached_connection(&mut conn_guard, sql_str)
                     } else {
-                        execute_query_with_param_buffer(
-                            conn_guard.connection(),
-                            sql_str,
-                            params_slice,
-                        )
+                        // Sprint 4.2 wire-up: when the params are a plain
+                        // legacy `ParamValue` list with no NULLs (where
+                        // the standard prepare + bind plan applies), route
+                        // through the CachedConnection's per-connection
+                        // statement-handle cache. DRT1-directed lists and
+                        // null-aware bindings still go through the raw
+                        // dispatch path because they need plan-specific
+                        // descriptor lookups that don't compose with a
+                        // cached `Prepared` handle.
+                        try_cached_legacy_params(&mut conn_guard, sql_str, params_slice)
                     }
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
@@ -3738,6 +3805,8 @@ pub extern "C" fn odbc_exec_query_params(
                         if params_slice.is_empty() {
                             execute_query_with_connection(conn_guard.get_connection(), sql_str)
                         } else {
+                            // Pooled connections do not own a CachedConnection
+                            // yet — see follow-up note in the sprint 4.2 plan.
                             execute_query_with_param_buffer(
                                 conn_guard.get_connection(),
                                 sql_str,
@@ -3842,7 +3911,7 @@ pub extern "C" fn odbc_exec_query_params_options(
                 return -1;
             };
 
-            let metrics = Arc::clone(&state.metrics);
+            let metrics = state::ffi_metrics();
             let start = Instant::now();
 
             let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -3974,7 +4043,7 @@ pub extern "C" fn odbc_exec_query_multi(
             return -1;
         };
 
-        let metrics = Arc::clone(&state.metrics);
+        let metrics = state::ffi_metrics();
         let start = Instant::now();
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -4134,7 +4203,7 @@ pub extern "C" fn odbc_exec_query_multi_params(
             return -1;
         };
 
-        let metrics = Arc::clone(&state.metrics);
+        let metrics = state::ffi_metrics();
         let start = Instant::now();
 
         let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -4277,7 +4346,7 @@ pub extern "C" fn odbc_catalog_columns(
             );
         }
 
-        let metrics = Arc::clone(&state.metrics);
+        let metrics = state::ffi_metrics();
         let start = Instant::now();
         let mut target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -4599,7 +4668,7 @@ pub extern "C" fn odbc_execute(
                 return -1;
             };
 
-            let metrics = Arc::clone(&state.metrics);
+            let metrics = state::ffi_metrics();
             let start = Instant::now();
 
             let mut target = match take_runnable_connection(&mut state, conn_id) {
@@ -6598,23 +6667,19 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
 
-        let (prev_last_error, prev_last_structured_error) = {
-            let Some(state) = try_lock_global_state() else {
-                panic!("Failed to lock global state");
-            };
-            (
-                state.last_error.clone(),
-                state.last_structured_error.clone(),
-            )
+        // Sprint 4 follow-up A2 split: snapshot/restore through the
+        // dedicated legacy-error `RwLock` instead of `GlobalState`.
+        let (prev_message, prev_structured) = {
+            let guard = state::legacy_global_error_read().expect("legacy error lock");
+            (guard.message.clone(), guard.structured.clone())
         };
 
         let result = f();
 
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        state.last_error = prev_last_error;
-        state.last_structured_error = prev_last_structured_error;
+        if let Some(mut guard) = state::legacy_global_error_write() {
+            guard.message = prev_message;
+            guard.structured = prev_structured;
+        }
 
         result
     }
@@ -6626,13 +6691,10 @@ mod tests {
         assert_eq!(odbc_audit_clear(), 0);
         assert_eq!(odbc_audit_enable(1), 0);
 
-        let Some(state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        assert!(state.audit_logger.is_enabled());
-        state.audit_logger.log_query(42, "SELECT 1");
-        state.audit_logger.log_error(Some(42), "boom");
-        drop(state);
+        let audit = state::ffi_audit_logger();
+        assert!(audit.is_enabled());
+        audit.log_query(42, "SELECT 1");
+        audit.log_error(Some(42), "boom");
 
         let mut buffer = vec![0u8; 4096];
         let mut written: c_uint = 0;
@@ -6655,10 +6717,7 @@ mod tests {
         );
 
         assert_eq!(odbc_audit_clear(), 0);
-        let Some(state_after_clear) = try_lock_global_state() else {
-            panic!("Failed to lock global state after clear");
-        };
-        assert_eq!(state_after_clear.audit_logger.event_count(), 0);
+        assert_eq!(state::ffi_audit_logger().event_count(), 0);
     }
 
     #[test]
@@ -6667,11 +6726,7 @@ mod tests {
         odbc_init();
         assert_eq!(odbc_audit_clear(), 0);
         assert_eq!(odbc_audit_enable(1), 0);
-        let Some(state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        state.audit_logger.log_query(7, "SELECT 7");
-        drop(state);
+        state::ffi_audit_logger().log_query(7, "SELECT 7");
 
         let mut tiny_buffer = [0u8; 4];
         let mut written: c_uint = 123;
@@ -7258,10 +7313,11 @@ mod tests {
         });
 
         {
-            let Some(mut state) = try_lock_global_state() else {
-                panic!("Failed to lock global state");
+            // Sprint 3 split: async-request map lives outside `GlobalState`.
+            let Some(mut async_mgr) = lock_async_requests() else {
+                panic!("Failed to lock async requests");
             };
-            state.async_requests.requests.insert(request_id, slot);
+            async_mgr.requests.insert(request_id, slot);
         }
 
         let mut small_buf = vec![0u8; 128];
@@ -7301,10 +7357,10 @@ mod tests {
         });
 
         {
-            let Some(mut state) = try_lock_global_state() else {
-                panic!("Failed to lock global state");
+            let Some(mut async_mgr) = lock_async_requests() else {
+                panic!("Failed to lock async requests");
             };
-            state.async_requests.requests.insert(request_id, slot);
+            async_mgr.requests.insert(request_id, slot);
         }
 
         let mut buf = vec![0u8; 16];
@@ -7642,21 +7698,15 @@ mod tests {
                 native_code: 208,
                 message: "Table not found (conn 100)".to_string(),
             };
-            {
-                let Some(mut state) = try_lock_global_state() else {
-                    panic!("Failed to lock global state");
-                };
-                state.last_structured_error = None;
-                state.last_error = None;
-                state.connection_errors.insert(
-                    100,
-                    ConnectionError {
-                        simple_message: err_a.message.clone(),
-                        structured: Some(err_a.clone()),
-                        timestamp: Instant::now(),
-                    },
-                );
+            // Reset the legacy global error to ensure conn 0 lookup
+            // observes no error. Sprint 4 follow-up A2: legacy error
+            // map lives in its own RwLock.
+            if let Some(mut guard) = state::legacy_global_error_write() {
+                guard.message = None;
+                guard.structured = None;
             }
+            // Sprint 3 split: per-conn error map lives in its own RwLock.
+            state::set_connection_structured_error(100, err_a.clone());
 
             let mut buffer = vec![0u8; 1024];
             let mut written: c_uint = 0;
@@ -7695,11 +7745,8 @@ mod tests {
             );
             assert_eq!(r0, 1, "global should be empty");
 
-            // Cleanup: remove injected connection error
-            let Some(mut state) = try_lock_global_state() else {
-                return;
-            };
-            state.connection_errors.remove(&100);
+            // Cleanup: remove injected connection error from the dedicated map.
+            state::clear_connection_error(100);
         });
     }
 
@@ -8070,11 +8117,10 @@ mod tests {
             odbc_init();
 
             // Clear only global structured error for this test scope.
-            let Some(mut state) = try_lock_global_state() else {
-                panic!("Failed to lock global state");
-            };
-            state.last_structured_error = None;
-            drop(state);
+            // Sprint 4 follow-up A2: legacy error map lives in its own RwLock.
+            if let Some(mut guard) = state::legacy_global_error_write() {
+                guard.structured = None;
+            }
 
             let mut buffer = vec![0u8; 1024];
             let mut written: c_uint = 0;
@@ -8173,9 +8219,14 @@ mod tests {
         use std::sync::Once;
         static INIT: Once = Once::new();
 
-        // Load .env only once.
+        // Load .env only once. The `dotenvy` dep is optional and only
+        // available behind the `test-helpers` feature; when the feature
+        // is off we skip the load (env vars from the process still work).
         INIT.call_once(|| {
-            let _ = dotenvy::dotenv();
+            #[cfg(feature = "test-helpers")]
+            {
+                let _ = dotenvy::dotenv();
+            }
         });
 
         // Check whether E2E tests are enabled
@@ -10186,5 +10237,77 @@ mod tests {
         let mut buf = [0u8; 64];
         let code = odbc_validate_connection_string(std::ptr::null(), buf.as_mut_ptr(), 64);
         assert_eq!(code, -1);
+    }
+
+    // ------------------------------------------------------------------
+    // PR1.3 / D15 — `ASYNC_REQUESTS` init concurrency regression.
+    //
+    // The sprint 3 split moved the async-request manager to its own
+    // `OnceLock<Mutex<AsyncRequestManager>>`. This regression test
+    // hammers `lock_async_requests()` from N threads simultaneously
+    // (the first one of which is responsible for the
+    // `OnceLock::get_or_init` race) and asserts that:
+    //
+    // 1. Every thread eventually acquires the lock — no deadlock and
+    //    no `None` return from a poisoned mutex.
+    // 2. The total of `requests.len()` after each thread inserts
+    //    `INSERTS_PER_THREAD` distinct request ids matches
+    //    `THREADS * INSERTS_PER_THREAD`, proving no insert was lost
+    //    to a torn first-access.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn async_requests_concurrent_init_is_lossless() {
+        // Use a unique base offset per test invocation so a previous
+        // run of the suite that left ids in the global manager doesn't
+        // cause `insert` collisions and mask losses.
+        let base = next_test_invalid_id().wrapping_mul(1024);
+        const THREADS: usize = 16;
+        const INSERTS_PER_THREAD: u32 = 32;
+
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut handles = Vec::with_capacity(THREADS);
+        for t in 0..THREADS {
+            let b = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                b.wait();
+                let conn_id = base.wrapping_add(t as u32 * 100);
+                for i in 0..INSERTS_PER_THREAD {
+                    let request_id = base
+                        .wrapping_add(t as u32 * INSERTS_PER_THREAD)
+                        .wrapping_add(i);
+                    let slot = Arc::new(AsyncRequestSlot {
+                        conn_id,
+                        cancelled: AtomicBool::new(false),
+                        outcome: Mutex::new(AsyncRequestOutcome::Pending),
+                        join_handle: Mutex::new(None),
+                    });
+                    let mut guard = lock_async_requests()
+                        .expect("async_requests mutex must be acquirable from every thread");
+                    guard.requests.insert(request_id, slot);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker thread");
+        }
+
+        let guard = lock_async_requests().expect("async_requests still locks after the race");
+        let mut observed = 0usize;
+        for t in 0..THREADS {
+            for i in 0..INSERTS_PER_THREAD {
+                let request_id = base
+                    .wrapping_add(t as u32 * INSERTS_PER_THREAD)
+                    .wrapping_add(i);
+                if guard.requests.contains_key(&request_id) {
+                    observed += 1;
+                }
+            }
+        }
+        assert_eq!(
+            observed,
+            THREADS * (INSERTS_PER_THREAD as usize),
+            "every insert must be observable after the concurrent first-access race"
+        );
     }
 }

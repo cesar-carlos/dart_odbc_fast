@@ -79,8 +79,17 @@ impl StructuredLogger {
         Self { enabled }
     }
 
+    /// True when this logger will actually emit anything at `level`.
+    ///
+    /// Callers should consult this before building log-only state (HashMaps,
+    /// formatted strings, span ids serialised to text) so the hot query
+    /// path does not pay for diagnostics nobody is consuming.
+    pub fn is_enabled(&self, level: Level) -> bool {
+        self.enabled && log::log_enabled!(level)
+    }
+
     pub fn log_query(&self, level: Level, query: &str, metadata: &HashMap<String, String>) {
-        if !self.enabled {
+        if !self.is_enabled(level) {
             return;
         }
 
@@ -94,7 +103,7 @@ impl StructuredLogger {
     }
 
     pub fn log_connection(&self, level: Level, connection_string: &str, action: &str) {
-        if !self.enabled {
+        if !self.is_enabled(level) {
             return;
         }
 
@@ -103,7 +112,7 @@ impl StructuredLogger {
     }
 
     pub fn log_error(&self, error: &str, metadata: &HashMap<String, String>) {
-        if !self.enabled {
+        if !self.is_enabled(Level::Error) {
             return;
         }
 
@@ -116,7 +125,7 @@ impl StructuredLogger {
     }
 
     pub fn log_metric(&self, name: &str, value: f64, unit: &str) {
-        if !self.enabled {
+        if !self.is_enabled(Level::Info) {
             return;
         }
 
