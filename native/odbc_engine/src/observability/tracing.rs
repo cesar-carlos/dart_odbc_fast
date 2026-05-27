@@ -290,6 +290,78 @@ mod tests {
         }
     }
 
+    #[test]
+    fn active_span_count_should_be_zero_for_fresh_tracer() {
+        let tracer = Tracer::new();
+        assert_eq!(tracer.active_span_count(), 0);
+    }
+
+    #[test]
+    fn active_span_count_should_increment_when_spans_started() {
+        let tracer = Tracer::new();
+        let _ = tracer.start_span("a".to_string());
+        let _ = tracer.start_span("b".to_string());
+        assert_eq!(tracer.active_span_count(), 2);
+    }
+
+    #[test]
+    fn active_span_count_should_decrement_when_spans_finished() {
+        let tracer = Tracer::new();
+        let id = tracer.start_span("a".to_string());
+        let _ = tracer.start_span("b".to_string());
+        let _ = tracer.finish_span(id);
+        assert_eq!(tracer.active_span_count(), 1);
+    }
+
+    #[test]
+    fn span_guard_should_record_span_id_for_metadata_attachment() {
+        let tracer = Arc::new(Tracer::new());
+        let guard = SpanGuard::new(Arc::clone(&tracer), "SELECT 1".to_string());
+        assert!(guard.span_id() >= 1);
+        guard.add_metadata("k", "v");
+
+        let id = guard.span_id();
+        let finished = guard.finish().expect("span returned by explicit finish");
+        assert_eq!(finished.span_id, id);
+        assert_eq!(finished.metadata.get("k"), Some(&"v".to_string()));
+    }
+
+    #[test]
+    fn span_guard_drop_should_finish_span_when_finish_not_called() {
+        let tracer = Arc::new(Tracer::new());
+        let initial = tracer.active_span_count();
+        {
+            let _guard = SpanGuard::new(Arc::clone(&tracer), "SELECT 1".to_string());
+            assert_eq!(tracer.active_span_count(), initial + 1);
+        }
+        // Dropped without calling finish — the span must still be removed.
+        assert_eq!(tracer.active_span_count(), initial);
+    }
+
+    #[test]
+    fn span_guard_explicit_finish_should_not_finish_twice_on_drop() {
+        let tracer = Arc::new(Tracer::new());
+        let guard = SpanGuard::new(Arc::clone(&tracer), "SELECT 1".to_string());
+        let id = guard.span_id();
+        let _finished = guard.finish().expect("explicit finish returns span");
+
+        // Drop runs after finish — finish_span(id) returns None on second
+        // call which we verify directly via the tracer.
+        assert!(tracer.finish_span(id).is_none());
+    }
+
+    #[test]
+    fn span_guard_should_attach_metadata_visible_in_finished_span() {
+        let tracer = Arc::new(Tracer::new());
+        let guard = SpanGuard::new(Arc::clone(&tracer), "SELECT 1".to_string());
+        guard.add_metadata("table", "users");
+        guard.add_metadata("rows", "10");
+
+        let span = guard.finish().expect("explicit finish");
+        assert_eq!(span.metadata.get("table"), Some(&"users".to_string()));
+        assert_eq!(span.metadata.get("rows"), Some(&"10".to_string()));
+    }
+
     /// Verifies that lock poisoning recovery (unwrap_or_else + into_inner) works:
     /// a thread panics while holding the lock, then another thread can still proceed.
     #[test]

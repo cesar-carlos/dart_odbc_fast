@@ -418,4 +418,159 @@ mod tests {
             .iter()
             .any(|s| s.contains("search_path TO \"public\"")));
     }
+
+    #[test]
+    #[allow(
+        clippy::default_constructed_unit_structs,
+        reason = "intentional: exercises the impl Default for PostgresPlugin"
+    )]
+    fn default_constructor_should_produce_named_plugin() {
+        let plugin = PostgresPlugin::default();
+        assert_eq!(plugin.name(), "postgres");
+    }
+
+    #[test]
+    fn bulk_loader_should_advertise_array_binding_technique() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(plugin.technique(), "array_binding_optimised");
+        assert!(plugin.supports_native_bulk());
+    }
+
+    #[test]
+    fn upsert_should_degrade_to_do_nothing_when_no_columns_to_update() {
+        let plugin = PostgresPlugin::new();
+        let sql = plugin
+            .build_upsert_sql("public.users", &["id"], &["id"], None)
+            .expect("valid upsert");
+        assert!(sql.contains("ON CONFLICT (\"id\") DO NOTHING"));
+        assert!(!sql.contains("DO UPDATE"));
+    }
+
+    #[test]
+    fn returnable_should_be_supported() {
+        let plugin = PostgresPlugin::new();
+        assert!(plugin.supports_returning());
+    }
+
+    #[test]
+    fn returning_clause_should_strip_trailing_semicolon() {
+        let plugin = PostgresPlugin::new();
+        let sql = plugin
+            .append_returning_clause("INSERT INTO t (id) VALUES (?);", DmlVerb::Insert, &["id"])
+            .unwrap();
+        assert!(sql.ends_with("RETURNING \"id\""));
+        assert!(!sql.contains(";"));
+    }
+
+    #[test]
+    fn type_catalog_should_map_json_and_jsonb_to_json() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(plugin.map_type_extended(1, Some("json")), OdbcType::Json);
+        assert_eq!(plugin.map_type_extended(1, Some("jsonb")), OdbcType::Json);
+    }
+
+    #[test]
+    fn type_catalog_should_map_uuid_and_bytea() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(plugin.map_type_extended(1, Some("uuid")), OdbcType::Uuid);
+        assert_eq!(plugin.map_type_extended(1, Some("bytea")), OdbcType::Binary);
+    }
+
+    #[test]
+    fn type_catalog_should_map_timestamptz_to_timestamp_with_tz() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(11, Some("timestamptz")),
+            OdbcType::TimestampWithTz,
+        );
+        assert_eq!(
+            plugin.map_type_extended(11, Some("timestamp with time zone")),
+            OdbcType::TimestampWithTz,
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_map_pg_numeric_aliases() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(0, Some("int2")),
+            OdbcType::SmallInt
+        );
+        assert_eq!(plugin.map_type_extended(0, Some("float4")), OdbcType::Float);
+        assert_eq!(plugin.map_type_extended(0, Some("real")), OdbcType::Float);
+        assert_eq!(
+            plugin.map_type_extended(0, Some("float8")),
+            OdbcType::Double
+        );
+        assert_eq!(
+            plugin.map_type_extended(0, Some("double precision")),
+            OdbcType::Double,
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_fall_back_when_type_name_is_unknown() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(1, Some("custom_type")),
+            OdbcType::Varchar,
+        );
+        assert_eq!(plugin.map_type_extended(4, None), OdbcType::Integer);
+    }
+
+    #[test]
+    fn identifier_quoter_should_use_double_quote_style() {
+        let plugin = PostgresPlugin::new();
+        assert_eq!(plugin.quoting_style(), IdentifierQuoting::DoubleQuote);
+    }
+
+    #[test]
+    fn catalog_provider_should_emit_primary_key_query_with_table_param() {
+        let plugin = PostgresPlugin::new();
+        let q = plugin
+            .list_primary_keys_sql("orders", None)
+            .expect("valid catalog query");
+        assert!(q.sql.contains("constraint_type = 'PRIMARY KEY'"));
+        assert_eq!(q.params.len(), 1);
+        assert!(matches!(&q.params[0], ParamValue::String(s) if s == "orders"));
+    }
+
+    #[test]
+    fn catalog_provider_should_emit_foreign_key_query_joining_ccu() {
+        let plugin = PostgresPlugin::new();
+        let q = plugin
+            .list_foreign_keys_sql("orders", None)
+            .expect("valid catalog query");
+        assert!(q.sql.contains("constraint_type = 'FOREIGN KEY'"));
+        assert!(q.sql.contains("constraint_column_usage"));
+        assert_eq!(q.params.len(), 1);
+    }
+
+    #[test]
+    fn session_init_should_emit_application_name_with_escaped_quotes() {
+        let plugin = PostgresPlugin::new();
+        let opts = SessionOptions::new().with_application_name("svc'name");
+        let stmts = plugin.initialization_sql(&opts);
+        let app_stmt = stmts
+            .iter()
+            .find(|s| s.starts_with("SET application_name"))
+            .expect("application_name statement emitted");
+        assert!(app_stmt.contains("'svc''name'"));
+    }
+
+    #[test]
+    fn session_init_should_emit_time_zone_with_escaped_quotes() {
+        let plugin = PostgresPlugin::new();
+        let opts = SessionOptions::new().with_timezone("Etc/UTC");
+        let stmts = plugin.initialization_sql(&opts);
+        assert!(stmts.iter().any(|s| s == "SET TIME ZONE 'Etc/UTC'"));
+    }
+
+    #[test]
+    fn session_init_should_pass_through_extra_sql_verbatim() {
+        let plugin = PostgresPlugin::new();
+        let opts = SessionOptions::new().with_extra_sql("SET statement_timeout = 5000");
+        let stmts = plugin.initialization_sql(&opts);
+        assert!(stmts.iter().any(|s| s == "SET statement_timeout = 5000"));
+    }
 }

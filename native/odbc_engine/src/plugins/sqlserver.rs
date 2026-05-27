@@ -486,4 +486,200 @@ mod tests {
         assert!(q.sql.contains("sys.index_columns"));
         assert_eq!(q.params.len(), 1);
     }
+
+    #[test]
+    #[allow(
+        clippy::default_constructed_unit_structs,
+        reason = "intentional: exercises the impl Default for SqlServerPlugin"
+    )]
+    fn default_constructor_should_produce_named_plugin() {
+        let plugin = SqlServerPlugin::default();
+        assert_eq!(plugin.name(), "sqlserver");
+    }
+
+    #[test]
+    fn upsert_should_omit_when_matched_block_when_only_conflict_columns() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .build_upsert_sql("dbo.users", &["id"], &["id"], None)
+            .expect("valid merge upsert");
+        assert!(sql.starts_with("MERGE INTO"));
+        assert!(!sql.contains("WHEN MATCHED THEN UPDATE"));
+        assert!(sql.contains("WHEN NOT MATCHED THEN INSERT"));
+    }
+
+    #[test]
+    fn returnable_should_be_supported() {
+        let plugin = SqlServerPlugin::new();
+        assert!(plugin.supports_returning());
+    }
+
+    #[test]
+    fn output_clause_for_delete_should_use_deleted_prefix() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause("DELETE FROM t WHERE id = ?", DmlVerb::Delete, &["id"])
+            .unwrap();
+        assert!(sql.contains("OUTPUT DELETED.[id]"));
+        assert!(sql.contains("WHERE id = ?"));
+    }
+
+    #[test]
+    fn output_clause_for_delete_without_where_should_append_at_end() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause("DELETE FROM t", DmlVerb::Delete, &["id"])
+            .unwrap();
+        assert!(sql.ends_with("OUTPUT DELETED.[id]"));
+    }
+
+    #[test]
+    fn output_clause_for_update_should_inject_before_where() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause(
+                "UPDATE t SET name = ? WHERE id = ?",
+                DmlVerb::Update,
+                &["id"],
+            )
+            .unwrap();
+        assert!(sql.contains("OUTPUT INSERTED.[id]"));
+        assert!(sql.contains("WHERE id = ?"));
+    }
+
+    #[test]
+    fn output_clause_for_update_without_where_should_append_at_end() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause("UPDATE t SET name = ?", DmlVerb::Update, &["id"])
+            .unwrap();
+        assert!(sql.contains("OUTPUT INSERTED.[id]"));
+    }
+
+    #[test]
+    fn output_clause_should_strip_trailing_semicolon() {
+        let plugin = SqlServerPlugin::new();
+        let sql = plugin
+            .append_returning_clause("INSERT INTO t (id) VALUES (?);", DmlVerb::Insert, &["id"])
+            .unwrap();
+        assert!(!sql.contains(';'));
+    }
+
+    #[test]
+    fn identifier_quoter_should_use_brackets_style() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(plugin.quoting_style(), IdentifierQuoting::Brackets);
+    }
+
+    #[test]
+    fn type_catalog_should_map_unicode_string_aliases() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(1, Some("nvarchar")),
+            OdbcType::NVarchar,
+        );
+        assert_eq!(
+            plugin.map_type_extended(1, Some("nchar")),
+            OdbcType::NVarchar,
+        );
+        assert_eq!(
+            plugin.map_type_extended(1, Some("ntext")),
+            OdbcType::NVarchar
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_map_datetimeoffset_and_uniqueidentifier() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(11, Some("datetimeoffset")),
+            OdbcType::DatetimeOffset,
+        );
+        assert_eq!(
+            plugin.map_type_extended(1, Some("uniqueidentifier")),
+            OdbcType::Uuid,
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_map_money_smallmoney_to_money() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(plugin.map_type_extended(3, Some("money")), OdbcType::Money);
+        assert_eq!(
+            plugin.map_type_extended(3, Some("smallmoney")),
+            OdbcType::Money,
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_map_bit_to_boolean() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(plugin.map_type_extended(4, Some("bit")), OdbcType::Boolean);
+    }
+
+    #[test]
+    fn type_catalog_should_map_small_integer_aliases_to_smallint() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(4, Some("smallint")),
+            OdbcType::SmallInt,
+        );
+        assert_eq!(
+            plugin.map_type_extended(4, Some("tinyint")),
+            OdbcType::SmallInt,
+        );
+    }
+
+    #[test]
+    fn type_catalog_should_map_real_and_float_to_float_double() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(plugin.map_type_extended(0, Some("real")), OdbcType::Float);
+        assert_eq!(plugin.map_type_extended(0, Some("float")), OdbcType::Double);
+    }
+
+    #[test]
+    fn type_catalog_should_map_binary_family_and_json() {
+        let plugin = SqlServerPlugin::new();
+        for name in &["varbinary", "binary", "image"] {
+            assert_eq!(plugin.map_type_extended(0, Some(name)), OdbcType::Binary);
+        }
+        assert_eq!(plugin.map_type_extended(0, Some("json")), OdbcType::Json);
+    }
+
+    #[test]
+    fn type_catalog_should_fall_back_when_name_unknown_or_absent() {
+        let plugin = SqlServerPlugin::new();
+        assert_eq!(
+            plugin.map_type_extended(1, Some("custom")),
+            OdbcType::Varchar
+        );
+        assert_eq!(plugin.map_type_extended(-5, None), OdbcType::BigInt);
+    }
+
+    #[test]
+    fn catalog_provider_should_emit_foreign_key_query_with_table_param() {
+        let plugin = SqlServerPlugin::new();
+        let q = plugin
+            .list_foreign_keys_sql("Orders", None)
+            .expect("valid catalog query");
+        assert!(q.sql.contains("sys.foreign_keys"));
+        assert_eq!(q.params.len(), 1);
+        assert!(matches!(&q.params[0], ParamValue::String(s) if s == "Orders"));
+    }
+
+    #[test]
+    fn session_initializer_should_always_emit_arithabort_and_concat_null() {
+        let plugin = SqlServerPlugin::new();
+        let stmts = plugin.initialization_sql(&SessionOptions::default());
+        assert!(stmts.iter().any(|s| s == "SET ARITHABORT ON"));
+        assert!(stmts.iter().any(|s| s == "SET CONCAT_NULL_YIELDS_NULL ON"));
+    }
+
+    #[test]
+    fn session_initializer_should_append_extra_sql_verbatim() {
+        let plugin = SqlServerPlugin::new();
+        let opts = SessionOptions::new().with_extra_sql("SET LOCK_TIMEOUT 1000");
+        let stmts = plugin.initialization_sql(&opts);
+        assert!(stmts.iter().any(|s| s == "SET LOCK_TIMEOUT 1000"));
+    }
 }

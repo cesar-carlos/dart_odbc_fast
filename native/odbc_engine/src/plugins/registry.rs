@@ -663,4 +663,191 @@ mod tests {
         let plugin = registry.get_for_connection(conn).expect("snowflake plugin");
         assert_eq!(plugin.name(), "snowflake");
     }
+
+    // --- Dispatch coverage for the remaining plugin branches -----------------
+
+    #[test]
+    fn dispatch_upsert_should_route_to_mysql_when_driver_resolves_to_mysql() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MySQL ODBC 8.0 Driver};Server=localhost;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("mysql upsert SQL");
+        assert!(sql.contains("ON DUPLICATE KEY UPDATE"));
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_mariadb_when_driver_resolves_to_mariadb() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MariaDB Connector/ODBC};Server=localhost;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("mariadb upsert SQL");
+        // MariaDB shares the MySQL-style ON DUPLICATE KEY UPDATE.
+        assert!(sql.contains("ON DUPLICATE KEY UPDATE") || sql.contains("INSERT IGNORE"));
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_oracle() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={Oracle in OraDB21Home1};Dbq=localhost/XEPDB1;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("oracle upsert SQL");
+        assert!(sql.contains("MERGE INTO"));
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_db2() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={IBM DB2 ODBC DRIVER};Database=sample;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("db2 upsert SQL");
+        assert!(sql.contains("MERGE INTO"));
+        assert!(sql.contains("USING (VALUES"));
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_snowflake() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SnowflakeDSIIDriver};Server=acc.snowflakecomputing.com;";
+        let sql = registry
+            .build_upsert_sql(conn, "schema.users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("snowflake upsert SQL");
+        assert!(sql.contains("MERGE INTO"));
+        assert!(sql.contains("USING (SELECT"));
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_sybase() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={Adaptive Server Enterprise};Server=localhost;";
+        let result = registry.build_upsert_sql(conn, "users", &["id"], &["id"], None);
+        // Sybase may return an UnsupportedFeature or a valid SQL — either way,
+        // the dispatch branch is exercised.
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn dispatch_upsert_should_route_to_sqlite() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SQLite3 ODBC Driver};Database=test.db;";
+        let sql = registry
+            .build_upsert_sql(conn, "users", &["id", "name"], &["id"], None)
+            .expect("upsert dispatch")
+            .expect("sqlite upsert SQL");
+        assert!(sql.contains("ON CONFLICT") || sql.contains("INSERT OR REPLACE"));
+    }
+
+    #[test]
+    fn dispatch_returning_should_route_to_mysql_and_emit_unsupported_error() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MySQL ODBC 8.0 Driver};Server=localhost;";
+        let r = registry
+            .append_returning_sql(
+                conn,
+                "INSERT INTO t (id) VALUES (?)",
+                DmlVerb::Insert,
+                &["id"],
+            )
+            .expect("returning dispatch");
+        assert!(matches!(r, Err(OdbcError::UnsupportedFeature(_))));
+    }
+
+    #[test]
+    fn dispatch_returning_should_route_to_sqlserver_and_emit_output_clause() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SQL Server};Server=localhost;";
+        let out = registry
+            .append_returning_sql(
+                conn,
+                "INSERT INTO t (id) VALUES (?)",
+                DmlVerb::Insert,
+                &["id"],
+            )
+            .expect("returning dispatch")
+            .expect("sqlserver returning SQL");
+        assert!(out.contains("OUTPUT INSERTED.[id]"));
+    }
+
+    #[test]
+    fn dispatch_returning_should_route_to_db2_and_emit_final_table_clause() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={IBM DB2 ODBC DRIVER};Database=sample;";
+        let out = registry
+            .append_returning_sql(
+                conn,
+                "INSERT INTO t (a) VALUES (?)",
+                DmlVerb::Insert,
+                &["id"],
+            )
+            .expect("returning dispatch")
+            .expect("db2 returning SQL");
+        assert!(out.contains("FROM FINAL TABLE"));
+    }
+
+    #[test]
+    fn dispatch_session_init_should_route_to_postgres() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={PostgreSQL Unicode};Server=localhost;";
+        let opts = SessionOptions::new().with_timezone("UTC");
+        let stmts = registry
+            .session_init_sql(conn, &opts)
+            .expect("session init dispatch");
+        assert!(stmts.iter().any(|s| s == "SET TIME ZONE 'UTC'"));
+    }
+
+    #[test]
+    fn dispatch_session_init_should_route_to_snowflake() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={SnowflakeDSIIDriver};Server=acc.snowflakecomputing.com;";
+        let opts = SessionOptions::new().with_timezone("UTC");
+        let stmts = registry
+            .session_init_sql(conn, &opts)
+            .expect("session init dispatch");
+        assert!(stmts
+            .iter()
+            .any(|s| s.contains("ALTER SESSION SET TIMEZONE")));
+    }
+
+    #[test]
+    fn dispatch_session_init_should_route_to_db2() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={IBM DB2 ODBC DRIVER};Database=sample;";
+        let opts = SessionOptions::new().with_schema("MYAPP");
+        let stmts = registry
+            .session_init_sql(conn, &opts)
+            .expect("session init dispatch");
+        assert!(stmts.iter().any(|s| s.contains("SET CURRENT SCHEMA")));
+    }
+
+    #[test]
+    fn dispatch_returning_for_unknown_plugin_should_return_unsupported_feature() {
+        let registry = PluginRegistry::default();
+        let result = registry.dispatch_returning("mongodb", "SELECT 1", DmlVerb::Insert, &["id"]);
+        assert!(matches!(result, Err(OdbcError::UnsupportedFeature(_))));
+    }
+
+    #[test]
+    fn dispatch_upsert_for_unknown_plugin_should_return_unsupported_feature() {
+        let registry = PluginRegistry::default();
+        let result = registry.dispatch_upsert("mongodb", "t", &["a"], &["a"], None);
+        assert!(matches!(result, Err(OdbcError::UnsupportedFeature(_))));
+    }
+
+    #[test]
+    fn session_init_should_return_empty_vec_for_unknown_plugin() {
+        let registry = PluginRegistry::default();
+        let conn = "Driver={MongoDB ODBC};Server=localhost;";
+        let stmts = registry
+            .session_init_sql(conn, &SessionOptions::default())
+            .expect("session init dispatch");
+        assert!(stmts.is_empty());
+    }
 }

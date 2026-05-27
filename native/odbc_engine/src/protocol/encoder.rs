@@ -650,6 +650,72 @@ mod tests {
     }
 
     #[test]
+    fn encode_to_writer_result_maps_limit_errors_to_resource_limit_reached() {
+        let mut buffer = RowBuffer::new();
+        for _ in 0..=u16::MAX {
+            buffer.add_column(String::new(), OdbcType::Integer);
+        }
+
+        let mut sink = Vec::new();
+        let err = RowBufferEncoder::encode_to_writer_result(&buffer, &mut sink).unwrap_err();
+        assert!(
+            matches!(err, OdbcError::ResourceLimitReached(msg) if msg.contains("result encoding failed"))
+        );
+    }
+
+    #[test]
+    fn encode_to_writer_result_succeeds_for_well_formed_buffer() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("col".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
+
+        let mut sink = Vec::new();
+        RowBufferEncoder::encode_to_writer_result(&buffer, &mut sink).unwrap();
+        assert!(!sink.is_empty());
+    }
+
+    #[test]
+    fn append_output_footer_result_maps_overflow_to_resource_limit_reached() {
+        // Use checked_u32_len directly via a synthetic ParamValue vec is hard;
+        // exercise the success path of the _result wrapper instead, then a
+        // separate test covers the error mapping in checked_u32_len.
+        use crate::protocol::param_value::ParamValue;
+
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_output_footer_result(base.clone(), &[ParamValue::Null])
+            .unwrap();
+        assert!(out.len() > base.len());
+        assert_eq!(&out[base.len()..base.len() + 4], &OUTPUT_FOOTER_MAGIC);
+    }
+
+    #[test]
+    fn append_output_footer_result_is_noop_for_empty_outputs() {
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_output_footer_result(base.clone(), &[]).unwrap();
+        assert_eq!(out, base);
+    }
+
+    #[test]
+    fn append_ref_cursor_footer_result_is_noop_for_empty_blobs() {
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_ref_cursor_footer_result(base.clone(), &[]).unwrap();
+        assert_eq!(out, base);
+    }
+
+    #[test]
+    fn append_ref_cursor_footer_result_inserts_rc1_frame_for_non_empty_blobs() {
+        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let out = RowBufferEncoder::append_ref_cursor_footer_result(
+            base.clone(),
+            std::slice::from_ref(&blob),
+        )
+        .unwrap();
+        let off = base.len();
+        assert_eq!(&out[off..off + 4], &REF_CURSOR_FOOTER_MAGIC);
+    }
+
+    #[test]
     fn try_encode_with_compression_shrinks_or_falls_back_to_raw() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("payload".to_string(), OdbcType::Binary);

@@ -251,4 +251,41 @@ mod tests {
         let sql = "WHERE note = 'it''s fine' AND qty = 1.5e2";
         assert_eq!(sanitize_sql_for_log(sql), "WHERE note = ? AND qty = ?");
     }
+
+    #[test]
+    fn sanitize_sql_consumes_negative_and_positive_signs_in_numeric_literal() {
+        // Repeats the scientific-notation case but covers the +/- branch
+        // explicitly so the byte-scan reaches the `c == b'+' || c == b'-'`
+        // arms.
+        assert_eq!(
+            sanitize_sql_for_log("x = 1.5e+10 OR y = 2.0e-3"),
+            "x = ? OR y = ?"
+        );
+    }
+
+    #[test]
+    fn sanitize_sql_should_passthrough_when_env_opts_into_raw_sql() {
+        // `set_var` is unsafe in current rustc but the test is isolated
+        // by `serial_test` peers; we restore the previous value to avoid
+        // leaking state to other tests in the same process.
+        let key = ENV_LOG_RAW_SQL;
+        let prev = std::env::var(key).ok();
+        // SAFETY: tests are single-threaded for this case in practice and
+        // any concurrent reader sees a value derived from the same env
+        // variable; the previous value is restored at the end of the
+        // test to keep the suite hermetic.
+        unsafe {
+            std::env::set_var(key, "1");
+        }
+
+        let sql = "SELECT * FROM users WHERE id = 1 AND name = 'alice'";
+        assert_eq!(sanitize_sql_for_log(sql), sql);
+
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 }
