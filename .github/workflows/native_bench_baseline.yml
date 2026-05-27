@@ -25,7 +25,7 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
@@ -53,7 +53,7 @@ jobs:
 
       - name: Upload Criterion HTML report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-criterion-report
           path: native/odbc_engine/target/criterion/

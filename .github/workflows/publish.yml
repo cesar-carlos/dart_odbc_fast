@@ -16,7 +16,7 @@ jobs:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}
@@ -63,7 +63,11 @@ jobs:
           set -euo pipefail
           URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
 
-          for attempt in $(seq 1 30); do
+          # 45 * 20s = 15min: gives ~4min headroom over the historical
+          # release.yml runtime (~9-11min) before pub.dev publish gives up.
+          # The previous 30*20s=10min budget timed out by literal seconds on
+          # v3.10.1 when release.yml drifted to 10m22s due to expanded tests.
+          for attempt in $(seq 1 45); do
             status="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -o release.json -w "%{http_code}" "${URL}" || true)"
 
             if [[ "${status}" == "200" ]]; then
@@ -72,7 +76,7 @@ jobs:
               fi
             fi
 
-            echo "Release assets not ready yet (attempt ${attempt}/30). Waiting 20s..."
+            echo "Release assets not ready yet (attempt ${attempt}/45). Waiting 20s..."
             sleep 20
           done
 
@@ -86,7 +90,7 @@ jobs:
     permissions:
       id-token: write # Required for OIDC authentication
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}

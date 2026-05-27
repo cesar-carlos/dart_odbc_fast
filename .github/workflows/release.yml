@@ -30,7 +30,7 @@ jobs:
       ODBC_DSN: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
@@ -146,7 +146,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: refs/tags/${{ needs.verify.outputs.release_tag }}
@@ -184,7 +184,7 @@ jobs:
         shell: bash
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: uploads/${{ matrix.artifact }}
@@ -202,7 +202,7 @@ jobs:
       ODBC_DSN: ""
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: refs/tags/${{ needs.verify.outputs.release_tag }}
@@ -213,7 +213,7 @@ jobs:
           sdk: stable
 
       - name: Download Windows DLL
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: odbc_engine.dll
           path: native/target/release/
@@ -236,13 +236,13 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: refs/tags/${{ needs.verify.outputs.release_tag }}
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: uploads/
           pattern: "*"
@@ -255,11 +255,41 @@ jobs:
           test -f uploads/odbc_engine.dll
           test -f uploads/libodbc_engine.so
 
+      - name: Extract CHANGELOG section into release body
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          python3 - "${VERSION}" > CHANGELOG_SECTION.md <<'PY'
+          import re
+          import sys
+
+          version = sys.argv[1]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          header = re.search(
+              r"^## \[" + re.escape(version) + r"\][^\n]*\n",
+              text,
+              re.MULTILINE,
+          )
+          if not header:
+              sys.exit(f"CHANGELOG.md missing section for [{version}]")
+          start = header.end()
+          nxt = re.search(r"^## \[", text[start:], re.MULTILINE)
+          end = start + nxt.start() if nxt else len(text)
+          print(text[start:end].strip())
+          PY
+          echo "----- Release body preview (head) -----"
+          head -n 40 CHANGELOG_SECTION.md
+          echo "----- end preview -----"
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.verify.outputs.release_tag }}
           name: Release ${{ needs.verify.outputs.release_tag }}
+          body_path: CHANGELOG_SECTION.md
+          append_body: true
           files: uploads/*
           fail_on_unmatched_files: true
           generate_release_notes: true
