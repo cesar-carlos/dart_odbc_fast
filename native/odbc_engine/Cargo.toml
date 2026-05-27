@@ -71,7 +71,7 @@ libloading = { version = "0.8", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # MSDTC COM enlistment uses the `windows` crate for generated COM interfaces.
-windows = { version = "0.59", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_DistributedTransactionCoordinator",
