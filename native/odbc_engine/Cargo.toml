@@ -67,7 +67,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenvy = { version = "0.15", optional = true }
 # Oracle OCI XA dynamic-loading shim.
-libloading = { version = "0.8", optional = true }
+libloading = { version = "0.9", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # MSDTC COM enlistment uses the `windows` crate for generated COM interfaces.
