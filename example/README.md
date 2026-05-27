@@ -136,6 +136,10 @@ accumulation with small chunks, and streaming multi-result decoding.
 - [telemetry_demo.dart](telemetry_demo.dart): `SimpleTelemetryService`, `ITelemetryRepository`, and `TelemetryBuffer` with in-memory repository.
 - [otel_repository_demo.dart](otel_repository_demo.dart): `OpenTelemetryFFI` + `TelemetryRepositoryImpl` with optional OTLP endpoint.
 
+### Event bus
+
+- **[event_bus_demo.dart](event_bus_demo.dart)** *(NEW v3.10.0)*: subscribes to `IAdminService.events` and pattern-matches the sealed `OdbcEvent` hierarchy (`ConnectionLost`, `WorkerRecovered`, `AutoReconnectAttempted`, `PoolResize`, `SlowQueryDetected`). Triggers real `PoolResize` via `poolSetSize` and real `SlowQueryDetected` with `slowQueryThreshold: Duration.zero`. Skips DSN-dependent work when `ODBC_EXAMPLE_DISABLE_DSN=1` and prints the sealed variant catalogue instead.
+
 ## Shared helper
 
 - [common.dart](common.dart): helper for DSN loading from `.env` and environment variables.

@@ -210,11 +210,31 @@ portable interval helpers including `intervalYearToMonth`. See
 
 - Sync and async database access (async via worker isolate)
 - Prepared statements and named parameters (`@name`, `:name`)
-- Multi-result queries (`executeQueryMulti`, `executeQueryMultiFull`)
-- Streaming queries (`streamQueryBatched`, `streamQuery`)
+- Multi-result queries (`executeQueryMulti`, `executeQueryMultiFull`,
+  `executeQueryMultiParams`, streaming `streamQueryMulti`)
+- Streaming queries (`streamQueryBatched`, `streamQuery`, `streamQueryNamed`)
+- **Sub-interfaces of `IOdbcService`** (v3.10): `IQueryService`,
+  `ITransactionService`, `IPoolService`, `IAdminService` — depend on the
+  narrow seam your code actually uses (Interface Segregation). Each ships
+  `...For(Connection conn, ...)` overloads so call sites no longer thread
+  `connection.id` around
+- **Event bus** (v3.10): `IAdminService.events` returns a broadcast
+  `Stream<OdbcEvent>` with sealed variants (`ConnectionLost`,
+  `WorkerRecovered`, `AutoReconnectAttempted`, `PoolResize`,
+  `SlowQueryDetected`) for log/metric/observability pipelines
+- **Typed columnar results** (v3.10): `executeQueryColumnar` /
+  `streamQueryColumnar` return `TypedColumnarResult` with
+  `Int32List` / `Int64List` / `Float64List` per numeric column (zero boxing)
+- **Transaction helpers** (Sprint 4.4 / v3.4.2): `runInTransaction<T>` and
+  `runInXaTransaction<T>` orchestrate begin → action → commit/rollback
+  (or end → prepare → commit_prepared for XA) with throw-safe cleanup
 - Connection pooling with **configurable eviction/timeouts** (v3.0
   `PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`)
-- Transactions and savepoints (Sql-92 / SQL Server dialects)
+- Transactions and savepoints (SQL-92 / SQL Server dialects); per-transaction
+  `IsolationLevel`, `TransactionAccessMode.readOnly`, `LockTimeout`
+- **X/Open XA / 2PC** (Sprint 4.3): typed `Xid` + `XaTransactionHandle`
+  state machine across PostgreSQL, MySQL/MariaDB, DB2, Oracle
+  (`SYS.DBMS_XA`), and SQL Server (`--features xa-dtc` on Windows)
 - Bulk insert payload builder and parallel bulk insert via pool
 - Connection string validation, driver capabilities, and runtime version APIs
 - **Live DBMS introspection** via `SQLGetInfo` (v2.1+): typed `DbmsInfo` with
@@ -237,6 +257,9 @@ portable interval helpers including `intervalYearToMonth`. See
   `ResourceLimitReachedError`, `CancelledError`, `WorkerCrashedError`,
   `BulkPartialFailureError` (with structured fields)
 - Runtime metrics and telemetry hooks (in-memory + OpenTelemetry OTLP)
+- **Opt-in performance helpers** (v3.10): `LazyString` (defer text decode
+  until `.value` is read) and `SqlPointerCache` (256-entry LRU of
+  `Pointer<Utf8>` per SQL string for hot loops)
 
 ## Type Mapping
 
@@ -332,23 +355,63 @@ paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
 
 ## API coverage (implemented)
 
-### High-level service (`OdbcService`)
+### High-level service (`OdbcService` + sub-interfaces)
 
-- Query execution: `executeQuery`, `executeQueryParams`, `executeQueryNamed`
-- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`, `executePreparedNamed`, `cancelStatement`, `closeStatement`
-- Incremental streaming: `streamQuery` (chunked `QueryResult` stream)
-- Named parameters: `prepareNamed`, `executePreparedNamed`, `executeQueryNamed`
-- Multi-result: `executeQueryMulti`, `executeQueryMultiParams`, `executeQueryMultiFull`
-- Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`, `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
-- Transactions: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
+`IOdbcService` (aggregate) implements four narrower contracts:
+[`IQueryService`](lib/application/services/i_query_service.dart),
+[`ITransactionService`](lib/application/services/i_transaction_service.dart),
+[`IPoolService`](lib/application/services/i_pool_service.dart),
+[`IAdminService`](lib/application/services/i_admin_service.dart). New
+consumers should depend on the narrowest sub-interface they need (ISP);
+existing code typed against `IOdbcService` keeps working.
+
+Each sub-interface also ships `...For(Connection conn, ...)` extension
+overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
+`runInTransactionFor`, ...) so call sites no longer thread
+`connection.id` around.
+
+- Query execution: `executeQuery`, `executeQueryParams`,
+  `executeQueryNamed`, `executeQueryDirectedParams` (DRT1 `IN`/`OUT`/`INOUT`),
+  `executeQueryColumnar` (returns `TypedColumnarResult`)
+- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`,
+  `executePreparedNamed`, `cancelStatement`, `closeStatement`,
+  `clearAllStatements`
+- Incremental streaming: `streamQuery`, `streamQueryNamed`,
+  `streamQueryColumnar`, `streamQueryMulti` (per-item multi-result stream)
+- Multi-result: `executeQueryMulti`, `executeQueryMultiParams`,
+  `executeQueryMultiFull`
+- Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`,
+  `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
+- Transactions: `beginTransaction`, `commitTransaction`,
+  `rollbackTransaction`, `runInTransaction<T>` (begin → action →
+  commit/rollback helper with throw-safe cleanup)
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
-- Pooling: `poolCreate`, `poolGetConnection`, `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`, `poolGetStateDetailed`, `poolSetSize`, `poolClose`
-- Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with fallback when `parallelism <= 1`)
-- Operations/maintenance: `detectDriver`, `clearStatementCache`, `getMetrics`, `getPreparedStatementsMetrics`, `getVersion`, `validateConnectionString`, `getDriverCapabilities`
-- Metadata cache: `metadataCacheEnable`, `metadataCacheStats`, `clearMetadataCache`
+- X/Open XA / 2PC: `xaStart`, `xaRecover`, `xaResumePrepared`,
+  `runInXaTransaction<T>` (orchestrates end → prepare → commit_prepared
+  or 1RM `commit_one_phase`)
+- Pooling: `poolCreate` (with `PoolOptions`), `poolGetConnection`,
+  `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`,
+  `poolGetStateDetailed`, `poolSetSize`, `poolClose`
+- Bulk insert: `bulkInsert`, `bulkInsertParallel` (pool-based, with
+  fallback when `parallelism <= 1`)
+- Lifecycle/admin: `initialize`, `connect`, `disconnect`,
+  `validateConnectionString`, `getDriverCapabilities`,
+  `getConnectionDbmsInfo` (live `SQLGetInfo`), `getMetrics`,
+  `getVersion`, `setLogLevel`, `getWorkerPoolStats()` (infallible,
+  returns `null` in sync mode)
+- Event bus: `events` — broadcast `Stream<OdbcEvent>` with sealed
+  variants (`ConnectionLost`, `WorkerRecovered`, `AutoReconnectAttempted`,
+  `PoolResize`, `SlowQueryDetected`)
+- Operations/maintenance: `detectDriver`, `clearStatementCache`,
+  `getPreparedStatementsMetrics`
+- Metadata cache: `metadataCacheEnable`, `metadataCacheStats`,
+  `clearMetadataCache`
 - Stream cancellation: `cancelStream`
-- Audit: `setAuditEnabled`, `getAuditStatus`, `getAuditEvents`, `clearAuditEvents`
-- Async lifecycle: `executeAsyncStart`, `asyncPoll`, `asyncGetResult`, `asyncCancel`, `asyncFree`, `streamStartAsync`, `streamPollAsync`
+- Audit: `setAuditEnabled`, `getAuditStatus`, `getAuditEvents`,
+  `clearAuditEvents`
+- Async request/stream lifecycle: `executeAsyncStart`, `asyncPoll`,
+  `asyncGetResult`, `asyncCancel`, `asyncFree`, `streamStartAsync`,
+  `streamPollAsync`
 
 ### Statement cancellation status
 
@@ -759,6 +822,8 @@ dart run example/main.dart
 dart run example/service_api_coverage_demo.dart
 dart run example/advanced_entities_demo.dart
 dart run example/simple_demo.dart
+dart run example/quick_start_balanced_demo.dart        # NEW v3.8 (OdbcUsageProfile)
+dart run example/sub_interfaces_migration_demo.dart    # NEW v3.10 (IQueryService et al)
 
 # Connection / pool
 dart run example/connection_string_builder_demo.dart   # 7 builders incl. MariaDB/SQLite/Db2/Snowflake
@@ -772,18 +837,27 @@ dart run example/execute_async_demo.dart
 dart run example/high_concurrency_worker_pool_demo.dart
 dart run example/high_concurrency_pool_demo.dart
 dart run example/async_concurrency_benchmark.dart
+dart run example/backpressure_modes_demo.dart          # failFast / waitForSlot + recovery callback
 
 # Optional: override the demo query with a slower/larger workload
 ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_worker_pool_demo.dart
 
 # Queries / parameters
 dart run example/named_parameters_demo.dart
+dart run example/stream_query_named_demo.dart          # NEW v3.10 (streamQueryNamed)
 dart run example/multi_result_demo.dart
+dart run example/multi_result_stream_demo.dart         # streamQueryMulti per-item
+dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
+dart run example/oracle_ref_cursor_demo.dart           # ParamValueRefCursorOut (opt-in)
+dart run example/columnar_result_encoding_demo.dart    # ResultEncoding.columnar / .columnarCompressed
 dart run example/streaming_demo.dart
+dart run example/streaming_performance_benchmark.dart  # streamQuery vs streamQueryBatched
 
-# Transactions / savepoints
+# Transactions / savepoints / XA
+dart run example/run_in_transaction_demo.dart          # NEW v3.4 (runInTransaction<T>)
 dart run example/savepoint_demo.dart
 dart run example/transaction_helpers_demo.dart
+dart run example/xa_2pc_demo.dart                      # Sprint 4.3 (XA / 2PC across 5 engines)
 
 # Schema introspection
 dart run example/catalog_reflection_demo.dart
@@ -794,6 +868,7 @@ dart run example/driver_features_demo.dart             # NEW v3.0 (UPSERT/RETURN
 
 # Errors / observability
 dart run example/structured_errors_demo.dart           # NEW v3.0 (12+ typed error classes)
+dart run example/event_bus_demo.dart                   # NEW v3.10 (IAdminService.events)
 dart run example/audit_example.dart
 dart run example/telemetry_demo.dart
 dart run example/otel_repository_demo.dart
@@ -821,6 +896,26 @@ Coverage-oriented examples:
   native-pool patterns for high-concurrency scenarios.
 - `example/async_concurrency_benchmark.dart`: local Stopwatch-based benchmark
   for worker pool, native pool and streaming choices.
+- `example/backpressure_modes_demo.dart`: contrasts `failFast` vs
+  `waitForSlot` and wires the `onWorkerRecovered` callback that fires
+  after auto-recovery.
+- `example/sub_interfaces_migration_demo.dart`: side-by-side `IOdbcService`
+  (aggregate) vs `IQueryService` (narrow sub-interface) plus the
+  `executeQueryFor(Connection, ...)` overload.
+- `example/event_bus_demo.dart`: subscribes to `IAdminService.events`
+  and pattern-matches the sealed `OdbcEvent` variants (`PoolResize`,
+  `SlowQueryDetected`, etc.).
+- `example/columnar_result_encoding_demo.dart` and
+  `example/streaming_performance_benchmark.dart`: opt-in result-encoding
+  comparison and streaming throughput benchmark.
+- `example/multi_result_stream_demo.dart`: per-item multi-result streaming
+  via `streamQueryMulti`.
+- `example/output_param_directions_demo.dart` and
+  `example/oracle_ref_cursor_demo.dart`: DRT1 directed parameters and
+  Oracle `REF CURSOR` materialization.
+- `example/run_in_transaction_demo.dart` and `example/xa_2pc_demo.dart`:
+  `runInTransaction<T>` orchestrated unit-of-work and full X/Open XA / 2PC
+  lifecycle (5 engines).
 - `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
   telemetry service/buffer usage plus OTLP repository initialization.
 
@@ -1033,6 +1128,86 @@ UPSERT, RETURNING, and SessionInit
   `BulkPartialFailureError` (v3.0)
 - ✅ `ErrorCategory` enum (transient/fatal/validation/connectionLost)
   for retry/abort/reconnect decision making
+
+#### Transaction orchestration (Sprint 4.4 / v3.10)
+
+**[run_in_transaction_demo.dart](example/run_in_transaction_demo.dart)** -
+High-level `runInTransaction<T>` helper
+
+- ✅ Begin → action → commit/rollback in a single call
+- ✅ Action `Failure` rolls back; throws are caught and converted to
+  `QueryError` (throw never escapes)
+- ✅ Forwards `IsolationLevel`, `TransactionAccessMode.readOnly`, and
+  `LockTimeout` to the underlying engine
+- ✅ Rollback failures during cleanup are swallowed so they never
+  overwrite the original cause
+
+#### XA / 2PC distributed transactions (Sprint 4.3 / v3.4.x)
+
+**[xa_2pc_demo.dart](example/xa_2pc_demo.dart)** - Full X/Open XA lifecycle
+
+- ✅ Phase 1 + Phase 2 commit (`xa_start` / `xa_end` / `xa_prepare` /
+  `xa_commit_prepared`)
+- ✅ 1RM optimization (`commit_one_phase`) when this RM is the sole
+  participant
+- ✅ Crash recovery via `xaRecover` + `xaResumePrepared`
+- ✅ Dedicated Oracle section (DML inside the branch so `xa_prepare`
+  doesn't return `XA_RDONLY`)
+- ✅ `XaTransactionHandle.runWithStart<T>` exception-safe helper
+
+#### Sub-interfaces + Connection-typed overloads (v3.10)
+
+**[sub_interfaces_migration_demo.dart](example/sub_interfaces_migration_demo.dart)** -
+ISP-friendly seams
+
+- ✅ Side-by-side `IOdbcService` (aggregate) vs `IQueryService` consumer
+- ✅ `executeQueryFor(Connection conn, ...)` overload that drops the
+  manual `conn.id` plumbing
+- ✅ DSN-free smoke run: works as a describe-only example
+
+#### Event bus (v3.10)
+
+**[event_bus_demo.dart](example/event_bus_demo.dart)** -
+`IAdminService.events` broadcast stream
+
+- ✅ Pattern-matches sealed `OdbcEvent` variants (`ConnectionLost`,
+  `WorkerRecovered`, `AutoReconnectAttempted`, `PoolResize`,
+  `SlowQueryDetected`)
+- ✅ Triggers real `PoolResize` via `poolSetSize` and real
+  `SlowQueryDetected` with `slowQueryThreshold: Duration.zero`
+- ✅ Best-effort observability — no back-pressure on the runtime
+  emission path
+
+#### Backpressure modes (v3.10)
+
+**[backpressure_modes_demo.dart](example/backpressure_modes_demo.dart)** -
+Async-pool flow control
+
+- ✅ `AsyncBackpressureMode.failFast` — extras rejected with
+  `AsyncErrorCode.resourceExhausted`
+- ✅ `AsyncBackpressureMode.waitForSlot` — FIFO queueing up to
+  `backpressureTimeout`
+- ✅ `onWorkerRecovered` callback wiring after auto-recovery
+
+#### Columnar result encoding (v3.10)
+
+**[columnar_result_encoding_demo.dart](example/columnar_result_encoding_demo.dart)** -
+Opt-in `ResultEncoding` comparison
+
+- ✅ Runs the same SQL through `rowMajor`, `columnar`, and
+  `columnarCompressed` encodings
+- ✅ Surfaces decompression errors when the loaded native library
+  lacks `odbc_columnar_decompress`
+- ✅ Row-major remains the default; columnar is opt-in per call
+
+#### Multi-result streaming
+
+**[multi_result_stream_demo.dart](example/multi_result_stream_demo.dart)** -
+`streamQueryMulti` per-item delivery
+
+- ✅ Streams `QueryResultMultiItem` (result set OR row count) one item
+  at a time
+- ✅ Lower peak memory than `executeQueryMultiFull` for big batches
 
 ## Build from source
 

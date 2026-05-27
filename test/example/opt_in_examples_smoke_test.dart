@@ -100,5 +100,21 @@ void main() {
       },
       timeout: const Timeout(Duration(seconds: 60)),
     );
+
+    test(
+      'should_skip_event_bus_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/event_bus_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
 }
