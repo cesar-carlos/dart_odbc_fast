@@ -82,11 +82,14 @@ windows = { version = "0.59", features = [
 env_logger = "0.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3"
-# Loom is used only by the optional `loom_state_test` integration test
-# (sprint 4 follow-up C11) to explore every interleaving of the FFI
-# state's sub-locks. It is intentionally pinned and kept out of any
-# production build by living under `dev-dependencies`.
-loom = "0.7"
+# Loom was previously a dev-dependency here, but `odbc_engine` pulls in
+# `tokio` which is not loom-compatible (its `AtomicWaker` exports are
+# gated behind `#[cfg(not(loom))]` while `task::local` uses them
+# unconditionally — see tokio-rs/tokio#2510). The loom models now live
+# in the sibling `loom_models` workspace member, which does not depend
+# on `odbc_engine` or `tokio` and can therefore be built with
+# `RUSTFLAGS="--cfg loom"`. See
+# `native/loom_models/tests/loom_state_test.rs` for the models.
 
 [[test]]
 name = "ffi_compatibility_test"

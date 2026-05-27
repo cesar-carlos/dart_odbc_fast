@@ -1,5 +1,5 @@
 [workspace]
-members = ["odbc_engine"]
+members = ["odbc_engine", "loom_models"]
 resolver = "2"
 
 [workspace.package]

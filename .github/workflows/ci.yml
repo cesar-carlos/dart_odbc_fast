@@ -95,33 +95,7 @@ jobs:
           cd native
           cargo test --workspace --features statement-handle-reuse -- --test-threads=1
 
-  loom:
-    # Optional, non-blocking loom exploration of the FFI state lock
-    # interactions (sprint 4 follow-up C11). Runs in its own job because
-    # `--cfg loom` is incompatible with normal cargo test caching and
-    # the model-check is slow.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    env:
-      CI: "true"
-      RUSTFLAGS: "--cfg loom"
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Rust (pinned toolchain)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.93.0
-      - name: Install ODBC (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev libclang-dev llvm
-      - name: Run loom models
-        run: |
-          cd native/odbc_engine
-          cargo test --test loom_state_test --release -- --test-threads=1
-
-      - name: Install dependencies
+      - name: Install Dart dependencies
         run: dart pub get
 
       - name: Dart analyze
@@ -155,6 +129,34 @@ jobs:
           test/domain
           test/infrastructure
           test/helpers/database_detection_test.dart
+
+  loom:
+    # Optional, non-blocking loom exploration of the FFI state lock
+    # interactions (sprint 4 follow-up C11). Runs in its own job because
+    # `--cfg loom` is incompatible with normal cargo test caching and
+    # the model-check is slow.
+    #
+    # The loom models live in the dedicated `loom_models` workspace
+    # member (see `native/loom_models/`) — building them through
+    # `odbc_engine` would drag in `tokio`, which is not loom-compatible
+    # (see tokio-rs/tokio#2510). `cargo test -p loom_models` keeps the
+    # build scoped to `loom` + `std`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      CI: "true"
+      RUSTFLAGS: "--cfg loom"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust (pinned toolchain)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+      - name: Run loom models
+        run: |
+          cd native
+          cargo test -p loom_models --release -- --test-threads=1
 
   coverage:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

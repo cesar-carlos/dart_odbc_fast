@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (CI — `loom` job and misplaced Dart steps)
+
+- **Loom job now actually runs.** The loom models lived under
+  `native/odbc_engine/tests/loom_state_test.rs` and were compiled
+  through the `odbc_engine` crate, which pulls in `tokio`. `tokio` is
+  not loom-compatible — its `AtomicWaker` exports are gated behind
+  `#[cfg(not(loom))]` while `task::local` uses them unconditionally
+  (tokio-rs/tokio#2510). Building with `RUSTFLAGS="--cfg loom"`
+  therefore broke compilation with `error[E0432]: unresolved import
+  crate::sync::AtomicWaker` before any model could run. Moved the
+  models to a dedicated `native/loom_models/` workspace member whose
+  only runtime dep is `loom`, and switched the CI `loom` job to
+  `cargo test -p loom_models --release`. All three models now pass
+  locally in ~42 s and the CI job is no longer permanently red.
+  Removed the now-unused `loom = "0.7"` from
+  `odbc_engine`'s `[dev-dependencies]`.
+- **Dart unit / docs / example / perf steps were running under the
+  loom job.** Because the `loom` job is `continue-on-error: true`, a
+  real Dart test failure inside that job would be silently swallowed.
+  Moved the entire Dart pipeline (`dart pub get`, `dart analyze`, FFI
+  export check, unit-only test suite, docs and opt-in example smoke
+  tests, protocol perf guard, slow-test budget) back to the `test`
+  job where it enforces against PRs as intended. The loom job is now
+  scoped to a single `cargo test -p loom_models --release` step.
+
 ## [3.10.0] - 2026-05-27 — Roadmap v3.x (additive + deprecation gradual)
 
 Bumped from `3.9.0` as MINOR per `doc/version/VERSIONING_STRATEGY.md`:

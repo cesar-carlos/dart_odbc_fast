@@ -3,14 +3,23 @@
 //! Run:
 //!
 //! ```bash
-//! cargo test --test loom_state_test --release -- --test-threads=1
+//! RUSTFLAGS="--cfg loom" cargo test -p loom_models --release -- --test-threads=1
 //! ```
 //!
+//! Lives in the dedicated `loom_models` workspace member because the
+//! parent crate `odbc_engine` depends on `tokio`, and `tokio` cannot be
+//! compiled with `--cfg loom` (its `AtomicWaker` exports are gated
+//! behind `#[cfg(not(loom))]` while `task::local` uses them
+//! unconditionally — see <https://github.com/tokio-rs/tokio/issues/2510>).
+//! Building loom in this isolated crate avoids dragging `tokio` into the
+//! `--cfg loom` build.
+//!
 //! Loom is significantly more expensive than the empirical
-//! `std::thread` tests in `state_locking_order_test.rs`; the release
-//! build keeps wall-clock manageable. The two models below mirror the
-//! two highest-traffic interactions in `ffi/state/mod.rs` and the
-//! residual outer mutex on `GlobalState`:
+//! `std::thread` tests in `odbc_engine/tests/state_locking_order_test.rs`;
+//! the release build keeps wall-clock manageable. The three models
+//! below mirror the highest-traffic interactions in
+//! `odbc_engine::ffi::state::*` and the residual outer mutex on
+//! `GlobalState`:
 //!
 //! 1. **`connection_errors` interleavings** — concurrent writers and
 //!    readers on the per-connection error `RwLock`. Loom must not
@@ -20,16 +29,18 @@
 //!    mutex then the `connection_errors` `RwLock`; another thread
 //!    acquires only `connection_errors`. Loom verifies there is no
 //!    cycle that would deadlock.
+//! 3. **Immutable `Arc` singleton visibility** — two threads observe
+//!    the same `Arc<T>` lock-free, modeling the `state::ffi_metrics()`
+//!    / `state::ffi_audit_logger()` hot path.
 //!
-//! We do not call into the production `ffi::state` module directly
-//! because loom requires its own `loom::sync` primitives. Instead,
-//! the models below recreate the *shape* of the production locks
-//! (immutable `Arc` for metrics, `RwLock` for errors, `Mutex` for
-//! the async-request manager) so loom's exploration covers the same
-//! transitions.
+//! The models intentionally do NOT import `odbc_engine::ffi::state`
+//! directly because loom requires its own `loom::sync` primitives; the
+//! production types use `std::sync` and would not be intercepted by the
+//! loom scheduler.
 //!
 //! When loom is not enabled at compile time (the default for the
-//! library target), the file compiles as an empty integration test.
+//! library target), the file compiles as an empty integration test —
+//! `cargo test -p loom_models` without `--cfg loom` is a no-op.
 
 // `loom` is a custom cfg gated by `RUSTFLAGS="--cfg loom"` per the
 // loom crate's documented invocation pattern. It is not in Cargo's

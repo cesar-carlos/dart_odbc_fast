@@ -1,0 +1,18 @@
+[package]
+name = "loom_models"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Loom concurrency models for the odbc_engine FFI state split. Lives in its own workspace member because tokio (a transitive dependency of odbc_engine) is not loom-compatible — building odbc_engine with `--cfg loom` breaks tokio's `AtomicWaker` exports. Keeping the loom models here lets the dedicated CI job run `cargo test -p loom_models` with `RUSTFLAGS=\"--cfg loom\"` without dragging tokio into the build."
+
+[lib]
+# Empty placeholder — every test lives under `tests/` so `cargo test -p
+# loom_models` picks them up without needing public API.
+path = "src/lib.rs"
+
+[dependencies]
+# `loom` is the only runtime dep so the crate stays loom-compatible. We do
+# not depend on the rest of the workspace; the models mirror the shape of
+# `odbc_engine::ffi::state` instead of importing it directly (the same
+# decision is documented at the top of `tests/loom_state_test.rs`).
+loom = "0.7"
