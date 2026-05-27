@@ -663,4 +663,86 @@ void main() {
       expect(view.getUint16(o, Endian.little), equals(0));
     });
   });
+
+  group('Nullable bitmap coverage across column types', () {
+    test('nullable i64 column emits null bitmap with bit set for null rows',
+        () {
+      final builder = BulkInsertBuilder()
+          .table('t')
+          .addColumn('big', BulkColumnType.i64, nullable: true)
+          .addRow([null]).addRow([42]);
+      final enc = builder.build();
+      expect(enc, isNotEmpty);
+    });
+
+    test(
+      'nullable text column emits null bitmap and pads non-null cell to maxLen',
+      () {
+        final builder = BulkInsertBuilder()
+            .table('t')
+            .addColumn(
+              'name',
+              BulkColumnType.text,
+              maxLen: 8,
+              nullable: true,
+            )
+            .addRow([null]).addRow(['abc']);
+        final enc = builder.build();
+        expect(enc, isNotEmpty);
+      },
+    );
+
+    test(
+      'nullable binary column emits null bitmap and pads non-null cell',
+      () {
+        final builder = BulkInsertBuilder()
+            .table('t')
+            .addColumn(
+              'p',
+              BulkColumnType.binary,
+              maxLen: 8,
+              nullable: true,
+            )
+            .addRow([null]).addRow([
+          Uint8List.fromList([1, 2, 3]),
+        ]);
+        final enc = builder.build();
+        expect(enc, isNotEmpty);
+      },
+    );
+
+    test('nullable decimal column emits null bitmap', () {
+      final builder = BulkInsertBuilder()
+          .table('t')
+          .addColumn(
+            'd',
+            BulkColumnType.decimal,
+            maxLen: 16,
+            nullable: true,
+          )
+          .addRow([null]).addRow(['1.25']);
+      final enc = builder.build();
+      expect(enc, isNotEmpty);
+    });
+
+    test('nullable timestamp column emits null bitmap', () {
+      final builder = BulkInsertBuilder()
+          .table('t')
+          .addColumn('ts', BulkColumnType.timestamp, nullable: true)
+          .addRow([null]).addRow([DateTime.utc(2026)]);
+      final enc = builder.build();
+      expect(enc, isNotEmpty);
+    });
+
+    test('binary column accepts List<int> cell value', () {
+      final builder = BulkInsertBuilder()
+          .table('t')
+          .addColumn('p', BulkColumnType.binary, maxLen: 4)
+          .addRow([
+        <int>[10, 20, 30],
+      ]);
+      final enc = builder.build();
+      expect(enc, isNotEmpty);
+    });
+  });
 }

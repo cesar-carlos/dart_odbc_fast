@@ -574,5 +574,49 @@ void main() {
         }
       });
     });
+
+    group('inOperation', () {
+      test('should_record_timing_and_end_trace_on_success', () async {
+        final result = await service.inOperation<int>(
+          'select-users',
+          () async => 42,
+        );
+
+        expect(result, equals(42));
+        expect(mockRepository.exportTraceCallCount, equals(1));
+        expect(mockRepository.updateTraceCallCount, equals(1));
+        expect(mockRepository.exportMetricCallCount, equals(1));
+        expect(
+          mockRepository.lastExportedMetric?.name,
+          equals('select-users.duration'),
+        );
+      });
+
+      test('should_record_error_event_and_rethrow_when_action_throws',
+          () async {
+        Object? caught;
+        try {
+          await service.inOperation<int>(
+            'select-users',
+            () async => throw const FormatException('bad query'),
+          );
+        } on Object catch (e) {
+          caught = e;
+        }
+
+        expect(caught, isA<FormatException>());
+        expect(mockRepository.exportTraceCallCount, equals(1));
+        expect(mockRepository.updateTraceCallCount, equals(1));
+        expect(mockRepository.exportEventCallCount, equals(1));
+        expect(
+          mockRepository.lastExportedEvent?.severity,
+          equals(TelemetrySeverity.error),
+        );
+        expect(
+          mockRepository.lastExportedEvent?.name,
+          equals('select-users.error'),
+        );
+      });
+    });
   });
 }

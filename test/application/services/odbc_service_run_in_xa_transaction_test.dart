@@ -103,7 +103,185 @@ void main() {
         isA<ValidationError>(),
       );
     });
+
+    group('failure branches', () {
+      test('onePhase: action threw → abort + QueryError surfaces stack',
+          () async {
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => throw StateError('action exploded'),
+          onePhase: true,
+        );
+
+        expect(result.isError(), isTrue);
+        final err = result.exceptionOrNull()!;
+        expect(err, isA<QueryError>());
+        expect((err as QueryError).message, contains('action threw'));
+        final fake = mockRepo.xaStartReturn! as _FakeXa;
+        expect(fake.endCalls + fake.commitOnePhaseCalls, greaterThan(0));
+      });
+
+      test('onePhase: commit_one_phase failure → QueryError with xid',
+          () async {
+        final fake = _FailingFakeXa(xid, failCommitOnePhase: true);
+        mockRepo.xaStartReturn = fake;
+
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => const Success(1),
+          onePhase: true,
+        );
+
+        expect(result.isError(), isTrue);
+        expect(
+          (result.exceptionOrNull()! as QueryError).message,
+          contains('xa_commit_one_phase failed'),
+        );
+      });
+
+      test('2PC: end() failure → QueryError with xid', () async {
+        final fake = _FailingFakeXa(xid, failEnd: true);
+        mockRepo.xaStartReturn = fake;
+
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => const Success(1),
+        );
+
+        expect(result.isError(), isTrue);
+        expect(
+          (result.exceptionOrNull()! as QueryError).message,
+          contains('xa_end failed'),
+        );
+      });
+
+      test('2PC: prepare() failure → QueryError with xid', () async {
+        final fake = _FailingFakeXa(xid, failPrepare: true);
+        mockRepo.xaStartReturn = fake;
+
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => const Success(1),
+        );
+
+        expect(result.isError(), isTrue);
+        expect(
+          (result.exceptionOrNull()! as QueryError).message,
+          contains('xa_prepare failed'),
+        );
+      });
+
+      test('2PC: commitPrepared() failure → QueryError with xid', () async {
+        final fake = _FailingFakeXa(xid, failCommitPrepared: true);
+        mockRepo.xaStartReturn = fake;
+
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => const Success(1),
+        );
+
+        expect(result.isError(), isTrue);
+        expect(
+          (result.exceptionOrNull()! as QueryError).message,
+          contains('xa_commit_prepared failed'),
+        );
+      });
+
+      test('2PC: action threw → abort + QueryError with stack', () async {
+        final result = await service.runInXaTransaction<int>(
+          'conn-1',
+          xid,
+          (_) async => throw StateError('mid-transaction crash'),
+        );
+
+        expect(result.isError(), isTrue);
+        expect(
+          (result.exceptionOrNull()! as QueryError).message,
+          contains('action threw'),
+        );
+      });
+    });
   });
+}
+
+/// Configurable variant of [_FakeXa] that lets each step fail
+/// individually to drive the corresponding error branch in
+/// `OdbcService.runInXaTransaction`.
+class _FailingFakeXa extends XaTransactionHandle {
+  _FailingFakeXa(
+    Xid xid, {
+    this.failEnd = false,
+    this.failPrepare = false,
+    this.failCommitPrepared = false,
+    this.failCommitOnePhase = false,
+  }) : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
+
+  final bool failEnd;
+  final bool failPrepare;
+  final bool failCommitPrepared;
+  final bool failCommitOnePhase;
+
+  XaState _st = XaState.active;
+
+  @override
+  XaState get state => _st;
+
+  @override
+  bool end() {
+    if (failEnd) {
+      _st = XaState.failed;
+      return false;
+    }
+    _st = XaState.idle;
+    return true;
+  }
+
+  @override
+  bool prepare() {
+    if (failPrepare) {
+      _st = XaState.failedAfterPrepare;
+      return false;
+    }
+    _st = XaState.prepared;
+    return true;
+  }
+
+  @override
+  bool commitPrepared() {
+    if (failCommitPrepared) {
+      _st = XaState.failedAfterPrepare;
+      return false;
+    }
+    _st = XaState.committed;
+    return true;
+  }
+
+  @override
+  bool commitOnePhase() {
+    if (failCommitOnePhase) {
+      _st = XaState.failed;
+      return false;
+    }
+    _st = XaState.committed;
+    return true;
+  }
+
+  @override
+  bool rollback() {
+    _st = XaState.rolledBack;
+    return true;
+  }
+
+  @override
+  bool rollbackPrepared() {
+    _st = XaState.rolledBack;
+    return true;
+  }
 }
 
 class _FakeXa extends XaTransactionHandle {

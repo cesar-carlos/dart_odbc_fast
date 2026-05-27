@@ -69,6 +69,38 @@ void main() {
       expect(opts.validate(), 'queryTimeout cannot be negative');
     });
 
+    group('effectiveSlowQueryThreshold', () {
+      test('should_return_explicit_slowQueryThreshold_when_set', () {
+        const opts = ConnectionOptions(
+          slowQueryThreshold: Duration(milliseconds: 500),
+        );
+        expect(
+          opts.effectiveSlowQueryThreshold,
+          equals(const Duration(milliseconds: 500)),
+        );
+      });
+
+      test('should_return_null_when_no_threshold_and_no_queryTimeout', () {
+        const opts = ConnectionOptions();
+        expect(opts.effectiveSlowQueryThreshold, isNull);
+      });
+
+      test('should_return_null_when_queryTimeout_is_zero_and_no_explicit', () {
+        const opts = ConnectionOptions(queryTimeout: Duration.zero);
+        expect(opts.effectiveSlowQueryThreshold, isNull);
+      });
+
+      test('should_fall_back_to_80_percent_of_queryTimeout', () {
+        const opts = ConnectionOptions(
+          queryTimeout: Duration(seconds: 10),
+        );
+        expect(
+          opts.effectiveSlowQueryThreshold,
+          equals(const Duration(seconds: 8)),
+        );
+      });
+    });
+
     test('validate should reject initial buffer greater than max buffer', () {
       const opts = ConnectionOptions(
         maxResultBufferBytes: 1024,

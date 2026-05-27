@@ -65,6 +65,84 @@ void main() {
     });
   });
 
+  group('OdbcEvent toString overrides', () {
+    final ts = DateTime.utc(2026, 5, 26, 12);
+
+    test('ConnectionLost.toString includes connectionId and reason type', () {
+      final e = ConnectionLost(
+        timestamp: ts,
+        connectionId: 'conn-abc',
+        reason: const ConnectionError(message: 'reset', sqlState: '08S01'),
+      );
+      final repr = e.toString();
+      expect(repr, contains('ConnectionLost'));
+      expect(repr, contains('conn-abc'));
+      expect(repr, contains('ConnectionError'));
+      expect(repr, contains('2026-05-26'));
+    });
+
+    test('WorkerRecovered.toString includes timestamp', () {
+      final e = WorkerRecovered(timestamp: ts);
+      final repr = e.toString();
+      expect(repr, startsWith('WorkerRecovered'));
+      expect(repr, contains('2026-05-26'));
+    });
+
+    test('AutoReconnectAttempted.toString includes attempt fraction', () {
+      final e = AutoReconnectAttempted(
+        timestamp: ts,
+        connectionId: 'conn-x',
+        attempt: 2,
+        maxAttempts: 7,
+      );
+      final repr = e.toString();
+      expect(repr, contains('AutoReconnectAttempted'));
+      expect(repr, contains('conn-x'));
+      expect(repr, contains('2/7'));
+    });
+
+    test('PoolResize.toString reflects capacity transition', () {
+      final e = PoolResize(
+        timestamp: ts,
+        poolId: 42,
+        oldSize: 4,
+        newSize: 16,
+      );
+      final repr = e.toString();
+      expect(repr, contains('PoolResize'));
+      expect(repr, contains('poolId: 42'));
+      expect(repr, contains('4 -> 16'));
+    });
+
+    test('SlowQueryDetected.toString keeps short SQL verbatim', () {
+      final e = SlowQueryDetected(
+        timestamp: ts,
+        connectionId: 'conn-1',
+        sql: 'SELECT 1',
+        durationMs: 250,
+      );
+      final repr = e.toString();
+      expect(repr, contains('SlowQueryDetected'));
+      expect(repr, contains('conn-1'));
+      expect(repr, contains('"SELECT 1"'));
+      expect(repr, contains('250ms'));
+      expect(repr, isNot(contains('...')));
+    });
+
+    test('SlowQueryDetected.toString truncates SQL longer than 80 chars', () {
+      final longSql = 'SELECT ${'x' * 200} FROM t';
+      final e = SlowQueryDetected(
+        timestamp: ts,
+        connectionId: 'conn-1',
+        sql: longSql,
+        durationMs: 1000,
+      );
+      final repr = e.toString();
+      expect(repr, contains('...'));
+      expect(repr.length, lessThan(longSql.length + 50));
+    });
+  });
+
   group('OdbcEvent sealed exhaustiveness', () {
     String describe(OdbcEvent e) {
       // Pattern-match exhaustively so the analyzer enforces that every

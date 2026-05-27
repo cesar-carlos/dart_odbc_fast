@@ -25,6 +25,12 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   bool disconnectSuccess = true;
   bool connectReturnsZero = false;
   bool cancelStatementSuccess = true;
+  bool closeStatementSuccess = true;
+  bool commitTransactionSuccess = true;
+  bool rollbackTransactionSuccess = true;
+  bool createSavepointSuccess = true;
+  bool rollbackToSavepointSuccess = true;
+  bool releaseSavepointSuccess = true;
   String? validateConnectionStringResult = 'rejected by fake';
   String errorMessage = 'disconnect failed';
 
@@ -37,6 +43,11 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   int streamMultiStartBatchedResult = 0;
   Uint8List? executePreparedResult;
   Uint8List? executeQueryMultiResult;
+
+  /// Recorded arguments for the most recent transaction-shaped call.
+  /// Tests assert on these to confirm parameters reached the fake.
+  int? lastTxnId;
+  String? lastSavepointName;
 
   List<StreamFetchResponse> streamFetchResponses = const [];
 
@@ -103,6 +114,9 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   Future<bool> cancelStatement(int stmtId) async => cancelStatementSuccess;
 
   @override
+  Future<bool> closeStatement(int stmtId) async => closeStatementSuccess;
+
+  @override
   Future<int> bulkInsertArray(
     int connectionId,
     String table,
@@ -143,6 +157,39 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
 
   @override
   Future<bool> streamClose(int streamId) async => true;
+
+  @override
+  Future<bool> commitTransaction(int txnId) async {
+    lastTxnId = txnId;
+    return commitTransactionSuccess;
+  }
+
+  @override
+  Future<bool> rollbackTransaction(int txnId) async {
+    lastTxnId = txnId;
+    return rollbackTransactionSuccess;
+  }
+
+  @override
+  Future<bool> createSavepoint(int txnId, String name) async {
+    lastTxnId = txnId;
+    lastSavepointName = name;
+    return createSavepointSuccess;
+  }
+
+  @override
+  Future<bool> rollbackToSavepoint(int txnId, String name) async {
+    lastTxnId = txnId;
+    lastSavepointName = name;
+    return rollbackToSavepointSuccess;
+  }
+
+  @override
+  Future<bool> releaseSavepoint(int txnId, String name) async {
+    lastTxnId = txnId;
+    lastSavepointName = name;
+    return releaseSavepointSuccess;
+  }
 
   @override
   void dispose() {}

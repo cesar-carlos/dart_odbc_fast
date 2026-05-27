@@ -8,11 +8,13 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
+import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
@@ -1433,6 +1435,535 @@ void main() {
               'connectionOptionsCount',
             ]),
           );
+        },
+      );
+    });
+
+    group('worker recovery + events', () {
+      test(
+        'onWorkerRecovered should_clear_state_and_emit_WorkerRecovered_event',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          final connId =
+              (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+          // Seed statement metadata so we can prove it's cleared too.
+          final prepareResult = await localRepo.prepare(connId, 'SELECT 1');
+          expect(prepareResult.isSuccess(), isTrue);
+
+          // Subscribe before triggering recovery so the broadcast stream
+          // delivers the event synchronously.
+          final events = <OdbcEvent>[];
+          final sub = localRepo.events.listen(events.add);
+          addTearDown(sub.cancel);
+
+          // Trigger the callback exactly as `_recoverWorkerInternal` does.
+          final cb = localNative.onWorkerRecovered;
+          expect(cb, isNotNull);
+          cb!();
+
+          expect(events, hasLength(1));
+          expect(events.single, isA<WorkerRecovered>());
+
+          // State must be cleared — old connectionId should now read as
+          // invalid through any repository entrypoint.
+          final after = await localRepo.prepare(connId, 'SELECT 1');
+          expect(after.isError(), isTrue);
+          after.fold(
+            (_) => fail('Expected ValidationError after recovery'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Invalid connection ID'),
+            ),
+          );
+
+          // The Dart-side metrics must reflect the clear-all.
+          final metrics = localRepo.dartSideMetrics();
+          expect(metrics.connectionCount, equals(0));
+          expect(metrics.statementCount, equals(0));
+        },
+      );
+
+      test(
+        'onWorkerRecovered should_be_safe_when_no_listener_subscribed',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+          await localRepo.connect('Driver={Test}');
+
+          // No listener attached — _emit must short-circuit gracefully.
+          expect(() => localNative.onWorkerRecovered!(), returnsNormally);
+        },
+      );
+
+      test(
+        'fromBackend constructor should_wire_recovery_callback',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          await localNative.initialize();
+
+          final localRepo = OdbcRepositoryImpl.fromBackend(
+            AsyncBackend(localNative),
+          );
+          addTearDown(localRepo.dispose);
+
+          expect(localNative.onWorkerRecovered, isNotNull);
+
+          final events = <OdbcEvent>[];
+          final sub = localRepo.events.listen(events.add);
+          addTearDown(sub.cancel);
+
+          localNative.onWorkerRecovered!();
+          expect(events.whereType<WorkerRecovered>(), hasLength(1));
+        },
+      );
+
+      test(
+        'events stream should_not_emit_after_dispose_closes_controller',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+          await localRepo.connect('Driver={Test}');
+
+          final events = <OdbcEvent>[];
+          final sub = localRepo.events.listen(events.add);
+          await sub.cancel();
+          localRepo.dispose();
+
+          // Calling the recovery callback after dispose must not throw.
+          expect(() => localNative.onWorkerRecovered?.call(), returnsNormally);
+          expect(events, isEmpty);
+        },
+      );
+    });
+
+    group('statement lifecycle via fake', () {
+      late _FakeAsyncNativeForRepositoryErrors localNative;
+      late OdbcRepositoryImpl localRepo;
+      late String connId;
+      late int stmtId;
+
+      setUp(() async {
+        localNative = _FakeAsyncNativeForRepositoryErrors();
+        addTearDown(localNative.dispose);
+        localRepo = OdbcRepositoryImpl(localNative);
+        await localRepo.initialize();
+        connId = (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+        stmtId = (await localRepo.prepare(connId, 'SELECT 1')).getOrNull()!;
+      });
+
+      test(
+        'closeStatement should_succeed_and_clear_statement_metadata',
+        () async {
+          final r = await localRepo.closeStatement(connId, stmtId);
+          expect(r.isSuccess(), isTrue);
+
+          // Following call must now see the statement as unknown.
+          final after = await localRepo.closeStatement(connId, stmtId);
+          expect(after.isError(), isTrue);
+          after.fold(
+            (_) => fail('Expected ValidationError'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Unknown statement ID'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'closeStatement should_clear_metadata_even_when_native_fails',
+        () async {
+          localNative
+            ..closeStatementSuccess = false
+            ..globalStructuredError = const StructuredError(
+              sqlState: [52, 50, 48, 48, 48],
+              nativeCode: 42,
+              message: 'native close refused',
+            );
+
+          final r = await localRepo.closeStatement(connId, stmtId);
+          expect(r.isError(), isTrue);
+
+          // Even on failure, the Dart-side metadata must be wiped.
+          final after = await localRepo.closeStatement(connId, stmtId);
+          after.fold(
+            (_) => fail('Expected ValidationError after wipe'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Unknown statement ID'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'closeStatement should_reject_unknown_statement_id',
+        () async {
+          final r = await localRepo.closeStatement(connId, 999_999);
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('Unknown statement ID'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'closeStatement should_reject_statement_owned_by_other_connection',
+        () async {
+          final otherConn =
+              (await localRepo.connect('Driver={Other}')).getOrNull()!.id;
+          final r = await localRepo.closeStatement(otherConn, stmtId);
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              contains('does not belong'),
+            ),
+          );
+        },
+      );
+
+      test(
+        'cancelStatement should_succeed_when_native_returns_true',
+        () async {
+          localNative.cancelStatementSuccess = true;
+          final r = await localRepo.cancelStatement(connId, stmtId);
+          expect(r.isSuccess(), isTrue);
+        },
+      );
+
+      test(
+        'cancelStatement should_translate_unsupported_sqlstate_0A000',
+        () async {
+          localNative
+            ..cancelStatementSuccess = false
+            ..globalStructuredError = const StructuredError(
+              sqlState: [48, 65, 48, 48, 48],
+              nativeCode: 5001,
+              message: 'cancellation not supported',
+            );
+          final r = await localRepo.cancelStatement(connId, stmtId);
+          r.fold(
+            (_) => fail('Expected UnsupportedFeatureError'),
+            (e) {
+              expect(e, isA<UnsupportedFeatureError>());
+              expect(
+                (e as UnsupportedFeatureError).sqlState,
+                equals('0A000'),
+              );
+            },
+          );
+        },
+      );
+
+      test(
+        'cancelStatement should_translate_unsupported_native_code_5001',
+        () async {
+          localNative
+            ..cancelStatementSuccess = false
+            ..globalStructuredError = const StructuredError(
+              sqlState: [52, 50, 48, 48, 48],
+              nativeCode: 5001,
+              message: 'engine does not implement cancellation',
+            );
+          final r = await localRepo.cancelStatement(connId, stmtId);
+          r.fold(
+            (_) => fail('Expected UnsupportedFeatureError'),
+            (e) => expect(e, isA<UnsupportedFeatureError>()),
+          );
+        },
+      );
+
+      test(
+        'cancelStatement should_surface_query_error_for_unrelated_failure',
+        () async {
+          localNative
+            ..cancelStatementSuccess = false
+            ..errorMessage = 'driver is busy'
+            ..globalStructuredError = const StructuredError(
+              sqlState: [50, 53, 48, 48, 48],
+              nativeCode: 99,
+              message: '',
+            );
+          final r = await localRepo.cancelStatement(connId, stmtId);
+          r.fold(
+            (_) => fail('Expected QueryError'),
+            (e) {
+              expect(e, isA<QueryError>());
+              final err = e as QueryError;
+              expect(err.message, equals('driver is busy'));
+            },
+          );
+        },
+      );
+
+      test(
+        'cancelStatement should_reject_unknown_statement_id',
+        () async {
+          final r = await localRepo.cancelStatement(connId, 9_999_999);
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(e, isA<ValidationError>()),
+          );
+        },
+      );
+    });
+
+    group('transaction primitives via fake', () {
+      late _FakeAsyncNativeForRepositoryErrors localNative;
+      late OdbcRepositoryImpl localRepo;
+      late String connId;
+
+      setUp(() async {
+        localNative = _FakeAsyncNativeForRepositoryErrors();
+        addTearDown(localNative.dispose);
+        localRepo = OdbcRepositoryImpl(localNative);
+        await localRepo.initialize();
+        connId = (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+      });
+
+      test(
+        'commitTransaction should_reject_zero_or_negative_txnId',
+        () async {
+          final zero = await localRepo.commitTransaction(connId, 0);
+          final neg = await localRepo.commitTransaction(connId, -1);
+          for (final r in [zero, neg]) {
+            expect(r.isError(), isTrue);
+            r.fold(
+              (_) => fail('Expected ValidationError'),
+              (e) => expect(
+                (e as ValidationError).message,
+                equals('Invalid transaction ID'),
+              ),
+            );
+          }
+        },
+      );
+
+      test(
+        'commitTransaction should_forward_to_native_on_valid_txnId',
+        () async {
+          localNative.commitTransactionSuccess = true;
+          final r = await localRepo.commitTransaction(connId, 12);
+          expect(r.isSuccess(), isTrue);
+          expect(localNative.lastTxnId, equals(12));
+        },
+      );
+
+      test(
+        'commitTransaction should_surface_native_failure_as_QueryError',
+        () async {
+          localNative
+            ..commitTransactionSuccess = false
+            ..globalStructuredError = const StructuredError(
+              sqlState: [52, 50, 48, 48, 48],
+              nativeCode: 9999,
+              message: 'commit failed at server',
+            );
+          final r = await localRepo.commitTransaction(connId, 12);
+          expect(r.isError(), isTrue);
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) {
+              expect(e, isA<QueryError>());
+              final err = e as QueryError;
+              expect(err.message, equals('commit failed at server'));
+              expect(err.sqlState, equals('42000'));
+              expect(err.nativeCode, equals(9999));
+            },
+          );
+        },
+      );
+
+      test(
+        'rollbackTransaction should_forward_to_native_on_valid_txnId',
+        () async {
+          localNative.rollbackTransactionSuccess = true;
+          final r = await localRepo.rollbackTransaction(connId, 99);
+          expect(r.isSuccess(), isTrue);
+          expect(localNative.lastTxnId, equals(99));
+        },
+      );
+
+      test(
+        'rollbackTransaction should_reject_invalid_connection',
+        () async {
+          final r = await localRepo.rollbackTransaction('missing', 1);
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              equals('Invalid connection ID'),
+            ),
+          );
+        },
+      );
+
+      group('savepoint operations', () {
+        test('createSavepoint should_reject_empty_name_after_trim', () async {
+          final r = await localRepo.createSavepoint(connId, 1, '   ');
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              equals('Savepoint name cannot be empty'),
+            ),
+          );
+        });
+
+        test('createSavepoint should_reject_zero_txnId', () async {
+          final r = await localRepo.createSavepoint(connId, 0, 'sp1');
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              equals('Invalid transaction ID'),
+            ),
+          );
+        });
+
+        test('createSavepoint should_forward_args_to_native', () async {
+          final r = await localRepo.createSavepoint(connId, 7, 'sp_alpha');
+          expect(r.isSuccess(), isTrue);
+          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastSavepointName, equals('sp_alpha'));
+        });
+
+        test('rollbackToSavepoint should_forward_args_to_native', () async {
+          final r = await localRepo.rollbackToSavepoint(connId, 7, 'sp_beta');
+          expect(r.isSuccess(), isTrue);
+          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastSavepointName, equals('sp_beta'));
+        });
+
+        test('rollbackToSavepoint should_reject_empty_name', () async {
+          final r = await localRepo.rollbackToSavepoint(connId, 7, '');
+          r.fold(
+            (_) => fail('Expected failure'),
+            (e) => expect(
+              (e as ValidationError).message,
+              equals('Savepoint name cannot be empty'),
+            ),
+          );
+        });
+
+        test('releaseSavepoint should_forward_args_to_native', () async {
+          final r = await localRepo.releaseSavepoint(connId, 7, 'sp_gamma');
+          expect(r.isSuccess(), isTrue);
+          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastSavepointName, equals('sp_gamma'));
+        });
+
+        test(
+          'releaseSavepoint should_surface_failure_as_QueryError',
+          () async {
+            localNative
+              ..releaseSavepointSuccess = false
+              ..globalStructuredError = const StructuredError(
+                sqlState: [52, 50, 48, 48, 48],
+                nativeCode: 1234,
+                message: 'release failed',
+              );
+            final r = await localRepo.releaseSavepoint(connId, 7, 'sp');
+            r.fold(
+              (_) => fail('Expected failure'),
+              (e) {
+                expect(e, isA<QueryError>());
+                expect((e as QueryError).message, equals('release failed'));
+              },
+            );
+          },
+        );
+
+        test(
+          'savepoint methods should_reject_invalid_connection_id',
+          () async {
+            final c = await localRepo.createSavepoint('missing', 1, 'sp');
+            final r = await localRepo.rollbackToSavepoint('missing', 1, 'sp');
+            final rl = await localRepo.releaseSavepoint('missing', 1, 'sp');
+            for (final res in [c, r, rl]) {
+              res.fold(
+                (_) => fail('Expected failure'),
+                (e) => expect(
+                  (e as ValidationError).message,
+                  equals('Invalid connection ID'),
+                ),
+              );
+            }
+          },
+        );
+      });
+    });
+
+    group('slow query detection', () {
+      test(
+        'should_emit_SlowQueryDetected_when_threshold_is_zero_duration',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          // Threshold of Duration.zero means any non-zero elapsed time
+          // crosses it — deterministic across CI runs.
+          final conn = (await localRepo.connect(
+            'Driver={Test}',
+            options: const ConnectionOptions(
+              slowQueryThreshold: Duration.zero,
+            ),
+          ))
+              .getOrNull()!;
+
+          final events = <OdbcEvent>[];
+          final sub = localRepo.events.listen(events.add);
+          addTearDown(sub.cancel);
+
+          // executeQueryMultiFull threads `sqlForSlowQueryDetection` through
+          // `_withReconnect`, exercising the slow-query hook with the fake.
+          localNative.executeQueryMultiResult = Uint8List(0);
+          final result = await localRepo.executeQueryMultiFull(
+            conn.id,
+            'SELECT 1',
+          );
+          expect(result.isSuccess(), isTrue);
+
+          final slow = events.whereType<SlowQueryDetected>().toList();
+          expect(slow, hasLength(1));
+          expect(slow.single.connectionId, equals(conn.id));
+          expect(slow.single.sql, equals('SELECT 1'));
+        },
+      );
+
+      test(
+        'should_not_emit_SlowQueryDetected_when_threshold_is_unset',
+        () async {
+          final localNative = _FakeAsyncNativeForRepositoryErrors();
+          addTearDown(localNative.dispose);
+          final localRepo = OdbcRepositoryImpl(localNative);
+          await localRepo.initialize();
+
+          final conn = (await localRepo.connect('Driver={Test}')).getOrNull()!;
+
+          final events = <OdbcEvent>[];
+          final sub = localRepo.events.listen(events.add);
+          addTearDown(sub.cancel);
+
+          localNative.executeQueryMultiResult = Uint8List(0);
+          await localRepo.executeQueryMultiFull(conn.id, 'SELECT 1');
+
+          expect(events.whereType<SlowQueryDetected>(), isEmpty);
         },
       );
     });

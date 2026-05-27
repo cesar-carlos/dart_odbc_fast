@@ -159,6 +159,38 @@ void main() {
       );
     });
 
+    test('should_expose_length_and_isNullAt_on_every_concrete_column', () {
+      const qr = QueryResult(
+        columns: ['i32', 'i64', 'f64', 'name'],
+        rows: [
+          [1, 10000000000, 1.5, 'alice'],
+          [null, null, null, null],
+          [3, 20000000000, 3.5, 'carol'],
+        ],
+        rowCount: 3,
+      );
+
+      final tc = toTypedColumnar(qr);
+      final int32Col = tc.column<TypedColumnInt32>('i32');
+      final int64Col = tc.column<TypedColumnInt64>('i64');
+      final float64Col = tc.column<TypedColumnFloat64>('f64');
+      final stringCol = tc.column<TypedColumnObject<String>>('name');
+
+      expect(int32Col.length, equals(3));
+      expect(int64Col.length, equals(3));
+      expect(float64Col.length, equals(3));
+      expect(stringCol.length, equals(3));
+
+      expect(int32Col.isNullAt(1), isTrue);
+      expect(int32Col.isNullAt(0), isFalse);
+      expect(int64Col.isNullAt(1), isTrue);
+      expect(int64Col.isNullAt(0), isFalse);
+      expect(float64Col.isNullAt(1), isTrue);
+      expect(float64Col.isNullAt(0), isFalse);
+      expect(stringCol.isNullAt(1), isTrue);
+      expect(stringCol.isNullAt(0), isFalse);
+    });
+
     test('should_classify_column_with_only_nulls_as_unknown', () {
       const qr = QueryResult(
         columns: ['unknown'],

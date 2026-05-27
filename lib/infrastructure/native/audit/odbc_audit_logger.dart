@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 
 /// Typed audit event mapped from native JSON payloads.
@@ -45,22 +46,46 @@ class OdbcAuditEvent {
 /// status/events.
 class OdbcAuditLogger {
   /// Creates a typed sync audit logger.
-  OdbcAuditLogger(this._native);
+  OdbcAuditLogger(OdbcNative native)
+      : _setEnabled =
+            (({required enabled}) => native.setAuditEnabled(enabled: enabled)),
+        _clear = native.clearAuditEvents,
+        _getEventsJson =
+            (({limit = 0}) => native.getAuditEventsJson(limit: limit)),
+        _getStatusJson = native.getAuditStatusJson;
 
-  final OdbcNative _native;
+  /// Creates an instance with injected delegates for tests.
+  ///
+  /// Avoids pulling the FFI shim in tests when only the JSON parsing and
+  /// orchestration logic needs to be exercised.
+  @visibleForTesting
+  OdbcAuditLogger.forTesting({
+    required bool Function({required bool enabled}) setEnabled,
+    required bool Function() clear,
+    required String? Function({int limit}) getEventsJson,
+    required String? Function() getStatusJson,
+  })  : _setEnabled = setEnabled,
+        _clear = clear,
+        _getEventsJson = getEventsJson,
+        _getStatusJson = getStatusJson;
+
+  final bool Function({required bool enabled}) _setEnabled;
+  final bool Function() _clear;
+  final String? Function({int limit}) _getEventsJson;
+  final String? Function() _getStatusJson;
 
   /// Enables native audit collection.
-  bool enable() => _native.setAuditEnabled(enabled: true);
+  bool enable() => _setEnabled(enabled: true);
 
   /// Disables native audit collection.
-  bool disable() => _native.setAuditEnabled(enabled: false);
+  bool disable() => _setEnabled(enabled: false);
 
   /// Clears all in-memory native audit events.
-  bool clear() => _native.clearAuditEvents();
+  bool clear() => _clear();
 
   /// Returns parsed audit status, or `null` when unavailable/invalid.
   OdbcAuditStatus? getStatus() {
-    final payload = _native.getAuditStatusJson();
+    final payload = _getStatusJson();
     if (payload == null || payload.isEmpty) {
       return null;
     }
@@ -75,7 +100,7 @@ class OdbcAuditLogger {
   ///
   /// When [limit] is `0`, native default behavior is used.
   List<OdbcAuditEvent> getEvents({int limit = 0}) {
-    final payload = _native.getAuditEventsJson(limit: limit);
+    final payload = _getEventsJson(limit: limit);
     if (payload == null || payload.isEmpty) {
       return <OdbcAuditEvent>[];
     }
