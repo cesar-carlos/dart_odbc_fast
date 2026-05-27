@@ -256,7 +256,7 @@ jobs:
           test -f uploads/libodbc_engine.so
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.verify.outputs.release_tag }}
           name: Release ${{ needs.verify.outputs.release_tag }}
