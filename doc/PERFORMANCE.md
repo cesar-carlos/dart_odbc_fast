@@ -1,9 +1,10 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v3.9 (pool/transaction hardening) + Unreleased native
-> engine follow-ups (`block-cursor-fetch` and `statement-handle-reuse` now
-> default ON; FFI `GlobalState` sharded; `OwnedPreparedStatement` RAII for the
-> prepared cache; release/bench profiles tightened).
+> **Last updated for:** v3.10.0 (sub-interfaces, event bus, columnar
+> service surface, pool/transaction hardening, native engine perf
+> follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
+> default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
+> for the prepared cache, release/bench profiles tightened).
 
 This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload.
 

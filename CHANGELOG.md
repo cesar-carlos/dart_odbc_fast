@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Roadmap v3.x (additive + deprecation gradual)
+## [Unreleased]
+
+## [3.10.0] - 2026-05-27 — Roadmap v3.x (additive + deprecation gradual)
+
+Bumped from `3.9.0` as MINOR per `doc/version/VERSIONING_STRATEGY.md`:
+backward-compatible public API additions only (new `IQueryService` /
+`ITransactionService` / `IPoolService` / `IAdminService` sub-interfaces,
+`IAdminService.events` + `OdbcEvent` sealed hierarchy,
+`executeQueryColumnar` / `streamQueryColumnar`, `TypedColumnarResult`,
+`LazyString`, `QueryResult.columnsMetadata`, `ColumnMetadata`,
+`DartSideMetrics`, `SqlPointerCache`, `ConnectionOptions.slowQueryThreshold`,
+9 `For(Connection)` overloads, `BinaryProtocolParser.parse(lazyStrings:)`,
+`IOdbcRepository.dispose()` no-op default). Single non-breaking deprecation:
+`IOdbcRepository.getAsyncWorkerPoolStats()` recommends
+`getWorkerPoolStats()`. Native engine wire format (`MAGIC = 0x4F444243`,
+MULT envelope, OUT1/RC1 trailers) and exported ABI (`odbc_exports.def`,
+cbindgen, Dart FFI bindings) are unchanged.
 
 ### Performance — Engine nativo, follow-ups dos 4 sprints (defaults flipados, perf micro-otimizações, hardening, native temporal, loom, Sprint 3 final)
 
@@ -3173,6 +3189,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.10.0...HEAD
+[3.10.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.8.1...v3.9.0
 [3.8.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.8.0...v3.8.1
 [3.8.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.7.0...v3.8.0

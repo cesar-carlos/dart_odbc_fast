@@ -14,4 +14,4 @@ abaixo exigem ambiente live, maturacao ou decisao de produto.
 | 5 | TVP / `SqlDataType` x direcao completa | Produto-gated; sem API publica | Fechar [`TVP_DESIGN_GATE.md`](TVP_DESIGN_GATE.md) antes de implementar |
 | - | E2E host-side | Testes existem e sao opt-in | Manter runbooks para DSN/driver local; nao colocar no CI Ubuntu padrao |
 
-Ultima atualizacao: 2026-05-25.
+Ultima atualizacao: 2026-05-27 (pacote `3.10.0`).

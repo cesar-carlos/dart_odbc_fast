@@ -1,10 +1,12 @@
 # Implementacoes pendentes
 
 Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
-maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.9.0` e ao
-`CHANGELOG.md` `[Unreleased]` (follow-ups de perf nativa:
-`block-cursor-fetch` / `statement-handle-reuse` agora default ON, sharding
-do `GlobalState`, `OwnedPreparedStatement`, env var
+maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.10.0`
+(sub-interfaces `IQueryService`/`ITransactionService`/`IPoolService`/`IAdminService`,
+`IAdminService.events` + `OdbcEvent`, `executeQueryColumnar` /
+`streamQueryColumnar`, `TypedColumnarResult`, `QueryResult.columnsMetadata`,
+follow-ups de perf nativa com `block-cursor-fetch` / `statement-handle-reuse`
+default ON, sharding do `GlobalState`, `OwnedPreparedStatement`, env var
 `ODBC_FAST_BLOCK_FETCH_BATCH`).
 
 Esta lista nao repete entregas ja fechadas. Quando uma pendencia virar codigo

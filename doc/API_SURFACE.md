@@ -494,7 +494,8 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 ---
 
-*Atualizado para v3.9.0 + Unreleased (perf nativa: `block-cursor-fetch` /
-`statement-handle-reuse` agora default ON, `GlobalState` sharded, fetch
+*Atualizado para v3.10.0 (sub-interfaces de `IOdbcService`, event bus,
+columnar service surface, perf nativa com `block-cursor-fetch` /
+`statement-handle-reuse` default ON, `GlobalState` sharded, fetch
 dispatcher em `engine::fetch`). Para cada funcionalidade com "fix" há um
 teste de regressão correspondente em `native/odbc_engine/tests/regression/`.*

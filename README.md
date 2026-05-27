@@ -6,29 +6,66 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 3.9.0
+## What's New in 3.10.0
 
-- **Pool & transaction hardening** — `poolGetConnection` now registers
-  ownership in dedicated `_poolCheckouts` / `_connectionPoolId` maps so
-  options, cleanup and pool membership work correctly for pooled
-  connections; `poolReleaseConnection` and `poolClose` sweep prepared
-  statements and Dart-side caches for the released IDs; transaction and
-  savepoint methods validate `connectionId` + `txnId` before any FFI call
-  and route async error reads to the correct worker isolate. See the
-  full audit in the [CHANGELOG](CHANGELOG.md).
-- **Native engine performance follow-ups (Unreleased)** — `block-cursor-fetch`
-  and `statement-handle-reuse` are now ON by default. Highlights:
-  `BlockCursor` + `ColumnarAnyBuffer` row-major fast path (batch size tunable
-  via `ODBC_FAST_BLOCK_FETCH_BATCH`, default `256`); direct column-major
-  fetch path skipping the row-major intermediate when the result is not
-  FOR JSON; `GlobalState` decomposed into sharded sub-locks (`ffi/state`);
-  `OwnedPreparedStatement` RAII guard around the per-connection prepared
-  cache (single point of `mem::transmute`, with a size-invariant tripwire
-  test); release/bench profiles set `lto = "fat"`, `codegen-units = 1`,
-  `opt-level = 3`. Wire format and ABI are unchanged — Dart consumers do
-  not need to do anything. Opt out with
-  `default-features = false, features = ["test-helpers", "observability"]`
-  in `Cargo.toml`.
+Minor release: backward-compatible public-API additions only (deprecation
+window opens for `IOdbcRepository.getAsyncWorkerPoolStats`). Wire format
+and exported ABI are unchanged.
+
+- **Sub-interfaces of `IOdbcService`** — `IQueryService`,
+  `ITransactionService`, `IPoolService`, `IAdminService`. The aggregate
+  `IOdbcService` `implements` each one so existing consumers keep
+  working; new code can depend on the narrow seam it actually needs
+  (Interface Segregation). Each sub-interface also ships an
+  `…For(Connection conn, …)` extension so call sites no longer thread
+  `conn.id` around. See
+  [`example/sub_interfaces_migration_demo.dart`](example/sub_interfaces_migration_demo.dart).
+- **Event bus** — `IAdminService.events` returns a broadcast
+  `Stream<OdbcEvent>` (sealed: `ConnectionLost`, `WorkerRecovered`,
+  `AutoReconnectAttempted`, `PoolResize`, `SlowQueryDetected`). The
+  `SlowQueryDetected` emission point is wired into the 5 hot
+  `executeQuery*` paths and is gated by
+  `ConnectionOptions.slowQueryThreshold` (defaults to
+  `queryTimeout * 0.8`).
+- **Service-level columnar surface** —
+  `IQueryService.executeQueryColumnar` and `streamQueryColumnar` return
+  `TypedColumnarResult` (column-major, with `Int32List` / `Int64List` /
+  `Float64List` for numeric columns). Backed by the same wire payload as
+  row-major; opt-in helper `toTypedColumnar(QueryResult)` is exported
+  too.
+- **`QueryResult.columnsMetadata`** — typed `List<ColumnMetadata>?`
+  surface populated by the parser; legacy callers see `null`.
+  `ColumnMetadata` moved to `lib/domain/entities/` and is re-exported
+  via the public barrel; the `OdbcType` typed view stays in
+  infrastructure as a `ColumnMetadataTypedView` extension so `col.type`
+  keeps working.
+- **`IAdminService.getWorkerPoolStats()`** — infallible bridge that
+  returns `null` in sync mode instead of `Failure(UnsupportedFeatureError)`.
+  Coexists with `IOdbcRepository.getAsyncWorkerPoolStats()` (now marked
+  `@Deprecated`, kept for at least the next minor per the deprecation
+  policy in `doc/version/VERSIONING_STRATEGY.md`).
+- **Opt-in performance helpers** — `BinaryProtocolParser.parse(lazyStrings:
+  true)` yields `LazyString` for text cells (decoding on demand;
+  `==` against `String` literals still works); `SqlPointerCache` keeps a
+  256-entry LRU of `Pointer<Utf8>` per SQL string for hot loops.
+- **Pool & transaction hardening (from 3.9.0, now part of 3.10.0)** —
+  `poolGetConnection` registers ownership in dedicated `_poolCheckouts`
+  / `_connectionPoolId` maps; `poolReleaseConnection` and `poolClose`
+  sweep prepared statements and Dart-side caches for the released IDs;
+  transaction and savepoint methods validate `connectionId` + `txnId`
+  before any FFI call and route async error reads to the correct worker
+  isolate. Full audit in the [CHANGELOG](CHANGELOG.md).
+- **Native engine performance follow-ups** — `block-cursor-fetch` and
+  `statement-handle-reuse` are now ON by default in the bundled Rust
+  engine. Highlights: `BlockCursor` + `ColumnarAnyBuffer` row-major fast
+  path (batch size tunable via `ODBC_FAST_BLOCK_FETCH_BATCH`, default
+  `256`); direct column-major fetch path skipping the row-major
+  intermediate when the result is not FOR JSON; `GlobalState`
+  decomposed into sharded sub-locks (`ffi/state`); `OwnedPreparedStatement`
+  RAII guard around the per-connection prepared cache (single point of
+  `mem::transmute`, with a size-invariant tripwire test);
+  release/bench profiles set `lto = "fat"`, `codegen-units = 1`,
+  `opt-level = 3`. Transparent to Dart consumers.
 
 ### Previously in 3.8.1
 
@@ -40,7 +77,7 @@
   See [Quick Start](#quick-start-high-level-service) and
   [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
 
-Highlights of the current `3.9.0` release. See the
+Highlights of the current `3.10.0` release. See the
 [CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
@@ -413,7 +450,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.9.0
+  odbc_fast: ^3.10.0
 ```
 
 Then:
