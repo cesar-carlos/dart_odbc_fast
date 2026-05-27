@@ -80,7 +80,7 @@ windows = { version = "0.59", features = [
 
 [dev-dependencies]
 env_logger = "0.11"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 serial_test = "3"
 # Loom is used only by the optional `loom_state_test` integration test
 # (sprint 4 follow-up C11) to explore every interleaving of the FFI
