@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.1] - 2026-05-27 — Patch: CI repair, coverage expansion, docs alignment
+
+PATCH bump per `doc/version/VERSIONING_STRATEGY.md`: no public Dart API
+changes, no native ABI / wire format / exported symbol changes. Scope is
+limited to CI hygiene, expanded unit coverage on previously
+integration-only paths, README/example alignment with the 3.10 surface,
+and a Dependabot bump for a release workflow action. The single touch
+inside `lib/` (`OdbcAuditLogger.forTesting(...)`) is purely additive and
+annotated `@visibleForTesting` — the default constructor and runtime
+behaviour are unchanged.
+
 ### Fixed (CI — `loom` job and misplaced Dart steps)
 
 - **Loom job now actually runs.** The loom models lived under
@@ -31,6 +42,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests, protocol perf guard, slow-test budget) back to the `test`
   job where it enforces against PRs as intended. The loom job is now
   scoped to a single `cargo test -p loom_models --release` step.
+
+### Tests (native — Rust unit coverage across plugins and observability)
+
+Adds dedicated unit tests for the dialect plugins, observability
+helpers, and the encoder result wrappers — all pure-logic paths that
+previously relied on integration / e2e tests.
+
+- `plugins/{mysql,postgres,sqlserver,snowflake,db2,oracle,mariadb,registry}`:
+  `TypeCatalog::map_type_extended` branches, `CatalogProvider` SQL
+  builders, `SessionInitializer` escapes, `Upsertable` / `Returnable`
+  error variants, `Default` impl pin, and registry dispatch coverage for
+  `upsert` / `returning` / `session_init` across every supported engine.
+- `observability/tracing`: `SpanGuard` explicit-finish vs drop,
+  `span_id` + metadata propagation, `active_span_count` assertions for
+  the leak guard.
+- `observability/logging`: `sanitize_sql_for_log` scientific notation
+  (`e+10` / `e-3`) branch and `ENV_LOG_RAW_SQL=1` passthrough with env
+  restoration so the suite stays hermetic.
+- `engine/environment` and `protocol/encoder`: result wrapper edge
+  cases and limit propagation paths previously exercised only by
+  higher-level flows.
+
+### Tests (Dart — public API surface, fakes, and extension overloads)
+
+Adds focused Dart unit tests for the public API surface that previously
+needed integration / e2e runs, plus a tiny additive testability hook on
+`OdbcAuditLogger`.
+
+- `lib/infrastructure/native/audit/odbc_audit_logger.dart` gains a
+  `@visibleForTesting OdbcAuditLogger.forTesting({...})` constructor
+  mirroring the existing `AsyncOdbcAuditLogger.forTesting` shape. The
+  primary `OdbcAuditLogger(OdbcNative)` constructor stays the public
+  default; only the field types changed (raw delegates instead of
+  capturing `_native`), so the public API and behaviour are unchanged.
+- `test/helpers/fake_async_native_for_errors.dart` grows extra
+  delegates (`closeStatement`, etc.) so the audit logger fakes cover
+  error paths previously exercised only end-to-end.
+- New unit tests:
+  `test/application/services/i_query_service_extension_test.dart`,
+  `test/application/services/i_transaction_service_extension_test.dart`,
+  `test/application/services/odbc_service_passthrough_test.dart`,
+  `test/domain/entities/column_metadata_test.dart`,
+  `test/domain/entities/dart_side_metrics_test.dart`,
+  `test/domain/entities/odbc_event_test.dart` (expanded),
+  `test/domain/entities/query_result_multi_test.dart` (expanded),
+  `test/domain/entities/typed_columnar_result_test.dart`,
+  `test/domain/services/simple_telemetry_service_test.dart`
+  (expanded),
+  `test/infrastructure/native/audit/odbc_audit_logger_test.dart`
+  (expanded), and
+  `test/infrastructure/native/protocol/multi_result_parser_legacy_test.dart`.
+
+### Documentation
+
+- README aligned with the 3.10 public API surface: Features section
+  gained 6 bullets covering the four `IOdbcService` sub-interfaces, the
+  event bus + sealed `OdbcEvent` hierarchy, `TypedColumnarResult`,
+  `runInTransaction<T>` / `runInXaTransaction<T>`, opt-in `LazyString` +
+  `SqlPointerCache` perf helpers, and X/Open XA / 2PC support. Streaming
+  and multi-result bullets now mention `streamQueryNamed`,
+  `streamQueryMulti`, and `executeQueryMultiParams`.
+- README "API coverage" section: explicit cross-link to the four
+  sub-interfaces (`IQueryService`, `ITransactionService`,
+  `IPoolService`, `IAdminService`) plus a note about the
+  `…For(Connection conn, …)` extensions; added ~13 previously omitted
+  methods (`executeQueryDirectedParams`, `executeQueryColumnar`,
+  `streamQueryColumnar`, `streamQueryMulti`, `streamQueryNamed`,
+  `runInTransaction<T>`, `runInXaTransaction<T>`, `xaStart` /
+  `xaRecover` / `xaResumePrepared`, `getWorkerPoolStats()`,
+  `getConnectionDbmsInfo`, `setLogLevel`, `clearAllStatements`, and the
+  `events` broadcast stream).
+- README examples block: now lists all 36 `example/*.dart` files;
+  previously 11 were only mentioned inline.
+- Added `example/event_bus_demo.dart` showing `IAdminService.events`
+  consumption against the sealed `OdbcEvent` hierarchy.
+
+### CI
+
+- Bumped `softprops/action-gh-release` from 1 to 3 in
+  `.github/workflows/release.yml` (Dependabot PR #4). No behavioural
+  change for consumers; release workflow now tracks the maintained
+  major.
 
 ## [3.10.0] - 2026-05-27 — Roadmap v3.x (additive + deprecation gradual)
 
