@@ -213,7 +213,7 @@ jobs:
           sdk: stable
 
       - name: Download Windows DLL
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: odbc_engine.dll
           path: native/target/release/
@@ -242,7 +242,7 @@ jobs:
           ref: refs/tags/${{ needs.verify.outputs.release_tag }}
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: uploads/
           pattern: "*"
