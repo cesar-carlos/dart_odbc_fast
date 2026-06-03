@@ -25,7 +25,7 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable

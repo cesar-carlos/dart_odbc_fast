@@ -21,7 +21,7 @@ jobs:
       ODBC_DSN: ""
       ODBC_EXAMPLE_DISABLE_DSN: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
@@ -148,7 +148,7 @@ jobs:
       CI: "true"
       RUSTFLAGS: "--cfg loom"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup Rust (pinned toolchain)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -174,7 +174,7 @@ jobs:
       ODBC_DSN: ""
       ODBC_EXAMPLE_DISABLE_DSN: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
