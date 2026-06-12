@@ -63,6 +63,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
           outWritten,
         ),
         maxSize: maxBufferBytes,
+        preferTransient: preferTransientFfiBufferForParams(params),
       ),
     );
   }

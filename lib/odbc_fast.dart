@@ -111,6 +111,7 @@ export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/driver_capabilities.dart';
 export 'infrastructure/native/driver_capabilities_v3.dart';
 export 'infrastructure/native/errors/async_error.dart';
+export 'infrastructure/native/native_bcp_runtime.dart';
 export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
 export 'infrastructure/native/pool_options.dart';

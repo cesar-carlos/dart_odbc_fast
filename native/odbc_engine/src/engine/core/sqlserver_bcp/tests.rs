@@ -107,20 +107,49 @@ fn test_build_bound_columns_rejects_column_data_length_mismatch() {
 }
 
 #[test]
-fn test_build_bound_columns_rejects_unsupported_column_type() {
+fn test_build_bound_columns_accepts_text_columns() {
     let payload = BulkInsertPayload {
         table: "dbo.t".to_string(),
         columns: vec![BulkColumnSpec {
             name: "label".to_string(),
             col_type: BulkColumnType::Text,
-            nullable: false,
+            nullable: true,
             max_len: 32,
         }],
-        row_count: 1,
+        row_count: 2,
         column_data: vec![BulkColumnData::Text {
-            rows: crate::protocol::bulk_rows_from_vecs(vec![b"hi".to_vec()]),
-            null_bitmap: None,
+            rows: crate::protocol::bulk_rows_from_vecs(vec![b"hi".to_vec(), b"bye".to_vec()]),
+            null_bitmap: Some(vec![0b010]),
             max_len: 32,
+        }],
+    };
+    let cols = build_bound_columns(&payload).expect("text columns should be accepted");
+    assert_eq!(cols.len(), 1);
+    assert_eq!(cols[0].len(), 2);
+}
+
+#[test]
+fn test_build_bound_columns_rejects_unsupported_column_type() {
+    let payload = BulkInsertPayload {
+        table: "dbo.t".to_string(),
+        columns: vec![BulkColumnSpec {
+            name: "ts".to_string(),
+            col_type: BulkColumnType::Timestamp,
+            nullable: false,
+            max_len: 0,
+        }],
+        row_count: 1,
+        column_data: vec![BulkColumnData::Timestamp {
+            values: vec![crate::protocol::BulkTimestamp {
+                year: 2024,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0,
+                fraction: 0,
+            }],
+            null_bitmap: None,
         }],
     };
     let err = match build_bound_columns(&payload) {
@@ -128,7 +157,7 @@ fn test_build_bound_columns_rejects_unsupported_column_type() {
         Ok(_) => panic!("unsupported column type should fail"),
     };
     assert!(matches!(err, OdbcError::UnsupportedFeature(_)));
-    assert!(err.to_string().contains("I32/I64"));
+    assert!(err.to_string().contains("I32, I64, and Text"));
 }
 
 #[test]

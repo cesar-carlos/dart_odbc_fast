@@ -30,16 +30,20 @@ impl BulkCopyExecutor {
         self.batch_size
     }
 
-    /// Bulk copy from raw columnar byte data (for future native BCP).
-    /// The current implementation requires structured payload metadata.
+    /// Bulk copy from raw columnar byte data.
+    ///
+    /// **Deferred (v4.2):** streaming / row-at-a-time memory bindings are not
+    /// implemented. The supported path is structured [`bulk_copy_from_payload`]
+    /// (native BCP with ArrayBinding fallback). Callers with in-memory column
+    /// vectors should build a [`BulkInsertPayload`] first.
     pub fn bulk_copy_from_memory(
         &self,
         _conn: &Connection<'static>,
         _table: &str,
         _data: &[Vec<u8>],
     ) -> Result<usize> {
-        Err(OdbcError::InternalError(
-            "bulk_copy_from_memory requires native BCP row bindings and is not implemented; use bulk_copy_from_payload".to_string(),
+        Err(OdbcError::UnsupportedFeature(
+            "bulk_copy_from_memory is not implemented; build a BulkInsertPayload and use bulk_copy_from_payload (streaming BCP deferred)".to_string(),
         ))
     }
 

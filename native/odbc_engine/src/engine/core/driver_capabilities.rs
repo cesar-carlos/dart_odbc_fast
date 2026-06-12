@@ -32,9 +32,29 @@ pub struct DriverCapabilities {
     /// [`detect`]; stable across releases. Defaults to [`ENGINE_UNKNOWN`].
     #[serde(default)]
     pub engine: String,
+    /// Whether native SQL Server BCP may be used for this engine when the
+    /// `sqlserver-bcp` feature is enabled on Windows builds. Does **not**
+    /// imply the runtime guard (`ODBC_ENABLE_UNSTABLE_NATIVE_BCP`) is set or
+    /// that vendor BCP DLLs are present — probe via bulk insert or
+    /// `probe_native_bcp_support` when accuracy matters.
+    #[serde(default)]
+    pub supports_native_bcp: bool,
 }
 
 impl DriverCapabilities {
+    /// Compile-time + platform eligibility for native SQL Server BCP.
+    pub fn engine_supports_native_bcp(engine: &str) -> bool {
+        #[cfg(all(feature = "sqlserver-bcp", windows))]
+        {
+            engine == ENGINE_SQLSERVER
+        }
+        #[cfg(not(all(feature = "sqlserver-bcp", windows)))]
+        {
+            let _ = engine;
+            false
+        }
+    }
+
     /// Build capabilities from a driver-name *string*. Accepts:
     /// - canonical engine ids (`"sqlserver"`, `"postgres"`, ...)
     /// - DBMS names returned by `SQLGetInfo(SQL_DBMS_NAME)`
@@ -71,6 +91,7 @@ impl DriverCapabilities {
             driver_name: display.to_string(),
             driver_version: "Unknown".to_string(),
             engine: engine.to_string(),
+            supports_native_bcp: Self::engine_supports_native_bcp(engine),
         }
     }
 
@@ -190,6 +211,7 @@ impl Default for DriverCapabilities {
             driver_name: "Unknown".to_string(),
             driver_version: "Unknown".to_string(),
             engine: ENGINE_UNKNOWN.to_string(),
+            supports_native_bcp: false,
         }
     }
 }
@@ -443,6 +465,35 @@ mod tests {
         let caps = DriverCapabilities::from_driver_name("postgres");
         let json = caps.to_json().expect("json");
         assert!(json.contains("\"engine\":\"postgres\""));
+    }
+
+    #[test]
+    fn should_serialize_native_bcp_flag_for_sqlserver() {
+        let caps = DriverCapabilities::from_driver_name("Microsoft SQL Server");
+        let json = caps.to_json().expect("json");
+        let expected = format!(
+            "\"supports_native_bcp\":{}",
+            DriverCapabilities::engine_supports_native_bcp(ENGINE_SQLSERVER)
+        );
+        assert!(json.contains(&expected));
+    }
+
+    #[test]
+    fn should_not_mark_postgres_for_native_bcp() {
+        let caps = DriverCapabilities::from_driver_name("postgres");
+        assert!(!caps.supports_native_bcp);
+    }
+
+    #[test]
+    fn detect_from_connection_string_sets_native_bcp_for_sqlserver() {
+        let caps = DriverCapabilities::detect_from_connection_string(
+            "Driver={ODBC Driver 18 for SQL Server};Server=h;Database=d;",
+        );
+        assert_eq!(caps.engine, ENGINE_SQLSERVER);
+        assert_eq!(
+            caps.supports_native_bcp,
+            DriverCapabilities::engine_supports_native_bcp(ENGINE_SQLSERVER)
+        );
     }
 
     #[test]

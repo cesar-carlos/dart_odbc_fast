@@ -1,6 +1,6 @@
 ﻿mod multi_result_collect;
 mod param_binding;
-mod result_encoding;
+pub(crate) mod result_encoding;
 
 use super::prepared_cache::PreparedStatementCache;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;

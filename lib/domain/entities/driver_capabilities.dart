@@ -138,6 +138,7 @@ class DriverCapabilities {
     required this.driverVersion,
     required this.databaseType,
     required this.engineId,
+    required this.supportsNativeBcp,
   });
 
   factory DriverCapabilities.fromJson(Map<String, Object?> json) {
@@ -157,6 +158,7 @@ class DriverCapabilities {
       driverVersion: json['driver_version'] as String? ?? 'Unknown',
       databaseType: databaseType,
       engineId: engineId,
+      supportsNativeBcp: json['supports_native_bcp'] as bool? ?? false,
     );
   }
 
@@ -168,6 +170,10 @@ class DriverCapabilities {
   final String driverVersion;
   final DatabaseType databaseType;
   final String engineId;
+
+  /// Whether the native engine was built with `sqlserver-bcp` on Windows for
+  /// this engine. Does not imply `ODBC_ENABLE_UNSTABLE_NATIVE_BCP` is set.
+  final bool supportsNativeBcp;
 }
 
 /// Live DBMS introspection (NEW in v2.1). Populated by
@@ -200,6 +206,7 @@ class DbmsInfo {
             driverVersion: 'Unknown',
             databaseType: DatabaseType.fromEngineId(engineId),
             engineId: engineId,
+            supportsNativeBcp: false,
           );
     return DbmsInfo(
       dbmsName: dbmsName,

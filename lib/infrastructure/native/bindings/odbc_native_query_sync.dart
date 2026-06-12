@@ -72,6 +72,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
                     outWritten,
                   ),
             maxSize: maxBufferBytes,
+            preferTransient: preferTransientFfiBufferForParams(paramsOrEmpty),
           ),
         );
       },
@@ -203,6 +204,8 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
           );
         },
         maxSize: maxBufferBytes,
+        preferTransient: paramsBuffer != null &&
+            preferTransientFfiBufferForParams(paramsBuffer),
       ),
     );
   }

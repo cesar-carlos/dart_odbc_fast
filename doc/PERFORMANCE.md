@@ -408,7 +408,7 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 | Knob | Value | Effect |
 | ---- | ----- | ------ |
-| `zeroCopyResultThresholdBytes` | `64 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). |
+| `zeroCopyResultThresholdBytes` | `32 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). Sync param paths with large directed blobs use a transient allocation via `preferTransientFfiBufferForParams`. |
 | Scratch pool | unchanged for small payloads | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Large results allocate a transient buffer and attach a `NativeFinalizer` (`malloc.nativeFree`). |
 | `odbc_release_buffer` | exported | C ABI hook for releasing Dart `malloc` buffers; Dart uses the paired `malloc.nativeFree` finalizer today. |
 
@@ -433,7 +433,8 @@ parameter buffers on the async worker path.
 | ---- | ------ |
 | Feature gate | `sqlserver-bcp` on `odbc_engine` (not in default features). Enables dynamic loading of vendor `bcp_*` symbols and the native `BulkCopyExecutor` fast path for SQL Server. |
 | Dart / build | Rebuild the native asset with `--features sqlserver-bcp` (or enable the feature in your hook/CI matrix). Without it, bulk insert stays on the portable `ArrayBinding` path. |
-| Runtime guard | Native BCP is **disabled at runtime** unless `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1` (or `true` / `yes`). Not surfaced in `odbc_get_driver_capabilities` JSON. Dart mirror: `isUnstableNativeBcpEnabled` in `native_bcp_runtime.dart`. |
+| Runtime guard | Native BCP is **disabled at runtime** unless `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1` (or `true` / `yes`). **`supports_native_bcp`** is surfaced in `odbc_get_driver_capabilities` JSON; combine with `isNativeBcpAvailable` / `isUnstableNativeBcpEnabled` in `native_bcp_runtime.dart`. |
+| Text columns | Native path supports `BulkColumnType::Text` (`SQLCHARACTER`) in addition to `I32` / `I64`. |
 | Scope | Row-at-a-time native BCP for supported scalar types; full payload is still materialised in-engine (streaming BCP remains open work). |
 
 ---

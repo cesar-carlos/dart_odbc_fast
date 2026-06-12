@@ -49,14 +49,44 @@ pub(crate) fn build_bound_columns<'a>(
                 )?,
                 cell: std::mem::MaybeUninit::uninit(),
             }),
-            (BulkColumnType::I32 | BulkColumnType::I64, _) => {
+            (
+                BulkColumnType::Text,
+                BulkColumnData::Text {
+                    rows,
+                    max_len,
+                    null_bitmap,
+                },
+            ) => {
+                let max_cell_len = if spec.max_len > 0 {
+                    spec.max_len
+                } else {
+                    *max_len
+                };
+                if max_cell_len == 0 {
+                    return Err(OdbcError::ValidationError(format!(
+                        "Native BCP Text column '{}' requires a positive max_len",
+                        spec.name
+                    )));
+                }
+                Ok(BoundColumnRef::Text {
+                    rows: rows.as_slice(),
+                    max_cell_len,
+                    null_bitmap: validate_null_bitmap(
+                        null_bitmap.as_deref(),
+                        rows.len(),
+                        spec.name.as_str(),
+                    )?,
+                    cell: vec![0u8; max_cell_len],
+                })
+            }
+            (BulkColumnType::I32 | BulkColumnType::I64 | BulkColumnType::Text, _) => {
                 Err(OdbcError::UnsupportedFeature(format!(
                     "Native BCP currently requires matching payload type for '{}'",
                     spec.name
                 )))
             }
             _ => Err(OdbcError::UnsupportedFeature(format!(
-                "Native BCP currently supports only I32/I64 columns; '{}' uses {:?}",
+                "Native BCP currently supports I32, I64, and Text columns; '{}' uses {:?}",
                 spec.name, spec.col_type
             ))),
         })

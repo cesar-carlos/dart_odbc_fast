@@ -1,5 +1,7 @@
+import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/native_bcp_runtime.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -137,6 +139,7 @@ void main() {
       expect(caps.driverVersion, '15.0');
       expect(caps.engineId, DatabaseEngineIds.postgres);
       expect(caps.databaseType, DatabaseType.postgresql);
+      expect(caps.supportsNativeBcp, isFalse);
     });
 
     test('falls back to driver-name heuristic when engine missing', () {
@@ -145,6 +148,21 @@ void main() {
       });
       expect(caps.databaseType, DatabaseType.sqlServer);
       expect(caps.engineId, DatabaseEngineIds.unknown);
+    });
+
+    test('parses supports_native_bcp for SQL Server', () {
+      final caps = DriverCapabilities.fromJson(<String, Object?>{
+        'driver_name': 'SQL Server',
+        'engine': DatabaseEngineIds.sqlserver,
+        'supports_native_bcp': true,
+      });
+      expect(caps.supportsNativeBcp, isTrue);
+      expect(caps.databaseType, DatabaseType.sqlServer);
+    });
+
+    test('defaults supports_native_bcp to false', () {
+      final caps = DriverCapabilities.fromJson(<String, Object?>{});
+      expect(caps.supportsNativeBcp, isFalse);
     });
 
     test('uses defaults for missing fields', () {
@@ -157,6 +175,39 @@ void main() {
       expect(caps.driverVersion, 'Unknown');
       expect(caps.databaseType, DatabaseType.unknown);
       expect(caps.engineId, DatabaseEngineIds.unknown);
+      expect(caps.supportsNativeBcp, isFalse);
+    });
+  });
+
+  group('isNativeBcpAvailable', () {
+    test('should_be_false_without_runtime_env_even_when_capability_true', () {
+      final caps = DriverCapabilities(
+        supportsPreparedStatements: true,
+        supportsBatchOperations: true,
+        supportsStreaming: true,
+        maxRowArraySize: 2000,
+        driverName: 'SQL Server',
+        driverVersion: 'Unknown',
+        databaseType: DatabaseType.sqlServer,
+        engineId: DatabaseEngineIds.sqlserver,
+        supportsNativeBcp: true,
+      );
+      expect(isNativeBcpAvailable(caps), isFalse);
+    });
+
+    test('should_be_false_when_capability_false', () {
+      final caps = DriverCapabilities(
+        supportsPreparedStatements: true,
+        supportsBatchOperations: true,
+        supportsStreaming: true,
+        maxRowArraySize: 1000,
+        driverName: 'PostgreSQL',
+        driverVersion: 'Unknown',
+        databaseType: DatabaseType.postgresql,
+        engineId: DatabaseEngineIds.postgres,
+        supportsNativeBcp: false,
+      );
+      expect(isNativeBcpAvailable(caps), isFalse);
     });
   });
 

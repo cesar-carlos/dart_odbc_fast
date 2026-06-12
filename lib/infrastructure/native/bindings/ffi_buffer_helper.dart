@@ -13,8 +13,9 @@ const int maxBufferSize = 16 * 1024 * 1024;
 /// Minimum successful FFI payload size before returning a zero-copy view.
 ///
 /// Smaller payloads keep the `Uint8List.fromList` copy because the
-/// `NativeFinalizer` bookkeeping dominates the win.
-const int zeroCopyResultThresholdBytes = 64 * 1024;
+/// `NativeFinalizer` bookkeeping dominates the win. Lowered in v4.2.0 from
+/// 64 KiB after microbenchmarks showed net benefit at 32 KiB on Windows.
+const int zeroCopyResultThresholdBytes = 32 * 1024;
 
 /// Callback function type for FFI buffer operations.
 ///
@@ -47,6 +48,11 @@ bool get isZeroCopyResultBufferAvailable {
   return _releaseBufferNative != null;
 }
 
+/// When true, skip the reusable scratch pool so large sync param queries can
+/// return zero-copy result views without an extra scratch→owned copy.
+bool preferTransientFfiBufferForParams(Uint8List params) =>
+    params.length >= zeroCopyResultThresholdBytes;
+
 /// Calls a buffer callback function with dynamically sized buffers.
 ///
 /// Starts with [initialSize] or [initialBufferSize] and doubles the buffer
@@ -60,11 +66,16 @@ bool get isZeroCopyResultBufferAvailable {
 /// Payloads at or above [zeroCopyResultThresholdBytes] use a transient native
 /// allocation and return a view with a [`NativeFinalizer`] when
 /// [isZeroCopyResultBufferAvailable]; otherwise they copy into the Dart heap.
-Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
+Uint8List? callWithBuffer(
+  BufferCallback fn, {
+  int? maxSize,
+  int? initialSize,
+  bool preferTransient = false,
+}) {
   final limit = maxSize ?? maxBufferSize;
   final size = initialSize ?? initialBufferSize;
   if (isZeroCopyResultBufferAvailable &&
-      limit >= zeroCopyResultThresholdBytes) {
+      (preferTransient || limit >= zeroCopyResultThresholdBytes)) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,

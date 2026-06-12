@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-06-12
+
+### Added
+
+- **`supports_native_bcp`** in `odbc_get_driver_capabilities` / `DbmsInfo.capabilities`
+  JSON — reports compile-time + platform eligibility for SQL Server native BCP
+  (`sqlserver-bcp` on Windows).
+- **`DriverCapabilities.supportsNativeBcp`** and **`isNativeBcpAvailable`** —
+  Dart mirrors for capability JSON plus the `ODBC_ENABLE_UNSTABLE_NATIVE_BCP`
+  runtime guard.
+- **Native BCP `Text` columns** — `sqlserver_bcp` binds `BulkColumnType::Text`
+  via `SQLCHARACTER` (nullable via null bitmap).
+- **`preferTransientFfiBufferForParams`** — sync parameterized query paths
+  (`execQueryParams`, `execQueryMultiParams`, prepared `execute`) skip the
+  scratch pool when param blobs are large so zero-copy results apply safely.
+- **`odbc_stream_start_batched_options`** (native FFI) — batched cursor streaming
+  with `ResultEncoding` wire layout (row-major, columnar v2, columnar compressed).
+- **`streamQueryColumnarNative`** on `IOdbcRepository` extensions — explicit alias
+  for columnar batched streaming.
+- **`MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH` (tag `2`)** — continuation frames for
+  per-cursor batched encoding in multi-result streaming.
+
+### Changed
+
+- **`zeroCopyResultThresholdBytes`** lowered from **64 KiB** to **32 KiB** when
+  `odbc_release_buffer` resolves (ABI 1.1+).
+- **`bulk_copy_from_memory`** — returns `UnsupportedFeature` with an explicit
+  deferral message; use `bulk_copy_from_payload` (streaming BCP remains open
+  work).
+- **`streamQueryColumnar`** — requests columnar v2 on batched streaming FFI when
+  available (`odbc_stream_start_batched_options`); falls back to row-major on
+  older natives.
+- **Multi-result streaming** — each ODBC result-set cursor is encoded in
+  fetch-sized batches instead of full cursor materialisation.
+- **`doc/PERFORMANCE.md`** — BCP capability JSON, Text column support,
+  zero-copy threshold notes, and columnar batched streaming semantics.
+
 ## [4.1.1] - 2026-06-12
 
 ### Added

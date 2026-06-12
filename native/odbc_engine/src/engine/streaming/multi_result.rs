@@ -1,6 +1,6 @@
-use super::columns::{describe_streaming_columns, encode_row_buffer};
+use super::columns::{describe_streaming_columns, encode_row_buffer_with_encoding};
 use super::state::{AsyncStreamingState, BatchedMessage, BatchedStreamingState, WorkerCompletion};
-use crate::engine::sqlserver_json::coalesce_for_json_rows;
+use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::pool::SharedPooledConnection;
@@ -14,6 +14,11 @@ use std::sync::Arc;
 /// Item-frame tags for the streaming multi-result wire format (M8).
 pub const MULTI_STREAM_ITEM_TAG_RESULT_SET: u8 = 0;
 pub const MULTI_STREAM_ITEM_TAG_ROW_COUNT: u8 = 1;
+/// Continuation batch for the current result set (v4.2 batched per cursor).
+pub const MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH: u8 = 2;
+
+/// Default ODBC rows per batch when streaming multi-result cursors.
+pub(crate) const DEFAULT_MULTI_STREAM_FETCH_SIZE: usize = 100;
 
 /// Drive a prepared statement that may yield multiple result sets and call
 /// `on_item` for **every** result set or row-count, in order. Each item is
@@ -25,6 +30,8 @@ pub const MULTI_STREAM_ITEM_TAG_ROW_COUNT: u8 = 1;
 fn drive_multi_result_stream<F>(
     conn: &Connection<'static>,
     sql: &str,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
     on_item: &mut F,
     cancel_requested: Option<Arc<AtomicBool>>,
 ) -> Result<()>
@@ -47,8 +54,13 @@ where
             if cancel_check() {
                 return Err(OdbcError::Cancelled);
             }
-            let (encoded, cursor) = encode_cursor_to_buffer(cursor)?;
-            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
+            let cursor = encode_cursor_batched(
+                cursor,
+                fetch_size,
+                result_encoding,
+                on_item,
+                cancel_check,
+            )?;
             let _stmt_ref = cursor.into_stmt();
             true
         } else {
@@ -108,8 +120,13 @@ where
         if cols > 0 {
             // SAFETY: just observed cols > 0 with no other live borrow.
             let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-            let (encoded, cursor) = encode_cursor_to_buffer(cursor)?;
-            on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
+            let cursor = encode_cursor_batched(
+                cursor,
+                fetch_size,
+                result_encoding,
+                on_item,
+                cancel_check,
+            )?;
             let _stmt_ref = cursor.into_stmt();
         } else {
             let rc = stmt
@@ -126,23 +143,60 @@ where
     }
 }
 
-/// Drain `cursor` into a `RowBuffer`, encode via `RowBufferEncoder`, and
-/// return the cursor so the caller can `into_stmt()` for `SQLMoreResults`.
+/// Drain `cursor` in fetch-sized batches, framing each encoded batch as a
+/// multi-result item. Returns the cursor so the caller can `into_stmt()` for
+/// `SQLMoreResults`.
 ///
-/// Each multi-result item is one complete result set; per-item materialisation
-/// matches the M8 wire format (one framed payload per result set).
-fn encode_cursor_to_buffer<C>(mut cursor: C) -> Result<(Vec<u8>, C)>
+/// FOR JSON coalescing is skipped here (same rationale as single-result
+/// batched streaming): chunks would be split across batches.
+fn encode_cursor_batched<C, F>(
+    mut cursor: C,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    on_item: &mut F,
+    cancel_check: impl Fn() -> bool,
+) -> Result<C>
 where
     C: Cursor + ResultSetMetadata,
+    F: FnMut(Vec<u8>) -> Result<()>,
 {
+    let batch_size = fetch_size.max(1);
     let mut row_buffer = RowBuffer::new();
     let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
-    let cursor =
-        crate::engine::fetch::fetch_cursor_into_row_buffer(cursor, &column_types, &mut row_buffer)?;
-    // FOR JSON normalisation — item is fully materialised before framing.
-    coalesce_for_json_rows(&mut row_buffer);
-    let encoded = encode_row_buffer(&row_buffer)?;
-    Ok((encoded, cursor))
+    let mut first_batch = true;
+
+    loop {
+        if cancel_check() {
+            return Err(OdbcError::Cancelled);
+        }
+
+        row_buffer.rows.clear();
+        let _fetched = crate::engine::fetch::fetch_batch_into_row_buffer(
+            &mut cursor,
+            &column_types,
+            batch_size,
+            &mut row_buffer,
+        )?;
+
+        if row_buffer.row_count() == 0 {
+            if first_batch {
+                let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
+                on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
+            }
+            break;
+        }
+
+        let tag = if first_batch {
+            MULTI_STREAM_ITEM_TAG_RESULT_SET
+        } else {
+            MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH
+        };
+        let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
+        on_item(frame_item(tag, encoded)?)?;
+        first_batch = false;
+    }
+
+    Ok(cursor)
 }
 
 pub(crate) fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
@@ -298,6 +352,8 @@ fn spawn_multi_stream_worker(
             match drive_multi_result_stream(
                 conn_guard.connection(),
                 &sql,
+                DEFAULT_MULTI_STREAM_FETCH_SIZE,
+                ResultEncoding::RowMajor,
                 &mut on_item,
                 Some(cancel),
             ) {
@@ -359,6 +415,8 @@ fn spawn_multi_stream_worker_pooled(
             match drive_multi_result_stream(
                 conn_guard.get_connection(),
                 &sql,
+                DEFAULT_MULTI_STREAM_FETCH_SIZE,
+                ResultEncoding::RowMajor,
                 &mut on_item,
                 Some(cancel),
             ) {
