@@ -51,6 +51,7 @@ desktop.ini
 coverage/
 *.lcov
 native/coverage/
+native/coverage-*/
 native/target/tarpaulin/
 
 # Rust documentation (generated)

@@ -99,6 +99,11 @@ void main() {
       expect(codecov, contains('target: 80%'));
       expect(codecov, contains('project'));
       expect(codecov, contains('patch'));
+      expect(codecov, contains('if_not_found: failure'));
+
+      final ci = _readRepoFile('.github/workflows/ci.yml');
+      expect(ci, contains('secrets.CODECOV_TOKEN'));
+      expect(ci, contains('disable_search: true'));
 
       final dependabot = _readRepoFile('.github/dependabot.yml');
       expect(dependabot, contains('package-ecosystem: "pub"'));

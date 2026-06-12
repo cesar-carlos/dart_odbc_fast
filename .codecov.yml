@@ -9,6 +9,10 @@
 #
 # `fail_ci_if_error` is set in the upload step (CI workflow), so a
 # failure to upload is a build failure too — no silent slips.
+#
+# Uploads require `CODECOV_TOKEN` in GitHub Actions secrets (see
+# doc/TESTING.md). `if_not_found: failure` keeps the gate honest when
+# no report is associated with a commit.
 
 coverage:
   precision: 2
@@ -18,12 +22,12 @@ coverage:
       default:
         target: 80%
         threshold: 1%
-        if_not_found: success
+        if_not_found: failure
         if_ci_failed: error
     patch:
       default:
         target: 80%
-        if_not_found: success
+        if_not_found: failure
         if_ci_failed: error
   ignore:
     - "native/**"

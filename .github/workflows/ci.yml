@@ -229,9 +229,11 @@ jobs:
       - name: Upload Dart coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/lcov.info
           flags: dart
           name: dart-coverage
+          disable_search: true
           fail_ci_if_error: true
 
       - name: Upload Dart coverage report
@@ -249,9 +251,11 @@ jobs:
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: native/coverage/lcov.info
           flags: rust
           name: rust-coverage
+          disable_search: true
           fail_ci_if_error: true
 
       - name: Upload Rust coverage report

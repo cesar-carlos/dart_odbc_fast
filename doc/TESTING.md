@@ -96,6 +96,14 @@ The standard CI (`.github/workflows/ci.yml`) does **not** require a live databas
 Variables set in CI: `ENABLE_E2E_TESTS=0`, `RUN_SKIPPED_TESTS=0`,
 `ODBC_TEST_DSN=""`, `ODBC_EXAMPLE_DISABLE_DSN=1`.
 
+The `coverage` job runs on push to `main` only (after the `test` job,
+~20 minutes into the full CI run). It uploads Dart (`lib/`) and Rust
+(`native/`, flag-only) LCOV reports to Codecov. GitHub Actions must
+define a repository secret `CODECOV_TOKEN` (from
+[app.codecov.io](https://app.codecov.io) after installing the Codecov
+GitHub App). Without the token, uploads to protected branches are
+rejected and the badge stays at 0%.
+
 Other workflows:
 
 | Workflow                   | Trigger                                | Scope                                           |
