@@ -3,7 +3,10 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
@@ -234,18 +237,98 @@ class OdbcStreamRunner {
     int nativeId,
     String sql, {
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async* {
     final batched = ffi.isAsync
         ? ffi.async.streamQueryBatched(
             nativeId,
             sql,
             maxBufferBytes: maxBufferBytes,
+            resultEncodingWire: resultEncoding.wireCode,
           )
-        : ffi.sync.streamQueryBatched(nativeId, sql);
+        : ffi.sync.streamQueryBatched(
+            nativeId,
+            sql,
+            resultEncoding: resultEncoding,
+          );
 
     await for (final chunk in batched) {
       yield chunk;
     }
+  }
+
+  /// Columnar batched streaming via `odbc_stream_start_batched_options` when
+  /// the native library supports it; otherwise row-major batched streaming
+  /// with the same `toTypedColumnar` decode path as before.
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) async* {
+    final nativeId = state.connectionIds[connectionId];
+    if (nativeId == null) {
+      yield const Failure<TypedColumnarResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+      return;
+    }
+
+    final opts = state.optionsFor(connectionId);
+    final maxBytes = opts?.maxResultBufferBytes;
+    final queryTimeout = opts?.queryTimeout;
+
+    Stream<Result<TypedColumnarResult>> createSource() async* {
+      try {
+        await for (final chunk in streamNativeQueryWithFallback(
+          nativeId,
+          sql,
+          maxBufferBytes: maxBytes,
+          resultEncoding: ResultEncoding.columnar,
+        )) {
+          yield Success(
+            toTypedColumnar(parser.toQueryResult(chunk)),
+          );
+        }
+      } on Exception catch (e) {
+        yield await _streamingColumnarFailureFromException(e);
+      }
+    }
+
+    final source = createSource();
+
+    if (queryTimeout != null && queryTimeout != Duration.zero) {
+      await for (final item in source.timeout(
+        queryTimeout,
+        onTimeout: (sink) {
+          sink
+            ..add(
+              const Failure<TypedColumnarResult, OdbcError>(
+                QueryError(message: odbcQueryTimedOutMessage),
+              ),
+            )
+            ..close();
+        },
+      )) {
+        yield item;
+      }
+      return;
+    }
+
+    await for (final item in source) {
+      yield item;
+    }
+  }
+
+  Future<Failure<TypedColumnarResult, OdbcError>>
+      _streamingColumnarFailureFromException(
+    Exception error,
+  ) async {
+    final base = await streamingFailureFromException(error);
+    return base.fold(
+      (_) => const Failure<TypedColumnarResult, OdbcError>(
+        QueryError(message: 'Unexpected success in columnar stream failure'),
+      ),
+      Failure<TypedColumnarResult, OdbcError>.new,
+    );
   }
 
   bool _isStreamingTimeoutException(

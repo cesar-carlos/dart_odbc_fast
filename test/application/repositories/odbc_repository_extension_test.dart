@@ -10,6 +10,8 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
@@ -47,7 +49,7 @@ class _FakeRepository implements IOdbcRepository {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async {
     capturedConnectionId = connectionId;
     capturedSql = sql;
@@ -64,6 +66,19 @@ class _FakeRepository implements IOdbcRepository {
     return Stream<Result<QueryResult>>.fromIterable(
       <Result<QueryResult>>[const Success(_emptyResult)],
     );
+  }
+
+  @override
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) async* {
+    await for (final chunk in streamQuery(connectionId, sql)) {
+      yield chunk.fold(
+        (qr) => Success(toTypedColumnar(qr)),
+        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
+      );
+    }
   }
 
   @override

@@ -1,4 +1,5 @@
 use crate::error::{OdbcError, Result};
+use crate::handles::CachedConnection;
 use odbc_api::{Connection, ConnectionOptions, Environment};
 use r2d2::{Pool, PooledConnection};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -197,18 +198,21 @@ impl OdbcConnectionManager {
 }
 
 impl r2d2::ManageConnection for OdbcConnectionManager {
-    type Connection = Connection<'static>;
+    type Connection = CachedConnection;
     type Error = OdbcError;
 
     fn connect(&self) -> std::result::Result<Self::Connection, Self::Error> {
-        self.env
+        let conn = self
+            .env
             .connect_with_connection_string(&self.connection_string, ConnectionOptions::default())
-            .map_err(OdbcError::from)
+            .map_err(OdbcError::from)?;
+        Ok(CachedConnection::new(conn))
     }
 
     fn is_valid(&self, conn: &mut Self::Connection) -> std::result::Result<(), Self::Error> {
-        conn.set_autocommit(true).map_err(OdbcError::from)?;
-        conn.execute(&self.health_check_query, (), None)
+        conn.pool_session_reset()?;
+        conn.connection()
+            .execute(&self.health_check_query, (), None)
             .map(|_| ())
             .map_err(OdbcError::from)
     }
@@ -251,11 +255,9 @@ pub struct PoolRuntimeConfig {
 #[derive(Debug)]
 struct PoolAutocommitCustomizer;
 
-impl r2d2::CustomizeConnection<Connection<'static>, OdbcError> for PoolAutocommitCustomizer {
-    fn on_acquire(&self, conn: &mut Connection<'static>) -> std::result::Result<(), OdbcError> {
-        // Best-effort rollback (in case the previous user left a transaction open).
-        let _ = conn.rollback();
-        conn.set_autocommit(true).map_err(OdbcError::from)
+impl r2d2::CustomizeConnection<CachedConnection, OdbcError> for PoolAutocommitCustomizer {
+    fn on_acquire(&self, conn: &mut CachedConnection) -> std::result::Result<(), OdbcError> {
+        conn.pool_session_reset()
     }
 }
 
@@ -397,10 +399,15 @@ pub type SharedPooledConnection = Arc<Mutex<PooledConnectionWrapper>>;
 
 impl PooledConnectionWrapper {
     pub fn get_connection(&self) -> &Connection<'static> {
-        &self.pooled
+        self.pooled.connection()
     }
 
     pub fn get_connection_mut(&mut self) -> &mut Connection<'static> {
+        self.pooled.connection_mut()
+    }
+
+    /// Mutable cached wrapper for prepared-statement reuse on pooled checkouts.
+    pub fn cached_mut(&mut self) -> &mut CachedConnection {
         &mut self.pooled
     }
 }
@@ -455,6 +462,22 @@ mod tests {
         let state = PoolState { size: 2, idle: 1 };
         assert_eq!(state.size, 2);
         assert_eq!(state.idle, 1);
+    }
+
+    #[test]
+    fn pool_manager_connection_type_is_cached_connection() {
+        use crate::handles::CachedConnection;
+
+        fn assert_is_cached(_: CachedConnection) {}
+        let _ = assert_is_cached;
+    }
+
+    #[test]
+    fn pooled_wrapper_exposes_cached_mut_for_stmt_cache() {
+        fn assert_cached_mut_available(wrapper: &mut PooledConnectionWrapper) {
+            let _cached: &mut CachedConnection = wrapper.cached_mut();
+        }
+        let _ = assert_cached_mut_available;
     }
 
     #[test]

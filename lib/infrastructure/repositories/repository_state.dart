@@ -1,5 +1,6 @@
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/dart_side_metrics.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -15,6 +16,13 @@ import 'package:result_dart/result_dart.dart';
 /// All members are package-private — never expose this through the
 /// public barrel.
 class OdbcRepositoryState {
+  OdbcRepositoryState({this.defaultResultEncoding = ResultEncoding.rowMajor});
+
+  /// Wire encoding used when callers omit `resultEncoding` on param execute
+  /// APIs. [ServiceLocator] sets this from
+  /// [ResolvedOdbcUsageProfile.recommendedResultEncoding] for server presets.
+  ResultEncoding defaultResultEncoding;
+
   /// Domain `connectionId` (string) → native id (int).
   final Map<String, int> connectionIds = {};
 

@@ -63,7 +63,7 @@ abstract class IOdbcService
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   });
 
   /// Like positional `executeQueryParams` for `OUT` / `INOUT` (DRT1 on the wire).
@@ -273,8 +273,8 @@ abstract class IOdbcService
     List<ParamValue>? params,
   });
 
-  /// Row-major [streamQuery] chunks converted via `toTypedColumnar`; for native
-  /// columnar wire encoding use [executeQueryColumnarParamValues].
+  /// Batched streaming with columnar v2 wire when supported (`odbc_stream_start_batched_options`).
+  /// See [IQueryService.streamQueryColumnar] for semantics and fallbacks.
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,

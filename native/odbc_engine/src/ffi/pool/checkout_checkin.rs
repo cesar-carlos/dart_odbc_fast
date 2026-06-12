@@ -132,9 +132,7 @@ pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
 
     rollback_transactions_best_effort(transactions);
     if let Ok(mut pooled) = entry.pooled.lock() {
-        let conn = pooled.get_connection_mut();
-        let _ = conn.rollback();
-        let _ = conn.set_autocommit(true);
+        let _ = pooled.cached_mut().pool_session_reset();
     } else {
         log::warn!("Failed to lock pooled connection {connection_id} during release cleanup");
     }
@@ -209,9 +207,7 @@ pub(super) fn close_pool(pool_id: c_uint) -> c_int {
     rollback_transactions_best_effort(transactions);
     for pooled in checked_out {
         if let Ok(mut pooled) = pooled.lock() {
-            let conn = pooled.get_connection_mut();
-            let _ = conn.rollback();
-            let _ = conn.set_autocommit(true);
+            let _ = pooled.cached_mut().pool_session_reset();
         } else {
             log::warn!("Failed to lock pooled connection during pool close cleanup");
         }

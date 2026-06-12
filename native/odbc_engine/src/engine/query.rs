@@ -58,8 +58,9 @@ pub fn execute_query_with_cached_connection(
 /// connection it already has a `CachedConnection`, so we route the
 /// `PreparedStandard`-flavoured execute through the per-connection
 /// statement-handle cache instead of going through the raw connection
-/// path that re-prepares on every call. Pooled connections continue on
-/// the legacy route until they grow their own cache (follow-up).
+/// path that re-prepares on every call. Pooled connections use the same
+/// cache now that r2d2 stores `CachedConnection` and checkout routes
+/// through `try_cached_legacy_params` / `execute_query_with_cached_connection`.
 ///
 /// The dispatcher delegates the heavy lifting to
 /// [`crate::handles::CachedConnection::execute_query_with_params`] so

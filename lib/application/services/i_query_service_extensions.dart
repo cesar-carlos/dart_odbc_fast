@@ -16,7 +16,7 @@ extension IQueryServiceTypedParamExtensions on IQueryService {
     String connectionId,
     String sql,
     List<Object?> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       executeQueryParamValues(
         connectionId,

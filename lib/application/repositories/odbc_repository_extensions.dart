@@ -52,20 +52,13 @@ extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
             : paramValuesFromObjects(params),
       );
 
-  /// Streams row-major chunks from [streamQuery] and maps each through
-  /// `toTypedColumnar`. Does not request columnar wire encoding on FFI; use
-  /// [executeQueryColumnarParamValues] when the engine should emit columnar.
-  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+  /// Explicit alias for [streamQueryColumnar] when callers want to stress the
+  /// native columnar wire path (`odbc_stream_start_batched_options`).
+  Stream<Result<TypedColumnarResult>> streamQueryColumnarNative(
     String connectionId,
     String sql,
-  ) async* {
-    await for (final chunk in streamQuery(connectionId, sql)) {
-      yield chunk.fold(
-        (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-      );
-    }
-  }
+  ) =>
+      streamQueryColumnar(connectionId, sql);
 }
 
 /// Ergonomic overloads that accept a [Connection] instead of a raw id.
@@ -84,7 +77,7 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     Connection conn,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       executeQueryParamValues(
         conn.id,
@@ -98,7 +91,7 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     Connection conn,
     String sql,
     List<Object?> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       executeQueryParamValuesFromObjects(
         conn.id,
@@ -193,7 +186,7 @@ extension IOdbcRepositoryTypedParamExtensions on IOdbcRepository {
     String connectionId,
     String sql,
     List<Object?> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       executeQueryParamValues(
         connectionId,

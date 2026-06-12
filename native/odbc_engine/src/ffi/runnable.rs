@@ -1,5 +1,5 @@
 use crate::engine::{
-    execute_query_with_cached_connection, execute_query_with_connection,
+    execute_query_with_cached_connection,
     execute_query_with_param_buffer_encoding, ResultEncoding, SharedHandleManager,
 };
 pub(crate) use crate::error::{OdbcError, Result};
@@ -7,6 +7,8 @@ use crate::handles::SharedConnection;
 pub(crate) use crate::pool::SharedPooledConnection;
 use std::os::raw::c_uint;
 pub(crate) use std::time::Instant;
+
+use super::global::try_cached_legacy_params;
 
 use super::global_state::{
     set_connection_error, set_connection_structured_error, set_out_written_zero,
@@ -306,11 +308,13 @@ pub(crate) fn run_async_query(
             )),
         },
         RunnableConnection::Pooled { pooled, .. } => {
-            let conn_guard = pooled.lock().map_err(|_| {
+            let mut conn_guard = pooled.lock().map_err(|_| {
                 OdbcError::InternalError("Failed to lock pooled connection".to_string())
             })?;
             if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
-                execute_query_with_connection(conn_guard.get_connection(), sql)
+                execute_query_with_cached_connection(conn_guard.cached_mut(), sql)
+            } else if encoding == ResultEncoding::RowMajor && !params_slice.is_empty() {
+                try_cached_legacy_params(conn_guard.cached_mut(), sql, params_slice)
             } else {
                 execute_query_with_param_buffer_encoding(
                     conn_guard.get_connection(),

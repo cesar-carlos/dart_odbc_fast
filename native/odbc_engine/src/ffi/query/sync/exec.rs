@@ -66,8 +66,8 @@ pub extern "C" fn odbc_exec_query(
                 execute_query_with_cached_connection(&mut conn_guard, sql_str)
             }
             RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => {
-                    execute_query_with_connection(conn_guard.get_connection(), sql_str)
+                Ok(mut conn_guard) => {
+                    execute_query_with_cached_connection(conn_guard.cached_mut(), sql_str)
                 }
                 Err(_) => Err(OdbcError::InternalError(
                     "Failed to lock pooled connection".to_string(),

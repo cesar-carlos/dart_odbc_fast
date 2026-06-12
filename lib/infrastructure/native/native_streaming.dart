@@ -46,12 +46,14 @@ mixin _NativeStreaming on _NativeOdbcState {
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) =>
       _native.streamStartBatched(
         connectionId,
         sql,
         fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       );
 
   /// Fetches the next chunk for a low-level native stream.
@@ -68,17 +70,22 @@ mixin _NativeStreaming on _NativeOdbcState {
   ///
   /// Uses cursor-based batching; each batch is a complete protocol message.
   /// [fetchSize] rows per batch, [chunkSize] buffer size in bytes.
+  /// When [resultEncoding] is not [ResultEncoding.rowMajor] and the native
+  /// library exports `odbc_stream_start_batched_options`, batches use columnar
+  /// v2 wire layout.
   Stream<ParsedRowBuffer> streamQueryBatched(
     int connectionId,
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async* {
     final streamId = _native.streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,
       chunkSize: chunkSize,
+      resultEncodingWire: resultEncoding.wireCode,
     );
 
     if (streamId == 0) {

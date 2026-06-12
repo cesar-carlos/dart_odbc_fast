@@ -17,6 +17,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
@@ -85,6 +86,13 @@ abstract class IOdbcRepository {
   /// On runtime failure, emits a single `Failure<QueryResult, OdbcError>`
   /// item and closes the stream.
   Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql,
+  );
+
+  /// Streams query chunks as [TypedColumnarResult] using columnar wire encoding
+  /// when the native library exports `odbc_stream_start_batched_options`.
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,
   );
@@ -259,7 +267,7 @@ abstract class IOdbcRepository {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   });
 
   /// Like positional parameter execute, but the wire buffer is pre-serialised:
@@ -269,7 +277,7 @@ abstract class IOdbcRepository {
     String connectionId,
     String sql,
     Uint8List? paramBuffer, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   });
 
   /// Executes SQL with DRT1 directed parameters (`OUT` / `INOUT`).

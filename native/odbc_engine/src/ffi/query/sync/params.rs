@@ -80,12 +80,15 @@ pub extern "C" fn odbc_exec_query_params(
                     }
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                    Ok(conn_guard) => {
+                    Ok(mut conn_guard) => {
                         if params_slice.is_empty() {
-                            execute_query_with_connection(conn_guard.get_connection(), sql_str)
+                            execute_query_with_cached_connection(
+                                conn_guard.cached_mut(),
+                                sql_str,
+                            )
                         } else {
-                            execute_query_with_param_buffer(
-                                conn_guard.get_connection(),
+                            try_cached_legacy_params(
+                                conn_guard.cached_mut(),
                                 sql_str,
                                 params_slice,
                             )

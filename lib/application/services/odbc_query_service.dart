@@ -20,7 +20,7 @@ class OdbcQueryService {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       _repository.executeQueryParamValues(
         connectionId,
@@ -145,11 +145,9 @@ class OdbcQueryService {
     String connectionId,
     String sql,
   ) async* {
-    await for (final chunk in _repository.streamQuery(connectionId, sql)) {
-      yield chunk.fold(
-        (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-      );
+    await for (final chunk
+        in _repository.streamQueryColumnar(connectionId, sql)) {
+      yield chunk;
     }
   }
 

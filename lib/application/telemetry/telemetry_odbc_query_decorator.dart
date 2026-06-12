@@ -22,7 +22,7 @@ class TelemetryOdbcQueryDecorator {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       _ops.inOperation(
         'ODBC.executeQueryParamValues',

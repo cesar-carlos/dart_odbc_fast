@@ -81,7 +81,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     List<ParamValue> params, {
     int? maxBufferBytes,
     Duration? timeout,
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async =>
       null;
 
@@ -92,7 +92,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
     Duration? timeout,
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async =>
       null;
 

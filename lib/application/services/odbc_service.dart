@@ -91,7 +91,7 @@ class OdbcService implements IOdbcService {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       _query.executeQueryParamValues(
         connectionId,

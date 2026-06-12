@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for columnar batched streaming.
 - **`MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH` (tag `2`)** — continuation frames for
   per-cursor batched encoding in multi-result streaming.
+- **`OdbcRepositoryState.defaultResultEncoding`** — `ServiceLocator` wires
+  `recommendedResultEncoding` for `balancedServer` / `highThroughput`.
+- **`CachedConnection::pool_session_reset`** and **`PooledConnectionWrapper::cached_mut`**
+  — pooled FFI paths reuse prepared handles via `try_cached_legacy_params`.
+- **`test/core/di/repository_profile_encoding_test.dart`** — profile default
+  encoding contracts for `ServiceLocator` / `OdbcRepositoryImpl`.
 
 ### Changed
 
@@ -42,7 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-result streaming** — each ODBC result-set cursor is encoded in
   fetch-sized batches instead of full cursor materialisation.
 - **`doc/PERFORMANCE.md`** — BCP capability JSON, Text column support,
-  zero-copy threshold notes, and columnar batched streaming semantics.
+  zero-copy threshold notes, columnar batched streaming semantics, automatic
+  columnar defaults on server profiles, and pooled prepared-cache routing.
+- **r2d2 pool connections** store `CachedConnection` so checkout retains the
+  per-connection prepared-statement LRU.
+- **`executeQueryParamValues` / `executeQueryParamBuffer`** — `resultEncoding`
+  is optional; `null` applies the repository default (`columnar` on server
+  presets via `ServiceLocator`).
 
 ## [4.1.1] - 2026-06-12
 

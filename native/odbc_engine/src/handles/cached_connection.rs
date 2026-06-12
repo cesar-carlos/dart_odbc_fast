@@ -223,6 +223,13 @@ impl CachedConnection {
         self.cache_misses.load(Ordering::Relaxed)
     }
 
+    /// Roll back any open transaction and restore autocommit without
+    /// evicting cached prepared statements. Used by pool acquire/release hooks.
+    pub fn pool_session_reset(&mut self) -> Result<()> {
+        let _ = self.conn.rollback();
+        self.conn.set_autocommit(true).map_err(OdbcError::from)
+    }
+
     #[cfg(feature = "statement-handle-reuse")]
     fn invalidate_cache(&mut self) {
         if !self.stmt_cache.is_empty() {

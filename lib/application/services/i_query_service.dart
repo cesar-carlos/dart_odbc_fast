@@ -29,7 +29,7 @@ abstract interface class IQueryService {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   });
 
   Future<Result<QueryResult>> executeQueryDirectedParams(
@@ -70,15 +70,14 @@ abstract interface class IQueryService {
     List<ParamValue>? params,
   });
 
-  /// Row-major streaming with a columnar Dart view.
+  /// Batched cursor streaming with columnar v2 wire encoding when the native
+  /// library exports `odbc_stream_start_batched_options` (v4.2+). Each chunk is
+  /// decoded to [TypedColumnarResult] via `toTypedColumnar`. On older natives
+  /// the call transparently falls back to row-major batched streaming.
   ///
-  /// Under the hood this calls [streamQuery] (batched cursor streaming by
-  /// default) and maps each [QueryResult] chunk through `toTypedColumnar`. The
-  /// native wire format stays row-major; no columnar v2 header is requested on
-  /// the FFI path.
-  ///
-  /// For a single-shot query that asks the engine for native columnar encoding,
-  /// use [executeQueryColumnarParamValues] (`ResultEncoding.columnar`).
+  /// For a single buffered result with native columnar encoding, use
+  /// [executeQueryColumnarParamValues]. [streamQueryColumnarNative] is an
+  /// explicit alias of this method on repository extensions.
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,
@@ -100,7 +99,7 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     Connection conn,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       executeQueryParamValues(
         conn.id,

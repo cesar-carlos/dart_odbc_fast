@@ -110,7 +110,7 @@ class _FakeAsyncNative extends AsyncNativeOdbcConnection {
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
     Duration? timeout,
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async =>
       _responseBuffer;
 

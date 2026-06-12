@@ -74,8 +74,9 @@ final class ResolvedOdbcUsageProfile {
   /// Suggested [ResultEncoding] for large SELECT workloads on this profile.
   ///
   /// [OdbcUsageProfile.balancedServer] and [OdbcUsageProfile.highThroughput]
-  /// default to [ResultEncoding.columnar]; other presets keep row-major.
-  /// Per-query APIs still default to row-major unless callers pass
+  /// use [ResultEncoding.columnar]; other presets keep row-major.
+  /// ServiceLocator wires this into repository `defaultResultEncoding`, so
+  /// `executeQueryParamValues` uses columnar wire unless callers pass
   /// `resultEncoding` explicitly.
   final ResultEncoding recommendedResultEncoding;
 }

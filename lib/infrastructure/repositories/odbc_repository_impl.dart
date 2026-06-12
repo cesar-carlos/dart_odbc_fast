@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart'
     show AsyncWorkerPoolStats;
 import 'package:odbc_fast/domain/entities/connection.dart';
@@ -20,6 +21,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
@@ -40,12 +42,22 @@ import 'package:result_dart/result_dart.dart';
 
 /// Thin façade over capability-focused runners implementing [IOdbcRepository].
 class OdbcRepositoryImpl implements IOdbcRepository {
-  OdbcRepositoryImpl(Object native)
-      : this.fromBackend(OdbcBackend.fromNative(native));
+  OdbcRepositoryImpl(
+    Object native, {
+    ResultEncoding defaultResultEncoding = ResultEncoding.rowMajor,
+  }) : this.fromBackend(
+          OdbcBackend.fromNative(native),
+          defaultResultEncoding: defaultResultEncoding,
+        );
 
-  OdbcRepositoryImpl.fromBackend(OdbcBackend backend)
-      : _backend = backend,
-        _ffi = OdbcFfiDispatch(backend) {
+  OdbcRepositoryImpl.fromBackend(
+    OdbcBackend backend, {
+    ResultEncoding defaultResultEncoding = ResultEncoding.rowMajor,
+  })  : _backend = backend,
+        _ffi = OdbcFfiDispatch(backend),
+        _state = OdbcRepositoryState(
+          defaultResultEncoding: defaultResultEncoding,
+        ) {
     _wireRunners();
     if (_backend case AsyncBackend(:final connection)) {
       connection.onWorkerRecovered = _connection.onWorkerRecovered;
@@ -54,7 +66,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   final OdbcBackend _backend;
   final OdbcFfiDispatch _ffi;
-  final OdbcRepositoryState _state = OdbcRepositoryState();
+  final OdbcRepositoryState _state;
   final OdbcResultParser _parser = const OdbcResultParser();
 
   StreamController<OdbcEvent>? _eventsController;
@@ -67,6 +79,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   late final OdbcAdminRunner _admin;
   late final OdbcCatalogRunner _catalog;
   late final OdbcBulkRunner _bulk;
+
+  /// Effective default for `executeQueryParamValues` when callers omit
+  /// `resultEncoding`. Wired from [ServiceLocator] for server presets.
+  @visibleForTesting
+  ResultEncoding get defaultResultEncoding => _state.defaultResultEncoding;
 
   void _wireRunners() {
     _connection = OdbcConnectionRunner(
@@ -195,6 +212,12 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
       _stream.streamQuery(connectionId, sql);
 
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) =>
+      _stream.streamQueryColumnar(connectionId, sql);
+
   @override
   bool isInitialized() => _connection.isInitialized();
 
@@ -310,13 +333,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       _query.executeQueryParamValues(
         connectionId,
         sql,
         params,
-        resultEncoding: resultEncoding,
+        resultEncoding: resultEncoding ?? _state.defaultResultEncoding,
       );
 
   @override
@@ -324,13 +347,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     String sql,
     Uint8List? paramBuffer, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) =>
       _query.executeQueryParamBuffer(
         connectionId,
         sql,
         paramBuffer,
-        resultEncoding: resultEncoding,
+        resultEncoding: resultEncoding ?? _state.defaultResultEncoding,
       );
 
   @override

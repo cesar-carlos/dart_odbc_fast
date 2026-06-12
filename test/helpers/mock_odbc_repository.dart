@@ -19,8 +19,10 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
@@ -174,11 +176,24 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
+    String connectionId,
+    String sql,
+  ) async* {
+    await for (final chunk in streamQuery(connectionId, sql)) {
+      yield chunk.fold(
+        (qr) => Success(toTypedColumnar(qr)),
+        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
+      );
+    }
+  }
+
+  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async {
     executeQueryParamValuesCalled = true;
     _queryCount++;
@@ -198,7 +213,7 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionId,
     String sql,
     Uint8List? paramBuffer, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async {
     executeQueryParamBufferCalled = true;
     _queryCount++;

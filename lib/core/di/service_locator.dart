@@ -97,9 +97,10 @@ class ServiceLocator {
       _resolvedUsageProfile.recommendedPoolMaxSize;
 
   /// Suggested [ResultEncoding] for analytics SELECT workloads on
-  /// [resolvedUsageProfile]. Server presets recommend columnar; pass this to
-  /// `executeQueryParamValues` / async query APIs when benchmarking confirms
-  /// the win for your driver and schema.
+  /// [resolvedUsageProfile]. Server presets (`balancedServer`,
+  /// `highThroughput`) apply this as the repository default for
+  /// `executeQueryParamValues` unless callers pass `resultEncoding`
+  /// explicitly.
   ResultEncoding get recommendedResultEncoding =>
       _resolvedUsageProfile.recommendedResultEncoding;
 
@@ -203,7 +204,10 @@ class ServiceLocator {
         backpressureMode: resolvedUsageProfile.backpressureMode,
         backpressureTimeout: resolvedUsageProfile.backpressureTimeout,
       );
-      _asyncRepository = OdbcRepositoryImpl(_asyncNativeConnection);
+      _asyncRepository = OdbcRepositoryImpl(
+        _asyncNativeConnection,
+        defaultResultEncoding: resolvedUsageProfile.recommendedResultEncoding,
+      );
       _asyncService = OdbcService(_asyncRepository);
     }
 
@@ -233,7 +237,10 @@ class ServiceLocator {
     if (_nativeConnection != null) return;
     final conn = NativeOdbcConnection();
     _nativeConnection = conn;
-    final repo = OdbcRepositoryImpl(conn);
+    final repo = OdbcRepositoryImpl(
+      conn,
+      defaultResultEncoding: _resolvedUsageProfile.recommendedResultEncoding,
+    );
     _repository = repo;
     _service = OdbcService(repo);
   }
