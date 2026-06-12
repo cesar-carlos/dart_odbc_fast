@@ -140,7 +140,7 @@ class OdbcNative extends _OdbcNativeState
 
   /// Returns engine version (api + abi) for client compatibility checks.
   ///
-  /// Example: `{"api": "0.1.0", "abi": "1.0.0"}`.
+  /// Example: `{"api": "4.1.0", "abi": "1.1"}`.
   /// Returns null on failure.
   Map<String, String>? getVersion() {
     const bufSize = 128;

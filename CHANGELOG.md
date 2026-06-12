@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-06-12
+
+### Added
+
+- **`test/infrastructure/native/bindings/ffi_exports_contract_test.dart`** —
+  regression test that parses `odbc_exports.def` and verifies every `odbc_*`
+  symbol has a Dart `lookup` (with documented exceptions for `otel_*` in
+  `opentelemetry_ffi.dart` and `odbc_release_buffer` in `ffi_buffer_helper.dart`).
+- **`isUnstableNativeBcpEnabled`** (`native_bcp_runtime.dart`) — Dart mirror of
+  the native `ODBC_ENABLE_UNSTABLE_NATIVE_BCP` runtime guardrail.
+
+### Changed
+
+- **`doc/API_SURFACE.md`** — aligned with v4.1.0: ABI **1.1**, 96 exported
+  symbols, `odbc_release_buffer`, batched streaming default, `streamQueryBuffer`,
+  `recommendedResultEncoding`, and zero-copy threshold.
+- **`streamQueryColumnar` dartdoc** on `IQueryService`, `IOdbcService`, and
+  repository extensions — clarifies row-major `toTypedColumnar` conversion vs
+  native columnar wire via `executeQueryColumnarParamValues`.
+- **`doc/PERFORMANCE.md`** — `streamQueryColumnar` vs columnar wire paragraph;
+  BCP runtime env documented with Dart helper reference.
+- **`docs_contract_test.dart`** — stale-phrase guards and positive checks for
+  `API_SURFACE.md` ABI 1.1 content.
+- Stale ABI **1.0.0** example in `odbc_native.dart` updated to **1.1**.
+
 ## [4.1.0] - 2026-06-12
 
 ### Changed

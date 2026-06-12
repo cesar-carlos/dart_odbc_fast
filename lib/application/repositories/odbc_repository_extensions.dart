@@ -52,7 +52,9 @@ extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
             : paramValuesFromObjects(params),
       );
 
-  /// Streams row chunks and maps each to a [TypedColumnarResult].
+  /// Streams row-major chunks from [streamQuery] and maps each through
+  /// `toTypedColumnar`. Does not request columnar wire encoding on FFI; use
+  /// [executeQueryColumnarParamValues] when the engine should emit columnar.
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,

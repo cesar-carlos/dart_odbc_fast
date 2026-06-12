@@ -273,6 +273,8 @@ abstract class IOdbcService
     List<ParamValue>? params,
   });
 
+  /// Row-major [streamQuery] chunks converted via `toTypedColumnar`; for native
+  /// columnar wire encoding use [executeQueryColumnarParamValues].
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,

@@ -115,6 +115,7 @@ void main() {
         'doc/notes/columnar_protocol_sketch.md',
         'doc/TESTING.md',
         'doc/PERFORMANCE.md',
+        'doc/API_SURFACE.md',
       ];
       final stalePhrases = [
         'Phase 1 pending',
@@ -124,6 +125,10 @@ void main() {
         'production results remain row-major only',
         '27-kind',
         '27 total',
+        'ABI estável (1.0)',
+        'odbc_engine v3.5.x',
+        '**92** funções',
+        'Atualizado para v3.10.0',
       ];
 
       for (final path in paths) {
@@ -136,6 +141,19 @@ void main() {
           );
         }
       }
+    });
+
+    test('should_keep_api_surface_aligned_with_v4_1_abi', () {
+      final apiSurface = _readRepoFile('doc/API_SURFACE.md');
+
+      expect(apiSurface, contains('v4.1.0'));
+      expect(apiSurface, contains('ABI **1.1**'));
+      expect(apiSurface, contains('odbc_release_buffer'));
+      expect(apiSurface, contains('streamQueryBuffer'));
+      expect(apiSurface, contains('recommendedResultEncoding'));
+      expect(apiSurface, contains('zeroCopyResultThresholdBytes'));
+      expect(apiSurface, contains('odbc_stream_start_batched'));
+      expect(apiSurface, contains('**96**'));
     });
   });
 }

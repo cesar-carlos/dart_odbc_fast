@@ -70,9 +70,15 @@ abstract interface class IQueryService {
     List<ParamValue>? params,
   });
 
-  /// Stream-shaped sibling of the columnar query API. Each emitted item
-  /// is a complete [TypedColumnarResult] (a single chunk for the named
-  /// query API; multiple chunks when the underlying engine streams).
+  /// Row-major streaming with a columnar Dart view.
+  ///
+  /// Under the hood this calls [streamQuery] (batched cursor streaming by
+  /// default) and maps each [QueryResult] chunk through `toTypedColumnar`. The
+  /// native wire format stays row-major; no columnar v2 header is requested on
+  /// the FFI path.
+  ///
+  /// For a single-shot query that asks the engine for native columnar encoding,
+  /// use [executeQueryColumnarParamValues] (`ResultEncoding.columnar`).
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,

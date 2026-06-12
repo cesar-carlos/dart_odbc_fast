@@ -433,7 +433,19 @@ parameter buffers on the async worker path.
 | ---- | ------ |
 | Feature gate | `sqlserver-bcp` on `odbc_engine` (not in default features). Enables dynamic loading of vendor `bcp_*` symbols and the native `BulkCopyExecutor` fast path for SQL Server. |
 | Dart / build | Rebuild the native asset with `--features sqlserver-bcp` (or enable the feature in your hook/CI matrix). Without it, bulk insert stays on the portable `ArrayBinding` path. |
+| Runtime guard | Native BCP is **disabled at runtime** unless `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1` (or `true` / `yes`). Not surfaced in `odbc_get_driver_capabilities` JSON. Dart mirror: `isUnstableNativeBcpEnabled` in `native_bcp_runtime.dart`. |
 | Scope | Row-at-a-time native BCP for supported scalar types; full payload is still materialised in-engine (streaming BCP remains open work). |
+
+---
+
+## `streamQueryColumnar` vs native columnar wire (v4.1.1)
+
+`IQueryService.streamQueryColumnar` / repository `streamQueryColumnar` call
+`streamQuery` (batched cursor streaming by default) and map each row-major
+`QueryResult` chunk through `toTypedColumnar`. They do **not** set
+`ResultEncoding.columnar` on the FFI path. For a single-shot query where the
+engine emits columnar wire format, use `executeQueryColumnarParamValues`
+(`ResultEncoding.columnar`).
 
 ---
 
