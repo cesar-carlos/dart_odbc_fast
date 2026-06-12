@@ -20,7 +20,11 @@ import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 part 'odbc_native_helpers.dart';
 part 'odbc_native_connection.dart';
-part 'odbc_native_query.dart';
+part 'odbc_native_query_async.dart';
+part 'odbc_native_query_sync.dart';
+part 'odbc_native_query_catalog.dart';
+part 'odbc_native_query_prepare.dart';
+part 'odbc_native_query_bulk.dart';
 part 'odbc_native_transaction.dart';
 part 'odbc_native_xa.dart';
 part 'odbc_native_stream.dart';
@@ -52,7 +56,11 @@ class OdbcNative extends _OdbcNativeState
     with
         _OdbcNativeHelpers,
         _OdbcNativeConnection,
-        _OdbcNativeQuery,
+        _OdbcNativeQueryAsync,
+        _OdbcNativeQuerySync,
+        _OdbcNativeQueryCatalog,
+        _OdbcNativeQueryPrepare,
+        _OdbcNativeQueryBulk,
         _OdbcNativeTransaction,
         _OdbcNativeXa,
         _OdbcNativeStream,
