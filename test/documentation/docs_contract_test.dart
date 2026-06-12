@@ -143,10 +143,10 @@ void main() {
       }
     });
 
-    test('should_keep_api_surface_aligned_with_v4_1_abi', () {
+    test('should_keep_api_surface_aligned_with_v4_2_abi', () {
       final apiSurface = _readRepoFile('doc/API_SURFACE.md');
 
-      expect(apiSurface, contains('v4.1.0'));
+      expect(apiSurface, contains('v4.2.0'));
       expect(apiSurface, contains('ABI **1.1**'));
       expect(apiSurface, contains('odbc_release_buffer'));
       expect(apiSurface, contains('streamQueryBuffer'));
@@ -154,7 +154,7 @@ void main() {
       expect(apiSurface, contains('zeroCopyResultThresholdBytes'));
       expect(apiSurface, contains('odbc_stream_start_batched'));
       expect(apiSurface, contains('odbc_stream_start_batched_options'));
-      expect(apiSurface, contains('**96**'));
+      expect(apiSurface, contains('**97**'));
     });
   });
 }

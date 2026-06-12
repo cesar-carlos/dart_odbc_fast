@@ -39,6 +39,7 @@ class _FakeAsyncNativeForStreaming extends AsyncNativeOdbcConnection {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int? maxBufferBytes,
+    int resultEncodingWire = 0,
   }) {
     batchedCalls++;
     final factory = batchedStreamFactory;

@@ -1,4 +1,4 @@
-# Superfície de API exposta — `odbc_engine` v4.1.0
+# Superfície de API exposta — `odbc_engine` v4.2.0
 
 Documento que cataloga **tudo** o que o crate Rust expõe, em três camadas:
 
@@ -15,8 +15,8 @@ Documento que cataloga **tudo** o que o crate Rust expõe, em três camadas:
 
 ## 1. FFI — Superfície C ABI
 
-**96 símbolos exportados** em `odbc_exports.def`:
-- **90** funções `odbc_*` (engine ODBC)
+**97 símbolos exportados** em `odbc_exports.def`:
+- **91** funções `odbc_*` (engine ODBC)
 - **6** funções `otel_*` (telemetria; bindings Dart em `opentelemetry_ffi.dart`)
 
 Distribuição aproximada no código-fonte:
@@ -190,16 +190,18 @@ Adicionados em v3.0.0. Despacham via `PluginRegistry` — sem I/O, geradores pur
 | `odbc_close_statement(stmt_id) -> c_int` | Fecha e remove do cache. |
 | `odbc_clear_all_statements() -> c_int` | Limpa todos os statements (shutdown helper). |
 
-### 1.16 Streaming de resultados (9)
+### 1.16 Streaming de resultados (10)
 
 Streaming **single-result** no Dart (`streamQuery`, repositório e serviço) usa
-**batched** por padrão (`odbc_stream_start_batched`). O modo legado buffer
+**batched** por padrão (`odbc_stream_start_batched`). `streamQueryColumnar` usa
+`odbc_stream_start_batched_options` quando disponível (v4.2+). O modo legado buffer
 (`odbc_stream_start`) permanece em `streamQueryBuffer` e spill-to-disk.
 
 | Função | Propósito |
 |---|---|
 | `odbc_stream_start(conn_id, sql, fetch_size, ...) -> stream_id` | Cursor síncrono (legado buffer-mode). |
 | `odbc_stream_start_batched(conn_id, sql, fetch_size, chunk_size, ...) -> stream_id` | Worker thread + `mpsc` (**default Dart**). |
+| `odbc_stream_start_batched_options(conn_id, sql, fetch_size, chunk_size, result_encoding, ...) -> stream_id` | Batched com `ResultEncoding` wire (row-major, columnar v2, columnar compressed). |
 | `odbc_stream_start_async(conn_id, sql, ...) -> stream_id` | Worker + status async. |
 | `odbc_stream_multi_start_batched(conn_id, sql, ...) -> stream_id` | Multi-result batched (v3.3+). Cada frame é `[tag:u8][len:u32][payload]`. |
 | `odbc_stream_multi_start_async(conn_id, sql, ...) -> stream_id` | Multi-result async (v3.3+). |
@@ -491,8 +493,8 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 | Categoria | Quantidade |
 |---|---|
-| FFI exportados (`odbc_exports.def`) | **96** |
-| — `odbc_*` | 90 |
+| FFI exportados (`odbc_exports.def`) | **97** |
+| — `odbc_*` | 91 |
 | — `otel_*` | 6 |
 | Módulos públicos | 9 (`engine`, `error`, `ffi`, `observability`, `plugins`, `pool`, `protocol`, `security`, `versioning`) |
 | Plugins de driver implementados | 9 (`sqlserver`, `postgres`, `mysql`, `mariadb`, `oracle`, `sybase`, `sqlite`, `db2`, `snowflake`) |
@@ -520,8 +522,9 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 ---
 
-*Atualizado para **odbc_fast v4.1.0** (ABI **1.1**, `odbc_release_buffer`,
-streaming batched default, `streamQueryBuffer`, `recommendedResultEncoding`,
-zero-copy 64 KiB). Para cada funcionalidade com "fix" há um teste de regressão
-correspondente em `native/odbc_engine/tests/regression/` e
+*Atualizado para **odbc_fast v4.2.0** (ABI **1.1**, `odbc_release_buffer`,
+`odbc_stream_start_batched_options`, streaming batched default,
+`streamQueryBuffer`, `recommendedResultEncoding`, zero-copy 32 KiB). Para cada
+funcionalidade com "fix" há um teste de regressão correspondente em
+`native/odbc_engine/tests/regression/` e
 `test/infrastructure/native/bindings/ffi_exports_contract_test.dart`.*

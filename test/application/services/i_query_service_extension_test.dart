@@ -167,14 +167,14 @@ void main() {
   });
 
   group('IQueryServiceConnectionOverloads.executeQueryParamValuesFor', () {
-    test('should_forward_default_encoding_as_rowMajor', () async {
+    test('should_forward_null_encoding_for_repository_default', () async {
       await fake.executeQueryParamValuesFor(
         conn,
         'SELECT ?',
         const [ParamValueInt32(1)],
       );
       expect(fake.capturedConnectionId, equals('conn-42'));
-      expect(fake.capturedEncoding, equals(ResultEncoding.rowMajor));
+      expect(fake.capturedEncoding, isNull);
     });
 
     test('should_forward_columnar_encoding_override', () async {

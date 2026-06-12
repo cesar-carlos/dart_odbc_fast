@@ -24,7 +24,7 @@ class _MigrationDemoService implements IOdbcService {
     String connectionId,
     String sql,
     List<ParamValue> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    ResultEncoding? resultEncoding,
   }) async {
     _logParams('executeQueryParamValues', params);
     return const Success(_stubResult);

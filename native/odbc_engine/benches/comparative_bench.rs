@@ -9,9 +9,9 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use odbc_engine::engine::core::{ArrayBinding, ParallelBulkInsert};
 use odbc_engine::engine::StreamingExecutor;
 use odbc_engine::pool::ConnectionPool;
+use odbc_engine::engine::ResultEncoding;
 use odbc_engine::{
     execute_query_with_connection, BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
-    ResultEncoding,
 };
 use std::cell::RefCell;
 use std::sync::Arc;

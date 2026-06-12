@@ -82,16 +82,9 @@ pub extern "C" fn odbc_exec_query_params(
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
                     Ok(mut conn_guard) => {
                         if params_slice.is_empty() {
-                            execute_query_with_cached_connection(
-                                conn_guard.cached_mut(),
-                                sql_str,
-                            )
+                            execute_query_with_cached_connection(conn_guard.cached_mut(), sql_str)
                         } else {
-                            try_cached_legacy_params(
-                                conn_guard.cached_mut(),
-                                sql_str,
-                                params_slice,
-                            )
+                            try_cached_legacy_params(conn_guard.cached_mut(), sql_str, params_slice)
                         }
                     }
                     Err(_) => Err(OdbcError::InternalError(

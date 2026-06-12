@@ -46,7 +46,9 @@ impl<'a> BoundColumnRef<'a> {
                 std::mem::size_of::<i64>() as i32,
                 SQLINT8,
             ),
-            BoundColumnRef::Text { cell, max_cell_len, .. } => (
+            BoundColumnRef::Text {
+                cell, max_cell_len, ..
+            } => (
                 cell.as_ptr(),
                 i32::try_from(*max_cell_len).unwrap_or(i32::MAX),
                 SQLCHARACTER,
@@ -114,9 +116,7 @@ impl<'a> BoundColumnRef<'a> {
                 }
             }
             BoundColumnRef::Text {
-                rows,
-                null_bitmap,
-                ..
+                rows, null_bitmap, ..
             } => {
                 if null_bitmap.is_some_and(|bm| is_null(bm, row_idx)) {
                     SQL_NULL_DATA

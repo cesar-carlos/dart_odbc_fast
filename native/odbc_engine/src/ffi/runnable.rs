@@ -1,6 +1,6 @@
 use crate::engine::{
-    execute_query_with_cached_connection,
-    execute_query_with_param_buffer_encoding, ResultEncoding, SharedHandleManager,
+    execute_query_with_cached_connection, execute_query_with_param_buffer_encoding, ResultEncoding,
+    SharedHandleManager,
 };
 pub(crate) use crate::error::{OdbcError, Result};
 use crate::handles::SharedConnection;
