@@ -1,5 +1,4 @@
 use super::super::chunk::StreamCopyResult;
-use super::super::columns::encode_row_buffer;
 use super::super::multi_result::{
     frame_item, MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH,
     MULTI_STREAM_ITEM_TAG_ROW_COUNT,

@@ -205,7 +205,8 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
   ) {
     final ptr = _odbc_stream_start_batched_options_ptr;
     if (ptr == null) return null;
-    return ptr.asFunction<int Function(int, ffi.Pointer<Utf8>, int, int, int)>()(
+    return ptr
+        .asFunction<int Function(int, ffi.Pointer<Utf8>, int, int, int)>()(
       connId,
       sql,
       fetchSize,

@@ -1,4 +1,3 @@
-import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/native_bcp_runtime.dart';

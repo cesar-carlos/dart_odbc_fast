@@ -28,10 +28,6 @@ where
     Ok(column_types)
 }
 
-pub(crate) fn encode_row_buffer(row_buffer: &RowBuffer) -> Result<Vec<u8>> {
-    encode_row_buffer_with_encoding(row_buffer, ResultEncoding::RowMajor)
-}
-
 /// Encodes a fetch batch using the requested wire layout (v4.2 streaming).
 pub(crate) fn encode_row_buffer_with_encoding(
     row_buffer: &RowBuffer,

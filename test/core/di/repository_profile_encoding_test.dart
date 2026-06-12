@@ -40,8 +40,8 @@ void main() {
 
     test('should_update_sync_repository_default_on_reinitialize', () {
       final locator = ServiceLocator()
-        ..initialize(profile: OdbcUsageProfile.balancedServer);
-      locator.initialize();
+        ..initialize(profile: OdbcUsageProfile.balancedServer)
+        ..initialize();
       final repo = locator.repository as OdbcRepositoryImpl;
       expect(repo.defaultResultEncoding, ResultEncoding.rowMajor);
       locator.shutdown();

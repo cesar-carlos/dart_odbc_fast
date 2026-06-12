@@ -112,9 +112,14 @@ void main() {
     test('decodes result-set batch continuation tag 2', () {
       final decoder = MultiResultStreamDecoder();
       final frame = BytesBuilder()
-        ..add(_buildResultSetFrame(['id'], [
-          ['1'],
-        ]))
+        ..add(
+          _buildResultSetFrame(
+            ['id'],
+            [
+              ['1'],
+            ],
+          ),
+        )
         ..add(
           _buildResultSetFrame(
             ['id'],

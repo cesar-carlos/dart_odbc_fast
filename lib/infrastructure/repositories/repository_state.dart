@@ -19,8 +19,8 @@ class OdbcRepositoryState {
   OdbcRepositoryState({this.defaultResultEncoding = ResultEncoding.rowMajor});
 
   /// Wire encoding used when callers omit `resultEncoding` on param execute
-  /// APIs. [ServiceLocator] sets this from
-  /// [ResolvedOdbcUsageProfile.recommendedResultEncoding] for server presets.
+  /// APIs. `ServiceLocator` sets this from
+  /// `ResolvedOdbcUsageProfile.recommendedResultEncoding` for server presets.
   ResultEncoding defaultResultEncoding;
 
   /// Domain `connectionId` (string) → native id (int).

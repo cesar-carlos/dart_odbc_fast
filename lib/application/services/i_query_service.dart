@@ -76,7 +76,7 @@ abstract interface class IQueryService {
   /// the call transparently falls back to row-major batched streaming.
   ///
   /// For a single buffered result with native columnar encoding, use
-  /// [executeQueryColumnarParamValues]. [streamQueryColumnarNative] is an
+  /// [executeQueryColumnarParamValues]. `streamQueryColumnarNative` is an
   /// explicit alias of this method on repository extensions.
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,

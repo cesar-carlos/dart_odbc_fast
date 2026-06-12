@@ -273,7 +273,8 @@ abstract class IOdbcService
     List<ParamValue>? params,
   });
 
-  /// Batched streaming with columnar v2 wire when supported (`odbc_stream_start_batched_options`).
+  /// Batched streaming with columnar v2 wire when supported
+  /// (`odbc_stream_start_batched_options`).
   /// See [IQueryService.streamQueryColumnar] for semantics and fallbacks.
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(

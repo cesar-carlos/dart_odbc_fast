@@ -81,7 +81,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   late final OdbcBulkRunner _bulk;
 
   /// Effective default for `executeQueryParamValues` when callers omit
-  /// `resultEncoding`. Wired from [ServiceLocator] for server presets.
+  /// `resultEncoding`. Wired from `ServiceLocator` for server presets.
   @visibleForTesting
   ResultEncoding get defaultResultEncoding => _state.defaultResultEncoding;
 
