@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/directed_param.dart';
-import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
+import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';

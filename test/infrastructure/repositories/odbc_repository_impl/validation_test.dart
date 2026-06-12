@@ -1,4 +1,3 @@
-
 import 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -676,7 +675,11 @@ void main() {
       'executeQueryParams rejects whitespace-only connection id',
       () async {
         expectInvalidConnectionId(
-          await repository.executeQueryParamValuesFromObjects('  \t  ', 'SELECT 1', []),
+          await repository.executeQueryParamValuesFromObjects(
+            '  \t  ',
+            'SELECT 1',
+            [],
+          ),
         );
       },
     );

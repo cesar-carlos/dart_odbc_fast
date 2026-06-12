@@ -1,11 +1,11 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
-import 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 import 'package:test/test.dart';
 
@@ -139,13 +139,12 @@ void main() {
             nativeCode: 102,
             message: 'Execute failed',
           );
-        final result =
-            await repository.executePreparedParamValuesFromObjects(
-              connectionId,
-              stmtId,
-              [],
-              null,
-            );
+        final result = await repository.executePreparedParamValuesFromObjects(
+          connectionId,
+          stmtId,
+          [],
+          null,
+        );
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),

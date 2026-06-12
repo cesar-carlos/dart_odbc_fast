@@ -50,7 +50,8 @@ void main() {
         final connection =
             connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-        final queryResult = await locator!.syncService.executeQueryParamValuesFromObjects(
+        final queryResult =
+            await locator!.syncService.executeQueryParamValuesFromObjects(
           connection.id,
           'SELECT 1',
           [],
@@ -77,7 +78,8 @@ void main() {
         final connection =
             connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-        final queryResult = await locator!.asyncService.executeQueryParamValuesFromObjects(
+        final queryResult =
+            await locator!.asyncService.executeQueryParamValuesFromObjects(
           connection.id,
           'SELECT 1',
           [],
@@ -107,7 +109,8 @@ void main() {
       final connection =
           connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-      final queryResult = await locator!.syncService.executeQueryParamValuesFromObjects(
+      final queryResult =
+          await locator!.syncService.executeQueryParamValuesFromObjects(
         connection.id,
         'SELECT 1',
         [],
@@ -141,7 +144,8 @@ void main() {
       final connection =
           connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-      final queryResult = await locator!.asyncService.executeQueryParamValuesFromObjects(
+      final queryResult =
+          await locator!.asyncService.executeQueryParamValuesFromObjects(
         connection.id,
         'SELECT 1',
         [],

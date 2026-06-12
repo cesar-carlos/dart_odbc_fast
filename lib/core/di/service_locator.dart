@@ -1,5 +1,3 @@
-export 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
-export 'package:odbc_fast/application/services/i_query_service_extensions.dart';
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
@@ -13,6 +11,9 @@ import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
+
+export 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
+export 'package:odbc_fast/application/services/i_query_service_extensions.dart';
 
 /// Dependency injection container for ODBC Fast services.
 ///

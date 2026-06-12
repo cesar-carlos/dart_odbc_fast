@@ -123,7 +123,8 @@ void main() {
             _sqlDrop,
             <dynamic>[],
           );
-          final result = await locator!.syncService.executeQueryParamValuesFromObjects(
+          final result =
+              await locator!.syncService.executeQueryParamValuesFromObjects(
             c.id,
             _sqlCreate,
             <dynamic>[],

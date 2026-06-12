@@ -101,7 +101,8 @@ void main() {
             _sqlDrop,
             <dynamic>[],
           );
-          final createResult = await locator!.syncService.executeQueryParamValuesFromObjects(
+          final createResult =
+              await locator!.syncService.executeQueryParamValuesFromObjects(
             c.id,
             _ddlCreate,
             <dynamic>[],
@@ -154,7 +155,8 @@ void main() {
         );
         final connectionId = connection.id;
         try {
-          final smoke = await locator!.syncService.executeQueryParamValuesFromObjects(
+          final smoke =
+              await locator!.syncService.executeQueryParamValuesFromObjects(
             connectionId,
             'SELECT 1',
             <dynamic>[],
