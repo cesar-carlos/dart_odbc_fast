@@ -2,6 +2,8 @@
 ///
 /// Run:
 ///   RUN_PERF_TESTS=1 dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
+library;
+
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
@@ -42,31 +44,31 @@ void main() {
 
       try {
         _setupTable(native, connId);
-        final results = <_BenchRow>[];
-
-        results.add(await _benchInsertRowByRow(native, connId));
+        final results = <_BenchRow>[
+          await _benchInsertRowByRow(native, connId),
+        ];
         _truncateTable(native, connId);
 
         results.addAll(await _benchInsertBulk(native, connId));
         _truncateTable(native, connId);
 
-        results.add(await _benchInsertBulkParallel(native, dsn));
-
-        results.add(await _benchSelectBuffered(native, connId));
-        results.add(await _benchSelectStreaming(native, connId));
-        results.add(await _benchSelectColumnar(native, connId));
-
-        results.add(await _benchUpdatePrepared(native, connId));
-        results.add(await _benchDeletePrepared(native, connId));
+        results
+          ..add(await _benchInsertBulkParallel(native, dsn))
+          ..add(await _benchSelectBuffered(native, connId))
+          ..add(await _benchSelectStreaming(native, connId))
+          ..add(await _benchSelectColumnar(native, connId))
+          ..add(await _benchUpdatePrepared(native, connId))
+          ..add(await _benchDeletePrepared(native, connId));
 
         _printReport(results);
       } finally {
-        native.executeQueryParams(
-          connId,
-          'DROP TABLE IF EXISTS $_table',
-          [],
-        );
-        native.disconnect(connId);
+        native
+          ..executeQueryParams(
+            connId,
+            'DROP TABLE IF EXISTS $_table',
+            [],
+          )
+          ..disconnect(connId);
       }
     },
     skip: runPerformanceTests
@@ -77,12 +79,14 @@ void main() {
 }
 
 void _setupTable(NativeOdbcConnection native, int connId) {
-  native.executeQueryParams(connId, 'DROP TABLE IF EXISTS $_table', []);
-  native.executeQueryParams(
-    connId,
-    'CREATE TABLE $_table (id INT NOT NULL PRIMARY KEY, val NVARCHAR(50) NOT NULL)',
-    [],
-  );
+  native
+    ..executeQueryParams(connId, 'DROP TABLE IF EXISTS $_table', [])
+    ..executeQueryParams(
+      connId,
+      'CREATE TABLE $_table '
+      '(id INT NOT NULL PRIMARY KEY, val NVARCHAR(50) NOT NULL)',
+      [],
+    );
 }
 
 void _truncateTable(NativeOdbcConnection native, int connId) {
@@ -96,7 +100,13 @@ Future<_BenchRow> _benchInsertRowByRow(
   const sql = 'INSERT INTO $_table (id, val) VALUES (?, ?)';
   final stmt = native.prepare(connId, sql);
   if (stmt == 0) {
-    return _BenchRow('INSERT', 'row-by-row prepared', _rowByRowCount, -1, -1);
+    return const _BenchRow(
+      'INSERT',
+      'row-by-row prepared',
+      _rowByRowCount,
+      -1,
+      -1,
+    );
   }
 
   final sw = Stopwatch()..start();
@@ -157,7 +167,7 @@ Future<List<_BenchRow>> _benchInsertBulk(
         buildSw.elapsedMicroseconds / 1000.0,
         _bulkInsertCount / (buildSw.elapsedMicroseconds / 1e6),
       ),
-      _BenchRow('INSERT', 'bulk array FFI', _bulkInsertCount, -1, -1),
+      const _BenchRow('INSERT', 'bulk array FFI', _bulkInsertCount, -1, -1),
     ];
   }
 
@@ -187,7 +197,7 @@ Future<_BenchRow> _benchInsertBulkParallel(
 ) async {
   final pool = native.createConnectionPool(dsn, _poolSize);
   if (pool == null) {
-    return _BenchRow(
+    return const _BenchRow(
       'INSERT',
       'bulk parallel pool x$_bulkParallelism',
       _bulkInsertCount,
@@ -217,7 +227,7 @@ Future<_BenchRow> _benchInsertBulkParallel(
     sw.stop();
 
     if (inserted < 0) {
-      return _BenchRow(
+      return const _BenchRow(
         'INSERT',
         'bulk parallel pool x$_bulkParallelism',
         _bulkInsertCount,
@@ -249,7 +259,13 @@ Future<_BenchRow> _benchSelectBuffered(
   sw.stop();
 
   if (buf == null) {
-    return _BenchRow('SELECT', 'buffered row-major', _selectRowCount, -1, -1);
+    return const _BenchRow(
+      'SELECT',
+      'buffered row-major',
+      _selectRowCount,
+      -1,
+      -1,
+    );
   }
 
   final decoded = BinaryProtocolParser.parse(buf);
@@ -274,7 +290,6 @@ Future<_BenchRow> _benchSelectStreaming(
   await for (final chunk in native.streamQueryBatched(
     connId,
     sql,
-    fetchSize: 1000,
   )) {
     rows += chunk.rowCount;
   }
@@ -305,7 +320,13 @@ Future<_BenchRow> _benchSelectColumnar(
   sw.stop();
 
   if (buf == null) {
-    return _BenchRow('SELECT', 'columnar buffered', _selectRowCount, -1, -1);
+    return const _BenchRow(
+      'SELECT',
+      'columnar buffered',
+      _selectRowCount,
+      -1,
+      -1,
+    );
   }
 
   final decoded = BinaryProtocolParser.parse(buf);
@@ -327,7 +348,13 @@ Future<_BenchRow> _benchUpdatePrepared(
   const sql = 'UPDATE $_table SET val = ? WHERE id = ?';
   final stmt = native.prepare(connId, sql);
   if (stmt == 0) {
-    return _BenchRow('UPDATE', 'prepared row-by-row', _updateDeleteCount, -1, -1);
+    return const _BenchRow(
+      'UPDATE',
+      'prepared row-by-row',
+      _updateDeleteCount,
+      -1,
+      -1,
+    );
   }
 
   final sw = Stopwatch()..start();
@@ -359,7 +386,13 @@ Future<_BenchRow> _benchDeletePrepared(
   const sql = 'DELETE FROM $_table WHERE id = ?';
   final stmt = native.prepare(connId, sql);
   if (stmt == 0) {
-    return _BenchRow('DELETE', 'prepared row-by-row', _updateDeleteCount, -1, -1);
+    return const _BenchRow(
+      'DELETE',
+      'prepared row-by-row',
+      _updateDeleteCount,
+      -1,
+      -1,
+    );
   }
 
   final sw = Stopwatch()..start();
@@ -393,8 +426,7 @@ void _printReport(List<_BenchRow> rows) {
         : r.op == 'SELECT'
             ? '${r.throughputPerSec.toStringAsFixed(0)} rows/s'
             : '${r.throughputPerSec.toStringAsFixed(0)} ops/s';
-    final avgMs =
-        r.avgMs < 0 ? 'FAILED' : r.avgMs.toStringAsFixed(3);
+    final avgMs = r.avgMs < 0 ? 'FAILED' : r.avgMs.toStringAsFixed(3);
     print(
       '${r.op.padRight(8)} | ${r.method.padRight(22)} | '
       '${r.count.toString().padLeft(8)} | ${avgMs.padLeft(10)} | '

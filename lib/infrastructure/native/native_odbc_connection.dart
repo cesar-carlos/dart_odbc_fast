@@ -74,5 +74,5 @@ class NativeOdbcConnection extends _NativeOdbcState
 
   /// Creates an instance backed by injected [native] (unit tests only).
   @visibleForTesting
-  NativeOdbcConnection.testing(bindings.OdbcNative native) : super(native);
+  NativeOdbcConnection.testing(super.native);
 }

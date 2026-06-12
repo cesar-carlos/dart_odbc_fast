@@ -2,9 +2,10 @@ import 'dart:convert';
 
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'bindings/test_odbc_bindings.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:test/test.dart';
+
+import 'bindings/test_odbc_bindings.dart';
 
 void main() {
   group('PoolOptions.toJson', () {

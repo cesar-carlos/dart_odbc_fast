@@ -91,7 +91,7 @@ mixin _NativeTransactions on _NativeOdbcState {
   /// `xa_start`: open a new XA branch on [connectionId] with the
   /// given [xid]. Returns a live [XaTransactionHandle] in the
   /// [XaState.active] state on success, `null` on failure (call
-  /// [getStructuredError] to inspect the cause).
+  /// `getStructuredError` to inspect the cause).
   ///
   /// Drive Phase 2 with [XaTransactionHandle.end] â†’
   /// [XaTransactionHandle.prepare] â†’ [XaTransactionHandle.commitPrepared]
@@ -121,7 +121,7 @@ mixin _NativeTransactions on _NativeOdbcState {
   /// per the Transaction Manager's recovery decision.
   ///
   /// Returns an empty list when no prepared XIDs exist; returns
-  /// `null` on FFI failure (call [getStructuredErrorForConnection]).
+  /// `null` on FFI failure (call `getStructuredErrorForConnection`).
   List<Xid>? xaRecover(int connectionId) {
     final count = _native.xaRecoverCount(connectionId);
     if (count < 0) return null;

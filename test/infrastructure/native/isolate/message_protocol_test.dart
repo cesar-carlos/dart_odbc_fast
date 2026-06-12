@@ -164,7 +164,8 @@ void main() {
       expect(identical(request.dataBuffer, request.dataBuffer), isTrue);
     });
 
-    test('BulkInsertArrayRequest uses transferable payload above threshold', () {
+    test('BulkInsertArrayRequest uses transferable payload above threshold',
+        () {
       final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
       final request = BulkInsertArrayRequest.withPayload(
         1,

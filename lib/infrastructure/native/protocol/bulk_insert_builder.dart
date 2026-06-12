@@ -831,9 +831,10 @@ class BulkInsertBuilder {
     final w = _WriteCursor(out);
 
     if (version == BulkPayloadVersion.v2) {
-      w.writeBytes(_bulkPayloadV2Magic);
-      w.writeU16Le(_bulkPayloadV2Version);
-      w.writeU16Le(_bulkPayloadV2Flags);
+      w
+        ..writeBytes(_bulkPayloadV2Magic)
+        ..writeU16Le(_bulkPayloadV2Version)
+        ..writeU16Le(_bulkPayloadV2Flags);
     }
 
     w

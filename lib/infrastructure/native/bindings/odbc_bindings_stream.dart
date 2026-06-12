@@ -1,3 +1,5 @@
+// FFI bindings mirror exported C symbol names; snake_case identifiers are
+// intentional for 1:1 native API mapping.
 // ignore_for_file: non_constant_identifier_names
 
 part of 'odbc_bindings.dart';

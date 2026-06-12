@@ -1,3 +1,4 @@
+// FFI typedefs mirror exported C symbol names; legacy C casing is intentional.
 // ignore_for_file: camel_case_types
 
 part of 'odbc_bindings.dart';
