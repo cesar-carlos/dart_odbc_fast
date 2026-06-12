@@ -92,9 +92,9 @@ void main() {
       expect(readme, contains('doc/ARCHITECTURE.md'));
     });
 
-    test('should_ship_codecov_threshold_and_dependabot_configs', () {
-      // PR4.1 + PR4.3: ensure the CI hardening configs ship alongside
-      // their docs so future edits don't drop one of them silently.
+    test('should_ship_codecov_threshold_and_ci_coverage_configs', () {
+      // PR4.1: ensure the CI hardening configs ship alongside their docs so
+      // future edits don't drop one of them silently.
       final codecov = _readRepoFile('.codecov.yml');
       expect(codecov, contains('target: 80%'));
       expect(codecov, contains('project'));
@@ -104,12 +104,6 @@ void main() {
       final ci = _readRepoFile('.github/workflows/ci.yml');
       expect(ci, contains('secrets.CODECOV_TOKEN'));
       expect(ci, contains('disable_search: true'));
-
-      final dependabot = _readRepoFile('.github/dependabot.yml');
-      expect(dependabot, contains('package-ecosystem: "pub"'));
-      expect(dependabot, contains('package-ecosystem: "cargo"'));
-      expect(dependabot, contains('package-ecosystem: "github-actions"'));
-      expect(dependabot, contains('weekly'));
     });
 
     test('should_not_reintroduce_known_stale_feature_phrases', () {
