@@ -307,6 +307,8 @@ needed integration / e2e runs, plus a tiny additive testability hook on
 
 ### Documentation
 
+- Removed redundant `doc/PERFORMANCE_v2.md` redirect stub; `doc/PERFORMANCE.md`
+  remains the single performance and benchmark guide.
 - README aligned with the 3.10 public API surface: Features section
   gained 6 bullets covering the four `IOdbcService` sub-interfaces, the
   event bus + sealed `OdbcEvent` hierarchy, `TypedColumnarResult`,
@@ -328,6 +330,12 @@ needed integration / e2e runs, plus a tiny additive testability hook on
   previously 11 were only mentioned inline.
 - Added `example/event_bus_demo.dart` showing `IAdminService.events`
   consumption against the sealed `OdbcEvent` hierarchy.
+- Example audit follow-up: `quick_start_balanced_demo` and
+  `async_service_locator_demo` use `OdbcUsageProfile.balanced`; existing
+  demos prefer `executeQueryParamValues` / column-oriented bulk helpers where
+  practical. New examples: `typed_columnar_demo.dart`,
+  `param_value_migration_demo.dart` (DSN-free), and `bulk_insert_demo.dart`.
+  `run_in_transaction_demo` documents `ODBC_TEST_DSN` consistently.
 
 ### CI
 

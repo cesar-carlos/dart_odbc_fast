@@ -67,15 +67,11 @@ void main() async {
 }
 
 Uint8List _buildPayload() {
-  final builder = BulkInsertBuilder()
-    ..table(_table)
-    ..addColumn('name', BulkColumnType.text, maxLen: 64);
-
-  for (var i = 1; i <= _rowCount; i++) {
-    builder.addRow(['row-$i']);
-  }
-
-  return builder.build();
+  final names = List<String>.generate(_rowCount, (i) => 'row-${i + 1}');
+  return BulkInsertBuilder()
+      .table(_table)
+      .addColumnText('name', names, maxLen: 64)
+      .build();
 }
 
 Future<void> _ensureTable(

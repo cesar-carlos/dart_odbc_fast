@@ -15,7 +15,8 @@ Future<void> main() async {
     return;
   }
 
-  final locator = ServiceLocator()..initialize();
+  final locator = ServiceLocator()
+    ..initialize(profile: OdbcUsageProfile.balanced);
   final service = locator.service;
   final tuning = locator.resolvedUsageProfile;
   AppLogger.info(
@@ -46,9 +47,10 @@ Future<void> main() async {
   );
 
   try {
-    final query = await service.executeQuery(
+    final query = await service.executeQueryParamValues(
+      conn.id,
       "SELECT 1 AS id, 'ok' AS msg",
-      connectionId: conn.id,
+      const <ParamValue>[],
     );
     query.fold(
       (r) => AppLogger.info('rows=${r.rowCount} columns=${r.columns}'),

@@ -321,6 +321,16 @@ dart test test/performance/protocol_performance_test.dart
 
 Example for parallel bulk insert: `example/bulk_insert_parallel_demo.dart`.
 
+### Mass UPDATE / DELETE
+
+Prefer **set-based SQL** (`UPDATE … WHERE …`, `DELETE … WHERE …`, or
+dialect-specific batch statements) over prepared-statement loops when changing
+many rows. Each prepared execution pays bind and round-trip overhead; the engine
+is optimized for bulk insert and fetch paths, not row-by-row DML. Wrap large
+changes in a transaction, use selective `WHERE` predicates, and consider
+staging tables plus `MERGE` / `INSERT … SELECT` patterns when your dialect
+supports them.
+
 ---
 
 ## Concurrency

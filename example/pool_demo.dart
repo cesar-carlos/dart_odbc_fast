@@ -43,8 +43,8 @@ void main() async {
 void _demoParallelBulkInsert(ConnectionPool pool) {
   final payload = BulkInsertBuilder()
       .table('pool_test_table')
-      .addColumn('name', BulkColumnType.text, maxLen: 100)
-      .addRow(['parallel-a']).addRow(['parallel-b']).build();
+      .addColumnText('name', const ['parallel-a', 'parallel-b'], maxLen: 100)
+      .build();
 
   final inserted = pool.bulkInsertParallel(
     'pool_test_table',

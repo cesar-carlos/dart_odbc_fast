@@ -13,8 +13,14 @@ Future<void> main() async {
     return;
   }
 
-  final locator = ServiceLocator()..initialize(useAsync: true);
-  final service = locator.asyncService;
+  final locator = ServiceLocator()
+    ..initialize(profile: OdbcUsageProfile.balanced);
+  final tuning = locator.resolvedUsageProfile;
+  AppLogger.info(
+    'Profile=${tuning.profile.name}, async=${tuning.useAsync}, '
+    'workers=${tuning.workerCount}',
+  );
+  final service = locator.service;
 
   try {
     final init = await service.initialize();

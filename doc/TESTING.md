@@ -168,6 +168,7 @@ Equivalent wrapper (from repo root, writes under `native/coverage/`): `python na
 | `ODBC_TEST_DSN`                | Rust + Dart | Full DSN string for the primary test database.               |
 | `ODBC_DSN`                     | Dart        | Alternative env var for pool integration tests.              |
 | `RUN_SKIPPED_TESTS`            | Dart        | `1`/`true`/`yes` — include slow/stress tests.                |
+| `RUN_PERF_TESTS`               | Dart        | `1`/`true`/`yes` — benchmark-style tests with runtime-sensitive expectations (`test/performance/`). |
 | `ENABLE_SLOW_E2E_TESTS`        | Rust        | `1` — include stress/benchmark E2E tests.                    |
 | `ENABLE_MSDTC_XA_TESTS`        | Rust        | `1` — include MSDTC XA smoke tests (Windows, MSDTC running). |
 | `E2E_PG_DIRECTED_OUT`          | Dart        | `1` — PostgreSQL directed `OUT` E2E test.                    |

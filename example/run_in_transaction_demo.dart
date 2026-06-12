@@ -17,7 +17,7 @@
 //
 // Run: dart run example/run_in_transaction_demo.dart
 //
-// Requires `EXAMPLE_DSN` (or `ODBC_TEST_DSN`) pointing at any supported
+// Requires `ODBC_TEST_DSN` (or `ODBC_DSN`) pointing at any supported
 // engine. Without a DSN the demo prints a friendly skip message.
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -31,8 +31,8 @@ void main() async {
   final dsn = requireExampleDsn();
   if (dsn == null) {
     AppLogger.info(
-      'EXAMPLE_DSN not set; skipping live demo. '
-      'Set EXAMPLE_DSN in .env to see runInTransaction in action.',
+      'ODBC_TEST_DSN not set; skipping live demo. '
+      'Set ODBC_TEST_DSN in .env to see runInTransaction in action.',
     );
     return;
   }

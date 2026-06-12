@@ -338,6 +338,15 @@ full driver-capability matrix.
 
 ### Bulk insert validation behavior
 
+For medium/large batches, prefer columnar
+[`addColumnInt32`](lib/infrastructure/native/protocol/bulk_insert_builder.dart) /
+[`addColumnText`](lib/infrastructure/native/protocol/bulk_insert_builder.dart)
+(and related `addColumn*` helpers) when source data is already column-shaped —
+they avoid per-row `List<dynamic>` allocation and bulk-copy typed lists into the
+wire buffer. Use [`addRow`](lib/infrastructure/native/protocol/bulk_insert_builder.dart)
+for small batches or incremental row construction. See
+[doc/PERFORMANCE.md](doc/PERFORMANCE.md#bulk-insert-performance-dart).
+
 `BulkInsertBuilder.addRow()` performs fail-fast validation:
 - non-nullable columns reject `null` immediately (`StateError`)
 - per-column type checks (`i32`, `i64`, `text`, `decimal`, `binary`, `timestamp`)
@@ -614,6 +623,19 @@ Future<void> main() async {
 }
 ```
 
+## Performance quick reference
+
+| Scenario | Prefer |
+| -------- | ------ |
+| Large SELECT (many rows, stable types) | `ResultEncoding.columnar` or `streamQueryBatched` / streaming APIs |
+| INSERT &lt; ~100 rows | Prepared `INSERT` in a loop |
+| INSERT 100–1k rows | `bulkInsert` / `bulkInsertArray` on one connection |
+| INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) |
+| Concurrency / worker tuning | [`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart) via `ServiceLocator.initialize(profile: ...)` |
+
+Rationale, benchmarks, and opt-in perf test flags:
+[doc/PERFORMANCE.md](doc/PERFORMANCE.md).
+
 ## Async API (non-blocking)
 
 Async mode is opt-in through an async profile or `useAsync: true`. When async is
@@ -860,6 +882,7 @@ dart run example/advanced_entities_demo.dart
 dart run example/simple_demo.dart
 dart run example/quick_start_balanced_demo.dart        # NEW v3.8 (OdbcUsageProfile)
 dart run example/sub_interfaces_migration_demo.dart    # NEW v3.10 (IQueryService et al)
+dart run example/param_value_migration_demo.dart       # DSN-free ParamValue migration
 
 # Connection / pool
 dart run example/connection_string_builder_demo.dart   # 7 builders incl. MariaDB/SQLite/Db2/Snowflake
@@ -886,8 +909,13 @@ dart run example/multi_result_stream_demo.dart         # streamQueryMulti per-it
 dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
 dart run example/oracle_ref_cursor_demo.dart           # ParamValueRefCursorOut (opt-in)
 dart run example/columnar_result_encoding_demo.dart    # ResultEncoding.columnar / .columnarCompressed
+dart run example/typed_columnar_demo.dart              # TypedColumnarResult consumption
 dart run example/streaming_demo.dart
 dart run example/streaming_performance_benchmark.dart  # streamQuery vs streamQueryBatched
+
+# Bulk insert
+dart run example/bulk_insert_demo.dart                 # single-connection bulk insert (~500 rows)
+dart run example/bulk_insert_parallel_demo.dart        # parallel bulk insert (>1k rows)
 
 # Transactions / savepoints / XA
 dart run example/run_in_transaction_demo.dart          # NEW v3.4 (runInTransaction<T>)
