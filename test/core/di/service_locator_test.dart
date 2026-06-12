@@ -1,5 +1,6 @@
 import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
@@ -55,6 +56,7 @@ void main() {
         OdbcUsageProfile.balancedServer.recommendedPoolMaxSize,
       );
       expect(locator.recommendedPoolOptions.hasAnyOption, isTrue);
+      expect(locator.recommendedResultEncoding, ResultEncoding.columnar);
       locator.shutdown();
     });
 
@@ -191,6 +193,7 @@ void main() {
       expect(locator.resolvedUsageProfile.workerCount, 6);
       expect(locator.resolvedUsageProfile.maxPendingRequests, 48);
       expect(locator.recommendedPoolMaxSize, 12);
+      expect(locator.recommendedResultEncoding, ResultEncoding.columnar);
       locator.shutdown();
     });
 

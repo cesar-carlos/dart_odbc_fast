@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rust `execute_streaming`** — documented as legacy buffer-mode; shared
   `materialize_cursor_to_encoded` helper extracted. Prefer
   `execute_streaming_batched` / `start_batched_stream` for bounded memory.
+- **FFI ABI version** bumped to **1.1** (additive: `odbc_release_buffer`).
+- **`doc/PERFORMANCE.md`** — zero-copy FFI thresholds, async param transfer,
+  and SQL Server `sqlserver-bcp` enablement notes.
 
 ### Added
 

@@ -1,0 +1,74 @@
+[
+  {
+    "scenario": "crud.INSERT.row_by_row_prepared",
+    "elapsedMs": 58.145,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 1719.8383351964915,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.INSERT.bulk_columnar_build",
+    "elapsedMs": 15.969,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 313106.6441229883,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.INSERT.bulk_columnar_ffi",
+    "elapsedMs": 1010.979,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 4945.701147105924,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.INSERT.bulk_parallel_pool_x4",
+    "elapsedMs": 232.889,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 21469.455405794175,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.SELECT.buffered_row_major",
+    "elapsedMs": 28.212,
+    "rowsPerSecond": 177229.54771019422,
+    "queriesPerSecond": 0,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.SELECT.streaming_batched",
+    "elapsedMs": 15.493,
+    "rowsPerSecond": 322726.3925643839,
+    "queriesPerSecond": 0,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.SELECT.columnar_buffered",
+    "elapsedMs": 10.159,
+    "rowsPerSecond": 492174.42661679303,
+    "queriesPerSecond": 0,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.UPDATE.prepared_row_by_row",
+    "elapsedMs": 49.47,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 2021.4271275520518,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  },
+  {
+    "scenario": "crud.DELETE.prepared_row_by_row",
+    "elapsedMs": 47.313,
+    "rowsPerSecond": 0,
+    "queriesPerSecond": 2113.584004396255,
+    "latencyP95Micros": 0,
+    "fallbacksToBlocking": 0
+  }
+]

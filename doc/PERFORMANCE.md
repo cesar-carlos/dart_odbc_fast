@@ -404,6 +404,39 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 ---
 
+## Zero-copy FFI result buffers (v4.1.0, safe subset)
+
+| Knob | Value | Effect |
+| ---- | ----- | ------ |
+| `zeroCopyResultThresholdBytes` | `64 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). |
+| Scratch pool | unchanged for small payloads | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Large results allocate a transient buffer and attach a `NativeFinalizer` (`malloc.nativeFree`). |
+| `odbc_release_buffer` | exported | C ABI hook for releasing Dart `malloc` buffers; Dart uses the paired `malloc.nativeFree` finalizer today. |
+
+Opt-out is automatic on older native builds that do not export the symbol — the helper falls back to copying.
+
+---
+
+## Async parameter isolate transfer (v4.1.0)
+
+Worker requests that carry serialized parameter blobs (`ExecuteQueryParamsRequest`,
+`ExecutePreparedRequest`, `ExecuteQueryMultiParamsRequest`,
+`ExecuteAsyncStartParamsRequest`) use the same `TransferableTypedData` threshold
+as bulk insert (`isolateTransferablePayloadThresholdBytes`, 64 KiB). Factory
+helpers (`*.withSerializedParams`) avoid an extra isolate copy for large directed
+parameter buffers on the async worker path.
+
+---
+
+## SQL Server native BCP (`sqlserver-bcp` feature)
+
+| Item | Detail |
+| ---- | ------ |
+| Feature gate | `sqlserver-bcp` on `odbc_engine` (not in default features). Enables dynamic loading of vendor `bcp_*` symbols and the native `BulkCopyExecutor` fast path for SQL Server. |
+| Dart / build | Rebuild the native asset with `--features sqlserver-bcp` (or enable the feature in your hook/CI matrix). Without it, bulk insert stays on the portable `ArrayBinding` path. |
+| Scope | Row-at-a-time native BCP for supported scalar types; full payload is still materialised in-engine (streaming BCP remains open work). |
+
+---
+
 ## Safety / correctness
 
 | Decision                                                            | Reasoning                                                                                                                              |
@@ -419,7 +452,7 @@ These performance-sensitive items are tracked outside the feature backlog:
 
 - **Single-result streaming (audit C7, resolved in v4.1.0)** — `streamQuery` and repository `streamQuery` now default to cursor-based batched streaming (`odbc_stream_start_batched` / `execute_streaming_batched`). Legacy buffer-mode `odbc_stream_start` / `execute_streaming` remains for `streamQueryBuffer` and spill-to-disk only; it still materialises the full result before byte-level FFI chunking.
 - **Multi-result per-cursor materialisation** — `odbc_stream_multi_*` streams items lazily but each result-set item is still encoded as one framed payload (M8 wire format). Per-item fetch now reuses `fetch_cursor_into_row_buffer` for block-cursor acceleration when enabled.
-- **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex because their cleanup paths need atomic transitions (e.g. `disconnect` cancels active transactions and streams; XA commit clears branches in multiple maps). Splitting further requires a `with_disconnect_cleanup`-style helper that acquires the per-category locks in the documented canonical order. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
+- **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex. `with_disconnect_cleanup` (v4.1.0) centralises disconnect map transitions so per-category locks can be split in a follow-up without duplicating cleanup logic. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
 
 Feature-level open work is tracked in

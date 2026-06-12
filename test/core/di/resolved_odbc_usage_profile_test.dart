@@ -2,6 +2,7 @@ import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:test/test.dart';
 
@@ -25,6 +26,7 @@ void main() {
         isFalse,
       );
       expect(resolved.poolOptions.hasAnyOption, isFalse);
+      expect(resolved.recommendedResultEncoding, ResultEncoding.rowMajor);
     });
 
     test('should_resolve_balanced_profile_when_requested', () {
@@ -64,6 +66,7 @@ void main() {
         resolved.poolOptions.connectionTimeout,
         const Duration(seconds: 30),
       );
+      expect(resolved.recommendedResultEncoding, ResultEncoding.rowMajor);
     });
 
     test('should_resolve_balanced_flutter_profile_when_requested', () {
@@ -90,6 +93,7 @@ void main() {
         resolved.poolOptions.connectionTimeout,
         const Duration(seconds: 30),
       );
+      expect(resolved.recommendedResultEncoding, ResultEncoding.rowMajor);
     });
 
     test('should_resolve_balanced_server_profile_when_requested', () {
@@ -113,6 +117,7 @@ void main() {
         const Duration(seconds: 120),
       );
       expect(resolved.poolOptions.idleTimeout, const Duration(minutes: 5));
+      expect(resolved.recommendedResultEncoding, ResultEncoding.columnar);
     });
 
     test('should_resolve_high_throughput_profile_when_requested', () {
@@ -136,6 +141,7 @@ void main() {
         const Duration(seconds: 120),
       );
       expect(resolved.poolOptions.maxLifetime, const Duration(minutes: 30));
+      expect(resolved.recommendedResultEncoding, ResultEncoding.columnar);
     });
   });
 

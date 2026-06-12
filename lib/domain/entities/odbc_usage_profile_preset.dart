@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 
 final class OdbcUsageProfilePreset {
   const OdbcUsageProfilePreset({
@@ -17,6 +18,7 @@ final class OdbcUsageProfilePreset {
     required this.poolMaxLifetime,
     required this.poolConnectionTimeout,
     required this.recommendedPoolMaxSize,
+    required this.recommendedResultEncoding,
   });
 
   final bool useAsync;
@@ -34,6 +36,11 @@ final class OdbcUsageProfilePreset {
   final Duration? poolMaxLifetime;
   final Duration? poolConnectionTimeout;
   final int recommendedPoolMaxSize;
+
+  /// Suggested [ResultEncoding] for analytics-style SELECT workloads on this
+  /// profile. Server presets default to [ResultEncoding.columnar]; other
+  /// presets keep [ResultEncoding.rowMajor] for compatibility.
+  final ResultEncoding recommendedResultEncoding;
 }
 
 OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
@@ -57,6 +64,7 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolMaxLifetime: Duration(minutes: 30),
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 4,
+        recommendedResultEncoding: ResultEncoding.rowMajor,
       );
     case OdbcUsageProfile.balancedFlutter:
       return const OdbcUsageProfilePreset(
@@ -75,6 +83,7 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolMaxLifetime: Duration(minutes: 30),
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 4,
+        recommendedResultEncoding: ResultEncoding.rowMajor,
       );
     case OdbcUsageProfile.balancedServer:
       return const OdbcUsageProfilePreset(
@@ -93,6 +102,7 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolMaxLifetime: Duration(minutes: 30),
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 8,
+        recommendedResultEncoding: ResultEncoding.columnar,
       );
     case OdbcUsageProfile.highThroughput:
       return const OdbcUsageProfilePreset(
@@ -111,6 +121,7 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolMaxLifetime: Duration(minutes: 30),
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 12,
+        recommendedResultEncoding: ResultEncoding.columnar,
       );
     case OdbcUsageProfile.legacy:
       return const OdbcUsageProfilePreset(
@@ -129,6 +140,7 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolMaxLifetime: null,
         poolConnectionTimeout: null,
         recommendedPoolMaxSize: 4,
+        recommendedResultEncoding: ResultEncoding.rowMajor,
       );
   }
 }

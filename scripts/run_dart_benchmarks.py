@@ -11,6 +11,7 @@ Usage:
     python scripts/run_dart_benchmarks.py --smoke --compare
     python scripts/run_dart_benchmarks.py --rust-micro
     python scripts/run_dart_benchmarks.py --harness
+    python scripts/run_dart_benchmarks.py --crud
     python scripts/run_dart_benchmarks.py --all
 """
 
@@ -139,6 +140,24 @@ def run_streaming(root: Path, query: str, tag: str) -> int:
     os.environ["ODBC_STREAM_BENCH_OUT_FILE"] = str(out)
     print_step(f"streaming -> {out.name}")
     return run(["dart", "run", "example/streaming_performance_benchmark.dart"], root)
+
+
+def run_crud(root: Path, tag: str) -> int:
+    out = bench_out_dir(root) / f"crud-{tag}.json"
+    os.environ["RUN_PERF_TESTS"] = "1"
+    os.environ["BENCH_BASELINE_OUT"] = str(out)
+    print_step(f"CRUD latency (columnar bulk) -> {out.name}")
+    return run(
+        [
+            "dart",
+            "test",
+            "test/performance/crud_latency_benchmark_test.dart",
+            "--reporter",
+            "expanded",
+            "--concurrency=1",
+        ],
+        root,
+    )
 
 
 def run_async(root: Path, query: str, tag: str) -> int:
@@ -324,12 +343,18 @@ def main() -> int:
         action="store_true",
         help="Run benchmarks/m1_baseline.dart and m2_performance.dart (DSN for m2)",
     )
+    parser.add_argument(
+        "--crud",
+        action="store_true",
+        help="Run CRUD latency benchmark (5k columnar bulk insert; emits JSON)",
+    )
     args = parser.parse_args()
 
     if args.all:
         args.protocol = True
         args.rust_micro = True
         args.harness = True
+        args.crud = True
         args.smoke = True
         args.heavy = True
         args.compare = True
@@ -351,6 +376,7 @@ def main() -> int:
             args.rust_micro,
             args.protocol,
             args.harness,
+            args.crud,
         )
     ):
         args.smoke = True
@@ -375,7 +401,7 @@ def main() -> int:
             return code
         print()
 
-    needs_dsn = args.smoke or args.heavy or args.harness
+    needs_dsn = args.smoke or args.heavy or args.harness or args.crud
     if resolve_dart() is None:
         print_error("dart not found on PATH")
         return 1
@@ -392,6 +418,14 @@ def main() -> int:
         print_step("benchmark_harness m2_performance")
         if run(["dart", "run", "benchmarks/m2_performance.dart"], root) != 0:
             exit_code = 1
+
+    if args.crud:
+        crud_tag = "produto-5k"
+        if run_crud(root, crud_tag) != 0:
+            exit_code = 1
+        if args.compare and exit_code == 0:
+            if compare(root, crud_tag, "crud") != 0:
+                exit_code = 1
 
     if args.smoke:
         if run_streaming(root, "SELECT 1 AS value", "smoke") != 0:

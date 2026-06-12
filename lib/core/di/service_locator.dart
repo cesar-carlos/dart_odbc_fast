@@ -4,6 +4,8 @@ import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
+import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
@@ -94,6 +96,13 @@ class ServiceLocator {
   int get recommendedPoolMaxSize =>
       _resolvedUsageProfile.recommendedPoolMaxSize;
 
+  /// Suggested [ResultEncoding] for analytics SELECT workloads on
+  /// [resolvedUsageProfile]. Server presets recommend columnar; pass this to
+  /// `executeQueryParamValues` / async query APIs when benchmarking confirms
+  /// the win for your driver and schema.
+  ResultEncoding get recommendedResultEncoding =>
+      _resolvedUsageProfile.recommendedResultEncoding;
+
   /// Initializes all services and dependencies.
   ///
   /// Must be called before accessing [service], [repository], or
@@ -171,6 +180,8 @@ class ServiceLocator {
       connectionOptions: ConnectionOptions.fromUsageProfile(profile),
       poolOptions: PoolOptions.fromUsageProfile(profile),
       recommendedPoolMaxSize: profile.recommendedPoolMaxSize,
+      recommendedResultEncoding:
+          resolveOdbcUsageProfilePreset(profile).recommendedResultEncoding,
     );
 
     _activeProfile = profile;

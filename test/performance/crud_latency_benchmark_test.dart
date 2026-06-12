@@ -2,7 +2,15 @@
 ///
 /// Run:
 ///   RUN_PERF_TESTS=1 dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
+///
+/// When `BENCH_BASELINE_OUT` is set (e.g.
+/// `bench_baselines/crud-produto-5k.baseline.json`), emits JSON consumable by
+/// `tool/compare_benchmark_baseline.dart`.
 library;
+
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/odbc_fast.dart';
@@ -49,11 +57,11 @@ void main() {
         ];
         _truncateTable(native, connId);
 
-        results.addAll(await _benchInsertBulk(native, connId));
+        results.addAll(await _benchInsertBulkColumnar(native, connId));
         _truncateTable(native, connId);
 
         results
-          ..add(await _benchInsertBulkParallel(native, dsn))
+          ..add(await _benchInsertBulkParallelColumnar(native, dsn))
           ..add(await _benchSelectBuffered(native, connId))
           ..add(await _benchSelectStreaming(native, connId))
           ..add(await _benchSelectColumnar(native, connId))
@@ -61,6 +69,7 @@ void main() {
           ..add(await _benchDeletePrepared(native, connId));
 
         _printReport(results);
+        _writeBaselineIfRequested(results);
       } finally {
         native
           ..executeQueryParams(
@@ -76,6 +85,22 @@ void main() {
         : 'Set RUN_PERF_TESTS=1 to run live CRUD benchmark',
     timeout: const Timeout(Duration(minutes: 5)),
   );
+}
+
+BulkInsertBuilder _columnarBulkBuilder(String valuePrefix) {
+  final ids = Int32List(_bulkInsertCount);
+  final vals = List<String>.generate(
+    _bulkInsertCount,
+    (i) => '$valuePrefix$i',
+    growable: false,
+  );
+  for (var i = 0; i < _bulkInsertCount; i++) {
+    ids[i] = i + 1;
+  }
+  return BulkInsertBuilder()
+    ..table(_table)
+    ..addColumnInt32('id', ids)
+    ..addColumnText('val', vals, maxLen: 50);
 }
 
 void _setupTable(NativeOdbcConnection native, int connId) {
@@ -106,6 +131,7 @@ Future<_BenchRow> _benchInsertRowByRow(
       _rowByRowCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
@@ -128,21 +154,15 @@ Future<_BenchRow> _benchInsertRowByRow(
     _rowByRowCount,
     ms / _rowByRowCount,
     _rowByRowCount / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
-Future<List<_BenchRow>> _benchInsertBulk(
+Future<List<_BenchRow>> _benchInsertBulkColumnar(
   NativeOdbcConnection native,
   int connId,
 ) async {
-  final builder = BulkInsertBuilder()
-    ..table(_table)
-    ..addColumn('id', BulkColumnType.i32)
-    ..addColumn('val', BulkColumnType.text, maxLen: 50);
-
-  for (var i = 1; i <= _bulkInsertCount; i++) {
-    builder.addRow([i, 'bulk']);
-  }
+  final builder = _columnarBulkBuilder('bulk');
 
   final buildSw = Stopwatch()..start();
   final payload = builder.build();
@@ -158,40 +178,51 @@ Future<List<_BenchRow>> _benchInsertBulk(
   );
   ffiSw.stop();
 
+  final buildMs = buildSw.elapsedMicroseconds / 1000.0;
+
   if (inserted < 0) {
     return [
       _BenchRow(
         'INSERT',
-        'bulk array build',
+        'bulk columnar build',
         _bulkInsertCount,
-        buildSw.elapsedMicroseconds / 1000.0,
+        buildMs,
         _bulkInsertCount / (buildSw.elapsedMicroseconds / 1e6),
+        totalElapsedMs: buildMs,
       ),
-      const _BenchRow('INSERT', 'bulk array FFI', _bulkInsertCount, -1, -1),
+      const _BenchRow(
+        'INSERT',
+        'bulk columnar FFI',
+        _bulkInsertCount,
+        -1,
+        -1,
+        totalElapsedMs: -1,
+      ),
     ];
   }
 
-  final buildMs = buildSw.elapsedMicroseconds / 1000.0;
   final ffiMs = ffiSw.elapsedMicroseconds / 1000.0;
   return [
     _BenchRow(
       'INSERT',
-      'bulk array build',
+      'bulk columnar build',
       _bulkInsertCount,
       buildMs,
       _bulkInsertCount / (buildSw.elapsedMicroseconds / 1e6),
+      totalElapsedMs: buildMs,
     ),
     _BenchRow(
       'INSERT',
-      'bulk array FFI',
+      'bulk columnar FFI',
       inserted,
       ffiMs / inserted,
       inserted / (ffiSw.elapsedMicroseconds / 1e6),
+      totalElapsedMs: ffiMs,
     ),
   ];
 }
 
-Future<_BenchRow> _benchInsertBulkParallel(
+Future<_BenchRow> _benchInsertBulkParallelColumnar(
   NativeOdbcConnection native,
   String dsn,
 ) async {
@@ -203,20 +234,12 @@ Future<_BenchRow> _benchInsertBulkParallel(
       _bulkInsertCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
   try {
-    final builder = BulkInsertBuilder()
-      ..table(_table)
-      ..addColumn('id', BulkColumnType.i32)
-      ..addColumn('val', BulkColumnType.text, maxLen: 50);
-
-    for (var i = 1; i <= _bulkInsertCount; i++) {
-      builder.addRow([i, 'bulk-parallel']);
-    }
-
-    final payload = builder.build();
+    final payload = _columnarBulkBuilder('bulk-parallel').build();
     final sw = Stopwatch()..start();
     final inserted = pool.bulkInsertParallel(
       _table,
@@ -233,6 +256,7 @@ Future<_BenchRow> _benchInsertBulkParallel(
         _bulkInsertCount,
         -1,
         -1,
+        totalElapsedMs: -1,
       );
     }
 
@@ -243,6 +267,7 @@ Future<_BenchRow> _benchInsertBulkParallel(
       inserted,
       ms / inserted,
       inserted / (sw.elapsedMicroseconds / 1e6),
+      totalElapsedMs: ms,
     );
   } finally {
     pool.close();
@@ -265,6 +290,7 @@ Future<_BenchRow> _benchSelectBuffered(
       _selectRowCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
@@ -277,6 +303,7 @@ Future<_BenchRow> _benchSelectBuffered(
     rows,
     ms,
     rows / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
@@ -302,6 +329,7 @@ Future<_BenchRow> _benchSelectStreaming(
     rows,
     ms,
     rows / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
@@ -326,6 +354,7 @@ Future<_BenchRow> _benchSelectColumnar(
       _selectRowCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
@@ -338,6 +367,7 @@ Future<_BenchRow> _benchSelectColumnar(
     rows,
     ms,
     rows / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
@@ -354,6 +384,7 @@ Future<_BenchRow> _benchUpdatePrepared(
       _updateDeleteCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
@@ -376,6 +407,7 @@ Future<_BenchRow> _benchUpdatePrepared(
     _updateDeleteCount,
     ms / _updateDeleteCount,
     _updateDeleteCount / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
@@ -392,6 +424,7 @@ Future<_BenchRow> _benchDeletePrepared(
       _updateDeleteCount,
       -1,
       -1,
+      totalElapsedMs: -1,
     );
   }
 
@@ -409,6 +442,7 @@ Future<_BenchRow> _benchDeletePrepared(
     _updateDeleteCount,
     ms / _updateDeleteCount,
     _updateDeleteCount / (sw.elapsedMicroseconds / 1e6),
+    totalElapsedMs: ms,
   );
 }
 
@@ -436,18 +470,55 @@ void _printReport(List<_BenchRow> rows) {
   print('');
 }
 
+void _writeBaselineIfRequested(List<_BenchRow> rows) {
+  final baselineOut = Platform.environment['BENCH_BASELINE_OUT'];
+  if (baselineOut == null || baselineOut.isEmpty) {
+    return;
+  }
+
+  final payload = <Map<String, Object?>>[];
+  for (final row in rows) {
+    if (row.totalElapsedMs < 0 || row.throughputPerSec < 0) {
+      continue;
+    }
+    final isSelect = row.op == 'SELECT';
+    payload.add({
+      'scenario': row.baselineScenario,
+      'elapsedMs': row.totalElapsedMs,
+      'rowsPerSecond': isSelect ? row.throughputPerSec : 0,
+      'queriesPerSecond': isSelect ? 0 : row.throughputPerSec,
+      'latencyP95Micros': 0,
+      'fallbacksToBlocking': 0,
+    });
+  }
+
+  final file = File(baselineOut);
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(payload));
+}
+
 class _BenchRow {
   const _BenchRow(
     this.op,
     this.method,
     this.count,
     this.avgMs,
-    this.throughputPerSec,
-  );
+    this.throughputPerSec, {
+    required this.totalElapsedMs,
+  });
 
   final String op;
   final String method;
   final int count;
   final double avgMs;
   final double throughputPerSec;
+  final double totalElapsedMs;
+
+  String get baselineScenario {
+    final slug = method
+        .toLowerCase()
+        .replaceAll(RegExp('[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return 'crud.$op.$slug';
+  }
 }

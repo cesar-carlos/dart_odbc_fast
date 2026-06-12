@@ -3,6 +3,7 @@ import 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 
 /// Effective profile configuration used by high-level Dart composition helpers.
@@ -22,6 +23,7 @@ final class ResolvedOdbcUsageProfile {
     required this.connectionOptions,
     required this.poolOptions,
     required this.recommendedPoolMaxSize,
+    required this.recommendedResultEncoding,
   });
 
   factory ResolvedOdbcUsageProfile.fromUsageProfile(OdbcUsageProfile profile) {
@@ -38,6 +40,7 @@ final class ResolvedOdbcUsageProfile {
       connectionOptions: ConnectionOptions.fromUsageProfile(profile),
       poolOptions: PoolOptions.fromUsageProfile(profile),
       recommendedPoolMaxSize: preset.recommendedPoolMaxSize,
+      recommendedResultEncoding: preset.recommendedResultEncoding,
     );
   }
 
@@ -67,4 +70,12 @@ final class ResolvedOdbcUsageProfile {
 
   /// Suggested `poolCreate(..., maxSize)` value for this profile.
   final int recommendedPoolMaxSize;
+
+  /// Suggested [ResultEncoding] for large SELECT workloads on this profile.
+  ///
+  /// [OdbcUsageProfile.balancedServer] and [OdbcUsageProfile.highThroughput]
+  /// default to [ResultEncoding.columnar]; other presets keep row-major.
+  /// Per-query APIs still default to row-major unless callers pass
+  /// `resultEncoding` explicitly.
+  final ResultEncoding recommendedResultEncoding;
 }

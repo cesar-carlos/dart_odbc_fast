@@ -43,7 +43,8 @@ Future<void> main() async {
     _log(
       'Pool ready: poolId=$poolId, poolSize=$poolSize, '
       'profile=${tuning.profile.name}, workers=${tuning.workerCount}, '
-      'pendingCap=${tuning.maxPendingRequests}, maxInFlight=$maxInFlight',
+      'pendingCap=${tuning.maxPendingRequests}, maxInFlight=$maxInFlight, '
+      'recommendedEncoding=${tuning.recommendedResultEncoding.name}',
     );
     _log(
       'The ${tuning.profile.name} profile starts multiple Dart worker '

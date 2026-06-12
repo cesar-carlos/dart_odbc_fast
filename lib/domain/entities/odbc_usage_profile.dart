@@ -7,8 +7,9 @@ import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 /// the package default behavior (sync-only, single worker, no pool/connection
 /// timeouts from presets). Use [OdbcUsageProfile.highThroughput] for heavier
 /// server workloads with more worker isolates and a larger recommended pool
-/// size. See `ConnectionOptions.fromUsageProfile` and
-/// `PoolOptions.fromUsageProfile`.
+/// size. See `ConnectionOptions.fromUsageProfile`,
+/// `PoolOptions.fromUsageProfile`, and
+/// `ResolvedOdbcUsageProfile.recommendedResultEncoding`.
 enum OdbcUsageProfile {
   /// Async, two workers, moderate backpressure; recommended general preset.
   balanced,
