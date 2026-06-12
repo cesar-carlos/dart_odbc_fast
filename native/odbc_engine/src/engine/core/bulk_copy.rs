@@ -329,7 +329,7 @@ mod tests {
                     null_bitmap: None,
                 },
                 crate::protocol::BulkColumnData::Text {
-                    rows: vec![b"a".to_vec(), b"b".to_vec()],
+                    rows: crate::protocol::bulk_rows_from_vecs(vec![b"a".to_vec(), b"b".to_vec()]),
                     max_len: 16,
                     null_bitmap: None,
                 },

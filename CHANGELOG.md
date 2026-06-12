@@ -108,6 +108,17 @@ no intended behaviour change.
   `type_catalog`, `session`, `bulk_loader`, `upsert`, `returning`, and tests.
 - **`plugins/db2/`** — replaces monolithic `db2.rs` with `catalog`,
   `type_catalog`, `session`, `upsert`, `returning`, and tests.
+- **`plugins/{snowflake,mariadb,sqlite,sybase}/`** — tier-2 dialect plugins
+  split into `catalog`, `type_catalog`, `session`, `upsert`, `returning`, and
+  focused unit tests; conflicting monolithic `*.rs` stubs removed in favour of
+  directory modules (same hygiene as Oracle).
+- **`lib/infrastructure/native/bindings/odbc_bindings.dart`** — FFI binding
+  surface split into `part` modules (`connection`, `query`, `stream`,
+  `transaction`, `xa`, `pool`, `types`); root library is a thin facade under
+  50 lines.
+- **`test/infrastructure/native/async_connection/`** — monolithic
+  `async_native_odbc_connection_test.dart` decomposed into behaviour-focused
+  suites with shared `fake_workers.dart`.
 - **`engine/transaction/`** — transaction lifecycle extracted to `lifecycle.rs`;
   dialect-specific `BEGIN` / isolation / access-mode SQL moves to
   `dialect_sql.rs` apply helpers; savepoint hooks stay in `savepoint.rs`.
@@ -135,6 +146,25 @@ no intended behaviour change.
 - **`test/performance/crud_latency_benchmark_test.dart`** — gated CRUD latency
   benchmark for async worker paths; complements native Criterion baselines.
 
+### Performance — bulk encoding, native parse, and async bulk transport
+
+- **`BulkInsertBuilder.build()` two-pass wire encoding.** Phase 1 pre-encodes
+  text/decimal payloads and sizes the BLK2 buffer; phase 2 writes into a single
+  pre-allocated `Uint8List` (no growing `BytesBuilder` / `List<int>` on the hot
+  path). Documented in `README.md` and `doc/PERFORMANCE.md`.
+- **Rust bulk payload parse zero-copy path.** `BulkCellBytes` shares one
+  `Arc<[u8]>` backing buffer per parsed Text/Binary column; legacy and v2 parsers
+  slice cells without per-cell `Vec` clones. `bulk_rows_from_vecs` keeps manual
+  and test construction ergonomic.
+- **Async bulk insert uses `TransferableTypedData`.** `bulkInsertArray` and
+  `bulkInsertParallel` worker requests carry bulk payloads as transferable byte
+  buffers across isolates (same pattern as query/stream fetch).
+- **CRUD latency benchmark scenarios expanded.** Gated harness now reports bulk
+  payload build time vs FFI insert time separately, plus pool-backed
+  `bulkInsertParallel` (`RUN_PERF_TESTS=1`).
+- **`param_value_conversion.dart`** — domain helper for typed parameter migration
+  at repository boundaries (complements phase-3 `ParamValue` APIs).
+
 ### Fixed — runtime hardening (native)
 
 - **Lock poison handling.** Central `LOCK_POISONED` diagnostic,
@@ -149,9 +179,9 @@ no intended behaviour change.
 
 ### Fixed — module hygiene and test stability
 
-- **Oracle plugin duplicate module.** Removed conflicting `plugins/oracle.rs`
-  in favour of the `plugins/oracle/` directory module; registry wiring
-  unchanged.
+- **Duplicate plugin modules.** Removed conflicting monolithic
+  `plugins/{oracle,snowflake,mariadb,sqlite,sybase}.rs` files in favour of
+  directory modules; registry wiring unchanged.
 - **`binary_protocol_fuzz_test` timing.** Per-iteration 100 ms budget and
   30 s group timeout keep fuzz runs bounded in CI without false flakes from
   slow debug builds.

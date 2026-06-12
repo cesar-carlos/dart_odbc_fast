@@ -89,7 +89,7 @@ mixin _AsyncPool on _AsyncOdbcState, _AsyncWorkerDispatch {
     int rowCount,
   ) async {
     final r = await _sendRequest<IntResponse>(
-      BulkInsertArrayRequest(
+      BulkInsertArrayRequest.withPayload(
         _nextRequestId(),
         connectionId,
         table,
@@ -111,7 +111,7 @@ mixin _AsyncPool on _AsyncOdbcState, _AsyncWorkerDispatch {
     int parallelism,
   ) async {
     final r = await _sendRequest<IntResponse>(
-      BulkInsertParallelRequest(
+      BulkInsertParallelRequest.withPayload(
         _nextRequestId(),
         poolId,
         table,

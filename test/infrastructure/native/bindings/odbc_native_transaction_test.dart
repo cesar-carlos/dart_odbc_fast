@@ -1,8 +1,8 @@
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
 import 'package:test/test.dart';
 
 import 'fake_odbc_bindings.dart';
+import 'test_odbc_bindings.dart';
 
 void main() {
   group('OdbcNative transactionBegin routing', () {

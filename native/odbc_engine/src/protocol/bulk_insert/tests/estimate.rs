@@ -1,5 +1,5 @@
 use super::{
-    estimate_serialized_payload_size, serialize_bulk_insert_payload,
+    bulk_rows_from_vecs, estimate_serialized_payload_size, serialize_bulk_insert_payload,
     serialize_bulk_insert_payload_v2, BulkColumnData, BulkColumnSpec, BulkColumnType,
     BulkInsertPayload, BulkPayloadWire,
 };
@@ -16,7 +16,7 @@ fn estimate_serialized_payload_size_matches_v2_length() {
         }],
         row_count: 2,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1, 0, 2], vec![3, 4]],
+            rows: bulk_rows_from_vecs(vec![vec![1, 0, 2], vec![3, 4]]),
             max_len: 0,
             null_bitmap: None,
         }],
@@ -40,7 +40,7 @@ fn estimate_legacy_payload_size_matches_encoded_length() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Text {
-            rows: vec![b"ab".to_vec()],
+            rows: bulk_rows_from_vecs(vec![b"ab".to_vec()]),
             max_len: 4,
             null_bitmap: None,
         }],

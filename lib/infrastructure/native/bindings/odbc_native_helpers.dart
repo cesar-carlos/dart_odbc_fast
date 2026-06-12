@@ -1,15 +1,10 @@
 part of 'odbc_native.dart';
 
 mixin _OdbcNativeHelpers on _OdbcNativeState {
-  /// Borrows [list] for the duration of a synchronous native call.
-  ///
-  /// The pointer is only valid while [list] remains reachable and the FFI call
-  /// does not return; do not store it past the callback.
-  ffi.Pointer<ffi.Uint8> _borrowUint8List(Uint8List list) {
-    if (list.isEmpty) {
-      return ffi.Pointer<ffi.Uint8>.fromAddress(0);
-    }
-    return list.address.cast<ffi.Uint8>();
+  ffi.Pointer<ffi.Uint8> _allocUint8List(Uint8List list) {
+    final p = malloc<ffi.Uint8>(list.length);
+    p.asTypedList(list.length).setAll(0, list);
+    return p;
   }
 
   T? _withSql<T>(
@@ -27,8 +22,14 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
   T? _withParamsBuffer<T>(
     Uint8List params,
     T? Function(ffi.Pointer<ffi.Uint8> ptr) f,
-  ) =>
-      f(_borrowUint8List(params));
+  ) {
+    final ptr = _allocUint8List(params);
+    try {
+      return f(ptr);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
 
   T? _withUtf8Pair<T>(
     String a,

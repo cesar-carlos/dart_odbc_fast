@@ -1,3 +1,5 @@
+// ignore_for_file: camel_case_types
+
 part of 'odbc_bindings.dart';
 
 typedef odbc_init_func = ffi.Int32 Function();

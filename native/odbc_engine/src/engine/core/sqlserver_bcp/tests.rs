@@ -118,7 +118,7 @@ fn test_build_bound_columns_rejects_unsupported_column_type() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Text {
-            rows: vec![b"hi".to_vec()],
+            rows: crate::protocol::bulk_rows_from_vecs(vec![b"hi".to_vec()]),
             null_bitmap: None,
             max_len: 32,
         }],

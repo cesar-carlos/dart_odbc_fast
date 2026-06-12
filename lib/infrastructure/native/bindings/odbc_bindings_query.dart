@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 part of 'odbc_bindings.dart';
 
 mixin _OdbcBindingsQuery on _OdbcBindingsState {

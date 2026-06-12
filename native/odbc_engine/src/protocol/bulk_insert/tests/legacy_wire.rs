@@ -1,7 +1,7 @@
 use super::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, trim_legacy_nul_padded_cell,
-    BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp,
-    BULK_V2_MAGIC, TAG_I32, TAG_I64,
+    bulk_rows_from_vecs, parse_bulk_insert_payload, serialize_bulk_insert_payload,
+    trim_legacy_nul_padded_cell, BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload,
+    BulkTimestamp, BULK_V2_MAGIC, TAG_I32, TAG_I64,
 };
 
 #[test]
@@ -47,7 +47,7 @@ fn should_roundtrip_decimal_when_legacy_wire() {
         }],
         row_count: 2,
         column_data: vec![BulkColumnData::Text {
-            rows: vec![b"3.14\0\0\0\0".to_vec(), b"-1.5\0\0\0".to_vec()],
+            rows: bulk_rows_from_vecs(vec![b"3.14\0\0\0\0".to_vec(), b"-1.5\0\0\0".to_vec()]),
             max_len: 8,
             null_bitmap: None,
         }],
@@ -144,7 +144,7 @@ fn should_roundtrip_legacy_binary_nullable_with_bitmap() {
         }],
         row_count: 2,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1, 2], vec![]],
+            rows: bulk_rows_from_vecs(vec![vec![1, 2], vec![]]),
             max_len: 4,
             null_bitmap: Some(vec![0b10]),
         }],

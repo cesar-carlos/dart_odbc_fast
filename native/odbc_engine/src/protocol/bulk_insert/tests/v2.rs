@@ -1,7 +1,7 @@
 use super::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload_v2, BulkColumnData, BulkColumnSpec,
-    BulkColumnType, BulkInsertPayload, BulkTimestamp, BULK_V2_VERSION, MAX_BULK_CELL_LEN,
-    TAG_BINARY,
+    bulk_rows_from_vecs, parse_bulk_insert_payload, serialize_bulk_insert_payload_v2,
+    BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp,
+    BULK_V2_VERSION, MAX_BULK_CELL_LEN, TAG_BINARY,
 };
 
 #[test]
@@ -16,7 +16,7 @@ fn parse_v2_preserves_binary_nul_bytes() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1, 0, 2, 0, 3]],
+            rows: bulk_rows_from_vecs(vec![vec![1, 0, 2, 0, 3]]),
             max_len: 8,
             null_bitmap: None,
         }],
@@ -46,7 +46,7 @@ fn parse_v2_accepts_variable_binary_when_max_len_zero() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![9, 8, 0, 7, 6]],
+            rows: bulk_rows_from_vecs(vec![vec![9, 8, 0, 7, 6]]),
             max_len: 0,
             null_bitmap: None,
         }],
@@ -171,7 +171,7 @@ fn should_roundtrip_decimal_unicode_when_v2_wire() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Text {
-            rows: vec!["café".as_bytes().to_vec()],
+            rows: bulk_rows_from_vecs(vec!["café".as_bytes().to_vec()]),
             max_len: 0,
             null_bitmap: None,
         }],
@@ -195,7 +195,7 @@ fn serialize_v2_rejects_variable_row_count_mismatch() {
         }],
         row_count: 2,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1]],
+            rows: bulk_rows_from_vecs(vec![vec![1]]),
             max_len: 0,
             null_bitmap: None,
         }],

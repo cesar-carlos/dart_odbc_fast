@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use crate::error::{OdbcError, Result};
 
 use super::common::{
-    read_bytes, read_null_bitmap, read_u32_le, BulkColumnData, BulkColumnSpec, BulkColumnType,
-    BulkTimestamp,
+    read_bytes, read_null_bitmap, read_u32_le, BulkCellBytes, BulkColumnData, BulkColumnSpec,
+    BulkColumnType, BulkTimestamp,
 };
 
 pub(crate) fn parse_column_data(
@@ -10,6 +12,7 @@ pub(crate) fn parse_column_data(
     start: usize,
     spec: &BulkColumnSpec,
     row_count: usize,
+    wire_backing: &Arc<[u8]>,
 ) -> Result<(BulkColumnData, usize)> {
     let mut o = start;
 
@@ -65,8 +68,14 @@ pub(crate) fn parse_column_data(
             let max_len = spec.max_len.max(1);
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
+                let cell_start = o;
                 let raw = read_bytes(data, &mut o, max_len)?;
-                rows.push(trim_legacy_nul_padded_cell(raw).to_vec());
+                let trimmed_len = trim_legacy_nul_padded_cell(raw).len();
+                rows.push(BulkCellBytes::from_arc_slice(
+                    Arc::clone(wire_backing),
+                    cell_start,
+                    trimmed_len,
+                ));
             }
             Ok((
                 BulkColumnData::Text {
@@ -82,8 +91,14 @@ pub(crate) fn parse_column_data(
             let max_len = spec.max_len.max(1);
             let mut rows = Vec::with_capacity(row_count);
             for _ in 0..row_count {
+                let cell_start = o;
                 let raw = read_bytes(data, &mut o, max_len)?;
-                rows.push(trim_legacy_nul_padded_cell(raw).to_vec());
+                let trimmed_len = trim_legacy_nul_padded_cell(raw).len();
+                rows.push(BulkCellBytes::from_arc_slice(
+                    Arc::clone(wire_backing),
+                    cell_start,
+                    trimmed_len,
+                ));
             }
             Ok((
                 BulkColumnData::Binary {
@@ -193,8 +208,9 @@ pub(crate) fn serialize_column_data(
                 out.extend_from_slice(bm);
             }
             for row in rows {
-                let len = row.len().min(*max_len);
-                out.extend_from_slice(&row[..len]);
+                let bytes = row.as_slice();
+                let len = bytes.len().min(*max_len);
+                out.extend_from_slice(&bytes[..len]);
                 for _ in len..*max_len {
                     out.push(0);
                 }
@@ -212,8 +228,9 @@ pub(crate) fn serialize_column_data(
                 out.extend_from_slice(bm);
             }
             for row in rows {
-                let len = row.len().min(*max_len);
-                out.extend_from_slice(&row[..len]);
+                let bytes = row.as_slice();
+                let len = bytes.len().min(*max_len);
+                out.extend_from_slice(&bytes[..len]);
                 for _ in len..*max_len {
                     out.push(0);
                 }

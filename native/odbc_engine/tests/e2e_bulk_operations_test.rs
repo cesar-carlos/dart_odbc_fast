@@ -884,7 +884,7 @@ fn test_e2e_bulk_insert_generic() {
                 null_bitmap: None,
             },
             BulkColumnData::Text {
-                rows: names,
+                rows: odbc_engine::protocol::bulk_rows_from_vecs(names),
                 max_len,
                 null_bitmap: None,
             },

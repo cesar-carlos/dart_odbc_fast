@@ -1,7 +1,7 @@
 use super::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData, BulkColumnSpec,
-    BulkColumnType, BulkInsertPayload, BULK_V2_VERSION, MAX_BULK_CELL_LEN, MAX_BULK_COLUMNS,
-    MAX_BULK_ROWS, TAG_BINARY, TAG_I32, TAG_TEXT,
+    bulk_rows_from_vecs, parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData,
+    BulkColumnSpec, BulkColumnType, BulkInsertPayload, BULK_V2_VERSION, MAX_BULK_CELL_LEN,
+    MAX_BULK_COLUMNS, MAX_BULK_ROWS, TAG_BINARY, TAG_I32, TAG_TEXT,
 };
 
 #[test]
@@ -119,7 +119,7 @@ fn should_error_when_serialize_column_data_mismatch() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Text {
-            rows: vec![b"x".to_vec()],
+            rows: bulk_rows_from_vecs(vec![b"x".to_vec()]),
             max_len: 4,
             null_bitmap: None,
         }],

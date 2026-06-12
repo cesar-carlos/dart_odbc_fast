@@ -149,6 +149,75 @@ void main() {
       expect(response.error, isNull);
     });
 
+    test('BulkInsertArrayRequest keeps inline payload below threshold', () {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes);
+      final request = BulkInsertArrayRequest.withPayload(
+        1,
+        2,
+        't',
+        const ['c'],
+        bytes,
+        3,
+      );
+
+      expect(request.dataBuffer, bytes);
+      expect(identical(request.dataBuffer, request.dataBuffer), isTrue);
+    });
+
+    test('BulkInsertArrayRequest uses transferable payload above threshold', () {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
+      final request = BulkInsertArrayRequest.withPayload(
+        1,
+        2,
+        't',
+        const ['c'],
+        bytes,
+        3,
+      );
+
+      expect(request.dataBuffer, bytes);
+      expect(identical(request.dataBuffer, request.dataBuffer), isTrue);
+    });
+
+    test('BulkInsertParallelRequest uses transferable payload above threshold',
+        () {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
+      final request = BulkInsertParallelRequest.withPayload(
+        1,
+        2,
+        't',
+        const ['c'],
+        bytes,
+        4,
+      );
+
+      expect(request.dataBuffer, bytes);
+      expect(identical(request.dataBuffer, request.dataBuffer), isTrue);
+    });
+
+    test('bulk insert requests are sendable across isolate ports', () async {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
+      final request = BulkInsertArrayRequest.withPayload(
+        11,
+        22,
+        'items',
+        const ['id'],
+        bytes,
+        5,
+      );
+      final receivePort = ReceivePort();
+
+      receivePort.sendPort.send(request);
+      final message = await receivePort.first as BulkInsertArrayRequest;
+      receivePort.close();
+
+      expect(message.requestId, 11);
+      expect(message.connectionId, 22);
+      expect(message.table, 'items');
+      expect(message.rowCount, 5);
+      expect(message.dataBuffer, bytes);
+    });
+
     test('StreamFetchResponse exposes success, hasMore, and error fields', () {
       final response = StreamFetchResponse(
         2,

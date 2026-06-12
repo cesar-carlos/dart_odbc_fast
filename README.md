@@ -6,11 +6,12 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 3.10.0
+## What's New in 3.10.x
 
-Minor release: backward-compatible public-API additions only (deprecation
-window opens for `IOdbcRepository.getAsyncWorkerPoolStats`). Wire format
-and exported ABI are unchanged.
+Current package version: **3.10.1**. The 3.10 line is a backward-compatible
+minor series: additive public APIs only, with a deprecation window opening for
+`IOdbcRepository.getAsyncWorkerPoolStats` and legacy `List<dynamic>` parameter
+overloads. Wire format and exported ABI are unchanged.
 
 - **Sub-interfaces of `IOdbcService`** — `IQueryService`,
   `ITransactionService`, `IPoolService`, `IAdminService`. The aggregate
@@ -66,6 +67,23 @@ and exported ABI are unchanged.
   `mem::transmute`, with a size-invariant tripwire test);
   release/bench profiles set `lto = "fat"`, `codegen-units = 1`,
   `opt-level = 3`. Transparent to Dart consumers.
+- **`QueryResultAccess` extension** — low-risk typed helpers on
+  `QueryResult` (`columnIndex`, `cell`, `cellAs`, `rowAsMap`, `rowsAsMaps`,
+  `columnValues`, `scalar`) without changing underlying `List<dynamic>`
+  row storage. Exported from `package:odbc_fast/odbc_fast.dart`.
+- **`IOdbcRepository` extensions** — columnar (`executeQueryColumnarParamValues`,
+  `streamQueryColumnar`), connection-scoped `…For(Connection)` overloads,
+  typed-parameter bridges (`executeQueryParamValuesFromObjects`,
+  `executePreparedParamValuesFromObjects`, `executeQueryMultiParamValuesFromObjects`
+  and matching `…For` variants), and `runInTransaction` — mirror the
+  `IOdbcService` sub-interface ergonomics for repository consumers.
+  See `lib/application/repositories/odbc_repository_extensions.dart`.
+
+### 3.10.1 patch highlights
+
+- CI repair (loom models isolated; Dart steps moved back to the `test` job).
+- Expanded Dart/Rust unit coverage on paths previously integration-only.
+- README/example alignment with the 3.10 public surface.
 
 ### Previously in 3.8.1
 
@@ -77,7 +95,7 @@ and exported ABI are unchanged.
   See [Quick Start](#quick-start-high-level-service) and
   [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
 
-Highlights of the current `3.10.0` release. See the
+Highlights of the current **3.10.x** line (`3.10.1` today). See the
 [CHANGELOG](CHANGELOG.md) for the complete list and
 [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
 for the remaining backlog.
@@ -225,6 +243,11 @@ portable interval helpers including `intervalYearToMonth`. See
 - **Typed columnar results** (v3.10): `executeQueryColumnar` /
   `streamQueryColumnar` return `TypedColumnarResult` with
   `Int32List` / `Int64List` / `Float64List` per numeric column (zero boxing)
+- **`QueryResultAccess`** (v3.10): typed row/column navigation on
+  `QueryResult` without changing row storage (`cell`, `scalar`, `rowsAsMaps`, …)
+- **`IOdbcRepository` extensions** (v3.10): columnar execute/stream,
+  `…For(Connection)` overloads, `…FromObjects` typed-parameter bridges, and
+  `runInTransaction` — same ergonomics as the service sub-interfaces
 - **Transaction helpers** (Sprint 4.4 / v3.4.2): `runInTransaction<T>` and
   `runInXaTransaction<T>` orchestrate begin → action → commit/rollback
   (or end → prepare → commit_prepared for XA) with throw-safe cleanup
@@ -431,13 +454,16 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 
 - **Typed parameters (preferred):** use `executeQueryParamValues` /
   `executePreparedParamValues` with `List<ParamValue>` (sealed hierarchy in
-  `lib/domain/entities/param_value.dart`). Helpers `paramValuesFromObjects` and
-  `ParamValue.*` constructors build wire-safe values. Directed `OUT` / `INOUT`
-  bindings use `executeQueryDirectedParams` with `List<DirectedParam>`.
+  `lib/domain/entities/param_value.dart`). Helpers `paramValuesFromObjects`
+  (`lib/domain/helpers/param_value_conversion.dart`) and `ParamValue.*`
+  constructors build wire-safe values. Repository consumers can also use
+  `executeQueryParamValuesFromObjects` / `…FromObjectsFor` extension methods
+  on `IOdbcRepository`. Directed `OUT` / `INOUT` bindings use
+  `executeQueryDirectedParams` with `List<DirectedParam>`.
 - **Legacy untyped surface:** `executeQuery`, `executeQueryParams`, and related
   `List<dynamic>` overloads remain available but are `@Deprecated`; migrate to
-  `ParamValue` before the next major release. See
-  [CHANGELOG](CHANGELOG.md) — [Unreleased] for the migration scope.
+  `ParamValue` or the `…FromObjects` bridges before the next major release.
+  See [CHANGELOG](CHANGELOG.md) — [Unreleased] for the migration scope.
 - Positional and prepared execution support a dynamic number of parameters,
   subject to the package protocol safety cap and the underlying driver/database.
 - Named placeholders preserve occurrence order. Repeating `@id` or `:id` in the
@@ -1246,6 +1272,12 @@ The experimental Cargo feature `columnar-v2` gates sketch constants and the
 Copy [`.env.example`](.env.example) to `.env` and set `ODBC_TEST_DSN` before
 any live-driver scope. Canonical opt-in flags are listed in
 [doc/TESTING.md](doc/TESTING.md).
+
+**Coverage note:** Codecov gates (`.codecov.yml`) measure Dart coverage under
+`lib/` only — `native/**` is intentionally ignored because Rust coverage is
+tracked separately via `cargo tarpaulin` (see [doc/TESTING.md](doc/TESTING.md)).
+The combined badge therefore understates native engine coverage; treat it as a
+Dart-layer gate, not whole-repo coverage.
 
 ```bash
 # Dart — CI-equivalent unit + docs (no live DSN)

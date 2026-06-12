@@ -6,9 +6,10 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart'
     show StructuredError;
+
+import 'test_odbc_bindings.dart';
 
 /// Preset [OdbcBindings] stubs for FFI/bindings unit tests (no live DSN).
 class FakeOdbcBindings {

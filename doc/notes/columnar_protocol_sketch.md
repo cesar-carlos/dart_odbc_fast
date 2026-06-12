@@ -1,6 +1,6 @@
 # Columnar protocol v2 — design sketch
 
-> **Status (2026-05, package `3.10.0`):** row-major v1 remains the default, but
+> **Status (2026-06, package `3.10.x` / `3.10.1`):** row-major v1 remains the default, but
 > public parameterized query paths can opt into **columnar v2** with
 > `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`. The Rust
 > engine emits v2 when the execution pipeline is built with
@@ -13,8 +13,12 @@
 > `columnar_encoder.rs` + `protocol/compression.rs`; the Dart path resolves
 > compressed column payloads via the native engine’s `odbc_columnar_decompress`
 > FFI (see PENDING section 2.3, `doc/Features/PENDING_IMPLEMENTATIONS.md`).
-> Small anchors also live under the Cargo feature `columnar-v2` (`odbc_engine::columnar_v2` magic/version constants; `columnar_v2_placeholder` bench) and
-> `lib/.../columnar_v2_flags.dart` (`isLikelyColumnarV2Header`). The historical
+> Small anchors also live under the Cargo feature `columnar-v2`
+> (`odbc_engine::columnar_v2` magic/version constants;
+> `columnar_v2_placeholder` bench only — production columnar encoding and
+> `odbc_columnar_decompress` stay on the default build) and
+> `lib/infrastructure/native/protocol/columnar_v2_flags.dart`
+> (`isLikelyColumnarV2Header`). The historical
 > standalone Dart “orphan” parser was removed in v3.1.0; the **layout** in
 > this file remains the canonical description.
 >

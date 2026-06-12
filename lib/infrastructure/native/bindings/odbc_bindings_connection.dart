@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 part of 'odbc_bindings.dart';
 
 mixin _OdbcBindingsConnection on _OdbcBindingsState {
@@ -72,7 +74,7 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     }
   }
 
-late final ffi.Pointer<ffi.NativeFunction<odbc_init_func>> _odbc_init_ptr;
+  late final ffi.Pointer<ffi.NativeFunction<odbc_init_func>> _odbc_init_ptr;
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_set_log_level_func>>
       _odbc_set_log_level_ptr;

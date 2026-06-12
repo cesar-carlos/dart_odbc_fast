@@ -6,9 +6,10 @@ pub(super) use super::common::{
 };
 pub(super) use super::legacy::trim_legacy_nul_padded_cell;
 pub(super) use super::{
-    estimate_serialized_payload_size, is_null, is_null_strict, null_bitmap_size,
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, serialize_bulk_insert_payload_v2,
-    BulkColumnData, BulkColumnSpec, BulkInsertPayload, BulkTimestamp,
+    bulk_rows_from_vecs, estimate_serialized_payload_size, is_null, is_null_strict,
+    null_bitmap_size, parse_bulk_insert_payload, serialize_bulk_insert_payload,
+    serialize_bulk_insert_payload_v2, BulkColumnData, BulkColumnSpec, BulkInsertPayload,
+    BulkTimestamp,
 };
 
 mod column_types;

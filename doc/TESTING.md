@@ -1,9 +1,10 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v3.10.0 (sub-interfaces, event bus, columnar
-> service surface, pool/transaction hardening, native engine perf
-> follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
-> default ON, `loom` opt-in via `RUSTFLAGS="--cfg loom"`).
+> **Last updated for:** v3.10.x (`3.10.1` — sub-interfaces, event bus,
+> columnar service surface, `QueryResultAccess`, `IOdbcRepository`
+> extensions, pool/transaction hardening, native engine perf follow-ups
+> with `block-cursor-fetch` and `statement-handle-reuse` default ON,
+> `loom` opt-in via `RUSTFLAGS="--cfg loom"`).
 
 This document describes the test strategy, how to run each scope, and CI boundaries. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
 
@@ -103,6 +104,15 @@ define a repository secret `CODECOV_TOKEN` (from
 [app.codecov.io](https://app.codecov.io) after installing the Codecov
 GitHub App). Without the token, uploads to protected branches are
 rejected and the badge stays at 0%.
+
+**Known gap — Codecov ignores `native/**`:** `.codecov.yml` sets
+`coverage.ignore` to `native/**` (along with `example/**` and `test/**`),
+so the Codecov project/patch gates apply to the Dart package surface
+(`lib/`) only. Rust coverage is measured locally with `cargo tarpaulin`
+(see [Reproducing coverage locally](#reproducing-coverage-locally)); it
+is not folded into the Codecov badge or the 80% gate. The combined
+badge therefore understates native engine coverage — treat it as a
+Dart-layer regression guard, not whole-repo coverage.
 
 Other workflows:
 

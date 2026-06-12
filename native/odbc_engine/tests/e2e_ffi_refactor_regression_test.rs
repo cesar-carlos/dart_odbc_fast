@@ -152,7 +152,7 @@ fn bulk_v2_binary_nul_round_trips_through_ffi() {
                 null_bitmap: None,
             },
             BulkColumnData::Binary {
-                rows: vec![vec![1, 0, 2], vec![3, 4]],
+                rows: odbc_engine::protocol::bulk_rows_from_vecs(vec![vec![1, 0, 2], vec![3, 4]]),
                 null_bitmap: None,
                 max_len: 8,
             },

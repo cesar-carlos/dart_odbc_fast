@@ -149,7 +149,7 @@ fn test_ffi_bulk_insert_array_accepts_v2_payload_before_connection_lookup() {
         }],
         row_count: 1,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1, 0, 2]],
+            rows: crate::protocol::bulk_rows_from_vecs(vec![vec![1, 0, 2]]),
             max_len: 8,
             null_bitmap: None,
         }],
@@ -200,7 +200,7 @@ fn test_bulk_parallel_bcp_chunk_fallback_preserves_binary_nul() {
         }],
         row_count: 3,
         column_data: vec![BulkColumnData::Binary {
-            rows: vec![vec![1], vec![2, 0, 3], vec![4]],
+            rows: crate::protocol::bulk_rows_from_vecs(vec![vec![1], vec![2, 0, 3], vec![4]]),
             max_len: 8,
             null_bitmap: Some(vec![0]),
         }],
@@ -209,7 +209,7 @@ fn test_bulk_parallel_bcp_chunk_fallback_preserves_binary_nul() {
     let chunk = slice_payload_rows(&payload, 1, 2).unwrap();
     assert_eq!(chunk.row_count, 1);
     match &chunk.column_data[0] {
-        BulkColumnData::Binary { rows, .. } => assert_eq!(rows, &vec![vec![2, 0, 3]]),
+        BulkColumnData::Binary { rows, .. } => assert_eq!(rows[0].as_slice(), &[2, 0, 3][..]),
         other => panic!("unexpected chunk data: {other:?}"),
     }
 }

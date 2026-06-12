@@ -6,8 +6,9 @@ mod v2;
 mod tests;
 
 pub use common::{
-    is_null, is_null_strict, null_bitmap_size, BulkColumnData, BulkColumnSpec, BulkColumnType,
-    BulkInsertPayload, BulkTimestamp, MAX_BULK_CELL_LEN, MAX_BULK_COLUMNS, MAX_BULK_ROWS,
+    bulk_rows_from_vecs, is_null, is_null_strict, null_bitmap_size, BulkCellBytes, BulkColumnData,
+    BulkColumnSpec, BulkColumnType, BulkInsertPayload, BulkTimestamp, MAX_BULK_CELL_LEN,
+    MAX_BULK_COLUMNS, MAX_BULK_ROWS,
 };
 
 use crate::error::{OdbcError, Result};
@@ -16,6 +17,7 @@ use common::{
     BulkPayloadWire, BULK_V2_FLAGS_NONE, BULK_V2_MAGIC, BULK_V2_VERSION,
 };
 use std::str;
+use std::sync::Arc;
 
 pub fn parse_bulk_insert_payload(data: &[u8]) -> Result<BulkInsertPayload> {
     if data.starts_with(BULK_V2_MAGIC) {
@@ -35,6 +37,8 @@ pub(super) fn parse_bulk_insert_payload_body(
     o: &mut usize,
     wire: BulkPayloadWire,
 ) -> Result<BulkInsertPayload> {
+    let wire_backing: Arc<[u8]> = Arc::from(data.to_vec());
+    let data = wire_backing.as_ref();
     let table_len = read_u32_le(data, o)? as usize;
     let table_bytes = read_bytes(data, o, table_len)?;
     let table = str::from_utf8(table_bytes).map_err(|_| {
@@ -96,8 +100,12 @@ pub(super) fn parse_bulk_insert_payload_body(
     let mut column_data = Vec::with_capacity(columns.len());
     for spec in &columns {
         let (data_col, consumed) = match wire {
-            BulkPayloadWire::Legacy => legacy::parse_column_data(data, *o, spec, row_count)?,
-            BulkPayloadWire::V2 => v2::parse_column_data_v2(data, *o, spec, row_count)?,
+            BulkPayloadWire::Legacy => {
+                legacy::parse_column_data(data, *o, spec, row_count, &wire_backing)?
+            }
+            BulkPayloadWire::V2 => {
+                v2::parse_column_data_v2(data, *o, spec, row_count, &wire_backing)?
+            }
         };
         column_data.push(data_col);
         *o += consumed;
@@ -233,7 +241,7 @@ pub(crate) fn estimate_serialized_payload_size(
                 | (BulkPayloadWire::V2, BulkColumnData::Binary { rows, .. }, _) => {
                     rows.iter().try_fold(0usize, |acc, row| {
                         checked_payload_size_add(acc, 4)
-                            .and_then(|acc| checked_payload_size_add(acc, row.len()))
+                            .and_then(|acc| checked_payload_size_add(acc, row.as_slice().len()))
                     })?
                 }
                 _ => 0,

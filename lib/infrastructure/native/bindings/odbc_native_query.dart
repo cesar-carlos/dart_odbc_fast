@@ -712,18 +712,23 @@ mixin _OdbcNativeQuery on _OdbcNativeState, _OdbcNativeHelpers {
       }
       final rowsInserted = malloc<ffi.Uint32>();
       try {
-        final code = _bindings.odbc_bulk_insert_array(
-          connectionId,
-          tablePtr.cast<bindings.Utf8>(),
-          colPtrs,
-          columns.length,
-          _borrowUint8List(dataBuffer),
-          dataBuffer.length,
-          rowCount,
-          rowsInserted,
-        );
-        if (code != 0) return -1;
-        return rowsInserted.value;
+        final dataPtr = _allocUint8List(dataBuffer);
+        try {
+          final code = _bindings.odbc_bulk_insert_array(
+            connectionId,
+            tablePtr.cast<bindings.Utf8>(),
+            colPtrs,
+            columns.length,
+            dataPtr,
+            dataBuffer.length,
+            rowCount,
+            rowsInserted,
+          );
+          if (code != 0) return -1;
+          return rowsInserted.value;
+        } finally {
+          malloc.free(dataPtr);
+        }
       } finally {
         malloc.free(rowsInserted);
       }
@@ -757,18 +762,23 @@ mixin _OdbcNativeQuery on _OdbcNativeState, _OdbcNativeHelpers {
       }
       final rowsInserted = malloc<ffi.Uint32>();
       try {
-        final code = _bindings.odbc_bulk_insert_parallel(
-          poolId,
-          tablePtr.cast<bindings.Utf8>(),
-          colPtrs,
-          columns.length,
-          _borrowUint8List(dataBuffer),
-          dataBuffer.length,
-          parallelism,
-          rowsInserted,
-        );
-        if (code != 0) return -1;
-        return rowsInserted.value;
+        final dataPtr = _allocUint8List(dataBuffer);
+        try {
+          final code = _bindings.odbc_bulk_insert_parallel(
+            poolId,
+            tablePtr.cast<bindings.Utf8>(),
+            colPtrs,
+            columns.length,
+            dataPtr,
+            dataBuffer.length,
+            parallelism,
+            rowsInserted,
+          );
+          if (code != 0) return -1;
+          return rowsInserted.value;
+        } finally {
+          malloc.free(dataPtr);
+        }
       } finally {
         malloc.free(rowsInserted);
       }

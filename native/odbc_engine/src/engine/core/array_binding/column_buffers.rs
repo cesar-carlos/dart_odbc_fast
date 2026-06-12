@@ -120,11 +120,11 @@ where
                 let cell = if null_bitmap.as_ref().is_some_and(|bm| is_null(bm, r)) {
                     None
                 } else {
-                    let bytes = &rows[r];
+                    let bytes = rows[r].as_slice();
                     if bytes.is_empty() {
                         Some(&[][..])
                     } else {
-                        Some(bytes.as_slice())
+                        Some(bytes)
                     }
                 };
                 view.set_cell(i, cell);
@@ -144,11 +144,11 @@ where
                 let cell = if null_bitmap.as_ref().is_some_and(|bm| is_null(bm, r)) {
                     None
                 } else {
-                    let bytes = &rows[r];
+                    let bytes = rows[r].as_slice();
                     if bytes.is_empty() {
                         Some(&[][..])
                     } else {
-                        Some(bytes.as_slice())
+                        Some(bytes)
                     }
                 };
                 view.set_cell(i, cell);

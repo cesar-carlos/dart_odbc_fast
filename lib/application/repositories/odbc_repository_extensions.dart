@@ -10,10 +10,9 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
-    show paramValuesFromObjects;
 import 'package:result_dart/result_dart.dart';
 
 /// Columnar and streaming helpers missing from the raw repository contract.
@@ -128,6 +127,20 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
         resultEncoding: resultEncoding,
       );
 
+  /// `executeQueryParamValuesFromObjects` overload that accepts a [Connection].
+  Future<Result<QueryResult>> executeQueryParamValuesFromObjectsFor(
+    Connection conn,
+    String sql,
+    List<Object?> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) =>
+      executeQueryParamValuesFromObjects(
+        conn.id,
+        sql,
+        params,
+        resultEncoding: resultEncoding,
+      );
+
   /// `executeQueryDirectedParams` overload that accepts a [Connection].
   Future<Result<QueryResult>> executeQueryDirectedParamsFor(
     Connection conn,
@@ -151,6 +164,36 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     List<ParamValue>? params,
   }) =>
       executeQueryColumnarParamValues(conn.id, sql, params: params);
+
+  /// `executeQueryColumnarFromObjects` overload that accepts a [Connection].
+  Future<Result<TypedColumnarResult>> executeQueryColumnarFromObjectsFor(
+    Connection conn,
+    String sql, {
+    List<Object?>? params,
+  }) =>
+      executeQueryColumnarFromObjects(conn.id, sql, params: params);
+
+  /// `executePreparedParamValuesFromObjects` overload for a [Connection].
+  Future<Result<QueryResult>> executePreparedParamValuesFromObjectsFor(
+    Connection conn,
+    int stmtId,
+    List<Object?>? params,
+    StatementOptions? options,
+  ) =>
+      executePreparedParamValuesFromObjects(
+        conn.id,
+        stmtId,
+        params,
+        options,
+      );
+
+  /// `executeQueryMultiParamValuesFromObjects` overload for a [Connection].
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValuesFromObjectsFor(
+    Connection conn,
+    String sql,
+    List<Object?> params,
+  ) =>
+      executeQueryMultiParamValuesFromObjects(conn.id, sql, params);
 
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(

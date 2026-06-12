@@ -2,8 +2,6 @@
 ///
 /// Run:
 ///   RUN_PERF_TESTS=1 dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
-import 'dart:typed_data';
-
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
@@ -15,6 +13,8 @@ const _rowByRowCount = 100;
 const _bulkInsertCount = 5000;
 const _selectRowCount = 5000;
 const _updateDeleteCount = 100;
+const _bulkParallelism = 4;
+const _poolSize = 4;
 
 void main() {
   loadTestEnv();
@@ -47,7 +47,10 @@ void main() {
         results.add(await _benchInsertRowByRow(native, connId));
         _truncateTable(native, connId);
 
-        results.add(await _benchInsertBulk(native, connId));
+        results.addAll(await _benchInsertBulk(native, connId));
+        _truncateTable(native, connId);
+
+        results.add(await _benchInsertBulkParallel(native, dsn));
 
         results.add(await _benchSelectBuffered(native, connId));
         results.add(await _benchSelectStreaming(native, connId));
@@ -118,7 +121,7 @@ Future<_BenchRow> _benchInsertRowByRow(
   );
 }
 
-Future<_BenchRow> _benchInsertBulk(
+Future<List<_BenchRow>> _benchInsertBulk(
   NativeOdbcConnection native,
   int connId,
 ) async {
@@ -131,29 +134,109 @@ Future<_BenchRow> _benchInsertBulk(
     builder.addRow([i, 'bulk']);
   }
 
+  final buildSw = Stopwatch()..start();
   final payload = builder.build();
-  final sw = Stopwatch()..start();
+  buildSw.stop();
+
+  final ffiSw = Stopwatch()..start();
   final inserted = native.bulkInsertArray(
     connId,
     _table,
     const ['id', 'val'],
-    Uint8List.fromList(payload),
+    payload,
     _bulkInsertCount,
   );
-  sw.stop();
+  ffiSw.stop();
 
   if (inserted < 0) {
-    return _BenchRow('INSERT', 'bulk array binding', _bulkInsertCount, -1, -1);
+    return [
+      _BenchRow(
+        'INSERT',
+        'bulk array build',
+        _bulkInsertCount,
+        buildSw.elapsedMicroseconds / 1000.0,
+        _bulkInsertCount / (buildSw.elapsedMicroseconds / 1e6),
+      ),
+      _BenchRow('INSERT', 'bulk array FFI', _bulkInsertCount, -1, -1),
+    ];
   }
 
-  final ms = sw.elapsedMicroseconds / 1000.0;
-  return _BenchRow(
-    'INSERT',
-    'bulk array binding',
-    inserted,
-    ms / inserted,
-    inserted / (sw.elapsedMicroseconds / 1e6),
-  );
+  final buildMs = buildSw.elapsedMicroseconds / 1000.0;
+  final ffiMs = ffiSw.elapsedMicroseconds / 1000.0;
+  return [
+    _BenchRow(
+      'INSERT',
+      'bulk array build',
+      _bulkInsertCount,
+      buildMs,
+      _bulkInsertCount / (buildSw.elapsedMicroseconds / 1e6),
+    ),
+    _BenchRow(
+      'INSERT',
+      'bulk array FFI',
+      inserted,
+      ffiMs / inserted,
+      inserted / (ffiSw.elapsedMicroseconds / 1e6),
+    ),
+  ];
+}
+
+Future<_BenchRow> _benchInsertBulkParallel(
+  NativeOdbcConnection native,
+  String dsn,
+) async {
+  final pool = native.createConnectionPool(dsn, _poolSize);
+  if (pool == null) {
+    return _BenchRow(
+      'INSERT',
+      'bulk parallel pool x$_bulkParallelism',
+      _bulkInsertCount,
+      -1,
+      -1,
+    );
+  }
+
+  try {
+    final builder = BulkInsertBuilder()
+      ..table(_table)
+      ..addColumn('id', BulkColumnType.i32)
+      ..addColumn('val', BulkColumnType.text, maxLen: 50);
+
+    for (var i = 1; i <= _bulkInsertCount; i++) {
+      builder.addRow([i, 'bulk-parallel']);
+    }
+
+    final payload = builder.build();
+    final sw = Stopwatch()..start();
+    final inserted = pool.bulkInsertParallel(
+      _table,
+      const ['id', 'val'],
+      payload,
+      parallelism: _bulkParallelism,
+    );
+    sw.stop();
+
+    if (inserted < 0) {
+      return _BenchRow(
+        'INSERT',
+        'bulk parallel pool x$_bulkParallelism',
+        _bulkInsertCount,
+        -1,
+        -1,
+      );
+    }
+
+    final ms = sw.elapsedMicroseconds / 1000.0;
+    return _BenchRow(
+      'INSERT',
+      'bulk parallel pool x$_bulkParallelism',
+      inserted,
+      ms / inserted,
+      inserted / (sw.elapsedMicroseconds / 1e6),
+    );
+  } finally {
+    pool.close();
+  }
 }
 
 Future<_BenchRow> _benchSelectBuffered(

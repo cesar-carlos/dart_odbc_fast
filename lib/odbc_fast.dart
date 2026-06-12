@@ -122,7 +122,8 @@ export 'infrastructure/native/protocol/columnar_v2_flags.dart';
 export 'infrastructure/native/protocol/directed_param.dart';
 export 'infrastructure/native/protocol/lazy_string.dart';
 export 'infrastructure/native/protocol/named_parameter_parser.dart';
-export 'infrastructure/native/protocol/param_value.dart';
+export 'infrastructure/native/protocol/param_value.dart'
+    hide paramValuesFromObjects, toParamValue;
 export 'infrastructure/native/protocol/typed_columnar_converter.dart'
     show toTypedColumnar;
 export 'infrastructure/native/telemetry/telemetry_buffer.dart';

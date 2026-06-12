@@ -127,7 +127,7 @@ fn run_bcp_fallback_e2e(n: usize) {
                 null_bitmap: None,
             },
             BulkColumnData::Text {
-                rows: names,
+                rows: odbc_engine::protocol::bulk_rows_from_vecs(names),
                 max_len,
                 null_bitmap: None,
             },

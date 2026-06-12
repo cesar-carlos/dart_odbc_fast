@@ -229,6 +229,17 @@ class AuditClearRequest extends WorkerRequest {
       : super(requestId, RequestType.auditClear);
 }
 
+/// Minimum payload size before isolate messages use [TransferableTypedData].
+const int isolateTransferablePayloadThresholdBytes = 64 * 1024;
+
+/// Returns transferable ownership for large byte payloads sent to workers.
+TransferableTypedData? transferableIsolatePayload(Uint8List bytes) {
+  if (bytes.length <= isolateTransferablePayloadThresholdBytes) {
+    return null;
+  }
+  return TransferableTypedData.fromList([bytes]);
+}
+
 /// Base class for worker responses. All subclasses must be sendable.
 sealed class WorkerResponse {
   const WorkerResponse(this.requestId);

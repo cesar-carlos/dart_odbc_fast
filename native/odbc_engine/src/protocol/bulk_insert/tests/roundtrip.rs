@@ -1,6 +1,6 @@
 use super::{
-    parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData, BulkColumnSpec,
-    BulkColumnType, BulkInsertPayload,
+    bulk_rows_from_vecs, parse_bulk_insert_payload, serialize_bulk_insert_payload, BulkColumnData,
+    BulkColumnSpec, BulkColumnType, BulkInsertPayload,
 };
 
 #[test]
@@ -79,7 +79,7 @@ fn test_bulk_insert_parse_roundtrip_text() {
         }],
         row_count: 2,
         column_data: vec![BulkColumnData::Text {
-            rows: vec![b"hi".to_vec(), b"world".to_vec()],
+            rows: bulk_rows_from_vecs(vec![b"hi".to_vec(), b"world".to_vec()]),
             max_len: 10,
             null_bitmap: None,
         }],

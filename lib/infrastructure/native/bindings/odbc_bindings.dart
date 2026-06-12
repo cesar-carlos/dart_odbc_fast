@@ -1,9 +1,6 @@
 // FFI bindings must match native C/Rust symbol names exactly.
-// ignore_for_file: non_constant_identifier_names, camel_case_types,
-// lines_longer_than_80_chars
 
 library;
-
 import 'dart:ffi' as ffi;
 
 part 'odbc_bindings_connection.dart';

@@ -9,7 +9,7 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     show Utf8;
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
+import '../bindings/test_odbc_bindings.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_isolate.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';

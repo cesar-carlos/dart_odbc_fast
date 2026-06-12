@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart' hide Utf8;
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as odbc_bindings;
-import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
 import 'package:test/test.dart';
 
 import 'fake_odbc_bindings.dart';
+import 'test_odbc_bindings.dart';
 
 void main() {
   group('OdbcBindings capability getters', () {

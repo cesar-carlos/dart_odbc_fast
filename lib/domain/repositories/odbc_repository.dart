@@ -19,6 +19,7 @@ import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Repository interface for ODBC database operations.
@@ -29,6 +30,14 @@ import 'package:result_dart/result_dart.dart';
 ///
 /// Implementations should handle errors and return [Result] types
 /// for type-safe error handling.
+///
+/// **Migrating off `List<dynamic>` parameters:** prefer
+/// [executeQueryParamValues], [executePreparedParamValues], and
+/// [executeQueryMultiParamValues] with explicit [ParamValue] tags, or the
+/// `…FromObjects` / `…ParamValuesFromObjects` extension methods on
+/// `IOdbcRepository` (see `odbc_repository_extensions.dart`, exported from
+/// `package:odbc_fast/odbc_fast.dart`). Use [paramValuesFromObjects] when
+/// building typed tag lists from plain Dart values.
 abstract class IOdbcRepository {
   /// Initializes the ODBC environment.
   ///

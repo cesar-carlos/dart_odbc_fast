@@ -293,6 +293,36 @@ python scripts/run_dart_benchmarks.py --rust-micro
 
 ---
 
+## Bulk insert performance (Dart)
+
+| Scenario | Prefer | Notes |
+| -------- | ------ | ----- |
+| Few rows (< ~100) | Prepared `INSERT` in a loop | Setup cost of [BulkInsertBuilder] is negligible; row-by-row is simpler. |
+| Medium batches (100–1k rows) | `bulkInsert` / `bulkInsertArray` on one connection | Build the payload once with [BulkInsertBuilder.build]; pass the [Uint8List] directly to FFI (no extra copy). |
+| Large batches (> ~1k rows) | `bulkInsertParallel` via [ConnectionPool] | Pool-backed parallel insert splits work across native workers. Size the pool to at least your target `parallelism` (often 4). |
+| Analytics SELECT (many rows, stable types) | `ResultEncoding.columnar` | Reduces row framing overhead; benchmark before adopting in production. |
+| Repeated statements | Prepared statement reuse | Keep one prepared handle per SQL shape; rebinding is cheaper than re-preparing. |
+
+[BulkInsertBuilder.build] uses the same two-pass strategy as [serializeParams]:
+phase 1 pre-encodes variable-width cells and computes the exact payload size;
+phase 2 writes into a single pre-sized [Uint8List]. This avoids [BytesBuilder]
+growth copies and an extra `Uint8List.fromList` at the FFI boundary.
+
+Local benchmarks:
+
+```powershell
+# CRUD latency incl. bulk build vs FFI split and pool parallel insert
+$env:RUN_PERF_TESTS="1"
+dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
+
+# Deterministic BulkInsertBuilder micro-benchmark (no DSN)
+dart test test/performance/protocol_performance_test.dart
+```
+
+Example for parallel bulk insert: `example/bulk_insert_parallel_demo.dart`.
+
+---
+
 ## Concurrency
 
 | Design decision                                                                               | Reasoning                                                                                                                                                                                                                                  |

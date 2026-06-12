@@ -94,36 +94,140 @@ class ClearAllStatementsRequest extends WorkerRequest {
 }
 
 class BulkInsertArrayRequest extends WorkerRequest {
-  const BulkInsertArrayRequest(
+  BulkInsertArrayRequest(
     int requestId,
     this.connectionId,
     this.table,
     this.columns,
-    this.dataBuffer,
+    Uint8List dataBuffer,
     this.rowCount,
-  ) : super(requestId, RequestType.bulkInsertArray);
+  )   : _dataBuffer = dataBuffer,
+        _transferableData = null,
+        super(requestId, RequestType.bulkInsertArray);
+
+  BulkInsertArrayRequest._transferable(
+    int requestId,
+    this.connectionId,
+    this.table,
+    this.columns,
+    TransferableTypedData transferableData,
+    this.rowCount,
+  )   : _dataBuffer = null,
+        _transferableData = transferableData,
+        super(requestId, RequestType.bulkInsertArray);
+
+  factory BulkInsertArrayRequest.withPayload(
+    int requestId,
+    int connectionId,
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer,
+    int rowCount,
+  ) {
+    final transferableData = transferableIsolatePayload(dataBuffer);
+    if (transferableData != null) {
+      return BulkInsertArrayRequest._transferable(
+        requestId,
+        connectionId,
+        table,
+        columns,
+        transferableData,
+        rowCount,
+      );
+    }
+    return BulkInsertArrayRequest(
+      requestId,
+      connectionId,
+      table,
+      columns,
+      dataBuffer,
+      rowCount,
+    );
+  }
+
+  Uint8List? _dataBuffer;
+  final TransferableTypedData? _transferableData;
   final int connectionId;
   final String table;
   final List<String> columns;
-  final Uint8List dataBuffer;
   final int rowCount;
+
+  Uint8List get dataBuffer {
+    final data = _dataBuffer;
+    if (data != null) {
+      return data;
+    }
+    return _dataBuffer = _transferableData!.materialize().asUint8List();
+  }
 }
 
 /// Parallel bulk insert through pool.
 class BulkInsertParallelRequest extends WorkerRequest {
-  const BulkInsertParallelRequest(
+  BulkInsertParallelRequest(
     int requestId,
     this.poolId,
     this.table,
     this.columns,
-    this.dataBuffer,
+    Uint8List dataBuffer,
     this.parallelism,
-  ) : super(requestId, RequestType.bulkInsertParallel);
+  )   : _dataBuffer = dataBuffer,
+        _transferableData = null,
+        super(requestId, RequestType.bulkInsertParallel);
+
+  BulkInsertParallelRequest._transferable(
+    int requestId,
+    this.poolId,
+    this.table,
+    this.columns,
+    TransferableTypedData transferableData,
+    this.parallelism,
+  )   : _dataBuffer = null,
+        _transferableData = transferableData,
+        super(requestId, RequestType.bulkInsertParallel);
+
+  factory BulkInsertParallelRequest.withPayload(
+    int requestId,
+    int poolId,
+    String table,
+    List<String> columns,
+    Uint8List dataBuffer,
+    int parallelism,
+  ) {
+    final transferableData = transferableIsolatePayload(dataBuffer);
+    if (transferableData != null) {
+      return BulkInsertParallelRequest._transferable(
+        requestId,
+        poolId,
+        table,
+        columns,
+        transferableData,
+        parallelism,
+      );
+    }
+    return BulkInsertParallelRequest(
+      requestId,
+      poolId,
+      table,
+      columns,
+      dataBuffer,
+      parallelism,
+    );
+  }
+
+  Uint8List? _dataBuffer;
+  final TransferableTypedData? _transferableData;
   final int poolId;
   final String table;
   final List<String> columns;
-  final Uint8List dataBuffer;
   final int parallelism;
+
+  Uint8List get dataBuffer {
+    final data = _dataBuffer;
+    if (data != null) {
+      return data;
+    }
+    return _dataBuffer = _transferableData!.materialize().asUint8List();
+  }
 }
 
 class CatalogTablesRequest extends WorkerRequest {

@@ -1,9 +1,11 @@
 use crate::error::{OdbcError, Result};
 
+use std::sync::Arc;
+
 use super::common::{
     len_to_u32, read_bytes, read_null_bitmap, read_u16_le, read_u32_le, validate_variable_cell_len,
-    write_null_bitmap, BulkColumnData, BulkColumnSpec, BulkColumnType, BulkInsertPayload,
-    BULK_V2_FLAGS_NONE, BULK_V2_MAGIC, BULK_V2_VERSION,
+    write_null_bitmap, BulkCellBytes, BulkColumnData, BulkColumnSpec, BulkColumnType,
+    BulkInsertPayload, BULK_V2_FLAGS_NONE, BULK_V2_MAGIC, BULK_V2_VERSION,
 };
 use super::legacy::{parse_column_data, serialize_column_data};
 
@@ -29,6 +31,7 @@ pub(crate) fn parse_column_data_v2(
     start: usize,
     spec: &BulkColumnSpec,
     row_count: usize,
+    wire_backing: &Arc<[u8]>,
 ) -> Result<(BulkColumnData, usize)> {
     let mut o = start;
 
@@ -39,7 +42,13 @@ pub(crate) fn parse_column_data_v2(
             for _ in 0..row_count {
                 let len = read_u32_le(data, &mut o)? as usize;
                 validate_variable_cell_len(len, spec.max_len)?;
-                rows.push(read_bytes(data, &mut o, len)?.to_vec());
+                let cell_start = o;
+                read_bytes(data, &mut o, len)?;
+                rows.push(BulkCellBytes::from_arc_slice(
+                    Arc::clone(wire_backing),
+                    cell_start,
+                    len,
+                ));
             }
             Ok((
                 BulkColumnData::Text {
@@ -56,7 +65,13 @@ pub(crate) fn parse_column_data_v2(
             for _ in 0..row_count {
                 let len = read_u32_le(data, &mut o)? as usize;
                 validate_variable_cell_len(len, spec.max_len)?;
-                rows.push(read_bytes(data, &mut o, len)?.to_vec());
+                let cell_start = o;
+                read_bytes(data, &mut o, len)?;
+                rows.push(BulkCellBytes::from_arc_slice(
+                    Arc::clone(wire_backing),
+                    cell_start,
+                    len,
+                ));
             }
             Ok((
                 BulkColumnData::Binary {
@@ -67,7 +82,7 @@ pub(crate) fn parse_column_data_v2(
                 o - start,
             ))
         }
-        _ => parse_column_data(data, start, spec, row_count),
+        _ => parse_column_data(data, start, spec, row_count, wire_backing),
     }
 }
 
@@ -108,7 +123,7 @@ pub(crate) fn serialize_column_data_v2(
 
 pub(crate) fn write_variable_rows_v2(
     out: &mut Vec<u8>,
-    rows: &[Vec<u8>],
+    rows: &[BulkCellBytes],
     max_len: usize,
     row_count: usize,
 ) -> Result<()> {
@@ -119,9 +134,10 @@ pub(crate) fn write_variable_rows_v2(
         )));
     }
     for row in rows {
-        validate_variable_cell_len(row.len(), max_len)?;
-        out.extend_from_slice(&len_to_u32(row.len(), "cell length")?.to_le_bytes());
-        out.extend_from_slice(row);
+        let bytes = row.as_slice();
+        validate_variable_cell_len(bytes.len(), max_len)?;
+        out.extend_from_slice(&len_to_u32(bytes.len(), "cell length")?.to_le_bytes());
+        out.extend_from_slice(bytes);
     }
     Ok(())
 }

@@ -7,7 +7,7 @@ import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as odbc_bindings show Utf8;
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     show OdbcNative;
-import 'package:odbc_fast/infrastructure/native/bindings/test_odbc_bindings.dart';
+import 'bindings/test_odbc_bindings.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/odbc_fast.dart'

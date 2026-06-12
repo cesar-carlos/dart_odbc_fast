@@ -1,5 +1,8 @@
 use crate::error::{OdbcError, Result};
+use std::borrow::Cow;
+use std::ops::Deref;
 use std::str;
+use std::sync::Arc;
 
 /// Hard cap on column count to bound memory in `parse_bulk_insert_payload`.
 /// Chosen to comfortably exceed any real-world table while preventing
@@ -70,6 +73,117 @@ pub struct BulkColumnSpec {
     pub max_len: usize,
 }
 
+/// Variable-length bulk cell bytes.
+///
+/// Parsed wire payloads share one [`Arc`] backing buffer per cell (zero-copy
+/// sub-slices). Manually constructed payloads use owned storage via the same
+/// type so [`BulkInsertPayload`] stays lifetime-free for [`ArrayBinding`].
+#[derive(Debug, Clone)]
+pub struct BulkCellBytes {
+    storage: Arc<[u8]>,
+    offset: usize,
+    len: usize,
+}
+
+impl BulkCellBytes {
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        let storage: Arc<[u8]> = Arc::from(bytes.into_boxed_slice());
+        let len = storage.len();
+        Self {
+            storage,
+            offset: 0,
+            len,
+        }
+    }
+
+    pub(crate) fn from_arc_slice(storage: Arc<[u8]>, offset: usize, len: usize) -> Self {
+        Self {
+            storage,
+            offset,
+            len,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.storage[self.offset..self.offset + self.len]
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.as_slice().to_vec()
+    }
+
+    pub fn into_owned(self) -> Cow<'static, [u8]> {
+        Cow::Owned(self.as_slice().to_vec())
+    }
+}
+
+impl From<Vec<u8>> for BulkCellBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::from_vec(bytes)
+    }
+}
+
+impl From<&[u8]> for BulkCellBytes {
+    fn from(bytes: &[u8]) -> Self {
+        Self::from_vec(bytes.to_vec())
+    }
+}
+
+impl AsRef<[u8]> for BulkCellBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Deref for BulkCellBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl PartialEq<[u8]> for BulkCellBytes {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl PartialEq<&[u8]> for BulkCellBytes {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.as_slice() == *other
+    }
+}
+
+impl PartialEq<Vec<u8>> for BulkCellBytes {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<BulkCellBytes> for &[u8] {
+    fn eq(&self, other: &BulkCellBytes) -> bool {
+        *self == other.as_slice()
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for BulkCellBytes {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for BulkCellBytes {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_slice() == other.as_ref()
+    }
+}
+
+/// Build a row vector from owned byte vectors (tests and manual payload construction).
+pub fn bulk_rows_from_vecs(rows: impl IntoIterator<Item = Vec<u8>>) -> Vec<BulkCellBytes> {
+    rows.into_iter().map(BulkCellBytes::from_vec).collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct BulkInsertPayload {
     pub table: String,
@@ -89,12 +203,12 @@ pub enum BulkColumnData {
         null_bitmap: Option<Vec<u8>>,
     },
     Text {
-        rows: Vec<Vec<u8>>,
+        rows: Vec<BulkCellBytes>,
         max_len: usize,
         null_bitmap: Option<Vec<u8>>,
     },
     Binary {
-        rows: Vec<Vec<u8>>,
+        rows: Vec<BulkCellBytes>,
         max_len: usize,
         null_bitmap: Option<Vec<u8>>,
     },
@@ -200,14 +314,7 @@ pub(crate) fn read_null_bitmap(
         return Ok(None);
     }
     let expected = null_bitmap_size(row_count);
-    let bytes = read_bytes(data, o, expected)?.to_vec();
-    if bytes.len() != expected {
-        return Err(OdbcError::MalformedPayload(format!(
-            "null bitmap length mismatch: expected {expected}, got {}",
-            bytes.len()
-        )));
-    }
-    Ok(Some(bytes))
+    Ok(Some(read_bytes(data, o, expected)?.to_vec()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
