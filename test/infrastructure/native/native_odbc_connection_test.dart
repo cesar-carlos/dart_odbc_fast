@@ -649,7 +649,7 @@ void main() {
         final connection = _connection(
           const TestOdbcBindingsOverrides(
             init: _initSuccess,
-            streamStart: _streamStartOne,
+            streamStartBatched: _streamStartBatchedOne,
             streamFetch: _streamFetchEmptySuccess,
           ),
         )..initialize();
@@ -942,8 +942,6 @@ int _streamFetchFailure(
   ffi.Pointer<ffi.Uint8> _____,
 ) =>
     -1;
-
-int _streamStartZero(int _, ffi.Pointer<odbc_bindings.Utf8> __, int ___) => 0;
 
 int _disconnectSuccess(int _) => 0;
 
