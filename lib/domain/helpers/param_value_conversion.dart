@@ -69,9 +69,9 @@ ParamValue toParamValue(Object? value) {
 
 /// Converts plain Dart objects to [ParamValue] wire tags.
 ///
-/// Preferred bridge for migrating off deprecated `List<dynamic>` repository
-/// and service overloads. Pair with `executeQueryParamValuesFromObjects` and
-/// related `…FromObjects` extension methods on `IOdbcRepository`.
+/// Converts plain Dart objects to [ParamValue] wire tags. Pair with
+/// `executeQueryParamValuesFromObjects` and related `…FromObjects` extension
+/// methods on `IOdbcRepository`.
 List<ParamValue> paramValuesFromObjects(List<Object?> params) {
   if (params.isEmpty) return const [];
 

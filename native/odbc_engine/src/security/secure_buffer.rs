@@ -19,27 +19,11 @@ impl SecureBuffer {
     }
 
     /// Run `f` with read-only access to the buffer bytes, then zeroise the
-    /// buffer in place before returning. Recommended over [`into_vec`] for
-    /// short-lived consumers that just need to forward bytes (C5).
+    /// buffer in place before returning (C5).
     pub fn with_bytes<R>(mut self, f: impl FnOnce(&[u8]) -> R) -> R {
         let r = f(&self.data);
         self.data.zeroize();
         r
-    }
-
-    /// Move the underlying bytes out of the buffer.
-    ///
-    /// **Security note (C5)**: the returned `Vec<u8>` is **not** zeroised when
-    /// the caller drops it. Prefer [`with_bytes`] when you only need temporary
-    /// access. Use this method only when the bytes must outlive the buffer for
-    /// architectural reasons (e.g. handing off to ODBC `connect` immediately).
-    #[deprecated(
-        since = "2.0.0",
-        note = "Bytes returned by `into_vec` are not zeroised on drop. \
-                Prefer `with_bytes` for short-lived consumers."
-    )]
-    pub fn into_vec(mut self) -> Vec<u8> {
-        std::mem::take(&mut self.data)
     }
 
     pub fn to_string_lossy(&self) -> String {
@@ -91,18 +75,6 @@ mod tests {
         let buffer = SecureBuffer::new(vec![1, 2, 3]);
         let copy = buffer.with_bytes(|b| b.to_vec());
         assert_eq!(copy, vec![1, 2, 3]);
-    }
-
-    #[test]
-    #[allow(
-        deprecated,
-        reason = "Regression test for legacy SecureBuffer API; ODBC-ENG-425; remove by 2026-09-30."
-    )]
-    fn test_into_vec_legacy() {
-        let data = vec![1, 2, 3];
-        let buffer = SecureBuffer::new(data.clone());
-        let extracted = buffer.into_vec();
-        assert_eq!(extracted, vec![1, 2, 3]);
     }
 
     #[test]
@@ -165,18 +137,6 @@ mod tests {
         let binary = vec![0x00, 0xFF, 0x7F, 0x80, 0xAA, 0x55];
         let buffer = SecureBuffer::new(binary.clone());
         assert_eq!(buffer.as_slice(), &[0x00, 0xFF, 0x7F, 0x80, 0xAA, 0x55]);
-    }
-
-    #[test]
-    #[allow(
-        deprecated,
-        reason = "Regression test for legacy SecureBuffer API; ODBC-ENG-425; remove by 2026-09-30."
-    )]
-    fn test_from_string_then_into_vec_legacy() {
-        let original = "test data".to_string();
-        let buffer = SecureBuffer::from_string(original.clone());
-        let extracted = buffer.into_vec();
-        assert_eq!(extracted, original.into_bytes());
     }
 
     #[test]

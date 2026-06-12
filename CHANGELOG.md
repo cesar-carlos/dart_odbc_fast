@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-06-12
+
+Patch confirming the 4.0 deprecation sweep is complete and removing the last
+native `#[deprecated]` surfaces.
+
+### Removed
+
+- **`SecureBuffer::into_vec`** (native) — use `with_bytes` so sensitive bytes
+  are zeroised on drop.
+- **`COLUMNAR_DEFAULT_BATCH_SIZE`** (native) — unused re-export; use
+  `block_fetch::configured_batch_size()` when batch sizing matters.
+
+### Changed
+
+- Example and doc comments updated to reference `executeQueryColumnarFromObjects`
+  and `executeQueryParamValuesFromObjects` instead of removed 3.x APIs.
+- `tool/generate_runners.py` no longer lists removed `getAsyncWorkerPoolStats`.
+
 ## [4.0.0] - 2026-06-12
 
 Major breaking release completing the typed-parameter migration and removing

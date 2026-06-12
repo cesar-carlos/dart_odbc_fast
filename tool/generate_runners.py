@@ -337,7 +337,6 @@ def main() -> None:
   final OdbcRepositoryState state;""",
         [
             "getMetrics",
-            "getAsyncWorkerPoolStats",
             "getWorkerPoolStats",
             "getVersion",
             "validateConnectionString",

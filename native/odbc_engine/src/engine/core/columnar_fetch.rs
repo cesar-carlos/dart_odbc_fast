@@ -23,8 +23,6 @@ use crate::protocol::OdbcType;
 use odbc_api::buffers::{AnySlice, BufferDesc, ColumnarAnyBuffer};
 use odbc_api::Cursor;
 
-use super::block_fetch::DEFAULT_BATCH_SIZE;
-
 /// Bind `cursor` to a `ColumnarAnyBuffer` and accumulate every batch into
 /// a freshly-built `RowBufferV2` (column-major). Returns the unbound
 /// cursor so multi-result paths can still call `into_stmt()`.
@@ -183,12 +181,6 @@ impl ColumnAccumulator {
         }
     }
 }
-
-/// Convenience re-export so call sites only import a single constant.
-#[deprecated(
-    note = "Use `block_fetch::configured_batch_size()` to honour ODBC_FAST_BLOCK_FETCH_BATCH"
-)]
-pub const COLUMNAR_DEFAULT_BATCH_SIZE: usize = DEFAULT_BATCH_SIZE;
 
 #[cfg(test)]
 mod tests {

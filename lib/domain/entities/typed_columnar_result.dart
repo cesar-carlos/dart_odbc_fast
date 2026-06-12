@@ -133,7 +133,7 @@ final class TypedColumnObject<T> extends TypedColumn {
 /// Usage:
 ///
 /// ```dart
-/// final r = await service.executeQueryColumnar(
+/// final r = await service.executeQueryColumnarFromObjects(
 ///   connId,
 ///   'SELECT id, score FROM stats',
 /// );

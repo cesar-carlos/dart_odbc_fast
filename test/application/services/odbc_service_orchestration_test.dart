@@ -249,8 +249,8 @@ void main() {
       });
     });
 
-    group('executeQueryColumnar', () {
-      test('delegates to executeQueryParams + toTypedColumnar conversion',
+    group('executeQueryColumnarFromObjects', () {
+      test('delegates to executeQueryParamValues + toTypedColumnar conversion',
           () async {
         final r = await service.executeQueryColumnarFromObjects(
           'test-connection',

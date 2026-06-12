@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('QueryResultMulti', () {
-    test('should expose firstResultSet, resultSets and rowCounts', () {
+    test('should expose firstResultSetOrNull, resultSets and rowCounts', () {
       const result = QueryResultMulti(
         items: [
           QueryResultMultiItem.rowCount(5),
