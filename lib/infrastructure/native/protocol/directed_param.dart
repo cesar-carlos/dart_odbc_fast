@@ -1,28 +1,10 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/types/param_direction.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
-/// A parameter with an explicit [ParamDirection] for the DRT1 wire path.
-///
-/// Native support covers scalar/text `OUT` / `INOUT`, `OUT1` result trailers,
-/// and Oracle `ParamValueRefCursorOut`. Binary `OUT` / `INOUT`, TVP, and the
-/// exhaustive `SqlDataType` x direction matrix remain product-gated; see
-/// `doc/notes/TYPE_MAPPING.md` section 3.1.
-///
-/// When [direction] is [ParamDirection.input] and [type] is null, the
-/// payload serialises the same as an untyped value.
-class DirectedParam {
-  const DirectedParam({
-    required this.value,
-    this.type,
-    this.direction = ParamDirection.input,
-  });
-
-  final Object? value;
-  final SqlDataType? type;
-  final ParamDirection direction;
-}
+export 'package:odbc_fast/domain/entities/directed_param.dart';
 
 /// Little-endian DRT1 magic (Rust: `odbc_engine` crate `bound_param` module).
 const List<int> drt1MagicBytes = [0x44, 0x52, 0x54, 0x31];
@@ -107,11 +89,7 @@ List<int> _u32Le(int v) {
   return buffer;
 }
 
-/// Serialises [DirectedParam] values to a **DRT1** buffer: `DRT1` + u32 count
-/// and repeated `(u8 direction)(ParamValue wire)`. Prefer
-/// `IOdbcService.executeQueryDirectedParams` or
-/// `IOdbcRepository.executeQueryParamBuffer` with this buffer. Engine mapping:
-/// [ParamDirection] `input` = 0, `output` = 1, `inOut` = 2.
+/// Serialises [DirectedParam] values to a **DRT1** buffer.
 Uint8List serializeDirectedParams(List<DirectedParam> params) {
   final out = BytesBuilder()
     ..add(drt1MagicBytes)
@@ -127,13 +105,7 @@ Uint8List serializeDirectedParams(List<DirectedParam> params) {
   return out.toBytes();
 }
 
-/// Converts [DirectedParam] rows to a legacy **v0** binary [ParamValue] list
-/// (concatenated tags, all treated as `INPUT` on the wire).
-///
-/// [ParamDirection.input] only — any other direction throws
-/// [UnsupportedError] because the legacy path cannot represent direction
-/// (use [serializeDirectedParams] and the service
-/// `executeQueryDirectedParams` for `OUT` / `INOUT`).
+/// Converts [DirectedParam] rows to a legacy **v0** binary [ParamValue] list.
 List<ParamValue> paramValuesFromDirected(List<DirectedParam> params) {
   return params.map((d) {
     if (d.direction != ParamDirection.input) {

@@ -1,3 +1,7 @@
+// Reason: exercises legacy Connection overload shims under test; remove when
+// dynamic-param APIs are deleted.
+// ignore_for_file: deprecated_member_use_from_same_package
+
 /// Unit tests for [IQueryServiceConnectionOverloads].
 ///
 /// Verifies the ergonomic extension overloads delegate to the underlying
@@ -8,11 +12,12 @@ library;
 
 import 'package:odbc_fast/application/services/i_query_service.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/directed_param.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
 
@@ -57,6 +62,20 @@ class _FakeQueryService implements IQueryService {
     String connectionId,
     String sql,
     List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
+    capturedConnectionId = connectionId;
+    capturedSql = sql;
+    capturedPositionalParams = params;
+    capturedEncoding = resultEncoding;
+    return Success(_stubResult);
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     capturedConnectionId = connectionId;
@@ -131,6 +150,18 @@ class _FakeQueryService implements IQueryService {
     String connectionId,
     String sql, {
     List<dynamic>? params,
+  }) async {
+    capturedConnectionId = connectionId;
+    capturedSql = sql;
+    capturedPositionalParams = params;
+    return Success(_stubColumnar);
+  }
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql, {
+    List<ParamValue>? params,
   }) async {
     capturedConnectionId = connectionId;
     capturedSql = sql;
@@ -217,6 +248,22 @@ void main() {
       );
       expect(fake.capturedConnectionId, equals('conn-42'));
       expect(fake.capturedPositionalParams, equals(<dynamic>['x']));
+    });
+  });
+
+  group('IQueryServiceConnectionOverloads.executeQueryColumnarParamValuesFor',
+      () {
+    test('should_forward_typed_param_values', () async {
+      await fake.executeQueryColumnarParamValuesFor(
+        conn,
+        'SELECT col FROM t WHERE id = ?',
+        params: const [ParamValueString('x')],
+      );
+      expect(fake.capturedConnectionId, equals('conn-42'));
+      expect(
+        fake.capturedPositionalParams,
+        equals(<ParamValue>[const ParamValueString('x')]),
+      );
     });
   });
 

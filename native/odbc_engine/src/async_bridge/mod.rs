@@ -17,19 +17,33 @@ fn get_runtime() -> Result<Arc<Runtime>, OdbcError> {
     }
 }
 
+/// Returns the stored runtime initialization error, if any.
+///
+/// Populated when [`init_runtime`] or the first [`get_runtime`] call fails.
+/// Subsequent calls return the same message until process restart.
+pub fn runtime_init_error() -> Option<&'static str> {
+    RUNTIME
+        .get()
+        .and_then(|result| result.as_ref().err().map(String::as_str))
+}
+
 #[cfg(test)]
 fn get_runtime_for_test() -> Result<Arc<Runtime>, OdbcError> {
     get_runtime()
 }
 
-#[allow(dead_code)]
-pub fn init_runtime() {
-    if let Err(e) = get_runtime() {
-        eprintln!("init_runtime failed: {}", e);
-    }
+/// Initialize the shared Tokio runtime. Idempotent on success.
+///
+/// On failure the error is stored in the [`RUNTIME`] `OnceLock` and is
+/// consultable via [`runtime_init_error`].
+pub fn init_runtime() -> Result<(), OdbcError> {
+    get_runtime().map(|_| ())
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "Async FFI bridge helper; exercised by unit tests here; ODBC-ENG-421; remove by 2026-09-30."
+)]
 pub fn execute_async<F, R>(f: F) -> Result<R, OdbcError>
 where
     F: std::future::Future<Output = Result<R, OdbcError>> + Send + 'static,
@@ -39,7 +53,6 @@ where
     runtime.block_on(f)
 }
 
-#[allow(dead_code)]
 pub fn spawn_blocking_task<F>(f: F) -> Result<tokio::task::JoinHandle<()>, OdbcError>
 where
     F: FnOnce() + Send + 'static,
@@ -55,16 +68,17 @@ mod tests {
 
     #[test]
     fn test_init_runtime() {
-        init_runtime();
-        init_runtime();
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
+        init_runtime().expect("repeated init should succeed");
+        init_runtime().expect("repeated init should succeed");
+        assert!(runtime_init_error().is_none());
     }
 
     #[test]
     fn test_init_runtime_multiple_calls() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
         let runtime1 = get_runtime_for_test().expect("runtime should initialize");
-        init_runtime();
+        init_runtime().expect("repeated init should succeed");
         let runtime2 = get_runtime_for_test().expect("runtime should initialize");
 
         assert!(Arc::ptr_eq(&runtime1, &runtime2));
@@ -72,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_get_runtime_singleton() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
         let runtime1 = get_runtime_for_test().expect("runtime should initialize");
         let runtime2 = get_runtime_for_test().expect("runtime should initialize");
 
@@ -81,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_get_runtime_creates_runtime() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
         let runtime = get_runtime_for_test().expect("runtime should initialize");
 
         let future = async { Ok::<i32, OdbcError>(42) };
@@ -93,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_execute_async_success() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         let future = async { Ok::<i32, OdbcError>(42) };
 
@@ -104,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_execute_async_error() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         let future = async { Err::<i32, OdbcError>(OdbcError::EmptyConnectionString) };
 
@@ -118,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_execute_async_string_result() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         let future = async { Ok::<String, OdbcError>("test".to_string()) };
 
@@ -129,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_execute_async_vec_result() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         let future = async { Ok::<Vec<i32>, OdbcError>(vec![1, 2, 3]) };
 
@@ -140,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_execute_async_async_operation() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         let future = async {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -154,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_spawn_blocking_task_runs_closure() {
-        init_runtime();
+        init_runtime().expect("runtime should initialize");
 
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
@@ -171,5 +185,11 @@ mod tests {
             .block_on(handle)
             .expect("blocking task should finish");
         assert!(done.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn runtime_init_error_is_none_after_successful_init() {
+        init_runtime().expect("runtime should initialize");
+        assert!(runtime_init_error().is_none());
     }
 }

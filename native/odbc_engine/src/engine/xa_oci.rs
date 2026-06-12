@@ -96,7 +96,10 @@ mod xa_flags {
     /// `xa_start`: begin a new branch.
     pub const TMNOFLAGS: c_int = 0;
     /// `xa_end`: branch is suspended (recoverable).
-    #[allow(dead_code)] // reserved for future XA suspend/resume support
+    #[allow(
+        dead_code,
+        reason = "Reserved for Oracle XA suspend/resume; ODBC-ENG-423; remove by 2026-09-30."
+    )]
     pub const TMSUSPEND: c_int = 0x02000000;
     /// `xa_end`: branch is completed (success / failure to be decided).
     pub const TMSUCCESS: c_int = 0x04000000;

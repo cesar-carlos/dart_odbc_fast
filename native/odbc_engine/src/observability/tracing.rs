@@ -63,7 +63,13 @@ impl Tracer {
     }
 
     pub fn finish_span(&self, span_id: u64) -> Option<QuerySpan> {
-        let mut spans = self.spans.lock().unwrap_or_else(|e| e.into_inner());
+        let mut spans = match self.spans.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!("Tracer spans lock poisoned; span {span_id} not finished");
+                poisoned.into_inner()
+            }
+        };
         if let Some(mut span) = spans.remove(&span_id) {
             span.finish();
             Some(span)

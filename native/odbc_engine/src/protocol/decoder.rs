@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_decode_empty_buffer() {
         let buffer = RowBuffer::new();
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.column_count, 0);
@@ -257,7 +257,7 @@ mod tests {
         buffer.add_column("value".to_string(), OdbcType::Integer);
         buffer.add_row(vec![Some(vec![5, 0, 0, 0])]); // 5 as i32 little-endian
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.column_count, 1);
@@ -273,7 +273,7 @@ mod tests {
         buffer.add_column("nullable".to_string(), OdbcType::Varchar);
         buffer.add_row(vec![None]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.rows[0][0], None);
@@ -285,7 +285,7 @@ mod tests {
         buffer.add_column("id".to_string(), OdbcType::Integer);
         buffer.add_column("name".to_string(), OdbcType::Varchar);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.column_count, 2);
@@ -301,7 +301,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
         buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.row_count, 2);
@@ -337,7 +337,7 @@ mod tests {
         original.add_row(vec![Some(vec![42, 0, 0, 0]), Some(b"hello".to_vec())]);
         original.add_row(vec![None, Some(b"world".to_vec())]);
 
-        let encoded = RowBufferEncoder::encode(&original);
+        let encoded = RowBufferEncoder::encode(&original).unwrap();
         let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
 
         assert_eq!(decoded.column_count, 2);
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_decode_rejects_payload_size_mismatch() {
-        let mut buffer = RowBufferEncoder::encode(&RowBuffer::new());
+        let mut buffer = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         buffer.extend_from_slice(&[1, 2, 3]);
 
         let result = BinaryProtocolDecoder::parse(&buffer);

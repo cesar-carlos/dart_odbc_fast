@@ -1950,6 +1950,8 @@ class OdbcMetrics {
   ///
   /// The [b] must contain at least 40 bytes of metrics data.
   // Factory method pattern preferred for deserialization.
+  // Reason: fromBytes mirrors cbindgen layout factory; AUDIT-DART-2026-06,
+  // remove when a named constructor can replace the static without ABI churn.
   // ignore: prefer_constructors_over_static_methods
   static OdbcMetrics fromBytes(Uint8List b) {
     final d = ByteData.sublistView(b);

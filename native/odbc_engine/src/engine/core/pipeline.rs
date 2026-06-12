@@ -1,10 +1,13 @@
-use super::execution_engine::ExecutionEngine;
+use super::execution::ExecutionEngine;
 use crate::error::{OdbcError, Result};
 use crate::handles::CachedConnection;
 use crate::observability::Metrics;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// Default prepared-statement cache size for process-wide pipeline singletons.
+pub const SHARED_PIPELINE_CACHE_SIZE: usize = 100;
 
 /// Borrowed query plan — describes a validated SQL string without owning
 /// it. Avoids one `String::from(sql)` per query in the hot path; the
@@ -136,6 +139,34 @@ impl QueryPipeline {
     }
 }
 
+/// Shared row-major [`QueryPipeline`] used by catalog and query entry points.
+pub fn shared_row_major_pipeline() -> Arc<QueryPipeline> {
+    static PIPELINE: OnceLock<Arc<QueryPipeline>> = OnceLock::new();
+    Arc::clone(PIPELINE.get_or_init(|| Arc::new(QueryPipeline::new(SHARED_PIPELINE_CACHE_SIZE))))
+}
+
+/// Shared columnar pipeline (no compression).
+pub fn shared_columnar_pipeline() -> Arc<QueryPipeline> {
+    static PIPELINE: OnceLock<Arc<QueryPipeline>> = OnceLock::new();
+    Arc::clone(PIPELINE.get_or_init(|| {
+        Arc::new(QueryPipeline::with_columnar(
+            SHARED_PIPELINE_CACHE_SIZE,
+            false,
+        ))
+    }))
+}
+
+/// Shared columnar pipeline with compression enabled.
+pub fn shared_columnar_compressed_pipeline() -> Arc<QueryPipeline> {
+    static PIPELINE: OnceLock<Arc<QueryPipeline>> = OnceLock::new();
+    Arc::clone(PIPELINE.get_or_init(|| {
+        Arc::new(QueryPipeline::with_columnar(
+            SHARED_PIPELINE_CACHE_SIZE,
+            true,
+        ))
+    }))
+}
+
 fn validate_sql_not_empty(sql: &str) -> Result<()> {
     if sql.trim().is_empty() {
         return Err(OdbcError::ValidationError(
@@ -257,6 +288,26 @@ mod tests {
         let sql = "SELECT naïve FROM t";
         let plan = pipeline.parse_sql(sql).unwrap();
         assert_eq!(plan.sql(), sql);
+    }
+
+    #[test]
+    fn shared_row_major_pipeline_returns_same_arc_instance() {
+        let a = shared_row_major_pipeline();
+        let b = shared_row_major_pipeline();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn shared_columnar_pipelines_are_distinct_singletons() {
+        let row = shared_row_major_pipeline();
+        let col = shared_columnar_pipeline();
+        let compressed = shared_columnar_compressed_pipeline();
+        assert!(!Arc::ptr_eq(&row, &col));
+        assert!(!Arc::ptr_eq(&col, &compressed));
+        assert!(Arc::ptr_eq(
+            &shared_columnar_pipeline(),
+            &shared_columnar_pipeline()
+        ));
     }
 
     #[test]

@@ -1,9 +1,10 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/directed_param.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped operations subset of `IOdbcService`.
@@ -17,16 +18,40 @@ import 'package:result_dart/result_dart.dart';
 /// categories (e.g. `executeQueryParamBuffer`) stay on `IOdbcService`
 /// for now and may be promoted here in a follow-up.
 abstract interface class IQueryService {
+  /// Legacy convenience query after `connect()`.
+  ///
+  /// Migration: prefer [executeQueryParamValues] (or
+  /// [executeQueryDirectedParams] for `OUT` / `INOUT`).
+  @Deprecated(
+    'Use executeQueryParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     List<dynamic>? params,
     String? connectionId,
   });
 
+  /// Legacy untyped positional parameters.
+  ///
+  /// Migration: prefer [executeQueryParamValues] or
+  /// [executeQueryDirectedParams] for typed parameters.
+  @Deprecated(
+    'Use executeQueryParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
     List<dynamic> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  });
+
+  /// Typed positional parameters via [ParamValue] wire tags.
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   });
 
@@ -63,10 +88,13 @@ abstract interface class IQueryService {
   /// `Float64List`) so numeric pipelines avoid `dynamic` boxing.
   /// Strings, bytes and dates remain in `List<T?>`.
   ///
-  /// Behaviour vs `executeQueryParams`:
+  /// Behaviour vs legacy positional `List<dynamic>` params:
   /// - Same validation, same error mapping.
   /// - Conversion overhead: one extra pass over the result; the win
   ///   comes from downstream reads in tight loops.
+  ///
+  /// Migration: prefer [executeQueryColumnarParamValues] when parameters
+  /// are already [ParamValue] instances.
   ///
   /// Example:
   ///
@@ -87,13 +115,24 @@ abstract interface class IQueryService {
   ///   (err) => log.error(err.message),
   /// );
   /// ```
+  @Deprecated(
+    'Use executeQueryColumnarParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<TypedColumnarResult>> executeQueryColumnar(
     String connectionId,
     String sql, {
     List<dynamic>? params,
   });
 
-  /// Stream-shaped sibling of [executeQueryColumnar]. Each emitted item
+  /// Typed sibling of the legacy columnar query API.
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql, {
+    List<ParamValue>? params,
+  });
+
+  /// Stream-shaped sibling of the legacy columnar query API. Each emitted item
   /// is a complete [TypedColumnarResult] (a single chunk for the named
   /// query API; multiple chunks when the underlying engine streams).
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
@@ -128,6 +167,10 @@ abstract interface class IQueryService {
 /// ```
 extension IQueryServiceConnectionOverloads on IQueryService {
   /// `executeQuery` overload that accepts a [Connection].
+  @Deprecated(
+    'Use executeQueryParamValuesFor() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executeQueryFor(
     Connection conn,
     String sql, {
@@ -136,6 +179,10 @@ extension IQueryServiceConnectionOverloads on IQueryService {
       executeQuery(sql, connectionId: conn.id, params: params);
 
   /// `executeQueryParams` overload that accepts a [Connection].
+  @Deprecated(
+    'Use executeQueryParamValuesFor() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executeQueryParamsFor(
     Connection conn,
     String sql,
@@ -143,6 +190,20 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       executeQueryParams(
+        conn.id,
+        sql,
+        params,
+        resultEncoding: resultEncoding,
+      );
+
+  /// `executeQueryParamValues` overload that accepts a [Connection].
+  Future<Result<QueryResult>> executeQueryParamValuesFor(
+    Connection conn,
+    String sql,
+    List<ParamValue> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) =>
+      executeQueryParamValues(
         conn.id,
         sql,
         params,
@@ -158,12 +219,24 @@ extension IQueryServiceConnectionOverloads on IQueryService {
       executeQueryNamed(conn.id, sql, namedParams);
 
   /// `executeQueryColumnar` overload that accepts a [Connection].
+  @Deprecated(
+    'Use executeQueryColumnarParamValuesFor() with typed ParamValue '
+    'parameters. Will be removed in a future major release.',
+  )
   Future<Result<TypedColumnarResult>> executeQueryColumnarFor(
     Connection conn,
     String sql, {
     List<dynamic>? params,
   }) =>
       executeQueryColumnar(conn.id, sql, params: params);
+
+  /// `executeQueryColumnarParamValues` overload that accepts a [Connection].
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValuesFor(
+    Connection conn,
+    String sql, {
+    List<ParamValue>? params,
+  }) =>
+      executeQueryColumnarParamValues(conn.id, sql, params: params);
 
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(

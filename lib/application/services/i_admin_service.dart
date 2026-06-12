@@ -1,9 +1,8 @@
+import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
-import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
-    show AsyncWorkerPoolStats;
 import 'package:result_dart/result_dart.dart';
 
 /// Administrative / lifecycle operations subset of `IOdbcService`.

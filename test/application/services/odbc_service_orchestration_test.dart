@@ -37,7 +37,7 @@ void main() {
             (err! as ConnectionError).message,
             contains('No active connection'),
           );
-          expect(mockRepo.executeQueryParamsCalled, isFalse);
+          expect(mockRepo.executeQueryParamValuesCalled, isFalse);
         },
       );
 
@@ -49,7 +49,7 @@ void main() {
               await service.executeQuery('SELECT 1', connectionId: '');
           expect(result.isError(), isTrue);
           expect(result.exceptionOrNull(), isA<ConnectionError>());
-          expect(mockRepo.executeQueryParamsCalled, isFalse);
+          expect(mockRepo.executeQueryParamValuesCalled, isFalse);
         },
       );
     });
@@ -64,7 +64,7 @@ void main() {
       });
 
       test(
-        'should_route_to_executeQueryParams_with_empty_params_'
+        'should_route_to_executeQueryParamValues_with_empty_params_'
         'when_params_is_null',
         () async {
           final result = await service.executeQuery(
@@ -73,14 +73,14 @@ void main() {
           );
 
           expect(result.isSuccess(), isTrue);
-          expect(mockRepo.executeQueryParamsCalled, isTrue);
+          expect(mockRepo.executeQueryParamValuesCalled, isTrue);
         },
       );
 
       test(
-        'should_route_to_executeQueryParams_when_params_are_nonempty',
+        'should_route_to_executeQueryParamValues_when_params_are_nonempty',
         () async {
-          mockRepo.executeQueryParamsCalled = false;
+          mockRepo.executeQueryParamValuesCalled = false;
           final result = await service.executeQuery(
             'SELECT * FROM t WHERE id = ?',
             params: [42],
@@ -88,14 +88,15 @@ void main() {
           );
 
           expect(result.isSuccess(), isTrue);
-          expect(mockRepo.executeQueryParamsCalled, isTrue);
+          expect(mockRepo.executeQueryParamValuesCalled, isTrue);
         },
       );
 
       test(
-        'should_route_to_executeQueryParams_with_empty_list_when_params_empty',
+        'should_route_to_executeQueryParamValues_with_empty_list_when_'
+        'params_empty',
         () async {
-          mockRepo.executeQueryParamsCalled = false;
+          mockRepo.executeQueryParamValuesCalled = false;
           final result = await service.executeQuery(
             'SELECT 1',
             params: [],
@@ -103,7 +104,7 @@ void main() {
           );
 
           expect(result.isSuccess(), isTrue);
-          expect(mockRepo.executeQueryParamsCalled, isTrue);
+          expect(mockRepo.executeQueryParamValuesCalled, isTrue);
         },
       );
     });

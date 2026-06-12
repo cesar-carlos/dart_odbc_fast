@@ -1,6 +1,6 @@
 /// Unit tests: repository mapping for MULT+OUT1 when item[0] is RowCount.
 ///
-/// Verifies that [OdbcRepositoryImpl._parseMultiDirectedBuffer] correctly
+/// Verifies that directed multi-result parsing correctly
 /// handles the DML-first case where the Rust engine emits
 /// `RowCount(n)` as the very first item in the MULT envelope instead of
 /// an empty `ResultSet`.

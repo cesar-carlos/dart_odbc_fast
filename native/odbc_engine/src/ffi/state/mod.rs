@@ -63,7 +63,10 @@ pub struct LegacyGlobalError {
 pub struct ConnectionError {
     pub simple_message: String,
     pub structured: Option<StructuredError>,
-    #[allow(dead_code)] // Reserved for future use (error expiration, debugging).
+    #[allow(
+        dead_code,
+        reason = "Reserved for error expiration/TTL; ODBC-ENG-422; remove by 2026-09-30."
+    )]
     pub timestamp: Instant,
 }
 
@@ -249,6 +252,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial]
     fn metrics_singleton_is_stable_across_calls() {
         let a = ffi_metrics();
         let b = ffi_metrics();
@@ -256,6 +260,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn audit_logger_singleton_is_stable_across_calls() {
         let a = ffi_audit_logger();
         let b = ffi_audit_logger();
@@ -263,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn connection_error_round_trip_plain_message() {
         let conn_id = 1_000_001;
         set_connection_error(conn_id, "boom".to_string());
@@ -275,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn connection_error_round_trip_structured() {
         let conn_id = 1_000_002;
         let structured = StructuredError {
@@ -296,6 +303,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn structured_error_overwrites_simple_for_same_conn_id() {
         let conn_id = 1_000_003;
         set_connection_error(conn_id, "old".to_string());
@@ -310,6 +318,49 @@ mod tests {
             Some("new")
         );
         clear_connection_error(conn_id);
+    }
+
+    /// Mirrors [`connection_errors_read`] / [`connection_errors_write`] poison
+    /// policy without poisoning the process-wide `OnceLock` (parallel lib tests
+    /// would otherwise observe `None` and fail).
+    #[test]
+    fn connection_errors_read_returns_none_when_lock_poisoned() {
+        let lock = RwLock::new(HashMap::<u32, ConnectionError>::new());
+        let poisoned = std::panic::catch_unwind(|| {
+            let _guard = lock.write().expect("lock should be available");
+            panic!("intentional panic to poison local RwLock");
+        });
+        assert!(poisoned.is_err(), "panic should poison the RwLock");
+
+        assert!(
+            lock.read().ok().is_none(),
+            "poisoned connection_errors read should return None for FFI guards"
+        );
+        assert!(
+            lock.write().ok().is_none(),
+            "poisoned connection_errors write should return None for FFI guards"
+        );
+    }
+
+    /// Mirrors [`legacy_global_error_read`] / [`legacy_global_error_write`]
+    /// poison policy on a local stand-in lock (see comment on the test above).
+    #[test]
+    fn legacy_global_error_read_returns_none_when_lock_poisoned() {
+        let lock = RwLock::new(LegacyGlobalError::default());
+        let poisoned = std::panic::catch_unwind(|| {
+            let _guard = lock.write().expect("lock should be available");
+            panic!("intentional panic to poison local RwLock");
+        });
+        assert!(poisoned.is_err(), "panic should poison the RwLock");
+
+        assert!(
+            lock.read().ok().is_none(),
+            "poisoned legacy error read should return None"
+        );
+        assert!(
+            lock.write().ok().is_none(),
+            "poisoned legacy error write should return None"
+        );
     }
 }
 

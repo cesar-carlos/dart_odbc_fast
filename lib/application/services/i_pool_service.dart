@@ -1,5 +1,5 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
+import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Pool-shaped operations subset of `IOdbcService`.

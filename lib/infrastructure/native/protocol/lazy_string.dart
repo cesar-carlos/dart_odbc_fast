@@ -41,8 +41,8 @@ import 'package:meta/meta.dart';
 /// cache that does not change the value the class represents; we suppress
 /// `must_be_immutable` for that reason only.
 @immutable
-// Cache field _decoded is private memoization with no external visibility;
-// equality and hashing are computed over the final byte slice only.
+// Reason: private decode cache is intentional memoization; AUDIT-DART-2026-06,
+// remove if LazyString is refactored to a non-@immutable holder type.
 // ignore: must_be_immutable
 class LazyString {
   /// Wraps [bytes] without taking a defensive copy. The caller is

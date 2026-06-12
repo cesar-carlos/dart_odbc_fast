@@ -16,7 +16,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod helpers;
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, should_run_slow_e2e_tests};
+use helpers::e2e::{
+    get_connection_and_db_type, should_run_e2e_tests, should_run_slow_e2e_tests, unique_e2e_table,
+};
 
 fn decode_integer(data: &[u8]) -> i32 {
     if data.len() >= 4 {
@@ -161,8 +163,8 @@ fn test_e2e_bulk_compare_array_vs_parallel() {
     println!("| --- | ---: | ---: | ---: | ---: |");
 
     for (label, rows) in scenarios {
-        let array_table = format!("odbc_bench_array_{}", label);
-        let parallel_table = format!("odbc_bench_parallel_{}", label);
+        let array_table = unique_e2e_table(&format!("odbc_bench_array_{label}"));
+        let parallel_table = unique_e2e_table(&format!("odbc_bench_parallel_{label}"));
 
         let odbc_conn = conn_arc.lock().expect("lock");
         let array_rps = benchmark_array_binding(&odbc_conn, &array_table, rows, 1_000);

@@ -247,6 +247,8 @@ class BulkTimestamp {
   final int fraction;
 
   /// Creates a [BulkTimestamp] from a [DateTime] instance.
+  // Reason: fromDateTime is the established bulk wire helper;
+  // AUDIT-DART-2026-06, remove when BulkTimestamp gains a constructor alias.
   // ignore: prefer_constructors_over_static_methods
   static BulkTimestamp fromDateTime(DateTime dt) {
     return BulkTimestamp(

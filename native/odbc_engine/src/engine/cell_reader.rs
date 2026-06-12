@@ -206,6 +206,20 @@ mod tests {
             .filter(|s| !s.is_empty())
     }
 
+    #[cfg(feature = "test-helpers")]
+    fn lock_handles_for_test(
+        handles: &crate::handles::SharedHandleManager,
+    ) -> Result<std::sync::MutexGuard<'_, crate::handles::HandleManager>> {
+        crate::error::lock_mutex(handles)
+    }
+
+    #[cfg(feature = "test-helpers")]
+    fn lock_cached_connection_for_test(
+        conn_arc: &std::sync::Arc<std::sync::Mutex<crate::handles::CachedConnection>>,
+    ) -> Result<std::sync::MutexGuard<'_, crate::handles::CachedConnection>> {
+        crate::error::lock_mutex(conn_arc)
+    }
+
     #[test]
     #[ignore]
     #[cfg(feature = "test-helpers")]
@@ -220,12 +234,12 @@ mod tests {
 
         let handles = conn.get_handles();
         let conn_arc = {
-            let handles_guard = handles.lock().unwrap();
+            let handles_guard = lock_handles_for_test(&handles).expect("lock handles");
             handles_guard
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let mut odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = lock_cached_connection_for_test(&conn_arc).expect("lock connection");
 
         let sql = "SELECT 42 AS value";
         let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
@@ -253,12 +267,12 @@ mod tests {
 
         let handles = conn.get_handles();
         let conn_arc = {
-            let handles_guard = handles.lock().unwrap();
+            let handles_guard = lock_handles_for_test(&handles).expect("lock handles");
             handles_guard
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let mut odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = lock_cached_connection_for_test(&conn_arc).expect("lock connection");
 
         let sql = "SELECT 'test' AS value";
         let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
@@ -286,12 +300,12 @@ mod tests {
 
         let handles = conn.get_handles();
         let conn_arc = {
-            let handles_guard = handles.lock().unwrap();
+            let handles_guard = lock_handles_for_test(&handles).expect("lock handles");
             handles_guard
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let mut odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = lock_cached_connection_for_test(&conn_arc).expect("lock connection");
 
         let sql = "SELECT NULL AS value";
         let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)
@@ -320,12 +334,12 @@ mod tests {
 
         let handles = conn.get_handles();
         let conn_arc = {
-            let handles_guard = handles.lock().unwrap();
+            let handles_guard = lock_handles_for_test(&handles).expect("lock handles");
             handles_guard
                 .get_connection(conn.get_connection_id())
                 .expect("Failed to get ODBC connection")
         };
-        let mut odbc_conn = conn_arc.lock().unwrap();
+        let mut odbc_conn = lock_cached_connection_for_test(&conn_arc).expect("lock connection");
 
         let sql = "SELECT 9223372036854775807 AS value";
         let buffer = execute_query_with_cached_connection(&mut odbc_conn, sql)

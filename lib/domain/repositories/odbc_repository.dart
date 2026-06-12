@@ -1,10 +1,15 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
+import 'package:odbc_fast/domain/entities/directed_param.dart';
+import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
+import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
@@ -12,12 +17,8 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
-import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
-    show AsyncWorkerPoolStats;
-import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Repository interface for ODBC database operations.
@@ -174,7 +175,7 @@ abstract class IOdbcRepository {
   ///
   /// The [timeoutMs] specifies the statement timeout in milliseconds.
   /// Returns a statement ID on success, which must be used with
-  /// [executePrepared] and [closeStatement].
+  /// [executePreparedParamValues] and [closeStatement].
   Future<Result<int>> prepare(
     String connectionId,
     String sql, {
@@ -188,7 +189,7 @@ abstract class IOdbcRepository {
   /// occurrence order so repeated names can reuse the same input value.
   ///
   /// The returned statement ID must be executed with [executePreparedNamed]
-  /// or [executePrepared].
+  /// or [executePreparedParamValues].
   Future<Result<int>> prepareNamed(
     String connectionId,
     String sql, {
@@ -204,10 +205,26 @@ abstract class IOdbcRepository {
   /// in the prepared SQL statement, in order.
   ///
   /// The [options] can override timeout and fetch size for this execution.
+  ///
+  /// Migration: prefer [executePreparedParamValues] for new code. Untyped
+  /// `List<dynamic>?` parameters remain supported but will be removed in a
+  /// future major release once call sites migrate to [ParamValue].
+  @Deprecated(
+    'Use executePreparedParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executePrepared(
     String connectionId,
     int stmtId,
     List<dynamic>? params,
+    StatementOptions? options,
+  );
+
+  /// Typed positional execution for statements prepared with [prepare].
+  Future<Result<QueryResult>> executePreparedParamValues(
+    String connectionId,
+    int stmtId,
+    List<ParamValue>? params,
     StatementOptions? options,
   );
 
@@ -239,6 +256,14 @@ abstract class IOdbcRepository {
   ///
   /// Convenience method that combines prepare and execute in a single call.
   /// The [params] list should contain values for each '?' placeholder in [sql].
+  ///
+  /// Migration: prefer [executeQueryParamValues] for new code. Untyped
+  /// `List<dynamic>` parameters remain supported but will be removed in a
+  /// future major release once call sites migrate to [ParamValue].
+  @Deprecated(
+    'Use executeQueryParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResult>> executeQueryParams(
     String connectionId,
     String sql,
@@ -246,7 +271,17 @@ abstract class IOdbcRepository {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   });
 
-  /// Like [executeQueryParams] but the wire buffer is pre-serialised: legacy
+  /// Typed positional parameters via [ParamValue] wire tags.
+  ///
+  /// Preferred positional execute API using explicit [ParamValue] wire tags.
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  });
+
+  /// Like positional parameter execute, but the wire buffer is pre-serialised:
   /// v0 (concatenated `ParamValue` wire tags) or DRT1
   /// (`serializeDirectedParams`).
   Future<Result<QueryResult>> executeQueryParamBuffer(
@@ -255,6 +290,13 @@ abstract class IOdbcRepository {
     Uint8List? paramBuffer, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   });
+
+  /// Executes SQL with DRT1 directed parameters (`OUT` / `INOUT`).
+  Future<Result<QueryResult>> executeQueryDirectedParams(
+    String connectionId,
+    String sql,
+    List<DirectedParam> params,
+  );
 
   /// Executes a SQL query with named parameters.
   ///
@@ -303,10 +345,25 @@ abstract class IOdbcRepository {
   ///
   /// Same wire format as [executeQueryMultiFull] but accepts positional `?`
   /// parameters. New in v3.2.0 (M5).
+  ///
+  /// Migration: prefer [executeQueryMultiParamValues] for new code. Untyped
+  /// `List<dynamic>` parameters remain supported but will be removed in a
+  /// future major release once call sites migrate to [ParamValue].
+  @Deprecated(
+    'Use executeQueryMultiParamValues() with typed ParamValue parameters. '
+    'Will be removed in a future major release.',
+  )
   Future<Result<QueryResultMulti>> executeQueryMultiParams(
     String connectionId,
     String sql,
     List<dynamic> params,
+  );
+
+  /// Typed positional multi-result execute API.
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
   );
 
   /// Streams a multi-result batch one item at a time.

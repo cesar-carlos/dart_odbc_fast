@@ -224,6 +224,21 @@ impl StructuredError {
     }
 }
 
+/// Stable diagnostic for mutex / `RwLock` poison in engine runtime paths.
+pub(crate) const LOCK_POISONED: &str = "Lock poisoned";
+
+/// [`OdbcError::InternalError`] used when a runtime mutex is poisoned.
+pub(crate) fn internal_lock_error() -> OdbcError {
+    OdbcError::InternalError(LOCK_POISONED.to_string())
+}
+
+/// Acquire a mutex guard or return [`internal_lock_error`].
+pub(crate) fn lock_mutex<'a, T>(
+    mutex: &'a std::sync::Mutex<T>,
+) -> Result<std::sync::MutexGuard<'a, T>> {
+    mutex.lock().map_err(|_| internal_lock_error())
+}
+
 pub type Result<T> = std::result::Result<T, OdbcError>;
 
 #[cfg(test)]

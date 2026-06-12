@@ -1,5 +1,6 @@
 pub mod capabilities;
 pub mod db2;
+pub mod detection;
 pub mod driver_plugin;
 pub mod mariadb;
 pub mod mysql;

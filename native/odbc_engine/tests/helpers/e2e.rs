@@ -4,8 +4,10 @@ use super::env::{
     get_mysql_test_dsn, get_oracle_test_dsn, get_postgresql_test_dsn, get_sqlite_test_dsn,
     get_sqlserver_test_dsn, get_sybase_test_dsn, get_test_dsn,
 };
-use odbc_engine::engine::{OdbcConnection, OdbcEnvironment};
+use odbc_engine::engine::{validate_identifier, OdbcConnection, OdbcEnvironment};
 use odbc_engine::test_helpers::load_dotenv;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Detected database type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,9 +174,32 @@ pub fn is_database_type(expected: DatabaseType) -> bool {
     false
 }
 
+/// Returns a unique, validated SQL identifier for an ephemeral E2E table.
+///
+/// Names embed process id, nanosecond timestamp, and a monotonic counter so
+/// parallel test binaries and reruns do not collide on shared databases.
+#[allow(dead_code)]
+pub fn unique_e2e_table(prefix: &str) -> String {
+    validate_identifier(prefix).expect("E2E table prefix must be a valid identifier");
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let name = format!(
+        "{prefix}_{}_{}_{}",
+        std::process::id(),
+        nanos,
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    validate_identifier(&name).expect("generated E2E table name must be a valid identifier");
+    name
+}
+
 /// Returns SQL to drop a table idempotently (no error if table does not exist).
 #[allow(dead_code)]
 pub fn sql_drop_table_if_exists(table_name: &str, db_type: DatabaseType) -> String {
+    validate_identifier(table_name).expect("table name must be a valid identifier");
     match db_type {
         DatabaseType::SqlServer => {
             format!(

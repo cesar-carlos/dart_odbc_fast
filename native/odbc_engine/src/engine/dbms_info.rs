@@ -77,14 +77,10 @@ impl DbmsInfo {
     /// Convenience: query a connection by id through the shared handle manager.
     pub fn detect_for_conn_id(handles: &SharedHandleManager, conn_id: u32) -> Result<Self> {
         let conn_arc = {
-            let h = handles
-                .lock()
-                .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
+            let h = crate::error::lock_mutex(handles.as_ref())?;
             h.get_connection(conn_id)?
         };
-        let cached = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+        let cached = crate::error::lock_mutex(conn_arc.as_ref())?;
         Self::detect(cached.connection())
     }
 

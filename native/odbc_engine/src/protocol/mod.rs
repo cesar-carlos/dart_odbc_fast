@@ -11,6 +11,9 @@ pub mod param_value;
 pub mod row_buffer;
 pub mod types;
 
+// EXPERIMENTAL (`columnar-v2` feature): only header constants and placeholder
+// benches exist today. Not wired into the main query/stream encode-decode
+// pipeline. See `columnar_v2.rs` and `doc/notes/columnar_protocol_sketch.md`.
 #[cfg(feature = "columnar-v2")]
 pub mod columnar_v2;
 

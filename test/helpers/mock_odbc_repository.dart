@@ -4,11 +4,14 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
+import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
@@ -19,10 +22,10 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
-import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
-    show AsyncWorkerPoolStats;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
+    show paramValuesFromObjects;
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -40,6 +43,9 @@ class MockOdbcRepository implements IOdbcRepository {
   bool executeQueryCalled = false;
   bool streamQueryCalled = false;
   bool executeQueryParamsCalled = false;
+  bool executeQueryParamValuesCalled = false;
+  bool executePreparedParamValuesCalled = false;
+  bool executeQueryMultiParamValuesCalled = false;
   bool executeQueryParamBufferCalled = false;
   bool executeQueryNamedCalled = false;
   bool streamQueryNamedCalled = false;
@@ -178,6 +184,22 @@ class MockOdbcRepository implements IOdbcRepository {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     executeQueryParamsCalled = true;
+    return executeQueryParamValues(
+      connectionId,
+      sql,
+      paramValuesFromObjects(params),
+      resultEncoding: resultEncoding,
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) async {
+    executeQueryParamValuesCalled = true;
     _queryCount++;
     return const Success(
       QueryResult(
@@ -209,6 +231,18 @@ class MockOdbcRepository implements IOdbcRepository {
       ),
     );
   }
+
+  @override
+  Future<Result<QueryResult>> executeQueryDirectedParams(
+    String connectionId,
+    String sql,
+    List<DirectedParam> params,
+  ) =>
+      executeQueryParamBuffer(
+        connectionId,
+        sql,
+        null,
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryNamed(
@@ -274,6 +308,22 @@ class MockOdbcRepository implements IOdbcRepository {
     List<dynamic>? params,
     StatementOptions? options,
   ) async {
+    return executePreparedParamValues(
+      connectionId,
+      stmtId,
+      params == null || params.isEmpty ? null : paramValuesFromObjects(params),
+      options,
+    );
+  }
+
+  @override
+  Future<Result<QueryResult>> executePreparedParamValues(
+    String connectionId,
+    int stmtId,
+    List<ParamValue>? params,
+    StatementOptions? options,
+  ) async {
+    executePreparedParamValuesCalled = true;
     return const Success(
       QueryResult(
         columns: ['id', 'name'],
@@ -436,6 +486,20 @@ class MockOdbcRepository implements IOdbcRepository {
     String sql,
     List<dynamic> params,
   ) async {
+    return executeQueryMultiParamValues(
+      connectionId,
+      sql,
+      paramValuesFromObjects(params),
+    );
+  }
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) async {
+    executeQueryMultiParamValuesCalled = true;
     executeQueryMultiFullCalled = true;
     return executeQueryMultiFull(connectionId, sql);
   }

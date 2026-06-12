@@ -16,7 +16,7 @@ fn benchmark_array_binding_new(c: &mut Criterion) {
 fn benchmark_encode_empty_buffer(c: &mut Criterion) {
     let buffer = RowBuffer::new();
     c.bench_function("encode_empty_buffer", |b| {
-        b.iter(|| black_box(RowBufferEncoder::encode(black_box(&buffer))));
+        b.iter(|| black_box(RowBufferEncoder::encode(black_box(&buffer)).expect("encode")));
     });
 }
 
@@ -31,7 +31,7 @@ fn benchmark_encode_small_buffer(c: &mut Criterion) {
         ]);
     }
     c.bench_function("encode_small_buffer_100_rows", |b| {
-        b.iter(|| black_box(RowBufferEncoder::encode(black_box(&buffer))));
+        b.iter(|| black_box(RowBufferEncoder::encode(black_box(&buffer)).expect("encode")));
     });
 }
 

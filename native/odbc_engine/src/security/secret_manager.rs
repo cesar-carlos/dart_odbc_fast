@@ -38,19 +38,13 @@ impl SecretManager {
     }
 
     pub fn store(&self, key: String, value: Secret) -> Result<()> {
-        let mut secrets = self
-            .secrets
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let mut secrets = crate::error::lock_mutex(self.secrets.as_ref())?;
         secrets.insert(key, value);
         Ok(())
     }
 
     pub fn retrieve(&self, key: &str) -> Result<Secret> {
-        let secrets = self
-            .secrets
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let secrets = crate::error::lock_mutex(self.secrets.as_ref())?;
         let secret = secrets
             .get(key)
             .ok_or_else(|| OdbcError::InternalError(format!("Secret not found: {}", key)))?;
@@ -65,10 +59,7 @@ impl SecretManager {
     /// The lock on the secret store is held only for the duration of `f`.
     /// Prefer this over [`retrieve`] for code paths that only read the value.
     pub fn with_secret<R>(&self, key: &str, f: impl FnOnce(&[u8]) -> R) -> Result<R> {
-        let secrets = self
-            .secrets
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let secrets = crate::error::lock_mutex(self.secrets.as_ref())?;
         let secret = secrets
             .get(key)
             .ok_or_else(|| OdbcError::InternalError(format!("Secret not found: {}", key)))?;
@@ -76,10 +67,7 @@ impl SecretManager {
     }
 
     pub fn remove(&self, key: &str) -> Result<()> {
-        let mut secrets = self
-            .secrets
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let mut secrets = crate::error::lock_mutex(self.secrets.as_ref())?;
         secrets.remove(key);
         Ok(())
     }

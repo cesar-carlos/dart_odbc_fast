@@ -20,12 +20,12 @@ use odbc_engine::BinaryProtocolDecoder;
 use serial_test::serial;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 mod helpers;
 use helpers::e2e::{
-    get_connection_and_db_type, should_run_e2e_tests, sql_drop_table_if_exists, DatabaseType,
+    get_connection_and_db_type, should_run_e2e_tests, sql_drop_table_if_exists, unique_e2e_table,
+    DatabaseType,
 };
 
 fn sql_server_dsn() -> Option<String> {
@@ -41,21 +41,6 @@ fn sql_server_dsn() -> Option<String> {
     }
 
     Some(dsn)
-}
-
-fn unique_table(prefix: &str) -> String {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!(
-        "{}_{}_{}_{}",
-        prefix,
-        std::process::id(),
-        nanos,
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
 }
 
 fn connect(dsn: &str) -> u32 {
@@ -132,7 +117,7 @@ fn bulk_v2_binary_nul_round_trips_through_ffi() {
         return;
     };
 
-    let table = unique_table("odbc_bulk_v2_e2e");
+    let table = unique_e2e_table("odbc_bulk_v2_e2e");
     let conn_id = connect(&dsn);
     let drop_sql = sql_drop_table_if_exists(&table, DatabaseType::SqlServer);
 

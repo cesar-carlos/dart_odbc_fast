@@ -27,7 +27,7 @@ fn le_u32(buf: &[u8], off: usize) -> u32 {
 }
 
 fn encode_empty_rb() -> Vec<u8> {
-    RowBufferEncoder::encode(&RowBuffer::new())
+    RowBufferEncoder::encode(&RowBuffer::new()).expect("encode empty row buffer")
 }
 
 // ─── single RS + OUT (drain empty → legacy wire) ─────────────────────────────

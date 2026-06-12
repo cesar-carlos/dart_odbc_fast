@@ -94,7 +94,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "Regression test for legacy SecureBuffer API; ODBC-ENG-425; remove by 2026-09-30."
+    )]
     fn test_into_vec_legacy() {
         let data = vec![1, 2, 3];
         let buffer = SecureBuffer::new(data.clone());
@@ -165,7 +168,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "Regression test for legacy SecureBuffer API; ODBC-ENG-425; remove by 2026-09-30."
+    )]
     fn test_from_string_then_into_vec_legacy() {
         let original = "test data".to_string();
         let buffer = SecureBuffer::from_string(original.clone());

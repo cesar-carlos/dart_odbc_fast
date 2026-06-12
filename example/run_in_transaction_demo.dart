@@ -59,10 +59,10 @@ void main() async {
       connId,
       (txnId) async {
         AppLogger.info('  inside txn $txnId — running a SELECT');
-        final r = await service.executeQueryParams(
+        final r = await service.executeQueryParamValues(
           connId,
           'SELECT 42',
-          const <Object?>[],
+          const <ParamValue>[],
         );
         if (r.isError()) return Failure(r.exceptionOrNull()!);
         return const Success(42);

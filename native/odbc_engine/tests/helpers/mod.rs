@@ -4,7 +4,7 @@ pub mod env;
 #[allow(unused_imports)]
 pub use e2e::{
     can_connect_to_sqlserver, detect_database_type, get_connection_and_db_type, is_database_type,
-    should_run_e2e_tests, sql_drop_table_if_exists, DatabaseType,
+    should_run_e2e_tests, sql_drop_table_if_exists, unique_e2e_table, DatabaseType,
 };
 #[allow(unused_imports)]
 pub use env::{

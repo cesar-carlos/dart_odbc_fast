@@ -53,8 +53,9 @@ impl RowBufferEncoder {
         Self::try_encode(buffer).map_err(Self::map_encode_error)
     }
 
-    pub fn encode(buffer: &RowBuffer) -> Vec<u8> {
-        Self::try_encode(buffer).expect("row buffer exceeds binary protocol limits")
+    /// Fallible encoding; identical to [`Self::encode_result`].
+    pub fn encode(buffer: &RowBuffer) -> Result<Vec<u8>> {
+        Self::encode_result(buffer)
     }
 
     pub fn try_encode(buffer: &RowBuffer) -> std::result::Result<Vec<u8>, EncodeError> {
@@ -257,9 +258,9 @@ mod tests {
     #[test]
     fn ref_cursor_footer_roundtrip_length() {
         let rb = RowBuffer::new();
-        let a = RowBufferEncoder::encode(&rb);
+        let a = RowBufferEncoder::encode(&rb).unwrap();
         let a_len = a.len();
-        let b = RowBufferEncoder::encode(&rb);
+        let b = RowBufferEncoder::encode(&rb).unwrap();
         let c = RowBufferEncoder::append_ref_cursor_footer(a, std::slice::from_ref(&b));
         assert!(c.len() > a_len);
         let count = u32::from_le_bytes([c[a_len + 4], c[a_len + 5], c[a_len + 6], c[a_len + 7]]);
@@ -268,6 +269,17 @@ mod tests {
             u32::from_le_bytes([c[a_len + 8], c[a_len + 9], c[a_len + 10], c[a_len + 11]]) as usize;
         assert_eq!(blen, b.len());
         assert_eq!(&c[a_len + 12..a_len + 12 + blen], &b[..]);
+    }
+
+    #[test]
+    fn encode_delegates_to_encode_result_for_well_formed_buffer() {
+        let mut buffer = RowBuffer::new();
+        buffer.add_column("n".to_string(), OdbcType::Integer);
+        buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+
+        let via_encode = RowBufferEncoder::encode(&buffer).unwrap();
+        let via_encode_result = RowBufferEncoder::encode_result(&buffer).unwrap();
+        assert_eq!(via_encode, via_encode_result);
     }
 
     #[test]
@@ -359,7 +371,7 @@ mod tests {
     fn try_append_output_footer_inserts_out1_and_params() {
         use crate::protocol::param_value::ParamValue;
 
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out =
             RowBufferEncoder::try_append_output_footer(base.clone(), &[ParamValue::Integer(7)])
                 .unwrap();
@@ -379,8 +391,8 @@ mod tests {
 
     #[test]
     fn try_append_ref_cursor_footer_inserts_rc1_frame() {
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
-        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
+        let blob = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::try_append_ref_cursor_footer(
             base.clone(),
             std::slice::from_ref(&blob),
@@ -433,7 +445,7 @@ mod tests {
     #[test]
     fn test_encode_empty_buffer() {
         let buffer = RowBuffer::new();
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Header: magic(4) + version(2) + col_count(2) + row_count(4) + payload_size(4) = 16 bytes
         assert_eq!(encoded.len(), 16);
@@ -464,7 +476,7 @@ mod tests {
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Header(16) + column_metadata(2 + 2 + 2) = 22 bytes
         assert_eq!(encoded.len(), 22);
@@ -493,7 +505,7 @@ mod tests {
         buffer.add_column("value".to_string(), OdbcType::Varchar);
         buffer.add_row(vec![Some(b"test".to_vec())]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Verify row count
         let row_count = u32::from_le_bytes([encoded[8], encoded[9], encoded[10], encoded[11]]);
@@ -534,7 +546,7 @@ mod tests {
         buffer.add_column("nullable".to_string(), OdbcType::Varchar);
         buffer.add_row(vec![None]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Find row data offset
         let metadata_offset = 16;
@@ -557,7 +569,7 @@ mod tests {
         buffer.add_column("name".to_string(), OdbcType::Varchar);
         buffer.add_column("age".to_string(), OdbcType::Integer);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Verify column count
         let col_count = u16::from_le_bytes([encoded[6], encoded[7]]);
@@ -570,7 +582,7 @@ mod tests {
         buffer.add_column("x".to_string(), OdbcType::Integer);
         buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
         let out = RowBufferEncoder::encode_with_compression(&buffer);
-        let raw = RowBufferEncoder::encode(&buffer);
+        let raw = RowBufferEncoder::encode(&buffer).unwrap();
         assert_eq!(out, raw);
     }
 
@@ -583,7 +595,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
         buffer.add_row(vec![Some(vec![3, 0, 0, 0])]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Verify row count
         let row_count = u32::from_le_bytes([encoded[8], encoded[9], encoded[10], encoded[11]]);
@@ -599,7 +611,7 @@ mod tests {
         buffer.add_row(vec![Some(b"A".to_vec()), None]);
         buffer.add_row(vec![None, Some(b"B".to_vec())]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
         // Verify structure exists (detailed parsing skipped for brevity)
         assert!(encoded.len() > 16); // Has header + data
@@ -612,7 +624,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
         buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
 
-        let encoded = RowBufferEncoder::encode(&buffer);
+        let encoded = RowBufferEncoder::encode(&buffer).unwrap();
         let mut out = Vec::new();
         RowBufferEncoder::encode_to_writer(&buffer, &mut out).unwrap();
         assert_eq!(encoded, out);
@@ -632,7 +644,7 @@ mod tests {
     fn append_output_footer_non_try_wrapper_succeeds() {
         use crate::protocol::param_value::ParamValue;
 
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_output_footer(base.clone(), &[ParamValue::Null]);
         assert_eq!(
             out.len(),
@@ -643,8 +655,8 @@ mod tests {
 
     #[test]
     fn append_ref_cursor_footer_non_try_wrapper_succeeds() {
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
-        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
+        let blob = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_ref_cursor_footer(base, std::slice::from_ref(&blob));
         assert!(out.windows(4).any(|w| w == REF_CURSOR_FOOTER_MAGIC));
     }
@@ -681,7 +693,7 @@ mod tests {
         // separate test covers the error mapping in checked_u32_len.
         use crate::protocol::param_value::ParamValue;
 
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_output_footer_result(base.clone(), &[ParamValue::Null])
             .unwrap();
         assert!(out.len() > base.len());
@@ -690,22 +702,22 @@ mod tests {
 
     #[test]
     fn append_output_footer_result_is_noop_for_empty_outputs() {
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_output_footer_result(base.clone(), &[]).unwrap();
         assert_eq!(out, base);
     }
 
     #[test]
     fn append_ref_cursor_footer_result_is_noop_for_empty_blobs() {
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_ref_cursor_footer_result(base.clone(), &[]).unwrap();
         assert_eq!(out, base);
     }
 
     #[test]
     fn append_ref_cursor_footer_result_inserts_rc1_frame_for_non_empty_blobs() {
-        let base = RowBufferEncoder::encode(&RowBuffer::new());
-        let blob = RowBufferEncoder::encode(&RowBuffer::new());
+        let base = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
+        let blob = RowBufferEncoder::encode(&RowBuffer::new()).unwrap();
         let out = RowBufferEncoder::append_ref_cursor_footer_result(
             base.clone(),
             std::slice::from_ref(&blob),

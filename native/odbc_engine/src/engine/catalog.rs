@@ -1,13 +1,9 @@
-use crate::engine::core::QueryPipeline;
+use crate::engine::core::shared_row_major_pipeline;
+use crate::engine::identifier::validate_identifier;
 use crate::error::{OdbcError, Result};
 use crate::plugins::capabilities::catalog_provider::CatalogQuery;
 use crate::protocol::ParamValue;
 use odbc_api::Connection;
-use std::sync::Arc;
-
-lazy_static::lazy_static! {
-    static ref PIPELINE: Arc<QueryPipeline> = Arc::new(QueryPipeline::new(100));
-}
 
 /// Resolve the dialect-specific `CatalogQuery` for the live connection. Falls
 /// back to the supplied default when no `CatalogProvider` plugin matches.
@@ -52,10 +48,11 @@ where
 }
 
 fn execute_catalog_query(conn: &Connection<'static>, q: CatalogQuery) -> Result<Vec<u8>> {
+    let pipeline = shared_row_major_pipeline();
     if q.params.is_empty() {
-        PIPELINE.execute_direct(conn, &q.sql)
+        pipeline.execute_direct(conn, &q.sql)
     } else {
-        PIPELINE.execute_with_params(conn, &q.sql, &q.params)
+        pipeline.execute_with_params(conn, &q.sql, &q.params)
     }
 }
 
@@ -77,11 +74,21 @@ pub fn list_tables(
     // Fallback: legacy INFORMATION_SCHEMA path used when no plugin matches.
     let (sql, params) = information_schema_list_tables_query(catalog, schema);
 
+    let pipeline = shared_row_major_pipeline();
     if params.is_empty() {
-        PIPELINE.execute_direct(conn, &sql)
+        pipeline.execute_direct(conn, &sql)
     } else {
-        PIPELINE.execute_with_params(conn, &sql, &params)
+        pipeline.execute_with_params(conn, &sql, &params)
     }
+}
+
+/// Parses `schema.table` or bare `table` for catalog ODBC calls.
+///
+/// Structural validation only (non-empty segments after trim). Catalog SQL
+/// binds the returned strings as parameters; callers must not interpolate
+/// untrusted values into identifier positions.
+pub fn parse_catalog_table_ref(table: &str) -> Result<(Option<String>, String)> {
+    validate_and_parse_table(table)
 }
 
 pub(crate) fn validate_and_parse_table(table: &str) -> Result<(Option<String>, String)> {
@@ -103,7 +110,24 @@ pub(crate) fn validate_and_parse_table(table: &str) -> Result<(Option<String>, S
     } else {
         (None, table.to_string())
     };
+    validate_table_identifiers(schema.as_deref(), &table_name)?;
     Ok((schema, table_name))
+}
+
+fn validate_table_identifiers(schema: Option<&str>, table_name: &str) -> Result<()> {
+    validate_identifier(table_name)?;
+    if let Some(s) = schema {
+        for segment in s.split('.') {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                return Err(OdbcError::ValidationError(
+                    "Invalid schema (empty segment)".to_string(),
+                ));
+            }
+            validate_identifier(segment)?;
+        }
+    }
+    Ok(())
 }
 
 /// Lists columns for a table. Uses the dialect-specific `CatalogProvider`
@@ -117,14 +141,14 @@ pub fn list_columns(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
 
     let (sql, params) = information_schema_list_columns_query(&table_name, schema);
 
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
 }
 
 /// Returns distinct data types from INFORMATION_SCHEMA.COLUMNS.
 /// Minimal type info for tools; full ODBC SQLGetTypeInfo would require lower-level API.
 /// Returns binary protocol (same as odbc_exec_query).
 pub fn get_type_info(conn: &Connection<'static>) -> Result<Vec<u8>> {
-    PIPELINE.execute_direct(conn, information_schema_type_info_sql())
+    shared_row_major_pipeline().execute_direct(conn, information_schema_type_info_sql())
 }
 
 /// Lists primary keys for a table from INFORMATION_SCHEMA.
@@ -140,7 +164,7 @@ pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
 
     let (sql, params) = information_schema_list_primary_keys_query(&table_name, schema);
 
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
 }
 
 /// Lists foreign keys for a table from INFORMATION_SCHEMA.
@@ -156,7 +180,7 @@ pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<
 
     let (sql, params) = information_schema_list_foreign_keys_query(&table_name, schema);
 
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
 }
 
 /// Lists indexes for a table.
@@ -179,7 +203,7 @@ pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> 
     // Note: This is a simplified version; full index metadata would require database-specific queries
     let (sql, params) = information_schema_list_indexes_query(&table_name, schema);
 
-    PIPELINE.execute_with_params(conn, &sql, &params)
+    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
 }
 
 /// INFORMATION_SCHEMA fallback for [`list_tables`] when no dialect plugin matches.
@@ -651,6 +675,31 @@ mod tests {
         assert_eq!(params.len(), 2);
         assert_string_param(&params[0], "dbo");
         assert_string_param(&params[1], "child");
+    }
+
+    #[test]
+    fn should_reject_validate_and_parse_table_when_table_has_sql_injection_chars() {
+        let err = validate_and_parse_table("dbo;drop--").unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn should_reject_validate_and_parse_table_when_schema_segment_is_invalid() {
+        let err = validate_and_parse_table("bad-name.mytable").unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
+    }
+
+    #[test]
+    fn should_validate_each_schema_segment_when_qualified_name_has_multiple_dots() {
+        let (schema, name) = validate_and_parse_table("cat.schema.mytable").unwrap();
+        assert_eq!(schema.as_deref(), Some("cat.schema"));
+        assert_eq!(name, "mytable");
+    }
+
+    #[test]
+    fn should_reject_validate_and_parse_table_when_any_schema_segment_is_invalid() {
+        let err = validate_and_parse_table("good.bad-name.mytable").unwrap_err();
+        assert!(matches!(err, OdbcError::ValidationError(_)));
     }
 
     #[test]

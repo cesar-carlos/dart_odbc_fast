@@ -11,7 +11,8 @@ pub mod sqlserver_json;
 pub mod statement;
 pub mod streaming;
 pub mod transaction;
-pub mod xa_transaction;
+pub mod xa;
+pub use xa as xa_transaction;
 
 // Sprint 4.3b — SQL Server XA via MSDTC (Windows-only, feature-gated).
 // The module is conditionally compiled so non-Windows builds and
@@ -25,6 +26,7 @@ pub mod xa_oci;
 
 pub use catalog::{
     get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
+    parse_catalog_table_ref,
 };
 pub use connection::OdbcConnection;
 pub use core::*;

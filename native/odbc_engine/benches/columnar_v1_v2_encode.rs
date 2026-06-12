@@ -32,13 +32,13 @@ fn columnar_v1_v2_benches(c: &mut Criterion) {
     for (rows, cols) in [(256usize, 16usize), (1024, 32)] {
         let rb = make_fixture(rows, cols);
         let colbuf = row_buffer_to_columnar(&rb).expect("valid bench fixture");
-        let v1 = RowBufferEncoder::encode(&rb);
+        let v1 = RowBufferEncoder::encode(&rb).expect("encode");
         let len = v1.len() as u64;
         group.throughput(Throughput::Bytes(len));
         let id = format!("r{rows}_c{cols}_bytes_{len}");
         group.bench_function(BenchmarkId::new("v1_row_major", &id), |b| {
             b.iter(|| {
-                let out = RowBufferEncoder::encode(black_box(&rb));
+                let out = RowBufferEncoder::encode(black_box(&rb)).expect("encode");
                 black_box(out);
             });
         });

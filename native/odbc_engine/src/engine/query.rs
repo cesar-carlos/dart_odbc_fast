@@ -1,4 +1,7 @@
-use crate::engine::core::QueryPipeline;
+use crate::engine::core::{
+    shared_columnar_compressed_pipeline, shared_columnar_pipeline, shared_row_major_pipeline,
+    QueryPipeline,
+};
 use crate::error::Result;
 use crate::handles::CachedConnection;
 use crate::observability::Metrics;
@@ -6,14 +9,6 @@ use crate::protocol::bound_param::{ParamDirection, ParamList};
 use crate::protocol::{deserialize_param_buffer, ParamValue};
 use odbc_api::Connection;
 use std::sync::Arc;
-
-lazy_static::lazy_static! {
-    static ref PIPELINE: Arc<QueryPipeline> = Arc::new(QueryPipeline::new(100));
-    static ref COLUMNAR_PIPELINE: Arc<QueryPipeline> =
-        Arc::new(QueryPipeline::with_columnar(100, false));
-    static ref COLUMNAR_COMPRESSED_PIPELINE: Arc<QueryPipeline> =
-        Arc::new(QueryPipeline::with_columnar(100, true));
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResultEncoding {
@@ -34,19 +29,19 @@ impl ResultEncoding {
 
     fn pipeline(self) -> Arc<QueryPipeline> {
         match self {
-            Self::RowMajor => Arc::clone(&PIPELINE),
-            Self::Columnar => Arc::clone(&COLUMNAR_PIPELINE),
-            Self::ColumnarCompressed => Arc::clone(&COLUMNAR_COMPRESSED_PIPELINE),
+            Self::RowMajor => shared_row_major_pipeline(),
+            Self::Columnar => shared_columnar_pipeline(),
+            Self::ColumnarCompressed => shared_columnar_compressed_pipeline(),
         }
     }
 }
 
 pub fn get_global_metrics() -> Arc<Metrics> {
-    PIPELINE.get_metrics()
+    shared_row_major_pipeline().get_metrics()
 }
 
 pub fn execute_query_with_connection(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-    PIPELINE.execute_direct(conn, sql)
+    shared_row_major_pipeline().execute_direct(conn, sql)
 }
 
 /// Execute SQL using cached connection (enables prepared-statement reuse when feature on).
@@ -54,7 +49,7 @@ pub fn execute_query_with_cached_connection(
     cached: &mut CachedConnection,
     sql: &str,
 ) -> Result<Vec<u8>> {
-    PIPELINE.execute_direct_cached(cached, sql)
+    shared_row_major_pipeline().execute_direct_cached(cached, sql)
 }
 
 /// Cached counterpart of [`execute_query_with_params`].
@@ -88,7 +83,7 @@ pub fn execute_query_with_params(
     sql: &str,
     params: &[ParamValue],
 ) -> Result<Vec<u8>> {
-    PIPELINE.execute_with_params(conn, sql, params)
+    shared_row_major_pipeline().execute_with_params(conn, sql, params)
 }
 
 /// Like [execute_query_with_params] but accepts a raw FFI buffer: legacy
@@ -148,7 +143,13 @@ pub fn execute_query_with_params_and_timeout(
     timeout_sec: Option<usize>,
     fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
-    PIPELINE.execute_with_params_and_timeout(conn, sql, params, timeout_sec, fetch_size)
+    shared_row_major_pipeline().execute_with_params_and_timeout(
+        conn,
+        sql,
+        params,
+        timeout_sec,
+        fetch_size,
+    )
 }
 
 /// [execute_query_with_params_and_timeout] with a raw buffer (legacy or DRT1).
@@ -170,7 +171,7 @@ pub fn execute_query_with_param_buffer_and_timeout(
 }
 
 pub fn execute_multi_result(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-    PIPELINE.execute_multi(conn, sql)
+    shared_row_major_pipeline().execute_multi(conn, sql)
 }
 
 pub fn execute_multi_result_with_params(
@@ -178,7 +179,7 @@ pub fn execute_multi_result_with_params(
     sql: &str,
     params: &[ParamValue],
 ) -> Result<Vec<u8>> {
-    PIPELINE.execute_multi_with_params(conn, sql, params)
+    shared_row_major_pipeline().execute_multi_with_params(conn, sql, params)
 }
 
 #[cfg(test)]
@@ -262,6 +263,15 @@ mod tests {
             }
             other => panic!("expected ValidationError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn shared_row_major_pipeline_matches_query_entrypoint() {
+        use crate::engine::core::shared_row_major_pipeline;
+
+        let from_query = ResultEncoding::RowMajor.pipeline();
+        let from_core = shared_row_major_pipeline();
+        assert!(std::sync::Arc::ptr_eq(&from_query, &from_core));
     }
 
     #[test]

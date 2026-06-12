@@ -2,6 +2,13 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    if env::var("CARGO_FEATURE_COLUMNAR_V2").is_ok() {
+        println!(
+            "cargo:warning=columnar-v2 is EXPERIMENTAL: wire format is not production-ready; \
+             see native/odbc_engine/src/protocol/columnar_v2.rs"
+        );
+    }
+
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = PathBuf::from(&crate_dir).join("include");
 
@@ -28,6 +35,7 @@ fn main() {
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=odbc_exports.def");
     println!("cargo:rerun-if-changed=src/ffi/mod.rs");
+    println!("cargo:rerun-if-changed=src/ffi/query/sync/mod.rs");
     println!("cargo:rerun-if-changed=src/ffi/columnar_decompress.rs");
     println!("cargo:rerun-if-changed=src/observability/telemetry/mod.rs");
 }

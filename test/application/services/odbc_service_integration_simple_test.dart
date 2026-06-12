@@ -78,7 +78,7 @@ void main() {
       );
       expect(result.isSuccess(), isTrue);
       expect(result.getOrNull()!.rows.length, equals(1));
-      expect(mockRepo.executeQueryParamsCalled, isTrue);
+      expect(mockRepo.executeQueryParamValuesCalled, isTrue);
     });
 
     test('StreamQuery operation', () async {

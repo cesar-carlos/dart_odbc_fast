@@ -113,9 +113,7 @@ impl HandleManager {
         F: FnOnce(&Connection<'static>) -> Result<T>,
     {
         let conn_arc = self.get_connection(conn_id)?;
-        let guard = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+        let guard = crate::error::lock_mutex(conn_arc.as_ref())?;
         f(guard.connection())
     }
 

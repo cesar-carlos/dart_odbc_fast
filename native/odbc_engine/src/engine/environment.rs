@@ -20,9 +20,7 @@ impl OdbcEnvironment {
     }
 
     pub fn init(&self) -> Result<()> {
-        let mut handles = self.handles.lock().map_err(|_| {
-            crate::error::OdbcError::InternalError("Failed to lock handles mutex".to_string())
-        })?;
+        let mut handles = crate::error::lock_mutex(self.handles.as_ref())?;
         handles.init_environment()
     }
 

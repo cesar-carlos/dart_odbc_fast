@@ -22,9 +22,7 @@ impl OdbcConnection {
         }
 
         let conn_id = {
-            let mut h = handles.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock handles mutex".to_string())
-            })?;
+            let mut h = crate::error::lock_mutex(handles.as_ref())?;
             h.create_connection(conn_str)?
         };
 
@@ -41,9 +39,7 @@ impl OdbcConnection {
         }
 
         let conn_id = {
-            let mut h = handles.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock handles mutex".to_string())
-            })?;
+            let mut h = crate::error::lock_mutex(handles.as_ref())?;
             h.create_connection_with_timeout(conn_str, timeout_secs)?
         };
 
@@ -51,10 +47,7 @@ impl OdbcConnection {
     }
 
     pub fn disconnect(self) -> Result<()> {
-        let mut handles = self
-            .handles
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock handles mutex".to_string()))?;
+        let mut handles = crate::error::lock_mutex(self.handles.as_ref())?;
         handles.remove_connection(self.conn_id)
     }
 
@@ -155,15 +148,10 @@ impl OdbcConnection {
     /// Equivalent to `self.dbms_info()?.capabilities`.
     pub fn driver_capabilities(&self) -> Result<DriverCapabilities> {
         let conn_arc = {
-            let h = self
-                .handles
-                .lock()
-                .map_err(|_| OdbcError::InternalError("Failed to lock handles".to_string()))?;
+            let h = crate::error::lock_mutex(self.handles.as_ref())?;
             h.get_connection(self.conn_id)?
         };
-        let cached = conn_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+        let cached = crate::error::lock_mutex(conn_arc.as_ref())?;
         DriverCapabilities::detect(cached.connection())
     }
 }

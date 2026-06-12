@@ -74,6 +74,8 @@ pub unsafe extern "C" fn otel_init(
         let exporter: Box<dyn TelemetryExporter + Send> = if api_endpoint.is_null() {
             Box::new(ConsoleExporter)
         } else {
+            // SAFETY: FFI contract requires `api_endpoint` to be a valid
+            // null-terminated C string for the duration of this call.
             let endpoint_str = unsafe {
                 std::ffi::CStr::from_ptr(api_endpoint)
                     .to_string_lossy()
@@ -129,7 +131,8 @@ pub unsafe extern "C" fn otel_export_trace(trace_json: *const u8, trace_len: usi
             return guard::FfiError::ResourceLimit.as_i32();
         }
 
-        // Convert bytes to string
+        // SAFETY: FFI contract requires `trace_json` to point to `trace_len`
+        // readable bytes; null was rejected above.
         let slice = unsafe { std::slice::from_raw_parts(trace_json, trace_len) };
         let json_str = match std::str::from_utf8(slice) {
             Ok(s) => s,
@@ -208,6 +211,7 @@ pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *
             return 1;
         }
 
+        // SAFETY: FFI contract requires `error_len` to point to writable `usize`.
         let buffer_cap = unsafe { *error_len };
         let state = match lock_telemetry_state() {
             Ok(state) => state,
@@ -225,6 +229,8 @@ pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *
 
         let bytes = c_msg.as_bytes_with_nul();
         let required_len = bytes.len() - 1;
+        // SAFETY: `error_len` is writable per FFI contract; we only store the
+        // required byte count excluding the terminating nul.
         unsafe {
             *error_len = required_len;
         }
@@ -232,6 +238,8 @@ pub unsafe extern "C" fn otel_get_last_error(error_buffer: *mut u8, error_len: *
             return ERROR_BUFFER_TOO_SMALL;
         }
 
+        // SAFETY: `error_buffer` has capacity `buffer_cap >= bytes.len()` and
+        // does not alias `bytes` (caller-owned output buffer).
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), error_buffer, bytes.len());
         }
@@ -271,6 +279,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    #[serial_test::serial]
     fn test_console_exporter() {
         let exporter = ConsoleExporter;
         let result = exporter.export(r#"{"trace_id": "123"}"#);
@@ -278,6 +287,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_init_console() {
         let result = unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         assert_eq!(result, 0);
@@ -287,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_init_otlp() {
         let endpoint = std::ffi::CString::new("http://localhost:4318/v1/traces").unwrap();
         let result = unsafe { otel_init(endpoint.as_ptr(), std::ptr::null(), std::ptr::null()) };
@@ -297,6 +308,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_shutdown() {
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         otel_shutdown();
@@ -307,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_get_last_error() {
         // Initialize with null endpoint (console exporter)
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
@@ -332,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_get_last_error_reports_required_len_for_small_buffer() {
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
 
@@ -347,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_otel_export_trace_rejects_oversized_payload() {
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
 
@@ -359,6 +374,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn should_reject_null_trace_pointer_after_init() {
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         let result = unsafe { otel_export_trace(std::ptr::null(), 0) };
@@ -367,6 +383,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn should_reject_invalid_utf8_trace_payload() {
         unsafe { otel_init(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
         let invalid = [0xFFu8, 0xFE];
@@ -376,6 +393,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn should_use_console_exporter_for_non_http_endpoint() {
         let endpoint = std::ffi::CString::new("file:///tmp/traces").unwrap();
         let result = unsafe { otel_init(endpoint.as_ptr(), std::ptr::null(), std::ptr::null()) };
@@ -387,6 +405,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn should_return_error_when_get_last_error_pointers_null() {
         let result = unsafe { otel_get_last_error(std::ptr::null_mut(), std::ptr::null_mut()) };
         assert_eq!(result, 1);
@@ -409,7 +428,26 @@ mod tests {
         }
     }
 
+    /// Mirrors [`lock_telemetry_state`] poison mapping (`Err(4)`) on a local
+    /// mutex so parallel lib tests are not affected by a poisoned global.
     #[test]
+    fn lock_telemetry_state_returns_internal_error_code_when_poisoned() {
+        let lock = Mutex::new(None::<TelemetryState>);
+        let poisoned = std::panic::catch_unwind(|| {
+            let _guard = lock.lock().expect("lock should be available");
+            panic!("intentional panic to poison local mutex");
+        });
+        assert!(poisoned.is_err(), "panic should poison the mutex");
+
+        let lock_result = lock.lock().map_err(|_| 4);
+        assert!(
+            matches!(lock_result, Err(4)),
+            "poisoned telemetry mutex should surface internal lock failure"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn export_trace_does_not_hold_global_state_lock_during_export() {
         let release = Arc::new(AtomicBool::new(false));
         let (entered_tx, entered_rx) = mpsc::channel();

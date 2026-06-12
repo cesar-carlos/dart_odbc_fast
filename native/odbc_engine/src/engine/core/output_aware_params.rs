@@ -240,26 +240,34 @@ unsafe impl ParameterCollection for OutputAwareParams {
             let num = (i + 1) as u16;
             match slot {
                 ParamSlot::InAny(t) => {
+                    // SAFETY: `t` is a boxed `InputParameter` built from validated
+                    // `ParamValue` in `bound_to_slots`; `num` is a 1-based ODBC index.
                     unsafe { stmt.bind_input_parameter(num, t) }.into_result(stmt)?;
                 }
                 ParamSlot::OutI32(n) => {
+                    // SAFETY: `n` is an owned `Nullable<i32>` output buffer for this slot.
                     unsafe { stmt.bind_parameter(num, ParamType::Output, n) }.into_result(stmt)?;
                 }
                 ParamSlot::OutI64(n) => {
+                    // SAFETY: `n` is an owned `Nullable<i64>` output buffer for this slot.
                     unsafe { stmt.bind_parameter(num, ParamType::Output, n) }.into_result(stmt)?;
                 }
                 ParamSlot::InOutI32(n) => {
+                    // SAFETY: `n` is an owned `Nullable<i32>` in/out buffer for this slot.
                     unsafe { stmt.bind_parameter(num, ParamType::InputOutput, n) }
                         .into_result(stmt)?;
                 }
                 ParamSlot::InOutI64(n) => {
+                    // SAFETY: `n` is an owned `Nullable<i64>` in/out buffer for this slot.
                     unsafe { stmt.bind_parameter(num, ParamType::InputOutput, n) }
                         .into_result(stmt)?;
                 }
                 ParamSlot::OutText(t) => {
+                    // SAFETY: `t` is a `VarCharBox`/`VarWCharBox` sized for ODBC OUT text.
                     unsafe { stmt.bind_parameter(num, ParamType::Output, t) }.into_result(stmt)?;
                 }
                 ParamSlot::InOutText(t) => {
+                    // SAFETY: `t` is a `VarCharBox`/`VarWCharBox` sized for ODBC INOUT text.
                     unsafe { stmt.bind_parameter(num, ParamType::InputOutput, t) }
                         .into_result(stmt)?;
                 }

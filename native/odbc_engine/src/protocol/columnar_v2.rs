@@ -1,8 +1,14 @@
-//! Columnar wire format v2 — header constants and helpers.
+//! Columnar wire format v2 — **experimental** header constants and helpers.
 //!
-//! Full emitter/parser lives in follow-up work; see
-//! `doc/notes/columnar_protocol_sketch.md`. Gated by Cargo feature
-//! `columnar-v2` so default builds stay unchanged.
+//! # Experimental status
+//!
+//! This module is behind the `columnar-v2` Cargo feature. Enabling that
+//! feature prints a `cargo:warning` at build time. Only magic/version
+//! constants and placeholder benches exist today; the full emitter/parser
+//! is not production-ready. See `doc/notes/columnar_protocol_sketch.md`.
+//!
+//! Do not enable `columnar-v2` in release consumer builds until the wire
+//! format graduates from the sketch doc and golden tests cover encode/decode.
 
 /// Little-endian `b"ODBC"` — first four bytes of the v2 header in the
 /// design sketch.

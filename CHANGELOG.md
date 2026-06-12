@@ -7,6 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Internal refactor and audit pass across the Rust native engine and Dart
+layers. No public ABI, wire-format (`MAGIC = 0x4F444243`, MULT v2), or
+exported-symbol changes; `pubspec.yaml` version is unchanged. Behaviour is
+preserved; the work improves module boundaries, test isolation, and
+maintainability ahead of the typed-parameter migration.
+
+### Changed — Dart clean architecture and service modularization
+
+- **`OdbcService` split into capability delegates.** Query, pool, admin, and
+  transaction orchestration move to `OdbcQueryService`, `OdbcPoolService`,
+  `OdbcAdminService`, and `OdbcTransactionService`. `OdbcService` is now a
+  thin façade that forwards each call; `IOdbcService` remains the aggregate
+  contract for decorators and DI.
+- **Domain types promoted out of infrastructure.** `ParamValue` (sealed),
+  `DirectedParam`, `PoolOptions`, `DriverCapabilities`, `AsyncWorkerPoolStats`,
+  `XaTransactionHandle`, and `SqlDataType` now live under `lib/domain/`.
+  Infrastructure protocol modules delegate to or mirror these contracts at
+  the FFI boundary.
+- **`OdbcRepositoryImpl` decomposed into focused runners.** Connection,
+  sync/prepared/multi query, stream, transaction, pool, admin, FFI dispatch,
+  and result parsing each have a dedicated runner under
+  `lib/infrastructure/repositories/runners/`, replacing a single monolithic
+  implementation file.
+- **`AsyncNativeOdbcConnection` split into `part` modules.** Worker lifecycle,
+  channel dispatch, connection, pool, sync/async query, streaming, transactions,
+  and stats are isolated in `async_*.dart` parts for easier navigation and
+  review.
+- **`ParamValue` encoding (phases 2–3).** Domain sealed hierarchy with
+  infrastructure two-pass wire encoding (pre-size, then single-buffer write).
+  New typed entry points `executeQueryParamValues` /
+  `executeQueryDirectedParams` route through the same FFI paths as the legacy
+  APIs.
+- **`QueryResultAccess` extension** on `QueryResult` adds low-risk typed
+  row/column helpers (`columnIndex`, `cell`, `rowAsMap`, scalar getters)
+  without changing underlying `List<dynamic>` storage.
+- **`odbc_fast.dart` exports** extended for the new domain entities, helpers,
+  and `SqlDataType`.
+- **`TelemetryOdbcServiceDecorator` split into capability modules.**
+  Query, pool, admin, and transaction instrumentation move to
+  `TelemetryOdbcQueryDecorator`, `TelemetryOdbcPoolDecorator`,
+  `TelemetryOdbcAdminDecorator`, and `TelemetryOdbcTransactionDecorator`
+  with shared helpers in `telemetry_odbc_operations.dart`; the root decorator
+  is a thin façade matching the `OdbcService` delegate layout.
+
+### Deprecated — soft migration away from `List<dynamic>` parameters (phase 3)
+
+Non-breaking `@Deprecated` annotations on legacy untyped parameter surfaces.
+Phase 3 completes the annotation pass across service, repository, telemetry,
+and test contracts. Callers should migrate to `executeQueryParamValues()` with
+`List<ParamValue>` or `executeQueryDirectedParams()` for `OUT` / `INOUT`
+bindings. Removal is planned for a future major release only.
+
+- `IQueryService` / `IOdbcService`: `executeQuery`, `executeQueryParams`,
+  prepared and multi-result variants that accept `List<dynamic>`.
+- `IOdbcRepository`: matching repository-level overloads.
+- Capability telemetry decorators and test fakes mirror the same deprecation
+  messages for contract parity.
+
+### Changed — Rust native engine module splits
+
+Monolithic engine and protocol files are split into cohesive submodules with
+no intended behaviour change.
+
+- **`ffi/`** — the ~10k-line `mod.rs` becomes a thin re-export root over
+  `bulk`, `capabilities` (+ `helpers`), `catalog`, `connection`,
+  `diagnostics`, `global`, `global_state`, `init`, `pool`, `query` (sync /
+  async + `helpers`), `runnable`, `stream` (+ `helpers`), `statement`,
+  `transaction`, and `xa`. Panic guards and `FfiError` codes (including
+  `InternalLock` for poisoned runtime locks) stay ABI-stable.
+- **`engine/core/execution/`** — replaces `execution_engine.rs` with
+  `param_binding`, `result_encoding`, `multi_result_collect`, and focused
+  unit tests.
+- **`engine/streaming/`** — replaces `streaming.rs` with `chunk`, `columns`,
+  `state`, `worker`, `multi_result`, and per-concern test modules.
+- **`engine/transaction/`** — replaces `transaction.rs` with dialect SQL,
+  savepoint handling, and isolation / access-mode / lock-timeout test suites.
+- **`engine/xa/`** — replaces `xa_transaction.rs`; `xa_oci` wiring updated.
+- **`protocol/bulk_insert/`** — replaces `bulk_insert.rs` with `common`,
+  `legacy`, `v2`, and validation / round-trip test modules.
+- **`protocol/param_value/`** — replaces `param_value.rs` with a `mod.rs` +
+  `tests.rs` layout.
+- **`plugins/detection.rs`** — driver / DBMS-name resolution extracted from
+  `registry.rs`; registry focuses on registration and dispatch.
+- **`plugins/oracle/`** — replaces monolithic `oracle.rs` with `catalog`,
+  `type_catalog`, `session`, `bulk_loader`, `upsert`, `returning`, and
+  focused unit tests.
+- **`plugins/sqlserver/`** — replaces monolithic `sqlserver.rs` with `catalog`,
+  `type_catalog`, `session`, `quoting`, `upsert`, `returning`, and tests.
+- **`engine/core/sqlserver_bcp/`** — replaces `sqlserver_bcp.rs` with
+  `bound_column`, `execute`, `helpers`, `library`, `payload`, and tests.
+- **`ffi/tests/query/`** — query FFI tests split into `async`, `prepare`,
+  `sync`, `params`, and `timeout` modules under a thin `mod.rs` root.
+- **`ffi/query/sync/`** — sync query FFI split into `exec`, `multi`, and
+  `params` modules.
+
+### Fixed — runtime hardening (native)
+
+- **Lock poison handling.** Central `LOCK_POISONED` diagnostic,
+  `internal_lock_error()`, and `lock_mutex()` helper in `error/mod.rs`; FFI
+  returns `FfiError::InternalLock` (-5). Tracing and telemetry paths log and
+  recover from poisoned `RwLock` instead of silent loss; regression test
+  `test_lock_poisoning_recovery` added.
+- **`encode_multi` non-panicking contract.** `try_encode_multi` is the
+  fallible encoder; `encode_multi` logs overflow and returns an empty buffer
+  rather than panicking. `encode_row_count_only` and v1 helpers follow the
+  same pattern.
+
+### Fixed — module hygiene and test stability
+
+- **Oracle plugin duplicate module.** Removed conflicting `plugins/oracle.rs`
+  in favour of the `plugins/oracle/` directory module; registry wiring
+  unchanged.
+- **`binary_protocol_fuzz_test` timing.** Per-iteration 100 ms budget and
+  30 s group timeout keep fuzz runs bounded in CI without false flakes from
+  slow debug builds.
+
+### Tests — FFI, E2E isolation, and Dart contract updates
+
+- **E2E runner scripts.** `scripts/run_e2e_tests.ps1` and
+  `scripts/run_e2e_tests.sh` load repo-root `.env`, map `RUN_SKIPPED_TESTS`
+  to `ENABLE_SLOW_E2E_TESTS`, and run all 25 `e2e_*` integration suites
+  (382 tests) with `--test-threads=1` and `--include-ignored`; `-Quick` /
+  `--quick` skips slow stress paths.
+- **FFI unit tests split** into `ffi/tests/{bulk,catalog,connection,diagnostics,errors,init,pool,query,stream,transaction,xa}` with shared `support.rs`; the `query` tree further splits into
+  `async`, `prepare`, `sync`, `params`, and `timeout`. Maintenance scripts
+  under `native/odbc_engine/scripts/` assist future splits.
+- **E2E table isolation.** `unique_e2e_table(prefix)` generates
+  pid + nanosecond + monotonic-counter names validated as SQL identifiers;
+  `sql_drop_table_if_exists` is dialect-aware (SQL Server, Oracle, default
+  `DROP TABLE IF EXISTS`). Bulk, benchmark, and FFI-regression E2E suites
+  migrated off hard-coded table names to avoid parallel-run collisions.
+- **ABI regression** — `abi_test.rs` pins `FfiError` layout, documented
+  negative codes, `ParamDirection` `repr(u8)`, and MULT header constants.
+- **Dart tests** — `mock_odbc_repository`, `i_query_service_extension_test`,
+  `odbc_service_run_in_xa_transaction_test`, and `query_result_test` updated
+  for typed-parameter APIs and `QueryResultAccess`.
+
 ## [3.10.1] - 2026-05-27 — Patch: CI repair, coverage expansion, docs alignment
 
 PATCH bump per `doc/version/VERSIONING_STRATEGY.md`: no public Dart API

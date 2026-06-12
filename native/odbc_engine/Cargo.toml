@@ -19,9 +19,10 @@ crate-type = ["cdylib", "rlib"]
 # feature combination on each PR and the synthetic Criterion benches
 # under `benches/` confirm the speedups without regressions. Consumers
 # that need to opt out can build with
-# `default-features = false, features = ["test-helpers", "observability"]`.
+# `default-features = false, features = ["observability"]`.
+# `test-helpers` is dev/test-only: integration tests and benches that need
+# `load_dotenv` declare `required-features = ["test-helpers"]`.
 default = [
-    "test-helpers",
     "observability",
     "block-cursor-fetch",
     "statement-handle-reuse",
@@ -40,7 +41,13 @@ ffi-tests = []
 xa-dtc = ["dep:windows"]
 # XA / 2PC on Oracle through a dynamically loaded OCI XA library.
 xa-oci = ["dep:libloading"]
-# Columnar result protocol v2 placeholder and benches.
+# EXPERIMENTAL — not in `default` features. Opt-in only.
+# `columnar-v2` gates `protocol::columnar_v2` (sketch header constants) and the
+# `columnar_v2_placeholder` bench. Production columnar encoding (`protocol::columnar`,
+# `ColumnarEncoder`, `odbc_columnar_decompress`) stays on the default build.
+# Full sketch emitter/parser is not production-ready; see
+# `src/protocol/columnar_v2.rs` and `doc/notes/columnar_protocol_sketch.md`.
+# Enabling this feature emits a `cargo:warning` from `build.rs`.
 columnar-v2 = []
 # Use BlockCursor + ColumnarAnyBuffer to fetch result sets in batches instead
 # of `cursor.next_row()` one cell at a time. Promoted to default — see

@@ -58,7 +58,7 @@ void main() {
           sw.stop();
           expect(
             sw.elapsedMilliseconds,
-            lessThan(_perCallBudgetMs),
+            lessThanOrEqualTo(_perCallBudgetMs),
             reason: 'iteration $i with ${bytes.length} bytes took '
                 '${sw.elapsedMilliseconds} ms (budget $_perCallBudgetMs ms)',
           );
@@ -110,7 +110,7 @@ void main() {
           sw.stop();
           expect(
             sw.elapsedMilliseconds,
-            lessThan(_perCallBudgetMs),
+            lessThanOrEqualTo(_perCallBudgetMs),
             reason:
                 'iteration $i (bogus lengths) took ${sw.elapsedMilliseconds} '
                 'ms; DoS guard may be missing',

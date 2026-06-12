@@ -65,7 +65,6 @@ bool _shouldSkipDownload() {
   return false;
 }
 
-
 String _getLibraryName(OS os) {
   switch (os) {
     case OS.windows:

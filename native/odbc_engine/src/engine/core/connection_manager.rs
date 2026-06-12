@@ -1,7 +1,7 @@
 //! Optional in-process pool registry. Not used by the FFI or by `pool/mod.rs`;
 //! those use the global pool APIs directly. Kept for tests and future refactors.
 
-use crate::error::{OdbcError, Result};
+use crate::error::{lock_mutex, OdbcError, Result};
 use crate::pool::{ConnectionPool, PoolState};
 use std::sync::{Arc, Mutex};
 
@@ -22,14 +22,8 @@ impl ConnectionManager {
         let pool = ConnectionPool::new(&connection_string, max_size)
             .map_err(|e| OdbcError::PoolError(format!("Failed to create pool: {}", e)))?;
 
-        let mut pools = self
-            .pools
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
-        let mut next_id = self
-            .next_pool_id
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let mut pools = lock_mutex(&self.pools)?;
+        let mut next_id = lock_mutex(&self.next_pool_id)?;
 
         let pool_id = *next_id;
         *next_id += 1;
@@ -39,10 +33,7 @@ impl ConnectionManager {
     }
 
     pub fn get_pool(&self, pool_id: u32) -> Result<Arc<Mutex<ConnectionPool>>> {
-        let pools = self
-            .pools
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let pools = lock_mutex(&self.pools)?;
         pools
             .get(&pool_id)
             .cloned()
@@ -50,24 +41,16 @@ impl ConnectionManager {
     }
 
     pub fn get_pool_state(&self, pool_id: u32) -> Result<PoolState> {
-        let pools = self
-            .pools
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let pools = lock_mutex(&self.pools)?;
         let pool_arc = pools
             .get(&pool_id)
             .ok_or_else(|| OdbcError::PoolError(format!("Pool {} not found", pool_id)))?;
-        let pool = pool_arc
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let pool = lock_mutex(pool_arc.as_ref())?;
         Ok(pool.state())
     }
 
     pub fn close_pool(&self, pool_id: u32) -> Result<()> {
-        let mut pools = self
-            .pools
-            .lock()
-            .map_err(|_| OdbcError::InternalError("Lock poisoned".to_string()))?;
+        let mut pools = lock_mutex(&self.pools)?;
         pools
             .remove(&pool_id)
             .ok_or_else(|| OdbcError::PoolError(format!("Pool {} not found", pool_id)))?;

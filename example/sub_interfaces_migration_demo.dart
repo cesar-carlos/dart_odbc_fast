@@ -37,9 +37,10 @@ class ReportRepositoryV1 {
   final IOdbcService _service;
 
   Future<List<Map<String, dynamic>>> recentEvents(Connection conn) async {
-    final r = await _service.executeQueryFor(
+    final r = await _service.executeQueryParamValuesFor(
       conn,
       'SELECT id, occurred_at FROM events ORDER BY occurred_at DESC',
+      const [],
     );
     return r.fold(
       (qr) =>
@@ -57,9 +58,10 @@ class ReportRepositoryV2 {
   final IQueryService _queries;
 
   Future<List<Map<String, dynamic>>> recentEvents(Connection conn) async {
-    final r = await _queries.executeQueryFor(
+    final r = await _queries.executeQueryParamValuesFor(
       conn,
       'SELECT id, occurred_at FROM events ORDER BY occurred_at DESC',
+      const [],
     );
     return r.fold(
       (qr) =>
@@ -70,31 +72,32 @@ class ReportRepositoryV2 {
 }
 
 /// Tiny in-memory fake exercising only the V2-relevant surface. Anything
-/// outside `executeQuery` falls through to `noSuchMethod` — V2 never
+/// outside typed query execute falls through to `noSuchMethod` — V2 never
 /// touches those, which is exactly the point of depending on the
 /// narrow interface.
 class _InMemoryQueryService implements IQueryService {
+  static const QueryResult _stubResult = QueryResult(
+    columns: ['id', 'occurred_at'],
+    rows: [
+      [1, '2026-05-26T20:00:00Z'],
+      [2, '2026-05-26T19:55:00Z'],
+    ],
+    rowCount: 2,
+  );
+
   @override
-  Future<Result<QueryResult>> executeQuery(
-    String sql, {
-    List<dynamic>? params,
-    String? connectionId,
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
-    return const Success(
-      QueryResult(
-        columns: ['id', 'occurred_at'],
-        rows: [
-          [1, '2026-05-26T20:00:00Z'],
-          [2, '2026-05-26T19:55:00Z'],
-        ],
-        rowCount: 2,
-      ),
-    );
+    return const Success(_stubResult);
   }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
-        'demo fake exposes only executeQuery — '
+        'demo fake exposes only executeQueryParamValues — '
         'this is the point of IQueryService',
       );
 }
@@ -103,8 +106,8 @@ Future<void> main() async {
   print('Sub-interfaces migration demo:');
   print('  - V1 depends on IOdbcService (the full aggregate).');
   print('  - V2 depends on IQueryService only.');
-  print('  - Both use executeQueryFor(Connection conn, ...) to skip ');
-  print('    the manual conn.id plumbing.');
+  print('  - Both use executeQueryParamValuesFor(Connection conn, ...) to ');
+  print('    skip the manual conn.id plumbing.');
   print('');
 
   // V2 path — the focus of the demo. The fake exposes only the slice

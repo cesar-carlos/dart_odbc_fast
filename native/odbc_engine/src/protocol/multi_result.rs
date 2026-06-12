@@ -42,8 +42,19 @@ pub enum MultiResultItem {
 }
 
 /// Encode a list of items using the v2 framing (magic + version + count).
+///
+/// Convenience wrapper around [`try_encode_multi`]. Well-formed payloads within
+/// wire limits always succeed. On overflow the error is logged and an empty
+/// buffer is returned instead of panicking; fallible callers should use
+/// [`try_encode_multi`] directly.
 pub fn encode_multi(items: &[MultiResultItem]) -> Vec<u8> {
-    try_encode_multi(items).expect("multi-result payload exceeds wire limits")
+    match try_encode_multi(items) {
+        Ok(buf) => buf,
+        Err(e) => {
+            log::error!("encode_multi: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Single-item MULT payload for DML / no-cursor executes (row-count only).
@@ -68,9 +79,18 @@ pub fn try_encode_multi(items: &[MultiResultItem]) -> Result<Vec<u8>> {
 /// Encode using the legacy v1 framing (no magic, no version). Kept around for
 /// regression / compatibility tests; production callers should use
 /// [`encode_multi`].
+///
+/// Same non-panicking contract as [`encode_multi`]; see [`try_encode_multi_v1`]
+/// for fallible encoding.
 #[doc(hidden)]
 pub fn encode_multi_v1(items: &[MultiResultItem]) -> Vec<u8> {
-    try_encode_multi_v1(items).expect("multi-result v1 payload exceeds wire limits")
+    match try_encode_multi_v1(items) {
+        Ok(buf) => buf,
+        Err(e) => {
+            log::error!("encode_multi_v1: {e}");
+            Vec::new()
+        }
+    }
 }
 
 #[doc(hidden)]

@@ -380,7 +380,11 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
       bqual: xid.bqual,
     );
     if (xaId == 0) return null;
-    return XaTransactionHandle(xaId: xaId, xid: xid, conn: this);
+    return createNativeXaTransactionHandle(
+      xaId: xaId,
+      xid: xid,
+      conn: this,
+    );
   }
 
   /// `xa_recover`: list every XID currently in the [XaState.prepared]
@@ -436,7 +440,7 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
       bqual: xid.bqual,
     );
     if (xaId == 0) return null;
-    return XaTransactionHandle(
+    return createNativeXaTransactionHandle(
       xaId: xaId,
       xid: xid,
       conn: this,

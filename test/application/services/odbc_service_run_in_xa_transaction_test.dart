@@ -4,10 +4,9 @@ library;
 import 'dart:typed_data';
 
 import 'package:odbc_fast/application/services/odbc_service.dart';
+import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
-import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 import 'package:test/test.dart';
 
@@ -212,6 +211,28 @@ void main() {
 /// Configurable variant of [_FakeXa] that lets each step fail
 /// individually to drive the corresponding error branch in
 /// `OdbcService.runInXaTransaction`.
+class _NoopXaBackend implements XaTransactionBackend {
+  const _NoopXaBackend();
+
+  @override
+  int xaCommitOnePhase(int xaId) => 0;
+
+  @override
+  int xaCommitPrepared(int xaId) => 0;
+
+  @override
+  int xaEnd(int xaId) => 0;
+
+  @override
+  int xaPrepare(int xaId) => 0;
+
+  @override
+  int xaRollbackActive(int xaId) => 0;
+
+  @override
+  int xaRollbackPrepared(int xaId) => 0;
+}
+
 class _FailingFakeXa extends XaTransactionHandle {
   _FailingFakeXa(
     Xid xid, {
@@ -219,7 +240,11 @@ class _FailingFakeXa extends XaTransactionHandle {
     this.failPrepare = false,
     this.failCommitPrepared = false,
     this.failCommitOnePhase = false,
-  }) : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
+  }) : super.withBackend(
+          xaId: 1,
+          xid: xid,
+          backend: const _NoopXaBackend(),
+        );
 
   final bool failEnd;
   final bool failPrepare;
@@ -285,7 +310,12 @@ class _FailingFakeXa extends XaTransactionHandle {
 }
 
 class _FakeXa extends XaTransactionHandle {
-  _FakeXa(Xid xid) : super(xaId: 1, xid: xid, conn: NativeOdbcConnection());
+  _FakeXa(Xid xid)
+      : super.withBackend(
+          xaId: 1,
+          xid: xid,
+          backend: const _NoopXaBackend(),
+        );
 
   int endCalls = 0;
   int prepareCalls = 0;

@@ -13,7 +13,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod helpers;
-use helpers::e2e::{get_connection_and_db_type, should_run_e2e_tests, DatabaseType};
+use helpers::e2e::{
+    get_connection_and_db_type, should_run_e2e_tests, sql_drop_table_if_exists, unique_e2e_table,
+    DatabaseType,
+};
 use serial_test::serial;
 
 /// Metrics structure for bulk operations
@@ -82,14 +85,9 @@ fn execute_command(conn: &Connection<'static>, sql: &str) -> Result<(), odbc_eng
     Ok(())
 }
 
-/// Ensure table is dropped, ignoring errors if table doesn't exist.
-/// Retries and waits so parallel runs or previous failed tests don't leave the table.
-fn ensure_table_dropped(conn: &Connection<'static>) {
-    for _ in 0..3 {
-        let _ = execute_command(conn, "DROP TABLE IF EXISTS odbc_bulk_test");
-        let _ = execute_command(conn, "DROP TABLE odbc_bulk_test");
-        std::thread::sleep(std::time::Duration::from_millis(150));
-    }
+/// Drop an ephemeral E2E table idempotently (no error when it does not exist).
+fn ensure_table_dropped(conn: &Connection<'static>, table_name: &str, db_type: DatabaseType) {
+    let _ = execute_command(conn, &sql_drop_table_if_exists(table_name, db_type));
 }
 
 /// Execute SQL command and return execution time
@@ -107,10 +105,10 @@ fn execute_command_with_metrics(
 }
 
 /// Generate CREATE TABLE SQL adapted to database type
-fn generate_create_table_sql(db_type: DatabaseType) -> String {
+fn generate_create_table_sql(table_name: &str, db_type: DatabaseType) -> String {
     match db_type {
-        DatabaseType::SqlServer => r#"
-            CREATE TABLE odbc_bulk_test (
+        DatabaseType::SqlServer => format!(
+            r#"CREATE TABLE {table_name} (
                 id INTEGER PRIMARY KEY,
                 name VARCHAR(100),
                 age INTEGER,
@@ -119,12 +117,10 @@ fn generate_create_table_sql(db_type: DatabaseType) -> String {
                 birth_date DATE,
                 created_at DATETIME2,
                 description VARCHAR(500)
-            )
-            "#
-        .trim()
-        .to_string(),
-        DatabaseType::Sybase => r#"
-            CREATE TABLE odbc_bulk_test (
+            )"#
+        ),
+        DatabaseType::Sybase => format!(
+            r#"CREATE TABLE {table_name} (
                 id INTEGER PRIMARY KEY,
                 name VARCHAR(100),
                 age INTEGER,
@@ -133,14 +129,10 @@ fn generate_create_table_sql(db_type: DatabaseType) -> String {
                 birth_date DATE,
                 created_at TIMESTAMP,
                 description VARCHAR(500)
-            )
-            "#
-        .trim()
-        .to_string(),
-        _ => {
-            // Generic SQL for other databases
-            r#"
-            CREATE TABLE odbc_bulk_test (
+            )"#
+        ),
+        _ => format!(
+            r#"CREATE TABLE {table_name} (
                 id INTEGER PRIMARY KEY,
                 name VARCHAR(100),
                 age INTEGER,
@@ -149,17 +141,21 @@ fn generate_create_table_sql(db_type: DatabaseType) -> String {
                 birth_date DATE,
                 created_at TIMESTAMP,
                 description VARCHAR(500)
-            )
-            "#
-            .trim()
-            .to_string()
-        }
+            )"#
+        ),
     }
 }
 
 /// Generate INSERT SQL for a batch of rows
-fn generate_insert_batch(start_id: i32, count: usize, _db_type: DatabaseType) -> String {
-    let mut sql = String::from("INSERT INTO odbc_bulk_test (id, name, age, salary, is_active, birth_date, created_at, description) VALUES ");
+fn generate_insert_batch(
+    table_name: &str,
+    start_id: i32,
+    count: usize,
+    _db_type: DatabaseType,
+) -> String {
+    let mut sql = format!(
+        "INSERT INTO {table_name} (id, name, age, salary, is_active, birth_date, created_at, description) VALUES "
+    );
 
     for i in 0..count {
         let id = start_id + i as i32;
@@ -184,10 +180,14 @@ fn generate_insert_batch(start_id: i32, count: usize, _db_type: DatabaseType) ->
 }
 
 /// Get row count from table
-fn get_row_count(conn: &Connection<'static>) -> Result<usize, odbc_engine::OdbcError> {
+fn get_row_count(
+    conn: &Connection<'static>,
+    table_name: &str,
+) -> Result<usize, odbc_engine::OdbcError> {
     use odbc_engine::execute_query_with_connection;
 
-    let buffer = execute_query_with_connection(conn, "SELECT COUNT(*) AS cnt FROM odbc_bulk_test")?;
+    let buffer =
+        execute_query_with_connection(conn, &format!("SELECT COUNT(*) AS cnt FROM {table_name}"))?;
     let decoded = BinaryProtocolDecoder::parse(&buffer)
         .map_err(|e| odbc_engine::OdbcError::InternalError(format!("Failed to decode: {}", e)))?;
 
@@ -224,11 +224,11 @@ fn test_e2e_bulk_create_table() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Drop table if exists (cleanup from previous test run)
-    ensure_table_dropped(&odbc_conn);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
 
     // Create table with SQL adapted to database type
-    let create_sql = generate_create_table_sql(db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     println!("Creating table with SQL: {}", create_sql);
 
     let start = Instant::now();
@@ -237,6 +237,7 @@ fn test_e2e_bulk_create_table() {
 
     println!("✓ Table created successfully in {:.2?}", duration);
 
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 }
@@ -265,9 +266,9 @@ fn test_e2e_bulk_insert_50k_rows() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Ensure table exists (drop if exists first)
-    ensure_table_dropped(&odbc_conn);
-    let create_sql = generate_create_table_sql(db_type);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     execute_command(&odbc_conn, &create_sql).expect("Failed to create table");
 
     // Insert 50,000 rows in batches of 500
@@ -284,7 +285,8 @@ fn test_e2e_bulk_insert_50k_rows() {
         let batch_end = std::cmp::min(batch_start + BATCH_SIZE - 1, TOTAL_ROWS);
         let batch_count = batch_end - batch_start + 1;
 
-        let insert_sql = generate_insert_batch(batch_start as i32, batch_count, db_type);
+        let insert_sql =
+            generate_insert_batch(&table_name, batch_start as i32, batch_count, db_type);
 
         let start = Instant::now();
         execute_command(&odbc_conn, &insert_sql)
@@ -299,7 +301,7 @@ fn test_e2e_bulk_insert_50k_rows() {
     }
 
     // Verify row count
-    let row_count = get_row_count(&odbc_conn).expect("Failed to get row count");
+    let row_count = get_row_count(&odbc_conn, &table_name).expect("Failed to get row count");
     assert_eq!(
         row_count, TOTAL_ROWS,
         "Expected {} rows, got {}",
@@ -314,6 +316,7 @@ fn test_e2e_bulk_insert_50k_rows() {
     );
     metrics.print_summary();
 
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 }
@@ -342,9 +345,9 @@ fn test_e2e_bulk_read_all_rows() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Ensure table exists with data (drop if exists first)
-    ensure_table_dropped(&odbc_conn);
-    let create_sql = generate_create_table_sql(db_type);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     execute_command(&odbc_conn, &create_sql).expect("Failed to create table");
 
     // Insert sample data in batches
@@ -358,7 +361,8 @@ fn test_e2e_bulk_read_all_rows() {
     for batch_start in (1..=TOTAL_ROWS).step_by(BATCH_SIZE) {
         let batch_end = std::cmp::min(batch_start + BATCH_SIZE - 1, TOTAL_ROWS);
         let batch_count = batch_end - batch_start + 1;
-        let insert_sql = generate_insert_batch(batch_start as i32, batch_count, db_type);
+        let insert_sql =
+            generate_insert_batch(&table_name, batch_start as i32, batch_count, db_type);
         execute_command(&odbc_conn, &insert_sql)
             .unwrap_or_else(|_| panic!("Failed to insert batch starting at {}", batch_start));
     }
@@ -368,11 +372,9 @@ fn test_e2e_bulk_read_all_rows() {
     let start = Instant::now();
 
     use odbc_engine::execute_query_with_connection;
-    let buffer = execute_query_with_connection(
-        odbc_conn.connection(),
-        "SELECT * FROM odbc_bulk_test ORDER BY id",
-    )
-    .expect("Failed to read rows");
+    let select_sql = format!("SELECT * FROM {table_name} ORDER BY id");
+    let buffer = execute_query_with_connection(odbc_conn.connection(), &select_sql)
+        .expect("Failed to read rows");
 
     let read_duration = start.elapsed();
 
@@ -434,6 +436,7 @@ fn test_e2e_bulk_read_all_rows() {
         decoded.row_count
     );
 
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 }
@@ -462,9 +465,9 @@ fn test_e2e_bulk_update_operations() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Setup: Create table and insert data
-    ensure_table_dropped(&odbc_conn);
-    let create_sql = generate_create_table_sql(db_type);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     execute_command(&odbc_conn, &create_sql).expect("Failed to create table");
 
     const TOTAL_ROWS: usize = 50000;
@@ -477,7 +480,8 @@ fn test_e2e_bulk_update_operations() {
     for batch_start in (1..=TOTAL_ROWS).step_by(BATCH_SIZE) {
         let batch_end = std::cmp::min(batch_start + BATCH_SIZE - 1, TOTAL_ROWS);
         let batch_count = batch_end - batch_start + 1;
-        let insert_sql = generate_insert_batch(batch_start as i32, batch_count, db_type);
+        let insert_sql =
+            generate_insert_batch(&table_name, batch_start as i32, batch_count, db_type);
         execute_command(&odbc_conn, &insert_sql)
             .unwrap_or_else(|_| panic!("Failed to insert batch starting at {}", batch_start));
     }
@@ -490,8 +494,7 @@ fn test_e2e_bulk_update_operations() {
 
     // UPDATE 1: Small update (500 rows - 1%)
     println!("\n--- UPDATE 1: Small update (500 rows - 1%) ---");
-    let update_sql_1 =
-        "UPDATE odbc_bulk_test SET salary = salary * 1.1 WHERE id <= 500".to_string();
+    let update_sql_1 = format!("UPDATE {table_name} SET salary = salary * 1.1 WHERE id <= 500");
     let duration_1 = execute_command_with_metrics(&odbc_conn, &update_sql_1)
         .expect("Failed to execute UPDATE 1");
 
@@ -501,7 +504,7 @@ fn test_e2e_bulk_update_operations() {
     // UPDATE 2: Medium update (5,000 rows - 10%)
     println!("\n--- UPDATE 2: Medium update (5,000 rows - 10%) ---");
     let update_sql_2 = format!(
-        "UPDATE odbc_bulk_test SET name = 'Updated_' {} name WHERE id <= 5000",
+        "UPDATE {table_name} SET name = 'Updated_' {} name WHERE id <= 5000",
         concat_op
     );
     let duration_2 = execute_command_with_metrics(&odbc_conn, &update_sql_2)
@@ -512,7 +515,7 @@ fn test_e2e_bulk_update_operations() {
 
     // UPDATE 3: Large update (25,000 rows - 50%)
     println!("\n--- UPDATE 3: Large update (25,000 rows - 50%) ---");
-    let update_sql_3 = "UPDATE odbc_bulk_test SET age = age + 1 WHERE id <= 25000".to_string();
+    let update_sql_3 = format!("UPDATE {table_name} SET age = age + 1 WHERE id <= 25000");
     let duration_3 = execute_command_with_metrics(&odbc_conn, &update_sql_3)
         .expect("Failed to execute UPDATE 3");
 
@@ -520,7 +523,8 @@ fn test_e2e_bulk_update_operations() {
     metrics_3.print_summary();
 
     // Verify final row count
-    let final_count = get_row_count(&odbc_conn).expect("Failed to get final row count");
+    let final_count =
+        get_row_count(&odbc_conn, &table_name).expect("Failed to get final row count");
     assert_eq!(
         final_count, TOTAL_ROWS,
         "Row count should remain {}",
@@ -529,6 +533,7 @@ fn test_e2e_bulk_update_operations() {
 
     println!("\n✓ All UPDATE operations completed successfully");
 
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 }
@@ -557,9 +562,9 @@ fn test_e2e_bulk_delete_operations() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Setup: Create table and insert data (drop if exists first)
-    ensure_table_dropped(&odbc_conn);
-    let create_sql = generate_create_table_sql(db_type);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     execute_command(&odbc_conn, &create_sql).expect("Failed to create table");
 
     const TOTAL_ROWS: usize = 50000;
@@ -572,7 +577,8 @@ fn test_e2e_bulk_delete_operations() {
     for batch_start in (1..=TOTAL_ROWS).step_by(BATCH_SIZE) {
         let batch_end = std::cmp::min(batch_start + BATCH_SIZE - 1, TOTAL_ROWS);
         let batch_count = batch_end - batch_start + 1;
-        let insert_sql = generate_insert_batch(batch_start as i32, batch_count, db_type);
+        let insert_sql =
+            generate_insert_batch(&table_name, batch_start as i32, batch_count, db_type);
         execute_command(&odbc_conn, &insert_sql)
             .unwrap_or_else(|_| panic!("Failed to insert batch starting at {}", batch_start));
     }
@@ -582,7 +588,7 @@ fn test_e2e_bulk_delete_operations() {
     // DELETE 1: Small delete (500 rows - 1%)
     println!("\n--- DELETE 1: Small delete (500 rows - 1%) ---");
     let delete_sql_1 = format!(
-        "DELETE FROM odbc_bulk_test WHERE id > {}",
+        "DELETE FROM {table_name} WHERE id > {}",
         remaining_rows - 500
     );
     let duration_1 = execute_command_with_metrics(&odbc_conn, &delete_sql_1)
@@ -593,7 +599,8 @@ fn test_e2e_bulk_delete_operations() {
     metrics_1.print_summary();
 
     // Verify count after DELETE 1
-    let count_1 = get_row_count(&odbc_conn).expect("Failed to get count after DELETE 1");
+    let count_1 =
+        get_row_count(&odbc_conn, &table_name).expect("Failed to get count after DELETE 1");
     assert_eq!(
         count_1, remaining_rows,
         "Expected {} rows after DELETE 1, got {}",
@@ -603,7 +610,7 @@ fn test_e2e_bulk_delete_operations() {
     // DELETE 2: Medium delete (5,000 rows - 10% of remaining)
     println!("\n--- DELETE 2: Medium delete (5,000 rows - 10% of remaining) ---");
     let delete_sql_2 = format!(
-        "DELETE FROM odbc_bulk_test WHERE id > {} AND id <= {}",
+        "DELETE FROM {table_name} WHERE id > {} AND id <= {}",
         remaining_rows - 5000,
         remaining_rows
     );
@@ -615,7 +622,8 @@ fn test_e2e_bulk_delete_operations() {
     metrics_2.print_summary();
 
     // Verify count after DELETE 2
-    let count_2 = get_row_count(&odbc_conn).expect("Failed to get count after DELETE 2");
+    let count_2 =
+        get_row_count(&odbc_conn, &table_name).expect("Failed to get count after DELETE 2");
     assert_eq!(
         count_2, remaining_rows,
         "Expected {} rows after DELETE 2, got {}",
@@ -625,7 +633,7 @@ fn test_e2e_bulk_delete_operations() {
     // DELETE 3: Large delete (20,000 rows - 40% of remaining)
     println!("\n--- DELETE 3: Large delete (20,000 rows - 40% of remaining) ---");
     let delete_sql_3 = format!(
-        "DELETE FROM odbc_bulk_test WHERE id > {} AND id <= {}",
+        "DELETE FROM {table_name} WHERE id > {} AND id <= {}",
         remaining_rows - 20000,
         remaining_rows
     );
@@ -637,7 +645,7 @@ fn test_e2e_bulk_delete_operations() {
     metrics_3.print_summary();
 
     // Verify final count
-    let final_count = get_row_count(&odbc_conn).expect("Failed to get final count");
+    let final_count = get_row_count(&odbc_conn, &table_name).expect("Failed to get final count");
     assert_eq!(
         final_count, remaining_rows,
         "Expected {} rows after all DELETEs, got {}",
@@ -650,6 +658,7 @@ fn test_e2e_bulk_delete_operations() {
         final_count, TOTAL_ROWS
     );
 
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Failed to disconnect");
 }
@@ -662,7 +671,7 @@ fn test_e2e_bulk_drop_table() {
         return;
     }
 
-    let (conn_str, _db_type) =
+    let (conn_str, db_type) =
         get_connection_and_db_type().expect("Failed to get connection string and database type");
 
     let env = OdbcEnvironment::new();
@@ -678,25 +687,26 @@ fn test_e2e_bulk_drop_table() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    // Ensure table exists (create if needed, drop if exists first)
-    ensure_table_dropped(&odbc_conn);
-    let create_sql = generate_create_table_sql(_db_type);
+    let table_name = unique_e2e_table("odbc_bulk");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    let create_sql = generate_create_table_sql(&table_name, db_type);
     execute_command(&odbc_conn, &create_sql).expect("Failed to create table");
 
     // Verify table exists
-    let count_before = get_row_count(&odbc_conn).ok();
+    let count_before = get_row_count(&odbc_conn, &table_name).ok();
     println!("Table exists (row count: {:?})", count_before);
 
     // Drop table
-    println!("Dropping table odbc_bulk_test...");
+    println!("Dropping table {table_name}...");
     let start = Instant::now();
-    execute_command(&odbc_conn, "DROP TABLE odbc_bulk_test").expect("Failed to drop table");
+    let drop_sql = sql_drop_table_if_exists(&table_name, db_type);
+    execute_command(&odbc_conn, &drop_sql).expect("Failed to drop table");
     let duration = start.elapsed();
 
     println!("✓ Table dropped successfully in {:.2?}", duration);
 
     // Verify table no longer exists (should error or return 0)
-    let count_after = get_row_count(&odbc_conn);
+    let count_after = get_row_count(&odbc_conn, &table_name);
     assert!(
         count_after.is_err() || count_after.unwrap_or(0) == 0,
         "Table should not exist after DROP"
@@ -707,13 +717,14 @@ fn test_e2e_bulk_drop_table() {
 }
 
 #[test]
+#[serial]
 fn test_e2e_bulk_array_binding() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: database not available");
         return;
     }
 
-    let (conn_str, _db_type) =
+    let (conn_str, db_type) =
         get_connection_and_db_type().expect("Failed to get connection string and database type");
 
     let env = OdbcEnvironment::new();
@@ -729,11 +740,10 @@ fn test_e2e_bulk_array_binding() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let _ = execute_command(&odbc_conn, "DROP TABLE IF EXISTS odbc_ab_test");
-    let _ = execute_command(&odbc_conn, "DROP TABLE odbc_ab_test");
-    std::thread::sleep(Duration::from_millis(100));
-
-    execute_command(&odbc_conn, "CREATE TABLE odbc_ab_test (id INT)").expect("Create table");
+    let table_name = unique_e2e_table("odbc_ab");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
+    execute_command(&odbc_conn, &format!("CREATE TABLE {table_name} (id INT)"))
+        .expect("Create table");
     const N: usize = 5_000;
     let ids: Vec<i32> = (1..=N as i32).collect();
     let data: Vec<Vec<i32>> = vec![ids];
@@ -741,14 +751,14 @@ fn test_e2e_bulk_array_binding() {
     let ab = ArrayBinding::new(1_000);
     let start = Instant::now();
     let inserted = ab
-        .bulk_insert_i32(&odbc_conn, "odbc_ab_test", &["id"], &data)
+        .bulk_insert_i32(&odbc_conn, &table_name, &["id"], &data)
         .expect("bulk_insert_i32");
     let elapsed = start.elapsed();
 
     assert_eq!(inserted, N, "Expected {} rows inserted", N);
     let buf = execute_query_with_connection(
         odbc_conn.connection(),
-        "SELECT COUNT(*) AS c FROM odbc_ab_test",
+        &format!("SELECT COUNT(*) AS c FROM {table_name}"),
     )
     .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
@@ -758,29 +768,29 @@ fn test_e2e_bulk_array_binding() {
     let m = BulkOperationMetrics::new("ArrayBinding insert", N, elapsed);
     m.print_summary();
 
-    execute_command(&odbc_conn, "DROP TABLE odbc_ab_test").expect("Drop table");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Disconnect");
 }
 
 #[test]
+#[serial]
 fn test_e2e_bulk_parallel_insert() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: database not available");
         return;
     }
 
-    let (conn_str, _db_type) =
+    let (conn_str, db_type) =
         get_connection_and_db_type().expect("Failed to get connection string and database type");
 
+    let table_name = unique_e2e_table("odbc_pi");
     let pool = Arc::new(ConnectionPool::new(&conn_str, 4).expect("Create pool"));
     let mut wrapper = pool.get().expect("Get connection");
     let conn = wrapper.get_connection_mut();
 
-    let _ = execute_command(conn, "DROP TABLE IF EXISTS odbc_pi_test");
-    let _ = execute_command(conn, "DROP TABLE odbc_pi_test");
-    std::thread::sleep(Duration::from_millis(100));
-    execute_command(conn, "CREATE TABLE odbc_pi_test (id INT)").expect("Create table");
+    ensure_table_dropped(conn, &table_name, db_type);
+    execute_command(conn, &format!("CREATE TABLE {table_name} (id INT)")).expect("Create table");
     drop(wrapper);
 
     const N: usize = 2_000;
@@ -790,7 +800,7 @@ fn test_e2e_bulk_parallel_insert() {
     let pbi = ParallelBulkInsert::new(Arc::clone(&pool), 2).with_batch_size(500);
     let start = Instant::now();
     let inserted = pbi
-        .insert_i32_parallel("odbc_pi_test", &["id"], data)
+        .insert_i32_parallel(&table_name, &["id"], data)
         .expect("insert_i32_parallel");
     let elapsed = start.elapsed();
 
@@ -798,8 +808,9 @@ fn test_e2e_bulk_parallel_insert() {
 
     let wrapper2 = pool.get().expect("Get connection");
     let conn2 = wrapper2.get_connection();
-    let buf = execute_query_with_connection(conn2, "SELECT COUNT(*) AS c FROM odbc_pi_test")
-        .expect("SELECT COUNT");
+    let buf =
+        execute_query_with_connection(conn2, &format!("SELECT COUNT(*) AS c FROM {table_name}"))
+            .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
     let count = decode_integer(dec.rows[0][0].as_ref().unwrap());
     assert_eq!(count as usize, N);
@@ -808,17 +819,18 @@ fn test_e2e_bulk_parallel_insert() {
     m.print_summary();
 
     let mut w3 = pool.get().expect("Get connection");
-    execute_command(w3.get_connection_mut(), "DROP TABLE odbc_pi_test").expect("Drop table");
+    ensure_table_dropped(w3.get_connection_mut(), &table_name, db_type);
 }
 
 #[test]
+#[serial]
 fn test_e2e_bulk_insert_generic() {
     if !should_run_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: database not available");
         return;
     }
 
-    let (conn_str, _db_type) =
+    let (conn_str, db_type) =
         get_connection_and_db_type().expect("Failed to get connection string and database type");
 
     let env = OdbcEnvironment::new();
@@ -834,13 +846,11 @@ fn test_e2e_bulk_insert_generic() {
         .expect("Failed to get ODBC connection");
     let odbc_conn = conn_arc.lock().unwrap();
 
-    let _ = execute_command(&odbc_conn, "DROP TABLE IF EXISTS odbc_bi_gen_test");
-    let _ = execute_command(&odbc_conn, "DROP TABLE odbc_bi_gen_test");
-    std::thread::sleep(Duration::from_millis(100));
-
+    let table_name = unique_e2e_table("odbc_bi_gen");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     execute_command(
         &odbc_conn,
-        "CREATE TABLE odbc_bi_gen_test (id INT, name VARCHAR(50))",
+        &format!("CREATE TABLE {table_name} (id INT, name VARCHAR(50))"),
     )
     .expect("Create table");
 
@@ -852,7 +862,7 @@ fn test_e2e_bulk_insert_generic() {
     let max_len = 50;
 
     let payload = BulkInsertPayload {
-        table: "odbc_bi_gen_test".to_string(),
+        table: table_name.clone(),
         columns: vec![
             BulkColumnSpec {
                 name: "id".to_string(),
@@ -891,7 +901,7 @@ fn test_e2e_bulk_insert_generic() {
     assert_eq!(inserted, N, "Expected {} rows inserted", N);
     let buf = execute_query_with_connection(
         odbc_conn.connection(),
-        "SELECT COUNT(*) AS c FROM odbc_bi_gen_test",
+        &format!("SELECT COUNT(*) AS c FROM {table_name}"),
     )
     .expect("SELECT COUNT");
     let dec = BinaryProtocolDecoder::parse(&buf).unwrap();
@@ -901,7 +911,7 @@ fn test_e2e_bulk_insert_generic() {
     let m = BulkOperationMetrics::new("bulk_insert_generic I32+Text", N, elapsed);
     m.print_summary();
 
-    execute_command(&odbc_conn, "DROP TABLE odbc_bi_gen_test").expect("Drop table");
+    ensure_table_dropped(&odbc_conn, &table_name, db_type);
     drop(handles_guard);
     conn.disconnect().expect("Disconnect");
 }

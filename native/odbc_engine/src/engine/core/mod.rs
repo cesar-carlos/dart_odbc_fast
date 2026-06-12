@@ -8,7 +8,7 @@ pub mod columnar_fetch;
 pub mod connection_manager;
 pub mod disk_spill;
 pub mod driver_capabilities;
-pub mod execution_engine;
+pub mod execution;
 pub mod memory_engine;
 pub mod metadata_cache;
 mod output_aware_params;
@@ -31,11 +31,14 @@ pub use driver_capabilities::{
     ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_REDSHIFT, ENGINE_SNOWFLAKE, ENGINE_SQLITE,
     ENGINE_SQLSERVER, ENGINE_SYBASE_ASA, ENGINE_SYBASE_ASE, ENGINE_UNKNOWN,
 };
-pub use execution_engine::ExecutionEngine;
+pub use execution::ExecutionEngine;
 pub use memory_engine::MemoryEngine;
 pub use metadata_cache::{ColumnMetadata, MetadataCache, TableSchema};
 pub use parallel_insert::ParallelBulkInsert;
-pub use pipeline::{QueryPipeline, QueryPlan};
+pub use pipeline::{
+    shared_columnar_compressed_pipeline, shared_columnar_pipeline, shared_row_major_pipeline,
+    QueryPipeline, QueryPlan, SHARED_PIPELINE_CACHE_SIZE,
+};
 pub use prepared_cache::{PreparedStatementCache, PreparedStatementMetrics};
 pub use protocol_engine::{ProtocolEngine, ProtocolVersion};
 pub use security_layer::{SecureBuffer, SecurityLayer};

@@ -25,8 +25,25 @@
 //! Functions returning pointers should use `call_ptr` and `null_mut()` on
 //! failure; size functions should use `call_size`.
 
-use std::os::raw::c_int;
+use std::ffi::CStr;
+use std::os::raw::{c_char, c_int};
 use std::panic::{catch_unwind, AssertUnwindSafe, UnwindSafe};
+
+/// Borrow a NUL-terminated C string from an FFI pointer.
+///
+/// Returns `None` when `ptr` is null.
+///
+/// # Safety
+///
+/// When `ptr` is non-null, the caller must guarantee it points to a valid,
+/// null-terminated C string that remains readable for the duration of the borrow.
+pub(crate) unsafe fn ptr_to_cstr<'a>(ptr: *const c_char) -> Option<&'a CStr> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: caller guarantees a valid null-terminated C string per # Safety.
+    Some(unsafe { CStr::from_ptr(ptr) })
+}
 
 /// Standard FFI error categories (negative `c_int` values returned by
 /// guarded entry points).
@@ -248,6 +265,21 @@ macro_rules! ffi_guard_ptr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ptr_to_cstr_returns_none_for_null() {
+        // SAFETY: null pointer is explicitly allowed by the helper contract.
+        let out = unsafe { ptr_to_cstr(std::ptr::null()) };
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn ptr_to_cstr_borrows_valid_c_string() {
+        let raw = std::ffi::CString::new("odbc").expect("cstring");
+        // SAFETY: pointer from CString is valid for the duration of this test.
+        let out = unsafe { ptr_to_cstr(raw.as_ptr()) };
+        assert_eq!(out.and_then(|c| c.to_str().ok()), Some("odbc"));
+    }
 
     #[test]
     fn call_int_passes_through_value() {

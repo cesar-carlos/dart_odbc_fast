@@ -1,14 +1,18 @@
-import 'dart:async';
-
-import 'package:odbc_fast/application/services/i_admin_service.dart';
-import 'package:odbc_fast/application/services/i_pool_service.dart';
-import 'package:odbc_fast/application/services/i_query_service.dart';
-import 'package:odbc_fast/application/services/i_transaction_service.dart';
+import 'package:odbc_fast/application/services/i_odbc_service.dart';
+import 'package:odbc_fast/application/services/odbc_admin_service.dart';
+import 'package:odbc_fast/application/services/odbc_pool_service.dart';
+import 'package:odbc_fast/application/services/odbc_query_service.dart';
+import 'package:odbc_fast/application/services/odbc_transaction_service.dart';
+import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
+import 'package:odbc_fast/domain/entities/directed_param.dart';
+import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
+import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
@@ -17,439 +21,25 @@ import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
-import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
-import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart'
-    show AsyncWorkerPoolStats;
-import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/typed_columnar_converter.dart'
-    show toTypedColumnar;
-import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
 export 'package:odbc_fast/application/services/i_admin_service.dart';
+export 'package:odbc_fast/application/services/i_odbc_service.dart';
 export 'package:odbc_fast/application/services/i_pool_service.dart';
 export 'package:odbc_fast/application/services/i_query_service.dart';
 export 'package:odbc_fast/application/services/i_transaction_service.dart';
-
-/// Interface for ODBC service operations.
-///
-/// Allows decorators and alternative implementations to be used
-/// interchangeably via dependency injection.
-///
-/// Aggregates four narrower sub-interfaces:
-///
-/// - [IQueryService] — query / stream operations.
-/// - [ITransactionService] — local 2PC + XA lifecycle.
-/// - [IPoolService] — connection pool management.
-/// - [IAdminService] — initialization, metrics, capabilities.
-///
-/// New consumers are encouraged to depend on the narrowest sub-interface
-/// they need (Interface Segregation Principle). Existing code that types
-/// against `IOdbcService` keeps working unchanged because every member
-/// stays declared at the aggregate level.
-abstract class IOdbcService
-    implements IQueryService, ITransactionService, IPoolService, IAdminService {
-  @override
-  Future<Result<void>> initialize();
-
-  @override
-  Future<Result<Connection>> connect(
-    String connectionString, {
-    ConnectionOptions? options,
-  });
-
-  @override
-  Future<Result<void>> disconnect(String connectionId);
-
-  @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  });
-
-  /// Like [executeQueryParams] for `OUT` / `INOUT` (DRT1 on the wire).
-  @override
-  Future<Result<QueryResult>> executeQueryDirectedParams(
-    String connectionId,
-    String sql,
-    List<DirectedParam> params,
-  );
-
-  @override
-  Stream<Result<QueryResult>> streamQuery(
-    String connectionId,
-    String sql,
-  );
-
-  @override
-  Future<Result<int>> beginTransaction(
-    String connectionId, {
-    IsolationLevel? isolationLevel,
-    SavepointDialect? savepointDialect,
-    TransactionAccessMode? accessMode,
-    Duration? lockTimeout,
-  });
-
-  @override
-  Future<Result<void>> commitTransaction(
-    String connectionId,
-    int txnId,
-  );
-
-  @override
-  Future<Result<void>> rollbackTransaction(
-    String connectionId,
-    int txnId,
-  );
-
-  /// Runs [action] inside a transaction with automatic commit on success
-  /// and rollback on any failure (returned `Failure` or thrown exception).
-  ///
-  /// Sprint 4.4 — ergonomic helper that captures the begin/commit/rollback
-  /// dance behind a single call so application code never has to manage
-  /// the `txnId` lifecycle by hand.
-  ///
-  /// - `action` receives the live `txnId` and returns a `Result<T>`.
-  ///   Returning `Success(value)` triggers `commitTransaction`; returning
-  ///   `Failure(error)` triggers `rollbackTransaction` and the original
-  ///   error is propagated.
-  /// - When [action] throws, the transaction is rolled back and the
-  ///   exception is converted to a `QueryError`. The original exception
-  ///   is preserved in the error message for diagnostics.
-  /// - When the rollback itself fails, the original error wins; the
-  ///   rollback failure is logged via the underlying repository (which
-  ///   already does this in [rollbackTransaction]).
-  /// - Default isolation is `IsolationLevel.readCommitted`,
-  ///   default dialect is `SavepointDialect.auto`, default access mode
-  ///   is `TransactionAccessMode.readWrite` — same defaults as
-  ///   [beginTransaction].
-  ///
-  /// Example:
-  /// ```dart
-  /// final result = await service.runInTransaction<int>(
-  ///   connId,
-  ///   (txnId) async {
-  ///     final r1 = await service.executeQueryParams(
-  ///       connId, 'INSERT INTO logs(msg) VALUES (?)', ['hi'],
-  ///     );
-  ///     if (r1.isError()) return Failure(r1.exceptionOrNull()!);
-  ///     return const Success(42);
-  ///   },
-  ///   accessMode: TransactionAccessMode.readWrite,
-  /// );
-  /// ```
-  @override
-  Future<Result<T>> runInTransaction<T extends Object>(
-    String connectionId,
-    Future<Result<T>> Function(int txnId) action, {
-    IsolationLevel? isolationLevel,
-    SavepointDialect? savepointDialect,
-    TransactionAccessMode? accessMode,
-    Duration? lockTimeout,
-  });
-
-  /// Runs [action] inside a distributed XA / 2PC branch on [connectionId].
-  ///
-  /// Two-phase (default): `xa_start` → [action] → `xa_end` → `xa_prepare` →
-  /// `xa_commit_prepared`. Set [onePhase] to use `xa_commit_one_phase` after
-  /// [action] instead (single-RM shortcut only).
-  ///
-  /// [action] returning [Failure] triggers best-effort rollback; thrown
-  /// exceptions are converted to [QueryError] and also roll back, matching
-  /// [runInTransaction].
-  Future<Result<T>> runInXaTransaction<T extends Object>(
-    String connectionId,
-    Xid xid,
-    Future<Result<T>> Function(XaTransactionHandle xa) action, {
-    bool onePhase = false,
-  });
-
-  Future<Result<void>> createSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  );
-
-  Future<Result<void>> rollbackToSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  );
-
-  Future<Result<void>> releaseSavepoint(
-    String connectionId,
-    int txnId,
-    String name,
-  );
-
-  Future<Result<int>> prepare(
-    String connectionId,
-    String sql, {
-    int timeoutMs = 0,
-  });
-
-  Future<Result<int>> prepareNamed(
-    String connectionId,
-    String sql, {
-    int timeoutMs = 0,
-  });
-
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  );
-
-  Future<Result<QueryResult>> executePreparedNamed(
-    String connectionId,
-    int stmtId,
-    Map<String, Object?> namedParams,
-    StatementOptions? options,
-  );
-
-  Future<Result<void>> closeStatement(
-    String connectionId,
-    int stmtId,
-  );
-
-  Future<Result<void>> cancelStatement(
-    String connectionId,
-    int stmtId,
-  );
-
-  Future<Result<QueryResult>> executeQueryMulti(
-    String connectionId,
-    String sql,
-  );
-
-  Future<Result<QueryResultMulti>> executeQueryMultiFull(
-    String connectionId,
-    String sql,
-  );
-
-  /// Executes a parameterised batch SQL and returns all multi-result items.
-  ///
-  /// Supports positional `?` parameters using the same wire format as
-  /// [executeQueryMultiFull]. New in v3.2.0.
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  );
-
-  /// Streams a multi-result batch one item at a time. New in v3.3.0 (M8).
-  @override
-  Stream<Result<QueryResultMultiItem>> streamQueryMulti(
-    String connectionId,
-    String sql,
-  );
-
-  @override
-  Future<Result<QueryResult>> executeQueryNamed(
-    String connectionId,
-    String sql,
-    Map<String, Object?> namedParams,
-  );
-
-  /// Executes a named-parameter query and returns results as a stream.
-  ///
-  /// Supports `@name` and `:name` syntax. Because the parameterized execute
-  /// path does not support incremental batched streaming at the FFI level, the
-  /// result is buffered and yielded as a single [QueryResult] chunk. On
-  /// failure, emits a single `Failure` item and closes the stream.
-  @override
-  Stream<Result<QueryResult>> streamQueryNamed(
-    String connectionId,
-    String sql,
-    Map<String, Object?> namedParams,
-  );
-
-  @override
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  });
-
-  @override
-  Stream<Result<TypedColumnarResult>> streamQueryColumnar(
-    String connectionId,
-    String sql,
-  );
-
-  Future<Result<QueryResult>> catalogTables({
-    required String connectionId,
-    String catalog = '',
-    String schema = '',
-  });
-
-  Future<Result<QueryResult>> catalogColumns(
-    String connectionId,
-    String table,
-  );
-
-  Future<Result<QueryResult>> catalogTypeInfo(String connectionId);
-
-  Future<Result<QueryResult>> catalogPrimaryKeys(
-    String connectionId,
-    String table,
-  );
-
-  Future<Result<QueryResult>> catalogForeignKeys(
-    String connectionId,
-    String table,
-  );
-
-  Future<Result<QueryResult>> catalogIndexes(
-    String connectionId,
-    String table,
-  );
-
-  @override
-  Future<Result<int>> poolCreate(
-    String connectionString,
-    int maxSize, {
-    PoolOptions? options,
-  });
-
-  @override
-  Future<Result<Connection>> poolGetConnection(int poolId);
-
-  @override
-  Future<Result<void>> poolReleaseConnection(String connectionId);
-
-  @override
-  Future<Result<bool>> poolHealthCheck(int poolId);
-
-  Future<Result<PoolState>> poolGetState(int poolId);
-
-  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId);
-
-  @override
-  Future<Result<void>> poolSetSize(int poolId, int newMaxSize);
-
-  @override
-  Future<Result<void>> poolClose(int poolId);
-
-  Future<Result<int>> bulkInsert(
-    String connectionId,
-    String table,
-    List<String> columns,
-    List<int> dataBuffer,
-    int rowCount,
-  );
-
-  Future<Result<int>> bulkInsertParallel(
-    int poolId,
-    String table,
-    List<String> columns,
-    List<int> dataBuffer,
-    int rowCount, {
-    int parallelism = 0,
-  });
-
-  @override
-  Future<Result<OdbcMetrics>> getMetrics();
-
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode instead of '
-    'Failure. Will be removed in a future major release.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
-
-  bool isInitialized();
-
-  Future<Result<void>> clearStatementCache();
-
-  Future<Result<void>> clearAllStatements();
-
-  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics();
-
-  Future<Result<Map<String, String>>> getVersion();
-
-  @override
-  Future<Result<void>> validateConnectionString(String connectionString);
-
-  @override
-  Future<Result<Map<String, Object?>>> getDriverCapabilities(
-    String connectionString,
-  );
-
-  @override
-  Future<AsyncWorkerPoolStats?> getWorkerPoolStats();
-
-  @override
-  Stream<OdbcEvent> get events;
-
-  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId);
-
-  Future<Result<void>> setLogLevel(int level);
-
-  Future<Result<void>> setAuditEnabled({required bool enabled});
-
-  Future<Result<Map<String, Object?>>> getAuditStatus();
-
-  Future<Result<List<Map<String, Object?>>>> getAuditEvents({int limit = 0});
-
-  Future<Result<void>> clearAuditEvents();
-
-  Future<Result<void>> metadataCacheEnable({
-    required int maxEntries,
-    required int ttlSeconds,
-  });
-
-  Future<Result<Map<String, Object?>>> metadataCacheStats();
-
-  Future<Result<void>> clearMetadataCache();
-
-  Future<Result<void>> cancelStream(int streamId);
-
-  Future<Result<int>> executeAsyncStart(String connectionId, String sql);
-
-  Future<Result<int>> asyncPoll(int requestId);
-
-  Future<Result<QueryResult>> asyncGetResult(
-    int requestId, {
-    int? maxBufferBytes,
-  });
-
-  Future<Result<void>> asyncCancel(int requestId);
-
-  Future<Result<void>> asyncFree(int requestId);
-
-  Future<Result<int>> streamStartAsync(
-    String connectionId,
-    String sql, {
-    int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
-  });
-
-  Future<Result<int>> streamPollAsync(int streamId);
-
-  Future<String?> detectDriver(String connectionString);
-
-  @override
-  Future<Result<QueryResult>> executeQuery(
-    String sql, {
-    List<dynamic>? params,
-    String? connectionId,
-  });
-
-  void dispose();
-}
 
 /// High-level ODBC service that provides simplified API for database
 /// operations.
 ///
 /// This service wraps [IOdbcRepository] to provide a more convenient
-/// interface for common database operations.
+/// interface for common database operations. Implementation is split
+/// across capability delegates ([OdbcQueryService], [OdbcPoolService],
+/// [OdbcAdminService], [OdbcTransactionService]); this class is a thin
+/// façade that forwards each call.
 ///
 /// ## Usage
 /// ```dart
@@ -462,51 +52,39 @@ abstract class IOdbcService
 /// ```
 class OdbcService implements IOdbcService {
   /// Creates a new [OdbcService] instance.
-  ///
-  /// The `repository` parameter provides the ODBC repository implementation.
-  OdbcService(this._repository) {
-    // Bridge repository's event source onto the broadcast controller so
-    // multiple consumers can subscribe without coupling to the repo.
-    _repoEventsSub = _repository.events.listen(_eventsController.add);
-  }
+  OdbcService(IOdbcRepository repository)
+      : _admin = OdbcAdminService(repository),
+        _query = OdbcQueryService(repository),
+        _pool = OdbcPoolService(repository),
+        _transaction = OdbcTransactionService(repository),
+        _repository = repository;
+
   final IOdbcRepository _repository;
-
-  /// Broadcast stream of [OdbcEvent]s. Created eagerly in the constructor
-  /// and forwarded from the repository so every consumer of this service
-  /// sees the same lifecycle events.
-  final StreamController<OdbcEvent> _eventsController =
-      StreamController<OdbcEvent>.broadcast();
-  late final StreamSubscription<OdbcEvent> _repoEventsSub;
-
-  @override
-  Stream<OdbcEvent> get events => _eventsController.stream;
+  final OdbcAdminService _admin;
+  final OdbcQueryService _query;
+  final OdbcPoolService _pool;
+  final OdbcTransactionService _transaction;
 
   /// Closes the internal event bridge. Call from owners that explicitly
   /// dispose the service. Safe to call multiple times.
-  Future<void> closeEvents() async {
-    await _repoEventsSub.cancel();
-    if (!_eventsController.isClosed) {
-      await _eventsController.close();
-    }
-  }
+  Future<void> closeEvents() => _admin.closeEvents();
 
   @override
-  Future<Result<void>> initialize() async {
-    return _repository.initialize();
-  }
+  Stream<OdbcEvent> get events => _admin.events;
+
+  @override
+  Future<Result<void>> initialize() => _admin.initialize();
 
   @override
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
-  }) async {
-    return _repository.connect(connectionString, options: options);
-  }
+  }) =>
+      _admin.connect(connectionString, options: options);
 
   @override
-  Future<Result<void>> disconnect(String connectionId) async {
-    return _repository.disconnect(connectionId);
-  }
+  Future<Result<void>> disconnect(String connectionId) =>
+      _admin.disconnect(connectionId);
 
   @override
   Future<Result<QueryResult>> executeQueryParams(
@@ -514,35 +92,39 @@ class OdbcService implements IOdbcService {
     String sql,
     List<dynamic> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) async {
-    return _repository.executeQueryParams(
-      connectionId,
-      sql,
-      params,
-      resultEncoding: resultEncoding,
-    );
-  }
+  }) =>
+      _query.executeQueryParams(
+        connectionId,
+        sql,
+        params,
+        resultEncoding: resultEncoding,
+      );
+
+  @override
+  Future<Result<QueryResult>> executeQueryParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) =>
+      _query.executeQueryParamValues(
+        connectionId,
+        sql,
+        params,
+        resultEncoding: resultEncoding,
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryDirectedParams(
     String connectionId,
     String sql,
     List<DirectedParam> params,
-  ) async {
-    return _repository.executeQueryParamBuffer(
-      connectionId,
-      sql,
-      serializeDirectedParams(params),
-    );
-  }
+  ) =>
+      _query.executeQueryDirectedParams(connectionId, sql, params);
 
   @override
-  Stream<Result<QueryResult>> streamQuery(
-    String connectionId,
-    String sql,
-  ) {
-    return _repository.streamQuery(connectionId, sql);
-  }
+  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
+      _query.streamQuery(connectionId, sql);
 
   @override
   Future<Result<int>> beginTransaction(
@@ -551,31 +133,22 @@ class OdbcService implements IOdbcService {
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
-  }) async {
-    return _repository.beginTransaction(
-      connectionId,
-      isolationLevel ?? IsolationLevel.readCommitted,
-      savepointDialect: savepointDialect ?? SavepointDialect.auto,
-      accessMode: accessMode ?? TransactionAccessMode.readWrite,
-      lockTimeout: lockTimeout,
-    );
-  }
+  }) =>
+      _transaction.beginTransaction(
+        connectionId,
+        isolationLevel: isolationLevel,
+        savepointDialect: savepointDialect,
+        accessMode: accessMode,
+        lockTimeout: lockTimeout,
+      );
 
   @override
-  Future<Result<void>> commitTransaction(
-    String connectionId,
-    int txnId,
-  ) async {
-    return _repository.commitTransaction(connectionId, txnId);
-  }
+  Future<Result<void>> commitTransaction(String connectionId, int txnId) =>
+      _transaction.commitTransaction(connectionId, txnId);
 
   @override
-  Future<Result<void>> rollbackTransaction(
-    String connectionId,
-    int txnId,
-  ) async {
-    return _repository.rollbackTransaction(connectionId, txnId);
-  }
+  Future<Result<void>> rollbackTransaction(String connectionId, int txnId) =>
+      _transaction.rollbackTransaction(connectionId, txnId);
 
   @override
   Future<Result<T>> runInTransaction<T extends Object>(
@@ -585,56 +158,15 @@ class OdbcService implements IOdbcService {
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
-  }) async {
-    final beginResult = await beginTransaction(
-      connectionId,
-      isolationLevel: isolationLevel,
-      savepointDialect: savepointDialect,
-      accessMode: accessMode,
-      lockTimeout: lockTimeout,
-    );
-    // Early-out when we couldn't even open the transaction. The wire
-    // format guarantees the failure carries an OdbcError, so we just
-    // forward it untouched.
-    if (beginResult.isError()) {
-      return Failure(beginResult.exceptionOrNull()!);
-    }
-    final txnId = beginResult.getOrNull()!;
-
-    Result<T> userResult;
-    try {
-      userResult = await action(txnId);
-    } on Object catch (e, st) {
-      // The whole point of the helper is to catch *any* throw the user
-      // emits and convert it into a Failure + rollback. Typed catches
-      // would defeat the contract — exceptions must never escape
-      // `runInTransaction`.
-      await _safelyRollback(connectionId, txnId);
-      return Failure(
-        QueryError(
-          message: 'runInTransaction: action threw ${e.runtimeType}: $e\n$st',
-        ),
+  }) =>
+      _transaction.runInTransaction(
+        connectionId,
+        action,
+        isolationLevel: isolationLevel,
+        savepointDialect: savepointDialect,
+        accessMode: accessMode,
+        lockTimeout: lockTimeout,
       );
-    }
-
-    if (userResult.isError()) {
-      // The action returned a Failure. Roll back, then propagate the
-      // original error verbatim so the caller's diagnostics aren't
-      // muddied by transaction bookkeeping.
-      await _safelyRollback(connectionId, txnId);
-      return userResult;
-    }
-
-    final commitResult = await commitTransaction(connectionId, txnId);
-    if (commitResult.isError()) {
-      // Commit failed *after* the action succeeded. By driver contract
-      // the engine has rolled back (or is in an undefined state, which
-      // we model as rolled back). Surface the commit failure so the
-      // caller knows the unit of work didn't actually persist.
-      return Failure(commitResult.exceptionOrNull()!);
-    }
-    return userResult;
-  }
 
   @override
   Future<Result<T>> runInXaTransaction<T extends Object>(
@@ -642,175 +174,53 @@ class OdbcService implements IOdbcService {
     Xid xid,
     Future<Result<T>> Function(XaTransactionHandle xa) action, {
     bool onePhase = false,
-  }) async {
-    final startResult = await _repository.xaStart(connectionId, xid);
-    if (startResult.isError()) {
-      return Failure(startResult.exceptionOrNull()!);
-    }
-    final xa = startResult.getOrNull()!;
-
-    if (onePhase) {
-      try {
-        final userResult = await action(xa);
-        if (userResult.isError()) {
-          await _xaSafelyAbort(xa);
-          return userResult;
-        }
-        if (!xa.commitOnePhase()) {
-          await _xaSafelyAbort(xa);
-          return Failure(
-            QueryError(
-              message: 'runInXaTransaction: xa_commit_one_phase failed '
-                  'on xid=${xa.xid}',
-            ),
-          );
-        }
-        return userResult;
-      } on Object catch (e, st) {
-        await _xaSafelyAbort(xa);
-        return Failure(
-          QueryError(
-            message: 'runInXaTransaction: action threw ${e.runtimeType}: '
-                '$e\n$st',
-          ),
-        );
-      }
-    }
-
-    try {
-      final userResult = await action(xa);
-      if (userResult.isError()) {
-        await _xaSafelyAbort(xa);
-        return userResult;
-      }
-      if (!xa.end()) {
-        await _xaSafelyAbort(xa);
-        return Failure(
-          QueryError(
-            message: 'runInXaTransaction: xa_end failed on xid=${xa.xid}',
-          ),
-        );
-      }
-      if (!xa.prepare()) {
-        await _xaSafelyAbort(xa);
-        return Failure(
-          QueryError(
-            message: 'runInXaTransaction: xa_prepare failed on xid=${xa.xid}',
-          ),
-        );
-      }
-      if (!xa.commitPrepared()) {
-        await _xaSafelyAbort(xa);
-        return Failure(
-          QueryError(
-            message: 'runInXaTransaction: xa_commit_prepared failed '
-                'on xid=${xa.xid}',
-          ),
-        );
-      }
-      return userResult;
-    } on Object catch (e, st) {
-      await _xaSafelyAbort(xa);
-      return Failure(
-        QueryError(
-          message: 'runInXaTransaction: action threw ${e.runtimeType}: '
-              '$e\n$st',
-        ),
+  }) =>
+      _transaction.runInXaTransaction(
+        connectionId,
+        xid,
+        action,
+        onePhase: onePhase,
       );
-    }
-  }
-
-  /// Best-effort XA cleanup after failure; mirrors
-  /// [XaTransactionHandle.runWithStart].
-  Future<void> _xaSafelyAbort(XaTransactionHandle xa) async {
-    try {
-      if (xa.state == XaState.active) {
-        xa.end();
-      }
-      if (xa.state == XaState.prepared ||
-          xa.state == XaState.failedAfterPrepare) {
-        // Branch is Prepared at the RM — must use rollbackPrepared(), not
-        // rollback(), to issue the correct XA opcode.
-        xa.rollbackPrepared();
-      } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
-        xa.rollback();
-      }
-    } on Object catch (_) {
-      // Same rationale as [runInTransaction] rollback swallow.
-    }
-  }
-
-  /// Rolls back [txnId] without surfacing the rollback's own failure to
-  /// the caller. The underlying repository already logs structured
-  /// errors on rollback failure (see Transaction::rollback in Rust);
-  /// we don't want a noisy rollback error to overwrite the original
-  /// problem the user is debugging.
-  Future<void> _safelyRollback(String connectionId, int txnId) async {
-    try {
-      await rollbackTransaction(connectionId, txnId);
-    } on Object catch (_) {
-      // Defensive: any throw from the rollback path is logged elsewhere
-      // by the underlying repository and intentionally not re-raised
-      // here. See the method doc for the rationale.
-    }
-  }
 
   @override
   Future<Result<void>> createSavepoint(
     String connectionId,
     int txnId,
     String name,
-  ) async {
-    return _repository.createSavepoint(connectionId, txnId, name);
-  }
+  ) =>
+      _transaction.createSavepoint(connectionId, txnId, name);
 
   @override
   Future<Result<void>> rollbackToSavepoint(
     String connectionId,
     int txnId,
     String name,
-  ) async {
-    return _repository.rollbackToSavepoint(
-      connectionId,
-      txnId,
-      name,
-    );
-  }
+  ) =>
+      _transaction.rollbackToSavepoint(connectionId, txnId, name);
 
   @override
   Future<Result<void>> releaseSavepoint(
     String connectionId,
     int txnId,
     String name,
-  ) async {
-    return _repository.releaseSavepoint(connectionId, txnId, name);
-  }
+  ) =>
+      _transaction.releaseSavepoint(connectionId, txnId, name);
 
   @override
   Future<Result<int>> prepare(
     String connectionId,
     String sql, {
     int timeoutMs = 0,
-  }) async {
-    return _repository.prepare(
-      connectionId,
-      sql,
-      timeoutMs: timeoutMs,
-    );
-  }
+  }) =>
+      _query.prepare(connectionId, sql, timeoutMs: timeoutMs);
 
   @override
   Future<Result<int>> prepareNamed(
     String connectionId,
     String sql, {
     int timeoutMs = 0,
-  }) async {
-    return _repository.prepareNamed(
-      connectionId,
-      sql,
-      timeoutMs: timeoutMs,
-    );
-  }
+  }) =>
+      _query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
 
   @override
   Future<Result<QueryResult>> executePrepared(
@@ -818,14 +228,22 @@ class OdbcService implements IOdbcService {
     int stmtId,
     List<dynamic>? params,
     StatementOptions? options,
-  ) async {
-    return _repository.executePrepared(
-      connectionId,
-      stmtId,
-      params,
-      options,
-    );
-  }
+  ) =>
+      _query.executePrepared(connectionId, stmtId, params, options);
+
+  @override
+  Future<Result<QueryResult>> executePreparedParamValues(
+    String connectionId,
+    int stmtId,
+    List<ParamValue>? params,
+    StatementOptions? options,
+  ) =>
+      _query.executePreparedParamValues(
+        connectionId,
+        stmtId,
+        params,
+        options,
+      );
 
   @override
   Future<Result<QueryResult>> executePreparedNamed(
@@ -833,214 +251,180 @@ class OdbcService implements IOdbcService {
     int stmtId,
     Map<String, Object?> namedParams,
     StatementOptions? options,
-  ) async {
-    return _repository.executePreparedNamed(
-      connectionId,
-      stmtId,
-      namedParams,
-      options,
-    );
-  }
+  ) =>
+      _query.executePreparedNamed(
+        connectionId,
+        stmtId,
+        namedParams,
+        options,
+      );
 
   @override
-  Future<Result<void>> closeStatement(
-    String connectionId,
-    int stmtId,
-  ) async {
-    return _repository.closeStatement(connectionId, stmtId);
-  }
+  Future<Result<void>> closeStatement(String connectionId, int stmtId) =>
+      _query.closeStatement(connectionId, stmtId);
 
   @override
-  Future<Result<void>> cancelStatement(
-    String connectionId,
-    int stmtId,
-  ) async {
-    return _repository.cancelStatement(connectionId, stmtId);
-  }
+  Future<Result<void>> cancelStatement(String connectionId, int stmtId) =>
+      _query.cancelStatement(connectionId, stmtId);
 
   @override
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
-  ) async {
-    return _repository.executeQueryMulti(connectionId, sql);
-  }
+  ) =>
+      _query.executeQueryMulti(connectionId, sql);
 
   @override
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
-  ) async {
-    return _repository.executeQueryMultiFull(connectionId, sql);
-  }
+  ) =>
+      _query.executeQueryMultiFull(connectionId, sql);
 
   @override
   Future<Result<QueryResultMulti>> executeQueryMultiParams(
     String connectionId,
     String sql,
     List<dynamic> params,
-  ) async {
-    return _repository.executeQueryMultiParams(connectionId, sql, params);
-  }
+  ) =>
+      _query.executeQueryMultiParams(connectionId, sql, params);
+
+  @override
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) =>
+      _query.executeQueryMultiParamValues(connectionId, sql, params);
 
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
     String sql,
-  ) {
-    return _repository.streamQueryMulti(connectionId, sql);
-  }
+  ) =>
+      _query.streamQueryMulti(connectionId, sql);
 
   @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
     Map<String, Object?> namedParams,
-  ) async {
-    return _repository.executeQueryNamed(connectionId, sql, namedParams);
-  }
+  ) =>
+      _query.executeQueryNamed(connectionId, sql, namedParams);
 
   @override
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
     Map<String, Object?> namedParams,
-  ) {
-    return _repository.streamQueryNamed(connectionId, sql, namedParams);
-  }
+  ) =>
+      _query.streamQueryNamed(connectionId, sql, namedParams);
 
   @override
   Future<Result<TypedColumnarResult>> executeQueryColumnar(
     String connectionId,
     String sql, {
     List<dynamic>? params,
-  }) async {
-    final r = await _repository.executeQueryParams(
-      connectionId,
-      sql,
-      params ?? const <dynamic>[],
-      resultEncoding: ResultEncoding.columnar,
-    );
-    return r.fold(
-      (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-      (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-    );
-  }
+  }) =>
+      _query.executeQueryColumnar(connectionId, sql, params: params);
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql, {
+    List<ParamValue>? params,
+  }) =>
+      _query.executeQueryColumnarParamValues(
+        connectionId,
+        sql,
+        params: params,
+      );
 
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,
-  ) async* {
-    await for (final chunk in _repository.streamQuery(connectionId, sql)) {
-      yield chunk.fold(
-        (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-        (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-      );
-    }
-  }
+  ) =>
+      _query.streamQueryColumnar(connectionId, sql);
 
   @override
   Future<Result<QueryResult>> catalogTables({
     required String connectionId,
     String catalog = '',
     String schema = '',
-  }) async {
-    return _repository.catalogTables(
-      connectionId,
-      catalog: catalog,
-      schema: schema,
-    );
-  }
+  }) =>
+      _query.catalogTables(
+        connectionId: connectionId,
+        catalog: catalog,
+        schema: schema,
+      );
 
   @override
   Future<Result<QueryResult>> catalogColumns(
     String connectionId,
     String table,
-  ) async {
-    return _repository.catalogColumns(connectionId, table);
-  }
+  ) =>
+      _query.catalogColumns(connectionId, table);
 
   @override
-  Future<Result<QueryResult>> catalogTypeInfo(
-    String connectionId,
-  ) async {
-    return _repository.catalogTypeInfo(connectionId);
-  }
+  Future<Result<QueryResult>> catalogTypeInfo(String connectionId) =>
+      _query.catalogTypeInfo(connectionId);
 
   @override
   Future<Result<QueryResult>> catalogPrimaryKeys(
     String connectionId,
     String table,
-  ) async {
-    return _repository.catalogPrimaryKeys(connectionId, table);
-  }
+  ) =>
+      _query.catalogPrimaryKeys(connectionId, table);
 
   @override
   Future<Result<QueryResult>> catalogForeignKeys(
     String connectionId,
     String table,
-  ) async {
-    return _repository.catalogForeignKeys(connectionId, table);
-  }
+  ) =>
+      _query.catalogForeignKeys(connectionId, table);
 
   @override
   Future<Result<QueryResult>> catalogIndexes(
     String connectionId,
     String table,
-  ) async {
-    return _repository.catalogIndexes(connectionId, table);
-  }
+  ) =>
+      _query.catalogIndexes(connectionId, table);
 
   @override
   Future<Result<int>> poolCreate(
     String connectionString,
     int maxSize, {
     PoolOptions? options,
-  }) async {
-    return _repository.poolCreate(
-      connectionString,
-      maxSize,
-      options: options,
-    );
-  }
+  }) =>
+      _pool.poolCreate(connectionString, maxSize, options: options);
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId) async {
-    return _repository.poolGetConnection(poolId);
-  }
+  Future<Result<Connection>> poolGetConnection(int poolId) =>
+      _pool.poolGetConnection(poolId);
 
   @override
-  Future<Result<void>> poolReleaseConnection(
-    String connectionId,
-  ) async {
-    return _repository.poolReleaseConnection(connectionId);
-  }
+  Future<Result<void>> poolReleaseConnection(String connectionId) =>
+      _pool.poolReleaseConnection(connectionId);
 
   @override
-  Future<Result<bool>> poolHealthCheck(int poolId) async {
-    return _repository.poolHealthCheck(poolId);
-  }
+  Future<Result<bool>> poolHealthCheck(int poolId) =>
+      _pool.poolHealthCheck(poolId);
 
   @override
-  Future<Result<PoolState>> poolGetState(int poolId) async {
-    return _repository.poolGetState(poolId);
-  }
+  Future<Result<PoolState>> poolGetState(int poolId) =>
+      _pool.poolGetState(poolId);
 
   @override
-  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) async {
-    return _repository.poolGetStateDetailed(poolId);
-  }
+  Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) =>
+      _pool.poolGetStateDetailed(poolId);
 
   @override
-  Future<Result<void>> poolSetSize(int poolId, int newMaxSize) async {
-    return _repository.poolSetSize(poolId, newMaxSize);
-  }
+  Future<Result<void>> poolSetSize(int poolId, int newMaxSize) =>
+      _pool.poolSetSize(poolId, newMaxSize);
 
   @override
-  Future<Result<void>> poolClose(int poolId) async {
-    return _repository.poolClose(poolId);
-  }
+  Future<Result<void>> poolClose(int poolId) => _pool.poolClose(poolId);
 
   @override
   Future<Result<int>> bulkInsert(
@@ -1049,15 +433,14 @@ class OdbcService implements IOdbcService {
     List<String> columns,
     List<int> dataBuffer,
     int rowCount,
-  ) async {
-    return _repository.bulkInsert(
-      connectionId,
-      table,
-      columns,
-      dataBuffer,
-      rowCount,
-    );
-  }
+  ) =>
+      _query.bulkInsert(
+        connectionId,
+        table,
+        columns,
+        dataBuffer,
+        rowCount,
+      );
 
   @override
   Future<Result<int>> bulkInsertParallel(
@@ -1067,162 +450,120 @@ class OdbcService implements IOdbcService {
     List<int> dataBuffer,
     int rowCount, {
     int parallelism = 0,
-  }) async {
-    return _repository.bulkInsertParallel(
-      poolId,
-      table,
-      columns,
-      dataBuffer,
-      rowCount,
-      parallelism: parallelism,
-    );
-  }
+  }) =>
+      _query.bulkInsertParallel(
+        poolId,
+        table,
+        columns,
+        dataBuffer,
+        rowCount,
+        parallelism: parallelism,
+      );
 
   @override
-  Future<Result<OdbcMetrics>> getMetrics() async {
-    return _repository.getMetrics();
-  }
+  Future<Result<OdbcMetrics>> getMetrics() => _admin.getMetrics();
 
   @override
   @Deprecated(
     'Use getWorkerPoolStats() — returns null in sync mode. '
     'Will be removed alongside IOdbcRepository.getAsyncWorkerPoolStats.',
   )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
-    return _repository.getAsyncWorkerPoolStats();
-  }
+  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
+      _admin.getAsyncWorkerPoolStats();
 
   @override
-  bool isInitialized() {
-    return _repository.isInitialized();
-  }
+  bool isInitialized() => _admin.isInitialized();
 
   @override
-  Future<Result<void>> clearStatementCache() async {
-    return _repository.clearStatementCache();
-  }
+  Future<Result<void>> clearStatementCache() => _admin.clearStatementCache();
 
   @override
-  Future<Result<void>> clearAllStatements() async {
-    return _repository.clearAllStatements();
-  }
+  Future<Result<void>> clearAllStatements() => _admin.clearAllStatements();
 
   @override
-  Future<Result<PreparedStatementMetrics>>
-      getPreparedStatementsMetrics() async {
-    return _repository.getPreparedStatementsMetrics();
-  }
+  Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() =>
+      _admin.getPreparedStatementsMetrics();
 
   @override
-  Future<Result<Map<String, String>>> getVersion() async {
-    return _repository.getVersion();
-  }
+  Future<Result<Map<String, String>>> getVersion() => _admin.getVersion();
 
   @override
-  Future<Result<void>> validateConnectionString(String connectionString) async {
-    return _repository.validateConnectionString(connectionString);
-  }
+  Future<Result<void>> validateConnectionString(String connectionString) =>
+      _admin.validateConnectionString(connectionString);
 
   @override
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
-  ) async {
-    return _repository.getDriverCapabilities(connectionString);
-  }
+  ) =>
+      _admin.getDriverCapabilities(connectionString);
 
   @override
-  Future<AsyncWorkerPoolStats?> getWorkerPoolStats() {
-    return _repository.getWorkerPoolStats();
-  }
+  Future<AsyncWorkerPoolStats?> getWorkerPoolStats() =>
+      _admin.getWorkerPoolStats();
 
   @override
-  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
-    return _repository.getConnectionDbmsInfo(connectionId);
-  }
+  Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) =>
+      _admin.getConnectionDbmsInfo(connectionId);
 
   @override
-  Future<Result<void>> setLogLevel(int level) async {
-    return _repository.setLogLevel(level);
-  }
+  Future<Result<void>> setLogLevel(int level) => _admin.setLogLevel(level);
 
   @override
-  Future<Result<void>> setAuditEnabled({required bool enabled}) async {
-    return _repository.setAuditEnabled(enabled: enabled);
-  }
+  Future<Result<void>> setAuditEnabled({required bool enabled}) =>
+      _admin.setAuditEnabled(enabled: enabled);
 
   @override
-  Future<Result<Map<String, Object?>>> getAuditStatus() async {
-    return _repository.getAuditStatus();
-  }
+  Future<Result<Map<String, Object?>>> getAuditStatus() =>
+      _admin.getAuditStatus();
 
   @override
-  Future<Result<List<Map<String, Object?>>>> getAuditEvents({
-    int limit = 0,
-  }) async {
-    return _repository.getAuditEvents(limit: limit);
-  }
+  Future<Result<List<Map<String, Object?>>>> getAuditEvents({int limit = 0}) =>
+      _admin.getAuditEvents(limit: limit);
 
   @override
-  Future<Result<void>> clearAuditEvents() async {
-    return _repository.clearAuditEvents();
-  }
+  Future<Result<void>> clearAuditEvents() => _admin.clearAuditEvents();
 
   @override
   Future<Result<void>> metadataCacheEnable({
     required int maxEntries,
     required int ttlSeconds,
-  }) async {
-    return _repository.metadataCacheEnable(
-      maxEntries: maxEntries,
-      ttlSeconds: ttlSeconds,
-    );
-  }
+  }) =>
+      _admin.metadataCacheEnable(
+        maxEntries: maxEntries,
+        ttlSeconds: ttlSeconds,
+      );
 
   @override
-  Future<Result<Map<String, Object?>>> metadataCacheStats() async {
-    return _repository.metadataCacheStats();
-  }
+  Future<Result<Map<String, Object?>>> metadataCacheStats() =>
+      _admin.metadataCacheStats();
 
   @override
-  Future<Result<void>> clearMetadataCache() async {
-    return _repository.clearMetadataCache();
-  }
+  Future<Result<void>> clearMetadataCache() => _admin.clearMetadataCache();
 
   @override
-  Future<Result<void>> cancelStream(int streamId) async {
-    return _repository.cancelStream(streamId);
-  }
+  Future<Result<void>> cancelStream(int streamId) =>
+      _admin.cancelStream(streamId);
 
   @override
-  Future<Result<int>> executeAsyncStart(String connectionId, String sql) async {
-    return _repository.executeAsyncStart(connectionId, sql);
-  }
+  Future<Result<int>> executeAsyncStart(String connectionId, String sql) =>
+      _admin.executeAsyncStart(connectionId, sql);
 
   @override
-  Future<Result<int>> asyncPoll(int requestId) async {
-    return _repository.asyncPoll(requestId);
-  }
+  Future<Result<int>> asyncPoll(int requestId) => _admin.asyncPoll(requestId);
 
   @override
   Future<Result<QueryResult>> asyncGetResult(
     int requestId, {
     int? maxBufferBytes,
-  }) async {
-    return _repository.asyncGetResult(
-      requestId,
-      maxBufferBytes: maxBufferBytes,
-    );
-  }
+  }) =>
+      _admin.asyncGetResult(requestId, maxBufferBytes: maxBufferBytes);
 
   @override
-  Future<Result<void>> asyncCancel(int requestId) async {
-    return _repository.asyncCancel(requestId);
-  }
+  Future<Result<void>> asyncCancel(int requestId) =>
+      _admin.asyncCancel(requestId);
 
   @override
-  Future<Result<void>> asyncFree(int requestId) async {
-    return _repository.asyncFree(requestId);
-  }
+  Future<Result<void>> asyncFree(int requestId) => _admin.asyncFree(requestId);
 
   @override
   Future<Result<int>> streamStartAsync(
@@ -1230,45 +571,29 @@ class OdbcService implements IOdbcService {
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
-  }) async {
-    return _repository.streamStartAsync(
-      connectionId,
-      sql,
-      fetchSize: fetchSize,
-      chunkSize: chunkSize,
-    );
-  }
+  }) =>
+      _admin.streamStartAsync(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
-  Future<Result<int>> streamPollAsync(int streamId) async {
-    return _repository.streamPollAsync(streamId);
-  }
+  Future<Result<int>> streamPollAsync(int streamId) =>
+      _admin.streamPollAsync(streamId);
 
   @override
-  Future<String?> detectDriver(String connectionString) async {
-    return _repository.detectDriver(connectionString);
-  }
+  Future<String?> detectDriver(String connectionString) =>
+      _admin.detectDriver(connectionString);
 
   @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     List<dynamic>? params,
     String? connectionId,
-  }) async {
-    if (connectionId == null || connectionId.isEmpty) {
-      return const Failure(
-        ConnectionError(
-          message: 'No active connection. Call connect() first.',
-        ),
-      );
-    }
-
-    if (params == null || params.isEmpty) {
-      return executeQueryParams(connectionId, sql, []);
-    }
-
-    return executeQueryParams(connectionId, sql, params);
-  }
+  }) =>
+      _query.executeQuery(sql, params: params, connectionId: connectionId);
 
   @override
   void dispose() => _repository.dispose();

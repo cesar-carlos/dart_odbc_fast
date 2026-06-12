@@ -103,7 +103,12 @@ impl BatchExecutor {
                     BatchParamBindingPlan::InferenceDirect => {
                         let parameters =
                             param_values_to_input_params_with_inference(&param_values)?
-                                .expect("plan_batch_param_binding guarantees inference path");
+                                .ok_or_else(|| {
+                                    OdbcError::InternalError(
+                                    "plan_batch_param_binding promised inference but binding failed"
+                                        .to_string(),
+                                )
+                                })?;
                         let encoded = self.execute_direct_param_set(conn, sql, parameters)?;
                         results.push(encoded);
                         continue;
