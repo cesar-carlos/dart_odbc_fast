@@ -201,3 +201,116 @@ impl IsolationLevel {
         }
     }
 }
+
+/// Vendor-aware isolation-level setter.
+pub(crate) fn apply_isolation(
+    conn: &mut odbc_api::Connection<'static>,
+    engine_id: &str,
+    level: IsolationLevel,
+) -> Result<()> {
+    match build_isolation_sql(engine_id, level)? {
+        IsolationSql::Execute(sql) => conn
+            .execute(&sql, (), None)
+            .map(|_| ())
+            .map_err(OdbcError::from),
+        IsolationSql::Skip { engine_id, level } => {
+            log::debug!(
+                "apply_isolation: engine {engine_id:?} ignores per-transaction isolation; \
+                 requested {level:?} silently skipped"
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Apply the `READ ONLY` / `READ WRITE` access mode to the connection
+/// using a vendor-aware strategy.
+///
+/// Engine matrix:
+///
+/// | Engine                       | Behaviour                                                      |
+/// | ---------------------------- | -------------------------------------------------------------- |
+/// | PostgreSQL                   | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+/// | MySQL / MariaDB              | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+/// | DB2                          | `SET TRANSACTION READ ONLY` / `READ WRITE`                     |
+/// | Oracle                       | `SET TRANSACTION READ ONLY` (no-op for `READ WRITE` — default) |
+/// | SQL Server / SQLite / others | log + skip; no native equivalent                                |
+///
+/// `READ WRITE` is the engine default everywhere, so for any engine
+/// without an explicit clause we treat it as a no-op rather than emit
+/// a redundant `SET`. This keeps the connection's textual session log
+/// clean and avoids spurious failures on engines that reject the
+/// keyword.
+pub(crate) fn apply_access_mode(
+    conn: &mut odbc_api::Connection<'static>,
+    engine_id: &str,
+    access_mode: TransactionAccessMode,
+) -> Result<()> {
+    if let Some(sql) = build_access_mode_sql(engine_id, access_mode) {
+        return conn
+            .execute(&sql, (), None)
+            .map(|_| ())
+            .map_err(OdbcError::from);
+    }
+
+    if access_mode.is_read_only() && access_mode_is_unsupported_noop(engine_id) {
+        log::debug!(
+            "apply_access_mode: engine {engine_id:?} has no READ ONLY transaction \
+             hint; silently treating as READ WRITE. Application-level \
+             enforcement (DENY UPDATE/INSERT/DELETE) is the only option \
+             on this engine."
+        );
+    }
+    Ok(())
+}
+
+/// Apply the per-transaction lock timeout to the connection using a
+/// vendor-aware strategy. See [`LockTimeout`] for the engine matrix.
+///
+/// **No-op when [`LockTimeout::is_engine_default`]**, which is the
+/// universal default — the engine's existing setting is left
+/// untouched and no `SET` is emitted. This keeps the connection's
+/// session log clean for callers that don't need the override and
+/// avoids paying for it in the hot path.
+pub(crate) fn apply_lock_timeout(
+    conn: &mut odbc_api::Connection<'static>,
+    engine_id: &str,
+    lock_timeout: LockTimeout,
+) -> Result<()> {
+    if let Some(sql) = build_lock_timeout_sql(engine_id, lock_timeout)? {
+        return conn
+            .execute(&sql, (), None)
+            .map(|_| ())
+            .map_err(OdbcError::from);
+    }
+
+    if lock_timeout.is_engine_default() {
+        return Ok(());
+    }
+
+    let Some(ms) = lock_timeout.millis() else {
+        return Err(OdbcError::InternalError(
+            "apply_lock_timeout: non-default LockTimeout missing millis".to_string(),
+        ));
+    };
+    if lock_timeout_is_unsupported_skip(engine_id) {
+        if matches!(
+            engine_id,
+            crate::engine::core::ENGINE_ORACLE | crate::engine::core::ENGINE_SNOWFLAKE
+        ) {
+            log::debug!(
+                "apply_lock_timeout: engine {engine_id:?} has no per-transaction \
+                 lock-timeout hint; requested {ms}ms silently skipped. \
+                 Use per-statement options (Oracle: FOR UPDATE WAIT n; \
+                 Snowflake: STATEMENT_TIMEOUT_IN_SECONDS) instead."
+            );
+        } else {
+            log::debug!(
+                "apply_lock_timeout: engine {engine_id:?} is not in the lock-timeout \
+                 matrix; requested {ms}ms silently skipped. File an issue if you \
+                 need first-class support."
+            );
+        }
+    }
+    Ok(())
+}

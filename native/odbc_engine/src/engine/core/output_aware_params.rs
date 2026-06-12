@@ -227,11 +227,15 @@ impl OutputAwareParams {
     }
 }
 
+// SAFETY: slots are built from validated `ParamValue`s; each bind uses owned buffers
+// and 1-based ODBC indices within `slots.len()`.
 unsafe impl ParameterCollection for OutputAwareParams {
     fn parameter_set_size(&self) -> usize {
         1
     }
 
+    // SAFETY: `stmt` is the active ODBC statement; each slot bind uses buffers owned
+    // by `self` and documents per-arm invariants below.
     unsafe fn bind_parameters_to(
         &mut self,
         stmt: &mut impl Statement,

@@ -34,6 +34,8 @@ pub(crate) unsafe fn parse_sql_ptr_zero_out<'a>(
     sql: *const c_char,
     out_written: *mut c_uint,
 ) -> Option<&'a str> {
+    // SAFETY: Forwarded from this function's # Safety contract; same obligations
+    // as `parse_sql_ptr`.
     match unsafe { parse_sql_ptr(sql) } {
         Some(sql_str) => Some(sql_str),
         None => {

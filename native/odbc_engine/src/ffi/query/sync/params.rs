@@ -31,6 +31,8 @@ pub extern "C" fn odbc_exec_query_params(
             return -1;
         }
 
+        // SAFETY: `sql` validated by `require_query_output_ptrs`; `parse_sql_ptr`
+        // documents caller obligations for the NUL-terminated SQL pointer.
         let sql_str = match unsafe { parse_sql_ptr(sql) } {
             Some(s) => s,
             None => return -1,
@@ -166,6 +168,8 @@ pub extern "C" fn odbc_exec_query_params_options(
             }
         };
 
+        // SAFETY: `sql` validated by `require_query_output_ptrs`; `parse_sql_ptr`
+        // documents caller obligations for the NUL-terminated SQL pointer.
         let sql_str = match unsafe { parse_sql_ptr(sql) } {
             Some(s) => s,
             None => return -1,

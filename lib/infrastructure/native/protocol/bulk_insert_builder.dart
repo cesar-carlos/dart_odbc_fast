@@ -118,36 +118,6 @@ void _validateValueForColumn(
   }
 }
 
-List<int> _u32Le(int v) {
-  final buffer = Uint8List(4);
-  ByteData.view(buffer.buffer).setUint32(0, v, _littleEndian);
-  return buffer;
-}
-
-List<int> _i32Le(int v) {
-  final buffer = Uint8List(4);
-  ByteData.view(buffer.buffer).setInt32(0, v, _littleEndian);
-  return buffer;
-}
-
-List<int> _i64Le(int v) {
-  final buffer = Uint8List(8);
-  ByteData.view(buffer.buffer).setInt64(0, v, _littleEndian);
-  return buffer;
-}
-
-List<int> _u16Le(int v) {
-  final buffer = Uint8List(2);
-  ByteData.view(buffer.buffer).setUint16(0, v, _littleEndian);
-  return buffer;
-}
-
-List<int> _i16Le(int v) {
-  final buffer = Uint8List(2);
-  ByteData.view(buffer.buffer).setInt16(0, v, _littleEndian);
-  return buffer;
-}
-
 /// Bulk insert wire payload version.
 enum BulkPayloadVersion {
   /// Legacy fixed-width wire format without a magic header.
@@ -289,6 +259,39 @@ class BulkInsertBuilder {
   String _table = '';
   final List<BulkColumnSpec> _columns = [];
   final List<List<dynamic>> _rows = [];
+  final ByteData _leScratch = ByteData(8);
+
+  void _appendLeBytes(BytesBuilder out, int byteCount) {
+    final bytes = _leScratch.buffer.asUint8List(0, byteCount);
+    for (var i = 0; i < byteCount; i++) {
+      out.addByte(bytes[i]);
+    }
+  }
+
+  void _appendU32Le(BytesBuilder out, int v) {
+    _leScratch.setUint32(0, v, _littleEndian);
+    _appendLeBytes(out, 4);
+  }
+
+  void _appendI32Le(BytesBuilder out, int v) {
+    _leScratch.setInt32(0, v, _littleEndian);
+    _appendLeBytes(out, 4);
+  }
+
+  void _appendI64Le(BytesBuilder out, int v) {
+    _leScratch.setInt64(0, v, _littleEndian);
+    _appendLeBytes(out, 8);
+  }
+
+  void _appendU16Le(BytesBuilder out, int v) {
+    _leScratch.setUint16(0, v, _littleEndian);
+    _appendLeBytes(out, 2);
+  }
+
+  void _appendI16Le(BytesBuilder out, int v) {
+    _leScratch.setInt16(0, v, _littleEndian);
+    _appendLeBytes(out, 2);
+  }
 
   /// Sets the target table name for the bulk insert.
   ///
@@ -400,30 +403,28 @@ class BulkInsertBuilder {
 
     final out = BytesBuilder(copy: false);
     if (version == BulkPayloadVersion.v2) {
-      out
-        ..add(_bulkPayloadV2Magic)
-        ..add(_u16Le(_bulkPayloadV2Version))
-        ..add(_u16Le(_bulkPayloadV2Flags));
+      out.add(_bulkPayloadV2Magic);
+      _appendU16Le(out, _bulkPayloadV2Version);
+      _appendU16Le(out, _bulkPayloadV2Flags);
     }
 
     final tableBytes = utf8.encode(_table);
-    out
-      ..add(_u32Le(tableBytes.length))
-      ..add(tableBytes)
-      ..add(_u32Le(_columns.length));
+    _appendU32Le(out, tableBytes.length);
+    out.add(tableBytes);
+    _appendU32Le(out, _columns.length);
 
     for (final spec in _columns) {
       final nameBytes = utf8.encode(spec.name);
+      _appendU32Le(out, nameBytes.length);
       out
-        ..add(_u32Le(nameBytes.length))
         ..add(nameBytes)
         ..addByte(spec.tag)
-        ..addByte(spec.nullable ? 1 : 0)
-        ..add(_u32Le(spec.maxLen));
+        ..addByte(spec.nullable ? 1 : 0);
+      _appendU32Le(out, spec.maxLen);
     }
 
     final rowCount = _rows.length;
-    out.add(_u32Le(rowCount));
+    _appendU32Le(out, rowCount);
 
     for (var c = 0; c < _columns.length; c++) {
       final spec = _columns[c];
@@ -461,7 +462,7 @@ class BulkInsertBuilder {
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
-          out.add(_i32Le(i));
+          _appendI32Le(out, i);
         }
       case BulkColumnType.i64:
         if (nullBitmap != null) {
@@ -473,7 +474,7 @@ class BulkInsertBuilder {
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
-          out.add(_i64Le(i));
+          _appendI64Le(out, i);
         }
       case BulkColumnType.text:
       case BulkColumnType.decimal:
@@ -561,14 +562,13 @@ class BulkInsertBuilder {
               second: 0,
             );
           }
-          out
-            ..add(_i16Le(t.year))
-            ..add(_u16Le(t.month))
-            ..add(_u16Le(t.day))
-            ..add(_u16Le(t.hour))
-            ..add(_u16Le(t.minute))
-            ..add(_u16Le(t.second))
-            ..add(_u32Le(t.fraction));
+          _appendI16Le(out, t.year);
+          _appendU16Le(out, t.month);
+          _appendU16Le(out, t.day);
+          _appendU16Le(out, t.hour);
+          _appendU16Le(out, t.minute);
+          _appendU16Le(out, t.second);
+          _appendU32Le(out, t.fraction);
         }
     }
   }
@@ -600,9 +600,8 @@ class BulkInsertBuilder {
         for (var r = 0; r < rowCount; r++) {
           final v = _rows[r][colIndex];
           final raw = v == null ? <int>[] : utf8.encode('$v');
-          out
-            ..add(_u32Le(raw.length))
-            ..add(raw);
+          _appendU32Le(out, raw.length);
+          out.add(raw);
         }
       case BulkColumnType.binary:
         if (nullBitmap != null) {
@@ -616,9 +615,8 @@ class BulkInsertBuilder {
           final raw = v == null
               ? const <int>[]
               : (v is Uint8List ? v : (v as List<int>));
-          out
-            ..add(_u32Le(raw.length))
-            ..add(raw);
+          _appendU32Le(out, raw.length);
+          out.add(raw);
         }
     }
   }

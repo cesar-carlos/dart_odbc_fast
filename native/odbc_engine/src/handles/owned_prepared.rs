@@ -89,6 +89,8 @@ impl OwnedPreparedStatement {
         // `StatementImpl<'static>` differ only in the phantom lifetime
         // parameter, not in layout — `odbc-api`'s public types are
         // `#[repr(transparent)]` wrappers over a raw SQLHSTMT.
+        // SAFETY: Phantom lifetime only — layouts match; caller drop-order contract
+        // guarantees the handle outlives the backing connection.
         let inner: Prepared<StatementImpl<'static>> = unsafe { std::mem::transmute(prepared) };
         Self { inner }
     }

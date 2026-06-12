@@ -1,3 +1,8 @@
+//! SQL Server BCP dynamic library loader.
+//!
+//! Function pointer aliases below are `unsafe extern "system"` because they mirror
+//! the vendor ODBC extension ABI; callers must uphold BCP handle and buffer contracts.
+
 use crate::error::{OdbcError, Result};
 use libloading::Library;
 
@@ -12,6 +17,8 @@ const REQUIRED_SYMBOL_SETS: &[&[&[u8]]] = &[
     &[b"bcp_done\0"],
 ];
 
+// SAFETY: Aliases mirror the SQL Server ODBC BCP extension ABI; callers must uphold
+// HDbc validity and vendor buffer/length contracts at every invocation site.
 pub(crate) type BcpInitWFn = unsafe extern "system" fn(
     hdbc: odbc_api::sys::HDbc,
     sz_table: *const odbc_api::sys::WChar,

@@ -63,6 +63,8 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
             return 0;
         }
 
+        // SAFETY: `conn_str` is non-null; `ptr_to_cstr` borrows a valid NUL-terminated
+        // C string for the duration of this call per FFI contract.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(conn_str) }) else {
             return 0;
         };
@@ -128,6 +130,8 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
             return 0;
         }
 
+        // SAFETY: `conn_str` is non-null; `ptr_to_cstr` borrows a valid NUL-terminated
+        // C string for the duration of this call per FFI contract.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(conn_str) }) else {
             return 0;
         };

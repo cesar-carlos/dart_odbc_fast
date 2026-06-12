@@ -67,6 +67,8 @@ pub(crate) unsafe fn parse_cstr_zero_out<'a>(
     ptr: *const c_char,
     out_written: *mut c_uint,
 ) -> Option<&'a str> {
+    // SAFETY: Forwarded from this function's # Safety contract; ptr is a valid
+    // NUL-terminated C string for the borrow.
     match unsafe { parse_cstr(ptr) } {
         Some(value) => Some(value),
         None => {
@@ -223,6 +225,8 @@ pub(crate) unsafe fn parse_session_options(options_json: *const c_char) -> Optio
     if options_json.is_null() {
         return Some(SessionOptions::default());
     }
+    // SAFETY: Non-null options_json was checked above; caller guarantees a valid
+    // NUL-terminated C string for the duration of this call.
     let json = unsafe { parse_cstr(options_json)? };
     if json.trim().is_empty() {
         return Some(SessionOptions::default());

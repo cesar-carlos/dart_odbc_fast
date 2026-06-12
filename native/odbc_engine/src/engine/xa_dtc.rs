@@ -249,6 +249,8 @@ pub struct DtcXaBranch {
 // COM `IUnknown` is not `Send` in `windows` by default. We store
 // `DtcXaBranch` only while the XA call sequence is driven on the
 // connection thread (same as ODBC usage).
+// SAFETY: `DtcXaBranch` is only moved/stored on the ODBC connection thread;
+// COM interfaces are not accessed concurrently across threads.
 unsafe impl Send for DtcXaBranch {}
 
 impl DtcXaBranch {

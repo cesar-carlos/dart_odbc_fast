@@ -18,6 +18,8 @@ pub extern "C" fn odbc_exec_query(
             return -1;
         }
 
+        // SAFETY: `sql` validated by `require_query_output_ptrs`; `parse_sql_ptr_zero_out`
+        // documents caller obligations for the NUL-terminated SQL pointer.
         let sql_str = match unsafe { parse_sql_ptr_zero_out(sql, out_written) } {
             Some(s) => s,
             None => return -1,

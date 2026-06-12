@@ -430,6 +430,7 @@ pub extern "C" fn odbc_xa_recover_get(
                 return 1;
             }
             if !gtrid_buf.is_null() && !xid.gtrid().is_empty() {
+                // SAFETY: `gtrid_buf_len` was checked above; buffer is non-null when copying.
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         xid.gtrid().as_ptr(),
@@ -439,6 +440,7 @@ pub extern "C" fn odbc_xa_recover_get(
                 }
             }
             if !bqual_buf.is_null() && !xid.bqual().is_empty() {
+                // SAFETY: `bqual_buf_len` was checked above; buffer is non-null when copying.
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         xid.bqual().as_ptr(),

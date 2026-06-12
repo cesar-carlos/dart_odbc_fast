@@ -104,6 +104,37 @@ no intended behaviour change.
 - **`ffi/query/sync/`** — sync query FFI split into `exec`, `multi`, and
   `params` modules.
 
+- **`plugins/postgres/`** — replaces monolithic `postgres.rs` with `catalog`,
+  `type_catalog`, `session`, `bulk_loader`, `upsert`, `returning`, and tests.
+- **`plugins/db2/`** — replaces monolithic `db2.rs` with `catalog`,
+  `type_catalog`, `session`, `upsert`, `returning`, and tests.
+- **`engine/transaction/`** — transaction lifecycle extracted to `lifecycle.rs`;
+  dialect-specific `BEGIN` / isolation / access-mode SQL moves to
+  `dialect_sql.rs` apply helpers; savepoint hooks stay in `savepoint.rs`.
+- **`lib/infrastructure/native/isolate/`** — `message_protocol` and
+  `worker_isolate` split into query, stream, transaction, pool, and helper
+  `part` modules; root libraries remain thin re-export facades.
+
+### Security — FFI `unsafe` audit (wave 4)
+
+- **`// SAFETY:` coverage closed on remaining production sites.** OCI XA
+  function-pointer fields (`engine/xa_oci.rs`), SQL Server BCP type aliases
+  (`engine/core/sqlserver_bcp/library.rs`), `OwnedPreparedStatement` transmute
+  alignment (`handles/owned_prepared.rs`), and inner helper blocks in
+  `ffi/capabilities/helpers.rs` and `ffi/query/helpers.rs`. Wave 4 also
+  documents `OutputAwareParams::bind_parameters_to`, `DtcXaBranch::Send`,
+  connection/query sync SQL parsing, and XA recover buffer copies.
+- **Criterion baselines (no local bench run required).** Synthetic micro-bench
+  snapshots and refresh workflow live in
+  `native/odbc_engine/benches/baselines/README.md`; the directory starts empty
+  and the reference baselines are captured by the `native_bench_baseline.yml`
+  workflow on the Linux runner — do not commit noisy per-developer snapshots.
+
+### Added — performance regression harness (wave 4)
+
+- **`test/performance/crud_latency_benchmark_test.dart`** — gated CRUD latency
+  benchmark for async worker paths; complements native Criterion baselines.
+
 ### Fixed — runtime hardening (native)
 
 - **Lock poison handling.** Central `LOCK_POISONED` diagnostic,

@@ -114,6 +114,8 @@ struct OciXaSymbols {
     // SAFETY: hold the Library alive for the whole process lifetime;
     // dropping it would invalidate every function pointer below.
     _lib: libloading::Library,
+    // SAFETY: Field types mirror documented oraxa.h XA entry points; call sites
+    // uphold X/Open pointer and lifetime contracts; `_lib` keeps every symbol valid.
     xa_open: unsafe extern "C" fn(info: *const c_char, rmid: c_int, flags: c_int) -> c_int,
     xa_close: unsafe extern "C" fn(info: *const c_char, rmid: c_int, flags: c_int) -> c_int,
     xa_start: unsafe extern "C" fn(xid: *const OciXid, rmid: c_int, flags: c_int) -> c_int,
