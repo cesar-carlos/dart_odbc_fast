@@ -80,6 +80,8 @@ pub fn enlist_connection_in_dtc(
     let value = (transaction as *const ITransaction)
         .cast::<c_void>()
         .cast_mut();
+    // SAFETY: `hdbc` is a live ODBC connection handle; `value` points to a live
+    // `ITransaction` COM interface for the duration of this call.
     let r = unsafe {
         SQLSetConnectAttr(
             hdbc,
@@ -101,6 +103,8 @@ pub fn enlist_connection_in_dtc(
 /// Unenlist the connection from DTC (after `xa_end` / before Phase 2 on another RM).
 pub fn unenlist_from_dtc(conn: &mut Connection<'static>) -> Result<()> {
     let hdbc = connection_hdbc(conn);
+    // SAFETY: `hdbc` is a live ODBC connection handle; passing null unenlists
+    // per the `SQL_ATTR_ENLIST_IN_DTC` contract.
     let r = unsafe {
         SQLSetConnectAttr(
             hdbc,

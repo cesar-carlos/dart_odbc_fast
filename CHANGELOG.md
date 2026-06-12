@@ -95,6 +95,8 @@ no intended behaviour change.
   focused unit tests.
 - **`plugins/sqlserver/`** — replaces monolithic `sqlserver.rs` with `catalog`,
   `type_catalog`, `session`, `quoting`, `upsert`, `returning`, and tests.
+- **`plugins/mysql/`** — replaces monolithic `mysql.rs` with `catalog`,
+  `type_catalog`, `session`, `bulk_loader`, `upsert`, `returning`, and tests.
 - **`engine/core/sqlserver_bcp/`** — replaces `sqlserver_bcp.rs` with
   `bound_column`, `execute`, `helpers`, `library`, `payload`, and tests.
 - **`ffi/tests/query/`** — query FFI tests split into `async`, `prepare`,

@@ -166,6 +166,8 @@ pub extern "C" fn odbc_detect_driver(
         if conn_str.is_null() || out_buf.is_null() || buffer_len == 0 {
             return 0;
         }
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated UTF-8 C string for the duration of this call.
         let conn_str_rust = match unsafe { guard::ptr_to_cstr(conn_str) } {
             Some(c) => match c.to_str() {
                 Ok(s) => s,
@@ -207,6 +209,8 @@ pub extern "C" fn odbc_get_driver_capabilities(
             set_out_written_zero(out_written);
             return -1;
         }
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated C string; `out_written` may be zeroed on parse failure.
         let conn_str_rust = match unsafe { parse_cstr_zero_out(conn_str, out_written) } {
             Some(value) => value,
             None => return -1,
@@ -327,14 +331,17 @@ pub extern "C" fn odbc_build_upsert_sql(
             set_out_written_zero(out_written);
             return -1;
         }
+        // SAFETY: `conn_str` is non-null (checked above); valid NUL-terminated C string.
         let conn_str_rs = match unsafe { helpers::parse_cstr(conn_str) } {
             Some(value) => value,
             None => return -1,
         };
+        // SAFETY: `table` is non-null (checked above); valid NUL-terminated C string.
         let table_rs = match unsafe { helpers::parse_cstr(table) } {
             Some(value) => value,
             None => return -1,
         };
+        // SAFETY: `payload_json` is non-null (checked above); valid NUL-terminated C string.
         let payload_rs = match unsafe { helpers::parse_cstr(payload_json) } {
             Some(value) => value,
             None => return -1,
@@ -388,14 +395,17 @@ pub extern "C" fn odbc_append_returning_sql(
             set_out_written_zero(out_written);
             return -1;
         }
+        // SAFETY: `conn_str` is non-null (checked above); valid NUL-terminated C string.
         let conn_str_rs = match unsafe { helpers::parse_cstr(conn_str) } {
             Some(value) => value,
             None => return -1,
         };
+        // SAFETY: `sql` is non-null (checked above); valid NUL-terminated C string.
         let sql_rs = match unsafe { helpers::parse_cstr(sql) } {
             Some(value) => value,
             None => return -1,
         };
+        // SAFETY: `columns_csv` is non-null (checked above); valid NUL-terminated C string.
         let cols_rs = match unsafe { helpers::parse_cstr(columns_csv) } {
             Some(value) => value,
             None => return -1,
@@ -438,10 +448,12 @@ pub extern "C" fn odbc_get_session_init_sql(
             set_out_written_zero(out_written);
             return -1;
         }
+        // SAFETY: `conn_str` is non-null (checked above); valid NUL-terminated C string.
         let conn_str_rs = match unsafe { helpers::parse_cstr(conn_str) } {
             Some(value) => value,
             None => return -1,
         };
+        // SAFETY: `options_json` may be null; when non-null it is a valid NUL-terminated C string.
         let opts = match unsafe { parse_session_options(options_json) } {
             Some(value) => value,
             None => return -1,

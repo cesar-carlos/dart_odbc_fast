@@ -255,6 +255,8 @@ impl ExecutionEngine {
         S: AsStatementRef,
     {
         loop {
+            // SAFETY: caller guarantees no live cursor borrow on `stmt`; each
+            // encoded cursor is consumed via `into_stmt()` before the next advance.
             let advance = unsafe { stmt.as_stmt_ref().more_results() };
             match advance {
                 SqlResult::NoData => return Ok(()),
@@ -289,6 +291,8 @@ impl ExecutionEngine {
                 .into_result(&stmt.as_stmt_ref())
                 .map_err(OdbcError::from)?;
             if cols > 0 {
+                // SAFETY: `num_result_cols > 0` after a successful
+                // `SQLMoreResults`; no other live borrow of `stmt` is held.
                 let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
                 out.push(self.encode_cursor_v1(&mut cursor)?);
                 let _ = cursor.into_stmt();

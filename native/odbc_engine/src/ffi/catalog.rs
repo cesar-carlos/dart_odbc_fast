@@ -51,6 +51,8 @@ pub extern "C" fn odbc_catalog_columns(
             return -1;
         }
 
+        // SAFETY: `table` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated UTF-8 C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(table) }) else {
             return -1;
         };
@@ -182,6 +184,8 @@ pub extern "C" fn odbc_catalog_primary_keys(
             return -1;
         }
 
+        // SAFETY: `table` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated UTF-8 C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(table) }) else {
             return -1;
         };
@@ -219,6 +223,8 @@ pub extern "C" fn odbc_catalog_foreign_keys(
             return -1;
         }
 
+        // SAFETY: `table` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated UTF-8 C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(table) }) else {
             return -1;
         };
@@ -256,6 +262,8 @@ pub extern "C" fn odbc_catalog_indexes(
             return -1;
         }
 
+        // SAFETY: `table` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated UTF-8 C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(table) }) else {
             return -1;
         };
@@ -280,6 +288,8 @@ pub(crate) fn ptr_to_opt_str(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
+    // SAFETY: `ptr` is non-null (checked above); caller guarantees a valid
+    // NUL-terminated C string for the duration of this call.
     let c_str = unsafe { guard::ptr_to_cstr(ptr)? };
     let s = c_str.to_str().ok()?;
     let t = s.trim();

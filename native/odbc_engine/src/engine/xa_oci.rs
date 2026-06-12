@@ -137,81 +137,86 @@ static OCI_SYMBOLS: OnceLock<std::result::Result<OciXaSymbols, String>> = OnceLo
 /// Cached after first call so subsequent invocations are O(1).
 fn load_oci() -> std::result::Result<&'static OciXaSymbols, String> {
     OCI_SYMBOLS
-        .get_or_init(|| unsafe {
-            // Try the canonical name on each platform; libloading
-            // resolves via the standard dynamic-linker search path
-            // (`LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on
-            // macOS, `PATH` on Windows). Failure to find the library
-            // is propagated as an actionable string error.
-            let candidates: &[&str] = if cfg!(target_os = "windows") {
-                &["oci.dll", "oraociei19.dll", "oraociei18.dll"]
-            } else if cfg!(target_os = "macos") {
-                &[
-                    "libclntsh.dylib",
-                    "libclntsh.dylib.19.1",
-                    "libclntsh.dylib.18.1",
-                ]
-            } else {
-                &["libclntsh.so", "libclntsh.so.19.1", "libclntsh.so.18.1"]
-            };
-            let mut last_err = String::new();
-            let lib = candidates
-                .iter()
-                .find_map(|name| match libloading::Library::new(name) {
-                    Ok(l) => Some(l),
-                    Err(e) => {
-                        last_err = format!("{}: {}", name, e);
-                        None
-                    }
-                });
-            let Some(lib) = lib else {
-                return Err(format!(
-                    "xa_oci: failed to load Oracle Instant Client. \
+        .get_or_init(|| {
+            // SAFETY: `libloading` opens a library from the platform search path;
+            // each `sym!` lookup casts to the documented `oraxa.h` signature and
+            // `_lib` keeps the library alive for the process lifetime.
+            unsafe {
+                // Try the canonical name on each platform; libloading
+                // resolves via the standard dynamic-linker search path
+                // (`LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on
+                // macOS, `PATH` on Windows). Failure to find the library
+                // is propagated as an actionable string error.
+                let candidates: &[&str] = if cfg!(target_os = "windows") {
+                    &["oci.dll", "oraociei19.dll", "oraociei18.dll"]
+                } else if cfg!(target_os = "macos") {
+                    &[
+                        "libclntsh.dylib",
+                        "libclntsh.dylib.19.1",
+                        "libclntsh.dylib.18.1",
+                    ]
+                } else {
+                    &["libclntsh.so", "libclntsh.so.19.1", "libclntsh.so.18.1"]
+                };
+                let mut last_err = String::new();
+                let lib = candidates
+                    .iter()
+                    .find_map(|name| match libloading::Library::new(name) {
+                        Ok(l) => Some(l),
+                        Err(e) => {
+                            last_err = format!("{}: {}", name, e);
+                            None
+                        }
+                    });
+                let Some(lib) = lib else {
+                    return Err(format!(
+                        "xa_oci: failed to load Oracle Instant Client. \
                      Tried {:?}; last error: {}. Install Oracle \
                      Instant Client and ensure the loader can find \
                      the library (LD_LIBRARY_PATH on Linux, PATH on \
                      Windows).",
-                    candidates, last_err,
-                ));
-            };
-
-            // Symbol lookup. Each `?` aborts the closure on the first
-            // missing symbol — we collect into a String to match the
-            // OnceLock signature.
-            macro_rules! sym {
-                ($name:literal) => {
-                    match lib.get($name.as_bytes()) {
-                        Ok(s) => *s,
-                        Err(e) => {
-                            return Err(format!(
-                                "xa_oci: symbol {} not found in OCI library: {}",
-                                $name, e,
-                            ));
-                        }
-                    }
+                        candidates, last_err,
+                    ));
                 };
+
+                // Symbol lookup. Each `?` aborts the closure on the first
+                // missing symbol — we collect into a String to match the
+                // OnceLock signature.
+                macro_rules! sym {
+                    ($name:literal) => {
+                        match lib.get($name.as_bytes()) {
+                            Ok(s) => *s,
+                            Err(e) => {
+                                return Err(format!(
+                                    "xa_oci: symbol {} not found in OCI library: {}",
+                                    $name, e,
+                                ));
+                            }
+                        }
+                    };
+                }
+
+                let xa_open = sym!("xaosw"); // canonical OCI XA `xa_open`
+                let xa_close = sym!("xaocl");
+                let xa_start = sym!("xaostart");
+                let xa_end = sym!("xaoend");
+                let xa_prepare = sym!("xaoprep");
+                let xa_commit = sym!("xaocommit");
+                let xa_rollback = sym!("xaoroll");
+                let xa_recover = sym!("xaorecover");
+
+                Ok(OciXaSymbols {
+                    _lib: lib,
+                    xa_open,
+                    xa_close,
+                    xa_start,
+                    xa_end,
+                    xa_prepare,
+                    xa_commit,
+                    xa_rollback,
+                    xa_recover,
+                })
             }
-
-            let xa_open = sym!("xaosw"); // canonical OCI XA `xa_open`
-            let xa_close = sym!("xaocl");
-            let xa_start = sym!("xaostart");
-            let xa_end = sym!("xaoend");
-            let xa_prepare = sym!("xaoprep");
-            let xa_commit = sym!("xaocommit");
-            let xa_rollback = sym!("xaoroll");
-            let xa_recover = sym!("xaorecover");
-
-            Ok(OciXaSymbols {
-                _lib: lib,
-                xa_open,
-                xa_close,
-                xa_start,
-                xa_end,
-                xa_prepare,
-                xa_commit,
-                xa_rollback,
-                xa_recover,
-            })
         })
         .as_ref()
         .map_err(|e| e.clone())
@@ -249,11 +254,13 @@ pub fn begin_oci_branch(info: &str, xid: &Xid, rmid: c_int) -> Result<OciXaBranc
     }
 
     let oci_xid = OciXid::from_xid(xid);
+    // SAFETY: function pointer resolved from OCI library; `oci_xid` matches `xid`.
     let rc = unsafe { (symbols.xa_start)(&oci_xid, rmid, xa_flags::TMNOFLAGS) };
     if rc != 0 {
         // Best-effort xa_close to release the resource manager handle
         // we just opened. Failures here are logged; the original
         // xa_start error wins.
+        // SAFETY: `info_c` is a NUL-terminated open string for this `rmid`.
         let close_rc = unsafe { (symbols.xa_close)(info_c.as_ptr(), rmid, xa_flags::TMNOFLAGS) };
         if close_rc != 0 {
             log::warn!(
@@ -295,6 +302,7 @@ impl OciXaBranch {
     /// `xa_end` (`TMSUCCESS`): mark the branch as completed and
     /// detached from the connection. Required before `xa_prepare`.
     fn end_success(&mut self) -> Result<()> {
+        // SAFETY: `oci_xid` and `rmid` identify the active branch opened by `xa_start`.
         let rc = unsafe { (self.symbols.xa_end)(&self.oci_xid, self.rmid, xa_flags::TMSUCCESS) };
         if rc != 0 {
             return Err(OdbcError::InternalError(format!(
@@ -308,6 +316,7 @@ impl OciXaBranch {
     /// Phase 1 of 2PC.
     pub fn prepare(&mut self) -> Result<()> {
         self.end_success()?;
+        // SAFETY: branch ended with `TMSUCCESS`; `oci_xid` matches the prepared branch.
         let rc =
             unsafe { (self.symbols.xa_prepare)(&self.oci_xid, self.rmid, xa_flags::TMNOFLAGS) };
         if rc != 0 {
@@ -321,7 +330,9 @@ impl OciXaBranch {
 
     /// Phase 2 commit on a previously prepared branch.
     pub fn commit(mut self) -> Result<()> {
+        // SAFETY: `oci_xid` identifies the prepared branch; `info` is the open string.
         let rc = unsafe { (self.symbols.xa_commit)(&self.oci_xid, self.rmid, xa_flags::TMNOFLAGS) };
+        // SAFETY: `info` is the NUL-terminated open string for this `rmid`.
         let close_rc =
             unsafe { (self.symbols.xa_close)(self.info.as_ptr(), self.rmid, xa_flags::TMNOFLAGS) };
         self.terminated = true;
@@ -342,8 +353,10 @@ impl OciXaBranch {
 
     /// Phase 2 rollback on a prepared (or active) branch.
     pub fn rollback(mut self) -> Result<()> {
+        // SAFETY: `oci_xid` identifies the active branch; `info` is the open string.
         let rc =
             unsafe { (self.symbols.xa_rollback)(&self.oci_xid, self.rmid, xa_flags::TMNOFLAGS) };
+        // SAFETY: `info` is the NUL-terminated open string for this `rmid`.
         let close_rc =
             unsafe { (self.symbols.xa_close)(self.info.as_ptr(), self.rmid, xa_flags::TMNOFLAGS) };
         self.terminated = true;
@@ -364,8 +377,10 @@ impl OciXaBranch {
     /// participant.
     pub fn commit_one_phase(mut self) -> Result<()> {
         self.end_success()?;
+        // SAFETY: one-phase commit on the ended branch; `info` is the open string.
         let rc =
             unsafe { (self.symbols.xa_commit)(&self.oci_xid, self.rmid, xa_flags::TMONEPHASE) };
+        // SAFETY: `info` is the NUL-terminated open string for this `rmid`.
         let close_rc =
             unsafe { (self.symbols.xa_close)(self.info.as_ptr(), self.rmid, xa_flags::TMNOFLAGS) };
         self.terminated = true;
@@ -392,6 +407,7 @@ impl Drop for OciXaBranch {
         }
         // Best-effort: rollback + close. Failures are logged; we can't
         // propagate from Drop.
+        // SAFETY: branch still active (`terminated == false`); `info` is the open string.
         let rc =
             unsafe { (self.symbols.xa_rollback)(&self.oci_xid, self.rmid, xa_flags::TMNOFLAGS) };
         if rc != 0 {
@@ -400,6 +416,7 @@ impl Drop for OciXaBranch {
                 rc,
             );
         }
+        // SAFETY: `info` is the NUL-terminated open string for this `rmid`.
         let close_rc =
             unsafe { (self.symbols.xa_close)(self.info.as_ptr(), self.rmid, xa_flags::TMNOFLAGS) };
         if close_rc != 0 {
@@ -421,6 +438,7 @@ pub fn recover_oci_xids(info: &str, rmid: c_int, max: usize) -> Result<Vec<Xid>>
 
     // Open + recover + close. Recovery doesn't need an active branch,
     // but xa_open is required to bind the rmid to a live session.
+    // SAFETY: `info_c` is a NUL-terminated open string for this `rmid`.
     let rc = unsafe { (symbols.xa_open)(info_c.as_ptr(), rmid, xa_flags::TMNOFLAGS) };
     if rc != 0 {
         return Err(OdbcError::InternalError(format!(
@@ -438,10 +456,12 @@ pub fn recover_oci_xids(info: &str, rmid: c_int, max: usize) -> Result<Vec<Xid>>
         };
         max
     ];
+    // SAFETY: `buffer` has capacity `max`; function pointer matches `oraxa.h`.
     let count = unsafe {
         (symbols.xa_recover)(buffer.as_mut_ptr(), max as c_int, rmid, xa_flags::TMNOFLAGS)
     };
 
+    // SAFETY: `info_c` is the open string paired with this recovery `rmid`.
     let close_rc = unsafe { (symbols.xa_close)(info_c.as_ptr(), rmid, xa_flags::TMNOFLAGS) };
     if close_rc != 0 {
         log::warn!("xa_oci: xa_close after recover returned {}", close_rc,);

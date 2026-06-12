@@ -404,27 +404,20 @@ class NativeOdbcConnection implements OdbcConnectionBackend {
     for (var i = 0; i < count; i++) {
       final entry = _native.xaRecoverGet(i);
       if (entry == null) continue;
-      // Xid() throws ArgumentError on length violations. We *want* to
-      // catch that and skip the entry — those XIDs belong to a
-      // different client that violated the X/Open length limits, and
-      // we don't want recovery to abort over an unrelated bad
-      // neighbour.
-      try {
-        out.add(
-          Xid(
-            formatId: entry.formatId,
-            gtrid: entry.gtrid,
-            bqual: entry.bqual,
-          ),
-        );
-        // Catching `Error` is unidiomatic in general, but here the
-        // error path is data-driven (a bad neighbour client wrote a
-        // malformed prepared XID) and we explicitly want to skip,
-        // not crash recovery.
-        // ignore: avoid_catching_errors
-      } on ArgumentError {
-        // intentionally silent — see comment above
+      // Skip malformed neighbours that violated X/Open length limits
+      // instead of aborting recovery for every prepared branch.
+      if (entry.gtrid.isEmpty ||
+          entry.gtrid.length > 64 ||
+          entry.bqual.length > 64) {
+        continue;
       }
+      out.add(
+        Xid(
+          formatId: entry.formatId,
+          gtrid: entry.gtrid,
+          bqual: entry.bqual,
+        ),
+      );
     }
     return out;
   }

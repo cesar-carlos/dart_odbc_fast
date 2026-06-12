@@ -135,6 +135,7 @@ mod tests {
         );
         assert_eq!(st, 0);
         assert_eq!(olen as usize, raw.len());
+        // SAFETY: `pout`/`olen` were written by `odbc_columnar_decompress` in this test.
         let got = unsafe { std::slice::from_raw_parts(pout, olen as usize) };
         assert_eq!(got, raw.as_slice());
         odbc_columnar_decompress_free(pout, olen, ocap);
@@ -225,6 +226,7 @@ mod tests {
         );
         assert_eq!(st, 0);
         assert_eq!(olen as usize, raw.len());
+        // SAFETY: `pout`/`olen` were written by `odbc_columnar_decompress` in this test.
         let got = unsafe { std::slice::from_raw_parts(pout, olen as usize) };
         assert_eq!(got, raw.as_slice());
         odbc_columnar_decompress_free(pout, olen, ocap);
