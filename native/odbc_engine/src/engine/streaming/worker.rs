@@ -28,44 +28,55 @@ impl StreamingExecutor {
         self.chunk_size
     }
 
+    /// Drains the full cursor into one encoded protocol message for legacy
+    /// buffer-mode FFI (`odbc_stream_start`). Applies FOR JSON coalescing.
+    ///
+    /// Prefer [`Self::execute_streaming_batched`] or [`Self::start_batched_stream`]
+    /// for bounded-memory cursor streaming.
+    fn materialize_cursor_to_encoded(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
+        let mut row_buffer = RowBuffer::new();
+        let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+        let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+        let Some(mut cursor) = cursor else {
+            return Err(OdbcError::InternalError("No data returned".to_string()));
+        };
+        let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+        let _cursor = crate::engine::fetch::fetch_cursor_into_row_buffer(
+            cursor,
+            &column_types,
+            &mut row_buffer,
+        )?;
+        // FOR JSON normalisation — buffer-mode materialises the full result
+        // before encoding, so coalescing is safe here. See `engine::sqlserver_json`.
+        coalesce_for_json_rows(&mut row_buffer);
+        encode_row_buffer(&row_buffer)
+    }
+
+    /// Legacy buffer-mode streaming: materialises the full result set before
+    /// byte-level FFI chunking via [`StreamingState`].
+    ///
+    /// **Prefer batched streaming.** [`Self::execute_streaming_batched`] and
+    /// `odbc_stream_start_batched` keep memory bounded to one fetch batch.
+    /// This path remains for `odbc_stream_start` compatibility only.
     pub fn execute_streaming(
         &self,
         conn: &Connection<'static>,
         sql: &str,
     ) -> Result<StreamingState> {
-        let mut row_buffer = RowBuffer::new();
-        let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-
-        let cursor = stmt.execute(()).map_err(OdbcError::from)?;
-
-        if let Some(mut cursor) = cursor {
-            let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
-            let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
-                cursor,
-                &column_types,
-                &mut row_buffer,
-            )?;
-
-            // FOR JSON normalisation — buffer-mode streaming materialises
-            // the full result before encoding, so it's safe (and necessary,
-            // for the SQL Server FOR JSON shape) to coalesce here. See
-            // `engine::sqlserver_json` (closes #2).
-            coalesce_for_json_rows(&mut row_buffer);
-
-            let encoded = encode_row_buffer(&row_buffer)?;
-            Ok(StreamingState {
-                data: encoded,
-                offset: 0,
-                chunk_size: self.chunk_size,
-            })
-        } else {
-            Err(OdbcError::InternalError("No data returned".to_string()))
-        }
+        let encoded = Self::materialize_cursor_to_encoded(conn, sql)?;
+        Ok(StreamingState {
+            data: encoded,
+            offset: 0,
+            chunk_size: self.chunk_size,
+        })
     }
 
     /// Buffer-mode streaming with optional spill-to-disk. When `spill_threshold_mb > 0`,
     /// encodes to `DiskSpillStream`; if data exceeds threshold, spills to temp file
     /// and returns `StreamState::FileBacked` for chunked read without loading full result.
+    ///
+    /// Like [`Self::execute_streaming`], this still materialises the full cursor
+    /// before encoding. Prefer batched streaming for large result sets.
     pub fn execute_streaming_with_spill(
         &self,
         conn: &Connection<'static>,
@@ -74,57 +85,52 @@ impl StreamingExecutor {
     ) -> Result<StreamState> {
         let mut row_buffer = RowBuffer::new();
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+        let Some(mut cursor) = cursor else {
+            return Err(OdbcError::InternalError("No data returned".to_string()));
+        };
+        let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+        let _cursor = crate::engine::fetch::fetch_cursor_into_row_buffer(
+            cursor,
+            &column_types,
+            &mut row_buffer,
+        )?;
+        coalesce_for_json_rows(&mut row_buffer);
 
-        if let Some(mut cursor) = cursor {
-            let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
-            let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
-                cursor,
-                &column_types,
-                &mut row_buffer,
-            )?;
+        let chunk_size = self.chunk_size;
 
-            // FOR JSON normalisation — see execute_streaming above (closes #2).
-            coalesce_for_json_rows(&mut row_buffer);
+        if let Some(threshold_mb) = spill_threshold_mb.filter(|&t| t > 0) {
+            let mut spill = DiskSpillStream::new(threshold_mb);
+            let mut writer = DiskSpillWriter::new(&mut spill);
+            RowBufferEncoder::encode_to_writer_result(&row_buffer, &mut writer)?;
+            writer
+                .flush()
+                .map_err(|e| OdbcError::InternalError(format!("spill flush: {}", e)))?;
 
-            let chunk_size = self.chunk_size;
-
-            if let Some(threshold_mb) = spill_threshold_mb.filter(|&t| t > 0) {
-                let mut spill = DiskSpillStream::new(threshold_mb);
-                let mut writer = DiskSpillWriter::new(&mut spill);
-                RowBufferEncoder::encode_to_writer_result(&row_buffer, &mut writer)?;
-                writer
-                    .flush()
-                    .map_err(|e| OdbcError::InternalError(format!("spill flush: {}", e)))?;
-
-                match spill.finish_for_streaming_read()? {
-                    crate::engine::core::SpillReadSource::File(path) => {
-                        let total_len = std::fs::metadata(&path)
-                            .map(|m| m.len() as usize)
-                            .unwrap_or(0);
-                        Ok(StreamState::FileBacked(StreamingStateFileBacked::new(
-                            path, chunk_size, total_len,
-                        )?))
-                    }
-                    crate::engine::core::SpillReadSource::Memory(data) => {
-                        Ok(StreamState::InMemory(StreamingState {
-                            data,
-                            offset: 0,
-                            chunk_size,
-                        }))
-                    }
+            match spill.finish_for_streaming_read()? {
+                crate::engine::core::SpillReadSource::File(path) => {
+                    let total_len = std::fs::metadata(&path)
+                        .map(|m| m.len() as usize)
+                        .unwrap_or(0);
+                    Ok(StreamState::FileBacked(StreamingStateFileBacked::new(
+                        path, chunk_size, total_len,
+                    )?))
                 }
-            } else {
-                let encoded = encode_row_buffer(&row_buffer)?;
-                Ok(StreamState::InMemory(StreamingState {
-                    data: encoded,
-                    offset: 0,
-                    chunk_size,
-                }))
+                crate::engine::core::SpillReadSource::Memory(data) => {
+                    Ok(StreamState::InMemory(StreamingState {
+                        data,
+                        offset: 0,
+                        chunk_size,
+                    }))
+                }
             }
         } else {
-            Err(OdbcError::InternalError("No data returned".to_string()))
+            let encoded = encode_row_buffer(&row_buffer)?;
+            Ok(StreamState::InMemory(StreamingState {
+                data: encoded,
+                offset: 0,
+                chunk_size,
+            }))
         }
     }
 

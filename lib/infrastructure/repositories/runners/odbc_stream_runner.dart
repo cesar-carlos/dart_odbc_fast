@@ -226,38 +226,24 @@ class OdbcStreamRunner {
     yield await query.executeQueryNamed(connectionId, sql, namedParams);
   }
 
+  /// Cursor-based batched streaming (`odbc_stream_start_batched`).
+  ///
+  /// `streamQuery` routes here directly; buffer-mode `odbc_stream_start` is
+  /// retained only on [NativeOdbcConnection.streamQueryBuffer] for legacy use.
   Stream<ParsedRowBuffer> streamNativeQueryWithFallback(
     int nativeId,
     String sql, {
     int? maxBufferBytes,
   }) async* {
-    var emittedFromBatched = false;
+    final batched = ffi.isAsync
+        ? ffi.async.streamQueryBatched(
+            nativeId,
+            sql,
+            maxBufferBytes: maxBufferBytes,
+          )
+        : ffi.sync.streamQueryBatched(nativeId, sql);
 
-    try {
-      final batched = ffi.isAsync
-          ? ffi.async.streamQueryBatched(
-              nativeId,
-              sql,
-              maxBufferBytes: maxBufferBytes,
-            )
-          : ffi.sync.streamQueryBatched(nativeId, sql);
-
-      await for (final chunk in batched) {
-        emittedFromBatched = true;
-        yield chunk;
-      }
-      return;
-    } on Exception {
-      if (emittedFromBatched) {
-        rethrow;
-      }
-    }
-
-    final fallback = ffi.isAsync
-        ? ffi.async.streamQuery(nativeId, sql, maxBufferBytes: maxBufferBytes)
-        : ffi.sync.streamQuery(nativeId, sql);
-
-    await for (final chunk in fallback) {
+    await for (final chunk in batched) {
       yield chunk;
     }
   }

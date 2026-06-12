@@ -98,24 +98,28 @@ void main() {
       asyncNative.dispose();
     });
 
-    test('falls back to classic stream when batched fails before first chunk',
+    test('does not fall back to buffer stream when batched fails before chunk',
         () async {
       asyncNative
+        ..structuredError = const StructuredError(
+          sqlState: [0, 0, 0, 0, 0],
+          nativeCode: 0,
+          message: 'batched start failed',
+        )
         ..batchedStreamFactory = () async* {
           await Future<void>.delayed(Duration.zero);
           throw Exception('fetch failed before first chunk');
         }
         ..fallbackStreamFactory = () async* {
           yield _chunk(1);
-          yield _chunk(2);
         };
 
       final chunks =
           await repository.streamQuery(connectionId, 'SELECT 1').toList();
       expect(asyncNative.batchedCalls, equals(1));
-      expect(asyncNative.fallbackCalls, equals(1));
-      expect(chunks.length, equals(2));
-      expect(chunks.every((c) => c.isSuccess()), isTrue);
+      expect(asyncNative.fallbackCalls, equals(0));
+      expect(chunks.length, equals(1));
+      expect(chunks.single.isError(), isTrue);
     });
 
     test('classifies protocol error during mid-stream consumption', () async {
@@ -193,7 +197,7 @@ void main() {
       );
     });
 
-    test('classifies SQL error with structured info when stream fails',
+    test('classifies SQL error with structured info when batched stream fails',
         () async {
       asyncNative
         ..structuredError = const StructuredError(
@@ -203,13 +207,11 @@ void main() {
         )
         ..batchedStreamFactory = () async* {
           throw Exception('batched failed');
-        }
-        ..fallbackStreamFactory = () async* {
-          throw Exception('fallback failed');
         };
 
       final chunks =
           await repository.streamQuery(connectionId, 'SELECT 1').toList();
+      expect(asyncNative.fallbackCalls, equals(0));
       expect(chunks.length, equals(1));
       expect(chunks.single.isError(), isTrue);
       chunks.single.fold(

@@ -1,6 +1,7 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v3.10.0 (sub-interfaces, event bus, columnar
+> **Last updated for:** v4.1.0 (server profile columnar recommendation,
+> CRUD columnar bulk benchmark baseline, harness `--crud` lane; prior v3.10.0
 > service surface, pool/transaction hardening, native engine perf
 > follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
 > default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
@@ -46,20 +47,25 @@ for [`ServiceLocator.initialize`](../lib/core/di/service_locator.dart): async vs
 sync, worker count, backpressure, and the shape of
 `recommendedConnectionOptions` / `recommendedPoolOptions`.
 
-| Profile           | When to use                                   | Async | Workers | Pending cap |
-| ----------------- | --------------------------------------------- | ----- | ------- | ----------- |
-| `balanced`        | Recommended opt-in preset for general apps    | yes   | 2       | 24          |
-| `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          |
-| `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          |
-| `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          |
-| `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   |
+| Profile           | When to use                                   | Async | Workers | Pending cap | Recommended `ResultEncoding` |
+| ----------------- | --------------------------------------------- | ----- | ------- | ----------- | ---------------------------- |
+| `balanced`        | Recommended opt-in preset for general apps    | yes   | 2       | 24          | row-major                    |
+| `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          | row-major                    |
+| `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          | **columnar**                 |
+| `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          | **columnar**                 |
+| `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   | row-major                    |
 
-`ResultEncoding.rowMajor` remains the safe default for query payloads.
-Columnar modes are only worth adopting after benchmarking your workload: they
-need the native engine to export `odbc_execute_async_params_options` so the
-worker isolate can start async execution with a non-row-major encoding. Older
-engines without that symbol still fall back to a blocking query for columnar
-requests.
+Per-query APIs still default to `ResultEncoding.rowMajor` for compatibility.
+Server presets expose `ServiceLocator.recommendedResultEncoding` /
+`ResolvedOdbcUsageProfile.recommendedResultEncoding` as **columnar** so pool
+and worker-pool demos can opt in without hard-coding the wire format. Pass
+`resultEncoding: locator.recommendedResultEncoding` after benchmarking your
+driver and schema.
+
+Columnar modes need the native engine to export `odbc_execute_async_params_options`
+so the worker isolate can start async execution with a non-row-major encoding.
+Older engines without that symbol still fall back to a blocking query for
+columnar requests.
 
 ---
 
@@ -107,13 +113,15 @@ python scripts/run_dart_benchmarks.py --protocol --smoke
 python scripts/run_dart_benchmarks.py --heavy --rows 5000
 python scripts/run_dart_benchmarks.py --rust-micro
 python scripts/run_dart_benchmarks.py --harness
+python scripts/run_dart_benchmarks.py --crud --compare
 # Full local epic (DSN + optional `Produto` table for --heavy):
 python scripts/run_dart_benchmarks.py --all
 ```
 
-`--all` runs protocol tests, Rust micro-benches, harness, smoke, heavy, and
-`--compare` against `bench_baselines/*.baseline.json` (creates baseline files
-on first run). After async runs, the script prints a short
+`--all` runs protocol tests, Rust micro-benches, harness, CRUD latency
+(`--crud`, 5k columnar bulk insert), smoke, heavy, and `--compare` against
+`bench_baselines/*.baseline.json` (creates baseline files on first run). After
+async runs, the script prints a short
 `fallbacksToBlocking` summary per scenario (columnar should trend to **0**
 once async encoding reaches the native async path).
 
@@ -201,9 +209,10 @@ $env:ODBC_STREAM_BENCH_OUT_FILE="bench_baselines/streaming.json"
 dart run example/streaming_performance_benchmark.dart
 ```
 
-`streaming_performance_benchmark.dart` compares `streamQuery` and
-`streamQueryBatched` with the same query and reports elapsed time, rows, chunks,
-rows/s, `fetchSize`, and `chunkSize`.
+`streaming_performance_benchmark.dart` compares `streamQuery` (batched default
+since v4.1.0) and `streamQueryBatched` with the same query and reports elapsed
+time, rows, chunks, rows/s, `fetchSize`, and `chunkSize`. Use
+`streamQueryBuffer` to exercise legacy buffer-mode `odbc_stream_start`.
 
 To find slow Dart tests before they become a CI problem, run:
 
@@ -311,8 +320,15 @@ growth copies and an extra `Uint8List.fromList` at the FFI boundary.
 Local benchmarks:
 
 ```powershell
-# CRUD latency incl. bulk build vs FFI split and pool parallel insert
+# CRUD latency incl. columnar bulk build vs FFI split and pool parallel insert
 $env:RUN_PERF_TESTS="1"
+dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
+
+# Emit/compare baseline JSON (5k columnar bulk scenarios)
+python scripts/run_dart_benchmarks.py --crud --compare
+# or manually:
+$env:RUN_PERF_TESTS="1"
+$env:BENCH_BASELINE_OUT="bench_baselines/crud-produto-5k.baseline.json"
 dart test test/performance/crud_latency_benchmark_test.dart --reporter expanded
 
 # Deterministic BulkInsertBuilder micro-benchmark (no DSN)
@@ -401,7 +417,8 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 These performance-sensitive items are tracked outside the feature backlog:
 
-- **True chunk-by-chunk streaming** — `engine::streaming::execute_streaming` still materialises results internally before chunking (audit C7). Multi-result streaming FFI (`odbc_stream_multi_*`) added in v3.3.0 improves the surface but the per-cursor materialisation remains.
+- **Single-result streaming (audit C7, resolved in v4.1.0)** — `streamQuery` and repository `streamQuery` now default to cursor-based batched streaming (`odbc_stream_start_batched` / `execute_streaming_batched`). Legacy buffer-mode `odbc_stream_start` / `execute_streaming` remains for `streamQueryBuffer` and spill-to-disk only; it still materialises the full result before byte-level FFI chunking.
+- **Multi-result per-cursor materialisation** — `odbc_stream_multi_*` streams items lazily but each result-set item is still encoded as one framed payload (M8 wire format). Per-item fetch now reuses `fetch_cursor_into_row_buffer` for block-cursor acceleration when enabled.
 - **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex because their cleanup paths need atomic transitions (e.g. `disconnect` cancels active transactions and streams; XA commit clears branches in multiple maps). Splitting further requires a `with_disconnect_cleanup`-style helper that acquires the per-category locks in the documented canonical order. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
 

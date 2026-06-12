@@ -507,13 +507,13 @@ void main() {
         connection.dispose();
       });
 
-      test('should_parse_simple_stream_payload', () async {
+      test('should_parse_simple_stream_payload_via_batched_default', () async {
         final frame = FakeOdbcBindings.minimalStreamRowMajorFrame();
         final fetchOverride = FakeOdbcBindings.streamFetchChunks([frame]);
         final connection = _connection(
           TestOdbcBindingsOverrides(
             init: _initSuccess,
-            streamStart: _streamStartOne,
+            streamStartBatched: _streamStartBatchedOne,
             streamFetch: fetchOverride.streamFetch,
           ),
         )..initialize();
@@ -572,12 +572,13 @@ void main() {
         connection.dispose();
       });
 
-      test('should_throw_when_simple_stream_start_returns_zero', () async {
+      test('should_throw_when_stream_query_batched_start_returns_zero',
+          () async {
         final connection = _connection(
           TestOdbcBindingsOverrides(
             init: _initSuccess,
-            streamStart: _streamStartZero,
-            getError: FakeOdbcBindings.getErrorWrites('stream start failed'),
+            streamStartBatched: _streamStartBatchedZero,
+            getError: FakeOdbcBindings.getErrorWrites('batched start failed'),
           ),
         )..initialize();
 
@@ -587,25 +588,25 @@ void main() {
             isA<Exception>().having(
               (e) => e.toString(),
               'message',
-              contains('stream start failed'),
+              contains('batched start failed'),
             ),
           ),
         );
         connection.dispose();
       });
 
-      test('should_throw_when_simple_stream_fetch_fails', () async {
+      test('should_throw_when_stream_query_fetch_fails', () async {
         var closeCalls = 0;
         final connection = _connection(
           TestOdbcBindingsOverrides(
             init: _initSuccess,
-            streamStart: _streamStartOne,
+            streamStartBatched: _streamStartBatchedOne,
             streamFetch: _streamFetchFailure,
             streamClose: (_) {
               closeCalls++;
               return 0;
             },
-            getError: FakeOdbcBindings.getErrorWrites('simple fetch failed'),
+            getError: FakeOdbcBindings.getErrorWrites('fetch failed'),
           ),
         )..initialize();
 
@@ -615,7 +616,7 @@ void main() {
             isA<Exception>().having(
               (e) => e.toString(),
               'message',
-              contains('simple fetch failed'),
+              contains('fetch failed'),
             ),
           ),
         );

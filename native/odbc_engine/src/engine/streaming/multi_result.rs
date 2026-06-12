@@ -1,11 +1,10 @@
-use super::columns::encode_row_buffer;
+use super::columns::{describe_streaming_columns, encode_row_buffer};
 use super::state::{AsyncStreamingState, BatchedMessage, BatchedStreamingState, WorkerCompletion};
-use crate::engine::cell_reader::CellReader;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::pool::SharedPooledConnection;
-use crate::protocol::{OdbcType, RowBuffer};
+use crate::protocol::RowBuffer;
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,11 +43,11 @@ where
     // `ExecutionEngine::execute_multi_result_inner` (M1 fix in v3.2.0).
     let had_initial_cursor = {
         let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
-        if let Some(mut cursor) = initial_cursor {
+        if let Some(cursor) = initial_cursor {
             if cancel_check() {
                 return Err(OdbcError::Cancelled);
             }
-            let encoded = encode_cursor_to_buffer(&mut cursor)?;
+            let (encoded, cursor) = encode_cursor_to_buffer(cursor)?;
             on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
             let _stmt_ref = cursor.into_stmt();
             true
@@ -108,8 +107,8 @@ where
             .map_err(OdbcError::from)?;
         if cols > 0 {
             // SAFETY: just observed cols > 0 with no other live borrow.
-            let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-            let encoded = encode_cursor_to_buffer(&mut cursor)?;
+            let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
+            let (encoded, cursor) = encode_cursor_to_buffer(cursor)?;
             on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
             let _stmt_ref = cursor.into_stmt();
         } else {
@@ -127,48 +126,23 @@ where
     }
 }
 
-/// Read every row from `cursor` into a `RowBuffer` and encode it via
-/// `RowBufferEncoder` (binary protocol v1). Local helper to avoid coupling
-/// `StreamingExecutor` with `ExecutionEngine`.
-fn encode_cursor_to_buffer<C>(cursor: &mut C) -> Result<Vec<u8>>
+/// Drain `cursor` into a `RowBuffer`, encode via `RowBufferEncoder`, and
+/// return the cursor so the caller can `into_stmt()` for `SQLMoreResults`.
+///
+/// Each multi-result item is one complete result set; per-item materialisation
+/// matches the M8 wire format (one framed payload per result set).
+fn encode_cursor_to_buffer<C>(mut cursor: C) -> Result<(Vec<u8>, C)>
 where
     C: Cursor + ResultSetMetadata,
 {
     let mut row_buffer = RowBuffer::new();
-    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-    let cols_u16: u16 = cols_i16
-        .try_into()
-        .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-    let cols_usize: usize = cols_u16.into();
-    let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-    for col_idx in 1..=cols_u16 {
-        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-        let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-        let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-        let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-        row_buffer.add_column(col_name.to_string(), odbc_type);
-        column_types.push(odbc_type);
-    }
-
-    let mut cell_reader = CellReader::new();
-    while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-        let mut row_data = Vec::with_capacity(column_types.len());
-        for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-            let col_number: u16 = (col_idx + 1)
-                .try_into()
-                .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-            let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-            row_data.push(cell_data);
-        }
-        row_buffer.add_row(row_data);
-    }
-
-    // FOR JSON normalisation — multi-result item is fully materialised
-    // before framing, so the same coalescing applies here (closes #2).
+    let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+    let cursor =
+        crate::engine::fetch::fetch_cursor_into_row_buffer(cursor, &column_types, &mut row_buffer)?;
+    // FOR JSON normalisation — item is fully materialised before framing.
     coalesce_for_json_rows(&mut row_buffer);
-
-    encode_row_buffer(&row_buffer)
+    let encoded = encode_row_buffer(&row_buffer)?;
+    Ok((encoded, cursor))
 }
 
 pub(crate) fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {

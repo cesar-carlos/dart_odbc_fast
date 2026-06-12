@@ -224,12 +224,26 @@ mixin _AsyncStreaming
     }
   }
 
-  /// Runs [sql] in the worker using native streaming.
+  /// Runs [sql] in the worker using native batched streaming.
   ///
-  /// This path uses `odbc_stream_start` + `odbc_stream_fetch`. Data is
-  /// accumulated and parsed at the end, matching sync `streamQuery` behavior.
-  /// [maxBufferBytes] caps total accumulated bytes.
+  /// Since v4.1.0 this delegates to [streamQueryBatched]. [chunkSize] is
+  /// interpreted as `fetchSize` (rows per yielded chunk).
   Stream<ParsedRowBuffer> streamQuery(
+    int connectionId,
+    String sql, {
+    int chunkSize = 1000,
+    int? maxBufferBytes,
+  }) =>
+      streamQueryBatched(
+        connectionId,
+        sql,
+        fetchSize: chunkSize,
+        maxBufferBytes: maxBufferBytes,
+      );
+
+  /// Legacy buffer-mode streaming via `odbc_stream_start`. Materialises the
+  /// full result in the worker before yielding a single parsed chunk.
+  Stream<ParsedRowBuffer> streamQueryBuffer(
     int connectionId,
     String sql, {
     int chunkSize = 1000,

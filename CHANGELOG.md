@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-06-12
+
+### Changed
+
+- **CRUD bulk insert benchmark** — `test/performance/crud_latency_benchmark_test.dart`
+  uses column-oriented `BulkInsertBuilder.addColumnInt32` / `addColumnText`
+  instead of per-row `addRow`.
+- **`bench_baselines/.gitignore`** — tracks `*.baseline.json` for regression
+  compare while ignoring ephemeral `*.json` outputs.
+- **Streaming C7 (batched default)** — `streamQuery` on `NativeOdbcConnection`,
+  `AsyncNativeOdbcConnection`, and repository/service layers now routes through
+  cursor-based batched streaming (`odbc_stream_start_batched`) instead of
+  materialising the full result via `odbc_stream_start`. The `chunkSize`
+  parameter is interpreted as `fetchSize` (rows per yielded chunk).
+- **Repository streaming** — `streamNativeQueryWithFallback` no longer falls
+  back to buffer-mode streaming; batched streaming is the only path.
+- **Native multi-result streaming** — per-result-set encoding reuses
+  `fetch_cursor_into_row_buffer` (block-cursor path when enabled).
+- **Rust `execute_streaming`** — documented as legacy buffer-mode; shared
+  `materialize_cursor_to_encoded` helper extracted. Prefer
+  `execute_streaming_batched` / `start_batched_stream` for bounded memory.
+
+### Added
+
+- **`ResolvedOdbcUsageProfile.recommendedResultEncoding`** and
+  **`ServiceLocator.recommendedResultEncoding`** — server presets
+  (`balancedServer`, `highThroughput`) recommend `ResultEncoding.columnar` for
+  analytics SELECT workloads; other presets keep row-major.
+- **CRUD benchmark baseline export** — `test/performance/crud_latency_benchmark_test.dart`
+  writes JSON when `BENCH_BASELINE_OUT` is set; reference baseline at
+  `bench_baselines/crud-produto-5k.baseline.json`.
+- **`scripts/run_dart_benchmarks.py --crud`** — runs the 5k columnar bulk CRUD
+  lane and optional `--compare` against `crud-produto-5k.baseline.json`.
+- **`streamQueryBuffer`** on sync and async native connections — explicit
+  legacy buffer-mode streaming via `odbc_stream_start` for callers that need
+  single-message accumulation or spill-to-disk semantics.
+- **`odbc_release_buffer`** (native FFI, ABI 1.1) — releases buffers allocated
+  with the host C `malloc` allocator.
+- **Zero-copy FFI result subset** — `callWithBuffer` returns a
+  `NativeFinalizer`-backed view for successful payloads ≥ 64 KiB when
+  `odbc_release_buffer` resolves, avoiding the `Uint8List.fromList` copy on
+  large query results.
+- **`with_disconnect_cleanup`** (native) — centralises cross-map disconnect
+  transitions ahead of further `GlobalState` lock sharding.
+- **Transferable async param buffers** — `ExecuteQueryParamsRequest`,
+  `ExecutePreparedRequest`, `ExecuteQueryMultiParamsRequest`, and
+  `ExecuteAsyncStartParamsRequest` expose `withSerializedParams` factories that
+  send large directed parameter blobs via `TransferableTypedData`.
+
+### Breaking
+
+- **Server usage profiles** — `OdbcUsageProfile.balancedServer` and
+  `OdbcUsageProfile.highThroughput` now resolve
+  `recommendedResultEncoding` to `ResultEncoding.columnar`. Per-query method
+  defaults remain `ResultEncoding.rowMajor`; only callers that read
+  `resolvedUsageProfile` / pass `recommendedResultEncoding` are affected. Opt
+  back to row-major with `ResultEncoding.rowMajor` when benchmarking does not
+  justify columnar for your driver.
+
 ## [4.0.1] - 2026-06-12
 
 Patch confirming the 4.0 deprecation sweep is complete and removing the last

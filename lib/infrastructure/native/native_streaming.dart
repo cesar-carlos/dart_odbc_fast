@@ -117,15 +117,11 @@ mixin _NativeStreaming on _NativeOdbcState {
     }
   }
 
-  /// Executes a SQL query and returns results as a stream.
+  /// Executes a SQL query and returns results as a batched stream.
   ///
-  /// The [connectionId] must be a valid active connection.
-  /// The [sql] should be a valid SQL SELECT statement.
-  ///
-  /// The [chunkSize] specifies how many rows to fetch per chunk
-  /// (default: 1000). Results are streamed as [ParsedRowBuffer] instances,
-  /// allowing efficient processing of large result sets without loading
-  /// everything into memory.
+  /// Since v4.1.0 this delegates to [streamQueryBatched] (cursor-based
+  /// `odbc_stream_start_batched`) so memory stays bounded to one fetch batch.
+  /// [chunkSize] is interpreted as `fetchSize` (rows per yielded chunk).
   ///
   /// Example:
   /// ```dart
@@ -137,6 +133,20 @@ mixin _NativeStreaming on _NativeOdbcState {
   /// }
   /// ```
   Stream<ParsedRowBuffer> streamQuery(
+    int connectionId,
+    String sql, {
+    int chunkSize = 1000,
+  }) =>
+      streamQueryBatched(
+        connectionId,
+        sql,
+        fetchSize: chunkSize,
+      );
+
+  /// Legacy buffer-mode streaming via `odbc_stream_start`. Materialises the
+  /// full result in native memory before yielding a single parsed chunk.
+  /// Prefer [streamQuery] or [streamQueryBatched] for large result sets.
+  Stream<ParsedRowBuffer> streamQueryBuffer(
     int connectionId,
     String sql, {
     int chunkSize = 1000,

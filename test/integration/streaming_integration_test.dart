@@ -129,7 +129,7 @@ void main() {
       expect(totalRows, 100);
     });
 
-    test('streamQuery with custom chunk size works', () async {
+    test('streamQuery with custom fetch size yields multiple chunks', () async {
       final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
       var totalRows = 0;
@@ -145,8 +145,8 @@ void main() {
         totalRows += chunk.rowCount;
       }
 
-      // streamQuery aggregates protocol chunks and yields a parsed result set.
-      expect(chunkCount, equals(1));
+      // streamQuery delegates to batched streaming; chunkSize is fetchSize.
+      expect(chunkCount, greaterThan(1));
       expect(totalRows, 100);
     });
 
