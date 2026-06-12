@@ -745,4 +745,91 @@ void main() {
       expect(enc, isNotEmpty);
     });
   });
+
+  group('Columnar typed API', () {
+    BulkInsertBuilder rowOrientedUsers() {
+      return BulkInsertBuilder()
+          .table('users')
+          .addColumn('id', BulkColumnType.i32)
+          .addColumn('name', BulkColumnType.text, maxLen: 8)
+          .addRow([1, 'Alice']).addRow([2, 'Bob']);
+    }
+
+    BulkInsertBuilder columnarUsers() {
+      return BulkInsertBuilder()
+          .table('users')
+          .addColumnInt32('id', Int32List.fromList([1, 2]))
+          .addColumnText('name', ['Alice', 'Bob'], maxLen: 8);
+    }
+
+    test('columnar build matches row-oriented wire payload', () {
+      final rowPayload = rowOrientedUsers().build();
+      final columnarPayload = columnarUsers().build();
+      expect(columnarPayload, equals(rowPayload));
+    });
+
+    test('columnar v2 build matches row-oriented wire payload', () {
+      final rowPayload = rowOrientedUsers().build();
+      final columnarPayload = columnarUsers().build();
+      expect(columnarPayload, equals(rowPayload));
+    });
+
+    test('addRow rejects after columnar column added', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumnInt32('a', Int32List.fromList([1]))
+            .addRow([2]),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('addColumnInt32 rejects after row-oriented addColumn', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumn('a', BulkColumnType.i32)
+            .addColumnInt32('b', Int32List.fromList([1])),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('columnar columns must share row count', () {
+      expect(
+        () => BulkInsertBuilder()
+            .table('t')
+            .addColumnInt32('a', Int32List.fromList([1, 2]))
+            .addColumnText('b', ['x'], maxLen: 4),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('nullable columnar i32 emits null bitmap', () {
+      final enc = BulkInsertBuilder().table('t').addColumnInt32(
+        'a',
+        Int32List.fromList([0, 42]),
+        nullable: true,
+        isNull: [true, false],
+      ).build(version: BulkPayloadVersion.legacy);
+
+      // table(5) + col metadata(11) + rowCount(4) = 24
+      expect(enc[24] & 1, equals(1));
+    });
+
+    test('columnar i64 and timestamp round-trip build', () {
+      final enc = BulkInsertBuilder()
+          .table('t')
+          .addColumnInt64('big', Int64List.fromList([9007199254740991]))
+          .addColumnTimestamp('ts', [DateTime.utc(2026, 6, 12)]).build();
+      expect(enc, isNotEmpty);
+    });
+
+    test('columnar binary preserves embedded nul bytes in v2', () {
+      final blob = Uint8List.fromList([1, 0, 2]);
+      final enc = BulkInsertBuilder()
+          .table('t')
+          .addColumnBinary('p', [blob])          .build();
+      expect(enc, isNotEmpty);
+    });
+  });
 }

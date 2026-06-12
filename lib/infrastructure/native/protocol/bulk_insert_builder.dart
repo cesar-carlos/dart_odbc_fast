@@ -297,6 +297,151 @@ final class _WriteCursor {
     _bd.setInt64(offset, v, _littleEndian);
     offset += 8;
   }
+
+  void writeInt32List(Int32List values) {
+    final byteLen = 4 * values.length;
+    _out.setRange(
+      offset,
+      offset + byteLen,
+      values.buffer.asUint8List(values.offsetInBytes, byteLen),
+    );
+    offset += byteLen;
+  }
+
+  void writeInt64List(Int64List values) {
+    final byteLen = 8 * values.length;
+    _out.setRange(
+      offset,
+      offset + byteLen,
+      values.buffer.asUint8List(values.offsetInBytes, byteLen),
+    );
+    offset += byteLen;
+  }
+}
+
+/// Column-oriented storage for one bulk column (typed APIs).
+sealed class _ColumnarColumnData {
+  int get length;
+  bool isNullAt(int row);
+  dynamic valueAt(int row);
+}
+
+final class _ColumnarInt32Data extends _ColumnarColumnData {
+  _ColumnarInt32Data(this.values, this.isNull);
+
+  final Int32List values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  int valueAt(int row) => values[row];
+}
+
+final class _ColumnarInt64Data extends _ColumnarColumnData {
+  _ColumnarInt64Data(this.values, this.isNull);
+
+  final Int64List values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  int valueAt(int row) => values[row];
+}
+
+final class _ColumnarTextData extends _ColumnarColumnData {
+  _ColumnarTextData(this.values, this.isNull);
+
+  final List<String> values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  String valueAt(int row) => values[row];
+}
+
+final class _ColumnarDecimalData extends _ColumnarColumnData {
+  _ColumnarDecimalData(this.values, this.isNull);
+
+  final List<String> values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  String valueAt(int row) => values[row];
+}
+
+final class _ColumnarBinaryData extends _ColumnarColumnData {
+  _ColumnarBinaryData(this.values, this.isNull);
+
+  final List<Uint8List> values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  Uint8List valueAt(int row) => values[row];
+}
+
+final class _ColumnarTimestampData extends _ColumnarColumnData {
+  _ColumnarTimestampData(this.values, this.isNull);
+
+  final List<Object> values;
+  final List<bool>? isNull;
+
+  @override
+  int get length => values.length;
+
+  @override
+  bool isNullAt(int row) => isNull != null && isNull![row];
+
+  @override
+  Object valueAt(int row) => values[row];
+}
+
+void _validateColumnarNullMask(
+  String columnName,
+  int rowCount,
+  List<bool>? isNull, {
+  required bool nullable,
+}) {
+  if (isNull == null) {
+    return;
+  }
+  if (isNull.length != rowCount) {
+    throw ArgumentError(
+      'Column "$columnName" isNull mask length ${isNull.length} != row count '
+      '$rowCount',
+    );
+  }
+  if (!nullable && isNull.any((v) => v)) {
+    throw StateError(
+      'Column "$columnName" is non-nullable but isNull marks a null row',
+    );
+  }
 }
 
 /// Builder for creating bulk insert data buffers.
@@ -308,7 +453,7 @@ final class _WriteCursor {
 /// after it is added (wrap with `List.unmodifiable` when the same list instance
 /// might be reused elsewhere).
 ///
-/// Example:
+/// Row-oriented example:
 /// ```dart
 /// final builder = BulkInsertBuilder()
 ///   ..table('users')
@@ -318,6 +463,16 @@ final class _WriteCursor {
 ///   ..addRow([2, 'Bob']);
 /// final buffer = builder.build();
 /// ```
+///
+/// Columnar example (avoids per-row `List<dynamic>` and bulk-copies
+/// fixed-width primitives):
+/// ```dart
+/// final builder = BulkInsertBuilder()
+///   ..table('users')
+///   ..addColumnInt32('id', Int32List.fromList([1, 2]))
+///   ..addColumnText('name', ['Alice', 'Bob'], maxLen: 100);
+/// final buffer = builder.build();
+/// ```
 class BulkInsertBuilder {
   /// Creates a new [BulkInsertBuilder] instance.
   BulkInsertBuilder();
@@ -325,6 +480,60 @@ class BulkInsertBuilder {
   String _table = '';
   final List<BulkColumnSpec> _columns = [];
   final List<List<dynamic>> _rows = [];
+  final List<_ColumnarColumnData> _columnarData = [];
+
+  bool get _usesColumnar => _columnarData.isNotEmpty;
+
+  int get _effectiveRowCount =>
+      _usesColumnar ? _columnarData.first.length : _rows.length;
+
+  void _ensureRowOrientedApis() {
+    if (_usesColumnar) {
+      throw StateError(
+        'Cannot use addColumn/addRow after columnar addColumn* APIs',
+      );
+    }
+  }
+
+  void _ensureColumnarApis() {
+    if (_rows.isNotEmpty) {
+      throw StateError('Cannot use columnar addColumn* after addRow');
+    }
+    if (_columns.isNotEmpty && !_usesColumnar) {
+      throw StateError(
+        'Cannot mix columnar addColumn* with row-oriented addColumn; '
+        'use addRow or restart with addColumnInt32/addColumnInt64/...',
+      );
+    }
+  }
+
+  void _registerColumnarColumn(
+    BulkColumnSpec spec,
+    _ColumnarColumnData data,
+    List<bool>? isNull,
+  ) {
+    _validateColumnarNullMask(
+      spec.name,
+      data.length,
+      isNull,
+      nullable: spec.nullable,
+    );
+    if (_usesColumnar && data.length != _effectiveRowCount) {
+      throw ArgumentError(
+        'Column "${spec.name}" row count ${data.length} != existing row count '
+        '$_effectiveRowCount',
+      );
+    }
+    if (!spec.nullable) {
+      for (var r = 0; r < data.length; r++) {
+        if (data.isNullAt(r)) {
+          _throwNullabilityError(spec.name, r + 1);
+        }
+      }
+    }
+    _columns.add(spec);
+    _columnarData.add(data);
+  }
 
   /// Sets the target table name for the bulk insert.
   ///
@@ -349,6 +558,7 @@ class BulkInsertBuilder {
     bool nullable = false,
     int maxLen = 0,
   }) {
+    _ensureRowOrientedApis();
     _columns.add(
       BulkColumnSpec(
         name: name,
@@ -372,6 +582,7 @@ class BulkInsertBuilder {
   /// Throws [StateError] if columns haven't been added yet.
   /// Throws [ArgumentError] if the row length doesn't match column count.
   BulkInsertBuilder addRow(List<dynamic> values) {
+    _ensureRowOrientedApis();
     if (_columns.isEmpty) {
       throw StateError('Add columns before rows');
     }
@@ -388,14 +599,189 @@ class BulkInsertBuilder {
     return this;
   }
 
+  /// Adds an i32 column from a typed [Int32List] (columnar mode).
+  ///
+  /// When [nullable] is true, pass [isNull] with one flag per row (`true` = SQL
+  /// NULL). [values] at null rows are ignored on the wire (written as zero).
+  ///
+  /// Do not mutate [values] after calling this method.
+  BulkInsertBuilder addColumnInt32(
+    String name,
+    Int32List values, {
+    bool nullable = false,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    _registerColumnarColumn(
+      BulkColumnSpec(
+        name: name,
+        colType: BulkColumnType.i32,
+        nullable: nullable,
+      ),
+      _ColumnarInt32Data(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
+  /// Adds an i64 column from a typed [Int64List] (columnar mode).
+  BulkInsertBuilder addColumnInt64(
+    String name,
+    Int64List values, {
+    bool nullable = false,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    _registerColumnarColumn(
+      BulkColumnSpec(
+        name: name,
+        colType: BulkColumnType.i64,
+        nullable: nullable,
+      ),
+      _ColumnarInt64Data(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
+  /// Adds a text column from a [List] of UTF-8 strings (columnar mode).
+  BulkInsertBuilder addColumnText(
+    String name,
+    List<String> values, {
+    bool nullable = false,
+    int maxLen = 0,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    final spec = BulkColumnSpec(
+      name: name,
+      colType: BulkColumnType.text,
+      nullable: nullable,
+      maxLen: maxLen,
+    );
+    for (var r = 0; r < values.length; r++) {
+      if (!(isNull != null && isNull[r])) {
+        _validateTextColumn(values[r], spec, r + 1);
+      }
+    }
+    _registerColumnarColumn(
+      spec,
+      _ColumnarTextData(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
+  /// Adds a decimal column from string literals (columnar mode).
+  BulkInsertBuilder addColumnDecimal(
+    String name,
+    List<String> values, {
+    bool nullable = false,
+    int maxLen = 0,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    final spec = BulkColumnSpec(
+      name: name,
+      colType: BulkColumnType.decimal,
+      nullable: nullable,
+      maxLen: maxLen,
+    );
+    for (var r = 0; r < values.length; r++) {
+      if (!(isNull != null && isNull[r])) {
+        _validateTextColumn(values[r], spec, r + 1);
+      }
+    }
+    _registerColumnarColumn(
+      spec,
+      _ColumnarDecimalData(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
+  /// Adds a binary column from [Uint8List] cells (columnar mode).
+  BulkInsertBuilder addColumnBinary(
+    String name,
+    List<Uint8List> values, {
+    bool nullable = false,
+    int maxLen = 0,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    final spec = BulkColumnSpec(
+      name: name,
+      colType: BulkColumnType.binary,
+      nullable: nullable,
+      maxLen: maxLen,
+    );
+    for (var r = 0; r < values.length; r++) {
+      if (!(isNull != null && isNull[r])) {
+        _validateBinaryColumn(values[r], spec, r + 1);
+      }
+    }
+    _registerColumnarColumn(
+      spec,
+      _ColumnarBinaryData(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
+  /// Adds a timestamp column from [DateTime] or [BulkTimestamp] values.
+  BulkInsertBuilder addColumnTimestamp(
+    String name,
+    List<Object> values, {
+    bool nullable = false,
+    List<bool>? isNull,
+  }) {
+    _ensureColumnarApis();
+    for (var r = 0; r < values.length; r++) {
+      if (isNull != null && isNull[r]) {
+        continue;
+      }
+      final v = values[r];
+      if (v is! DateTime && v is! BulkTimestamp) {
+        throw ArgumentError(
+          'Column "$name" expects timestamp (DateTime/BulkTimestamp) but got '
+          '$v (${v.runtimeType}) at row ${r + 1}.',
+        );
+      }
+    }
+    _registerColumnarColumn(
+      BulkColumnSpec(
+        name: name,
+        colType: BulkColumnType.timestamp,
+        nullable: nullable,
+      ),
+      _ColumnarTimestampData(values, isNull),
+      isNull,
+    );
+    return this;
+  }
+
   /// Gets the table name.
   String get tableName => _table;
 
   /// Gets the list of column names in the order they were added.
   List<String> get columnNames => _columns.map((c) => c.name).toList();
 
-  /// Gets the number of rows added to the builder.
-  int get rowCount => _rows.length;
+  /// Gets the number of rows in the builder (row- or column-oriented).
+  int get rowCount => _effectiveRowCount;
+
+  bool _isCellNull(int colIndex, int row) {
+    if (_usesColumnar) {
+      return _columnarData[colIndex].isNullAt(row);
+    }
+    return _rows[row][colIndex] == null;
+  }
+
+  dynamic _cellValue(int colIndex, int row) {
+    if (_usesColumnar) {
+      return _columnarData[colIndex].valueAt(row);
+    }
+    return _rows[row][colIndex];
+  }
 
   /// Builds the binary data buffer for bulk insert.
   ///
@@ -420,19 +806,21 @@ class BulkInsertBuilder {
     if (_columns.isEmpty) {
       throw StateError('At least one column required');
     }
-    if (_rows.isEmpty) {
+    if (_effectiveRowCount == 0) {
       throw StateError('At least one row required');
     }
 
     // Keep a final nullability check because addRow stores row references.
     // Caller code can still mutate rows after insertion.
-    for (var c = 0; c < _columns.length; c++) {
-      final spec = _columns[c];
-      if (!spec.nullable) {
-        for (var r = 0; r < _rows.length; r++) {
-          final value = _rows[r][c];
-          if (value == null) {
-            _throwNullabilityError(spec.name, r + 1);
+    if (!_usesColumnar) {
+      for (var c = 0; c < _columns.length; c++) {
+        final spec = _columns[c];
+        if (!spec.nullable) {
+          for (var r = 0; r < _rows.length; r++) {
+            final value = _rows[r][c];
+            if (value == null) {
+              _throwNullabilityError(spec.name, r + 1);
+            }
           }
         }
       }
@@ -464,7 +852,7 @@ class BulkInsertBuilder {
         ..writeU32Le(spec.maxLen);
     }
 
-    final rowCount = _rows.length;
+    final rowCount = _effectiveRowCount;
     w.writeU32Le(rowCount);
 
     for (var c = 0; c < _columns.length; c++) {
@@ -475,6 +863,7 @@ class BulkInsertBuilder {
         c,
         rowCount,
         cache.v2VariableCells[c],
+        _usesColumnar ? _columnarData[c] : null,
       );
     }
 
@@ -498,7 +887,7 @@ class BulkInsertBuilder {
     }
     total += 4;
 
-    final rowCount = _rows.length;
+    final rowCount = _effectiveRowCount;
     final v2VariableCells = <List<Uint8List>?>[];
     for (var c = 0; c < _columns.length; c++) {
       total += _columnPayloadByteSize(
@@ -545,8 +934,8 @@ class BulkInsertBuilder {
         if (version == BulkPayloadVersion.v2) {
           final cells = <Uint8List>[];
           for (var r = 0; r < rowCount; r++) {
-            final v = _rows[r][colIndex];
-            final raw = v == null
+            final v = _cellValue(colIndex, r);
+            final raw = _isCellNull(colIndex, r)
                 ? Uint8List(0)
                 : Uint8List.fromList(utf8.encode(v is String ? v : '$v'));
             cells.add(raw);
@@ -562,10 +951,13 @@ class BulkInsertBuilder {
         if (version == BulkPayloadVersion.v2) {
           final cells = <Uint8List>[];
           for (var r = 0; r < rowCount; r++) {
-            final v = _rows[r][colIndex];
-            final raw = v == null
-                ? Uint8List(0)
-                : (v is Uint8List ? v : Uint8List.fromList(v as List<int>));
+            if (_isCellNull(colIndex, r)) {
+              cells.add(Uint8List(0));
+              size += 4;
+              continue;
+            }
+            final v = _cellValue(colIndex, r);
+            final raw = v is Uint8List ? v : Uint8List.fromList(v as List<int>);
             cells.add(raw);
             size += 4 + raw.length;
           }
@@ -585,6 +977,7 @@ class BulkInsertBuilder {
     int colIndex,
     int rowCount,
     List<Uint8List>? v2Cells,
+    _ColumnarColumnData? columnar,
   ) {
     if (version == BulkPayloadVersion.v2 &&
         (spec.colType == BulkColumnType.text ||
@@ -593,7 +986,7 @@ class BulkInsertBuilder {
       _writeColumnV2Variable(w, spec, colIndex, rowCount, v2Cells!);
       return;
     }
-    _writeColumnLegacy(w, spec, colIndex, rowCount);
+    _writeColumnLegacy(w, spec, colIndex, rowCount, columnar);
   }
 
   void _writeColumnLegacy(
@@ -601,6 +994,7 @@ class BulkInsertBuilder {
     BulkColumnSpec spec,
     int colIndex,
     int rowCount,
+    _ColumnarColumnData? columnar,
   ) {
     final maxLen = spec.maxLen > 0 ? spec.maxLen : 1;
     List<int>? nullBitmap;
@@ -612,40 +1006,51 @@ class BulkInsertBuilder {
       case BulkColumnType.i32:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
-            final v = _rows[r][colIndex];
-            if (v == null) _setNullAt(nullBitmap, r);
+            if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
           }
           w.writeBytes(nullBitmap);
         }
+        if (columnar is _ColumnarInt32Data && nullBitmap == null) {
+          w.writeInt32List(columnar.values);
+          return;
+        }
         for (var r = 0; r < rowCount; r++) {
-          final v = _rows[r][colIndex];
-          final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
+          final v = _cellValue(colIndex, r);
+          final i = _isCellNull(colIndex, r)
+              ? 0
+              : (v is int ? v : int.tryParse('$v') ?? 0);
           w.writeI32Le(i);
         }
       case BulkColumnType.i64:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
-            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+            if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
           }
           w.writeBytes(nullBitmap);
         }
+        if (columnar is _ColumnarInt64Data && nullBitmap == null) {
+          w.writeInt64List(columnar.values);
+          return;
+        }
         for (var r = 0; r < rowCount; r++) {
-          final v = _rows[r][colIndex];
-          final i = v == null ? 0 : (v is int ? v : int.tryParse('$v') ?? 0);
+          final v = _cellValue(colIndex, r);
+          final i = _isCellNull(colIndex, r)
+              ? 0
+              : (v is int ? v : int.tryParse('$v') ?? 0);
           w.writeI64Le(i);
         }
       case BulkColumnType.text:
       case BulkColumnType.decimal:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
-            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+            if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
           }
           w.writeBytes(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
-          final v = _rows[r][colIndex];
+          final v = _cellValue(colIndex, r);
           final List<int> raw;
-          if (v == null) {
+          if (_isCellNull(colIndex, r)) {
             raw = const <int>[];
           } else if (v is String) {
             raw = utf8.encode(v);
@@ -661,14 +1066,14 @@ class BulkInsertBuilder {
       case BulkColumnType.binary:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
-            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+            if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
           }
           w.writeBytes(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
-          final v = _rows[r][colIndex];
+          final v = _cellValue(colIndex, r);
           final List<int> raw;
-          if (v == null) {
+          if (_isCellNull(colIndex, r)) {
             raw = const <int>[];
           } else if (v is Uint8List) {
             raw = v;
@@ -686,14 +1091,14 @@ class BulkInsertBuilder {
       case BulkColumnType.timestamp:
         if (nullBitmap != null) {
           for (var r = 0; r < rowCount; r++) {
-            if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+            if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
           }
           w.writeBytes(nullBitmap);
         }
         for (var r = 0; r < rowCount; r++) {
-          final v = _rows[r][colIndex];
+          final v = _cellValue(colIndex, r);
           BulkTimestamp t;
-          if (v == null) {
+          if (_isCellNull(colIndex, r)) {
             t = const BulkTimestamp(
               year: 0,
               month: 0,
@@ -739,7 +1144,7 @@ class BulkInsertBuilder {
     if (spec.nullable) {
       nullBitmap = List.filled(_nullBitmapSize(rowCount), 0);
       for (var r = 0; r < rowCount; r++) {
-        if (_rows[r][colIndex] == null) _setNullAt(nullBitmap, r);
+        if (_isCellNull(colIndex, r)) _setNullAt(nullBitmap, r);
       }
       w.writeBytes(nullBitmap);
     }

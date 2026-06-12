@@ -148,6 +148,13 @@ no intended behaviour change.
 
 ### Performance — bulk encoding, native parse, and async bulk transport
 
+- **Columnar typed `BulkInsertBuilder` APIs.** `addColumnInt32`,
+  `addColumnInt64`, `addColumnText`, `addColumnDecimal`, `addColumnBinary`,
+  and `addColumnTimestamp` accept typed column buffers (`Int32List`,
+  `Int64List`, `List<String>`, `List<Uint8List>`, …) instead of per-row
+  `List<dynamic>`. Fixed-width columns bulk-copy into the wire buffer; nullable
+  columns use an optional parallel `isNull` mask. Row-oriented `addRow` remains
+  supported and produces identical payloads.
 - **`BulkInsertBuilder.build()` two-pass wire encoding.** Phase 1 pre-encodes
   text/decimal payloads and sizes the BLK2 buffer; phase 2 writes into a single
   pre-allocated `Uint8List` (no growing `BytesBuilder` / `List<int>` on the hot

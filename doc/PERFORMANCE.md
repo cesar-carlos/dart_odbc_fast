@@ -298,7 +298,7 @@ python scripts/run_dart_benchmarks.py --rust-micro
 | Scenario | Prefer | Notes |
 | -------- | ------ | ----- |
 | Few rows (< ~100) | Prepared `INSERT` in a loop | Setup cost of [BulkInsertBuilder] is negligible; row-by-row is simpler. |
-| Medium batches (100–1k rows) | `bulkInsert` / `bulkInsertArray` on one connection | Build the payload once with [BulkInsertBuilder.build]; pass the [Uint8List] directly to FFI (no extra copy). |
+| Medium batches (100–1k rows) | `bulkInsert` / `bulkInsertArray` on one connection | Build the payload once with [BulkInsertBuilder.build]; pass the [Uint8List] directly to FFI (no extra copy). Prefer columnar `addColumnInt32` / `addColumnText` when source data is already column-shaped — avoids per-row `List<dynamic>` and bulk-copies `Int32List`/`Int64List` into the wire buffer. |
 | Large batches (> ~1k rows) | `bulkInsertParallel` via [ConnectionPool] | Pool-backed parallel insert splits work across native workers. Size the pool to at least your target `parallelism` (often 4). |
 | Analytics SELECT (many rows, stable types) | `ResultEncoding.columnar` | Reduces row framing overhead; benchmark before adopting in production. |
 | Repeated statements | Prepared statement reuse | Keep one prepared handle per SQL shape; rebinding is cheaper than re-preparing. |
