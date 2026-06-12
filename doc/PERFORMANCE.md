@@ -442,14 +442,23 @@ parameter buffers on the async worker path.
 
 ---
 
-## `streamQueryColumnar` vs native columnar wire (v4.1.1)
+## `streamQueryColumnar` and native columnar batched wire (v4.2)
 
 `IQueryService.streamQueryColumnar` / repository `streamQueryColumnar` call
-`streamQuery` (batched cursor streaming by default) and map each row-major
-`QueryResult` chunk through `toTypedColumnar`. They do **not** set
-`ResultEncoding.columnar` on the FFI path. For a single-shot query where the
-engine emits columnar wire format, use `executeQueryColumnarParamValues`
-(`ResultEncoding.columnar`).
+`odbc_stream_start_batched_options` with `ResultEncoding.columnar` when the
+loaded native library exports that symbol (v4.2+). Each batched chunk is a
+columnar v2 protocol message decoded to `TypedColumnarResult` via
+`toTypedColumnar`. Older natives fall back to row-major batched streaming with
+the same Dart conversion path.
+
+For a single-shot buffered query with native columnar encoding, use
+`executeQueryColumnarParamValues` (`ResultEncoding.columnar`). Repository
+extensions expose `streamQueryColumnarNative` as an explicit alias.
+
+Multi-result streaming (`odbc_stream_multi_*`) now encodes each cursor in
+fetch-sized batches. Tag `0` opens a result set; tag `2` continues the same
+result set; tag `1` is row count. Dart `MultiResultStreamDecoder` accepts tags
+`0` and `2` as result-set payloads.
 
 ---
 
@@ -467,7 +476,7 @@ engine emits columnar wire format, use `executeQueryColumnarParamValues`
 These performance-sensitive items are tracked outside the feature backlog:
 
 - **Single-result streaming (audit C7, resolved in v4.1.0)** — `streamQuery` and repository `streamQuery` now default to cursor-based batched streaming (`odbc_stream_start_batched` / `execute_streaming_batched`). Legacy buffer-mode `odbc_stream_start` / `execute_streaming` remains for `streamQueryBuffer` and spill-to-disk only; it still materialises the full result before byte-level FFI chunking.
-- **Multi-result per-cursor materialisation** — `odbc_stream_multi_*` streams items lazily but each result-set item is still encoded as one framed payload (M8 wire format). Per-item fetch now reuses `fetch_cursor_into_row_buffer` for block-cursor acceleration when enabled.
+- **Multi-result per-cursor materialisation (resolved in v4.2)** — `odbc_stream_multi_*` encodes each cursor in fetch-sized batches (tag `0` + tag `2` continuation frames). Memory stays bounded to one batch per active cursor.
 - **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex. `with_disconnect_cleanup` (v4.1.0) centralises disconnect map transitions so per-category locks can be split in a follow-up without duplicating cleanup logic. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
 

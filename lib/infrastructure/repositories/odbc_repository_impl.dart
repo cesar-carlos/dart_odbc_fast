@@ -212,6 +212,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
       _stream.streamQuery(connectionId, sql);
 
+  @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,
