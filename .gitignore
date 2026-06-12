@@ -60,6 +60,10 @@ native/target/doc/
 # Dart documentation (generated)
 doc/api/
 
+# Python
+**/__pycache__/
+*.pyc
+
 # Temporary files
 *.tmp
 *.temp

@@ -38,6 +38,18 @@ maintainability ahead of the typed-parameter migration.
   async/audit/metadata, transactions/XA, prepared/query/multi-result, catalog,
   pool/bulk, and streaming/dispose are isolated in `native_*.dart` parts;
   public API and behaviour unchanged.
+- **`param_value.dart` split into `part` modules.** Wire encode/decode,
+  typed conversion (`toParamValue`, `paramValuesFromObjects`), and literal
+  validators are isolated in `param_value_wire.dart`,
+  `param_value_conversion.dart`, and `param_value_validators.dart`; exports
+  unchanged.
+- **`odbc_native_query.dart` split into capability mixins.** Async execute,
+  sync exec/multi + metrics/cache, catalog, prepare/execute, and bulk insert
+  are isolated in `odbc_native_query_*.dart` parts; `OdbcNative` public API
+  unchanged.
+- **`bulk_insert_builder.dart` split into `part` modules.** Validation, public
+  types, columnar storage, row API, and wire encoding are isolated in focused
+  parts behind `_BulkInsertBuilderState`; builder behaviour unchanged.
 - **`ParamValue` encoding (phases 2–3).** Domain sealed hierarchy with
   infrastructure two-pass wire encoding (pre-size, then single-buffer write).
   New typed entry points `executeQueryParamValues` /
@@ -129,6 +141,16 @@ no intended behaviour change.
 - **`lib/infrastructure/native/isolate/`** — `message_protocol` and
   `worker_isolate` split into query, stream, transaction, pool, and helper
   `part` modules; root libraries remain thin re-export facades.
+- **`lib/infrastructure/native/protocol/param_value.dart`** — wire encoding,
+  domain conversion, and validators split into `part` modules; root library
+  stays under 150 lines.
+- **`lib/infrastructure/native/protocol/bulk_insert_builder.dart`** —
+  validation, columnar/row builders, and wire encode helpers split into
+  `part` modules; root library stays under 150 lines.
+- **`lib/infrastructure/native/bindings/odbc_native.dart`** — query FFI
+  surface split from monolithic `odbc_native_query.dart` into `part` modules
+  (`query_sync`, `query_async`, `query_prepare`, `query_catalog`,
+  `query_bulk`); no ABI or behaviour change.
 
 ### Security — FFI `unsafe` audit (wave 4)
 
@@ -309,6 +331,10 @@ needed integration / e2e runs, plus a tiny additive testability hook on
 
 - Removed redundant `doc/PERFORMANCE_v2.md` redirect stub; `doc/PERFORMANCE.md`
   remains the single performance and benchmark guide.
+- Removed redundant `doc/API_SURFACE_v2.md` redirect stub; `doc/API_SURFACE.md`
+  remains the single FFI / Rust / Dart API reference.
+- Removed redundant `doc/TEST_COVERAGE_v2.md` redirect stub; `doc/TESTING.md`
+  remains the single test policy, CI scope, and coverage guide.
 - README aligned with the 3.10 public API surface: Features section
   gained 6 bullets covering the four `IOdbcService` sub-interfaces, the
   event bus + sealed `OdbcEvent` hierarchy, `TypedColumnarResult`,
@@ -333,7 +359,8 @@ needed integration / e2e runs, plus a tiny additive testability hook on
 - Example audit follow-up: `quick_start_balanced_demo` and
   `async_service_locator_demo` use `OdbcUsageProfile.balanced`; existing
   demos prefer `executeQueryParamValues` / column-oriented bulk helpers where
-  practical. New examples: `typed_columnar_demo.dart`,
+  practical. New examples: `typed_columnar_demo.dart` (now also demonstrates
+  `streamQueryColumnar`), `query_result_access_demo.dart`,
   `param_value_migration_demo.dart` (DSN-free), and `bulk_insert_demo.dart`.
   `run_in_transaction_demo` documents `ODBC_TEST_DSN` consistently.
 
