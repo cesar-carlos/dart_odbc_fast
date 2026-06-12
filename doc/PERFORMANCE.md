@@ -1,7 +1,9 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.1.0 (server profile columnar recommendation,
-> CRUD columnar bulk benchmark baseline, harness `--crud` lane; prior v3.10.0
+> **Last updated for:** v4.2.0 (server profiles apply columnar wire by default
+> via `ServiceLocator` / `OdbcRepositoryImpl`, pooled checkouts reuse prepared
+> handles through `CachedConnection`; prior v4.1.0 server profile columnar
+> recommendation, CRUD columnar bulk benchmark baseline, harness `--crud` lane;
 > service surface, pool/transaction hardening, native engine perf
 > follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
 > default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
@@ -16,7 +18,7 @@ This document records architectural decisions with a measurable performance or r
 | Knob | Default | Effect |
 | ---- | ------- | ------ |
 | `block-cursor-fetch` feature | **enabled** | Cursor fetch goes through `engine::core::block_fetch::fetch_rows_into` (`BlockCursor` + `ColumnarAnyBuffer`) for queries whose columns can all be pre-bound. LOBs / `WLONGVARCHAR` without an advertised max length transparently fall back to the legacy per-row path. |
-| `statement-handle-reuse` feature | **enabled** | `CachedConnection` keeps a per-connection LRU of `OwnedPreparedStatement` (RAII guard around the `mem::transmute` that fabricates the `'static` lifetime). `execute_query_with_params` now rebinds on the cached statement when the param list is legacy/no-NULL. |
+| `statement-handle-reuse` feature | **enabled** | `CachedConnection` keeps a per-connection LRU of `OwnedPreparedStatement` (RAII guard around the `mem::transmute` that fabricates the `'static` lifetime). `execute_query_with_params` rebinds on the cached statement when the param list is legacy/no-NULL. **Pooled** checkouts store `CachedConnection` in r2d2 and route `odbc_exec_query_params` / `odbc_exec_query` through `try_cached_legacy_params` / `execute_query_with_cached_connection` (wave 4.2). |
 | `ODBC_FAST_BLOCK_FETCH_BATCH` env var | `256` | Batch size for `BlockCursor::fetch_with_truncation_check`. Invalid or missing values fall back to the default. Cached via `OnceLock`, so `std::env::var` is not consulted per query. |
 
 Opt out at the crate level with
@@ -55,12 +57,13 @@ sync, worker count, backpressure, and the shape of
 | `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          | **columnar**                 |
 | `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   | row-major                    |
 
-Per-query APIs still default to `ResultEncoding.rowMajor` for compatibility.
-Server presets expose `ServiceLocator.recommendedResultEncoding` /
-`ResolvedOdbcUsageProfile.recommendedResultEncoding` as **columnar** so pool
-and worker-pool demos can opt in without hard-coding the wire format. Pass
-`resultEncoding: locator.recommendedResultEncoding` after benchmarking your
-driver and schema.
+Per-query APIs use `ResultEncoding? resultEncoding` on
+`executeQueryParamValues` / `executeQueryParamBuffer`: when omitted (`null`),
+the repository applies its `defaultResultEncoding` (`rowMajor` for direct
+`OdbcRepositoryImpl(...)` construction, `columnar` when created through
+`ServiceLocator` with `balancedServer` or `highThroughput`). Pass
+`resultEncoding: ResultEncoding.rowMajor` explicitly to force the legacy wire
+on server presets.
 
 Columnar modes need the native engine to export `odbc_execute_async_params_options`
 so the worker isolate can start async execution with a non-row-major encoding.
