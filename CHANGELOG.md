@@ -34,6 +34,10 @@ maintainability ahead of the typed-parameter migration.
   channel dispatch, connection, pool, sync/async query, streaming, transactions,
   and stats are isolated in `async_*.dart` parts for easier navigation and
   review.
+- **`NativeOdbcConnection` split into `part` modules.** Sync FFI connection,
+  async/audit/metadata, transactions/XA, prepared/query/multi-result, catalog,
+  pool/bulk, and streaming/dispose are isolated in `native_*.dart` parts;
+  public API and behaviour unchanged.
 - **`ParamValue` encoding (phases 2–3).** Domain sealed hierarchy with
   infrastructure two-pass wire encoding (pre-size, then single-buffer write).
   New typed entry points `executeQueryParamValues` /
