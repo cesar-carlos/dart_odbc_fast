@@ -1,5 +1,5 @@
 /// E2E tests for StreamingExecutor with real SQL Server connection
-use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, StreamingExecutor};
+use odbc_engine::engine::{OdbcConnection, OdbcEnvironment, ResultEncoding, StreamingExecutor};
 use odbc_engine::protocol::BinaryProtocolDecoder;
 
 mod helpers;
@@ -532,6 +532,7 @@ fn test_streaming_batched_lazy() {
                 Ok(())
             },
             None,
+            ResultEncoding::RowMajor,
         )
         .expect("execute_streaming_batched failed");
 
@@ -601,6 +602,7 @@ fn test_streaming_batched_large_result() {
                 Ok(())
             },
             None,
+            ResultEncoding::RowMajor,
         )
         .expect("execute_streaming_batched failed");
 
@@ -699,6 +701,7 @@ fn test_streaming_batched_empty_result() {
                 Ok(())
             },
             None,
+            ResultEncoding::RowMajor,
         )
         .expect("execute_streaming_batched should succeed for empty result");
 
@@ -750,6 +753,7 @@ fn test_streaming_batched_callback_error_propagates() {
             }
         },
         None,
+        ResultEncoding::RowMajor,
     );
 
     drop(handles_guard);
@@ -911,6 +915,7 @@ fn test_streaming_50k_rows_memory_validation() {
                 Ok(())
             },
             None,
+            ResultEncoding::RowMajor,
         )
         .expect("Batched mode should complete for 50k rows");
     let mut total_rows = 0_usize;

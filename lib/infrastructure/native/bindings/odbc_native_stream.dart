@@ -156,15 +156,30 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) {
     return _withSql<int>(
           sql,
-          (sqlPtr) => _bindings.odbc_stream_start_batched(
-            connectionId,
-            sqlPtr,
-            fetchSize,
-            chunkSize,
-          ),
+          (sqlPtr) {
+            if (resultEncodingWire != 0) {
+              final optionsId = _bindings.odbc_stream_start_batched_options(
+                connectionId,
+                sqlPtr,
+                fetchSize,
+                chunkSize,
+                resultEncodingWire,
+              );
+              if (optionsId != null) {
+                return optionsId;
+              }
+            }
+            return _bindings.odbc_stream_start_batched(
+              connectionId,
+              sqlPtr,
+              fetchSize,
+              chunkSize,
+            );
+          },
         ) ??
         0;
   }

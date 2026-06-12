@@ -9,7 +9,11 @@ const Endian _le = Endian.little;
 
 /// Build a single result-set frame whose payload is a valid binary_protocol
 /// v1 buffer with `columns` and `rows` (UTF-8 string columns, ASCII data).
-Uint8List _buildResultSetFrame(List<String> columns, List<List<String>> rows) {
+Uint8List _buildResultSetFrame(
+  List<String> columns,
+  List<List<String>> rows, {
+  int tag = multiStreamItemTagResultSet,
+}) {
   // Reuse the same helper layout the integration test files use for
   // _createSingleResultSetBuffer: header(16) + cols + rows.
   final cols = <int>[];
@@ -60,7 +64,7 @@ Uint8List _buildResultSetFrame(List<String> columns, List<List<String>> rows) {
 
   // Wrap in stream frame: tag(1) + len(4) + payload
   final out = BytesBuilder()
-    ..addByte(multiStreamItemTagResultSet)
+    ..addByte(tag)
     ..add((ByteData(4)..setUint32(0, inner.length, _le)).buffer.asUint8List())
     ..add(inner);
   return out.toBytes();
@@ -102,6 +106,27 @@ void main() {
       final rs = (items.single as MultiResultItemResultSet).value;
       expect(rs.columnNames, equals(['id', 'name']));
       expect(rs.rowCount, equals(1));
+      decoder.assertExhausted();
+    });
+
+    test('decodes result-set batch continuation tag 2', () {
+      final decoder = MultiResultStreamDecoder();
+      final frame = BytesBuilder()
+        ..add(_buildResultSetFrame(['id'], [
+          ['1'],
+        ]))
+        ..add(
+          _buildResultSetFrame(
+            ['id'],
+            [
+              ['2'],
+            ],
+            tag: multiStreamItemTagResultSetBatch,
+          ),
+        );
+      final items = decoder.feed(frame.toBytes());
+      expect(items, hasLength(2));
+      expect(items.every((item) => item is MultiResultItemResultSet), isTrue);
       decoder.assertExhausted();
     });
 

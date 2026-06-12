@@ -15,6 +15,10 @@ const Endian _littleEndian = Endian.little;
 /// Item-frame tag for a result set payload (v3.3.0 streaming wire format).
 const int multiStreamItemTagResultSet = MultiResultParser.tagResultSet;
 
+/// Item-frame tag for a continuation batch of the current result set (v4.2).
+const int multiStreamItemTagResultSetBatch =
+    MultiResultParser.tagResultSetBatch;
+
 /// Item-frame tag for a row-count payload (v3.3.0 streaming wire format).
 const int multiStreamItemTagRowCount = MultiResultParser.tagRowCount;
 
@@ -170,6 +174,7 @@ class MultiResultStreamDecoder {
 
       switch (tag) {
         case multiStreamItemTagResultSet:
+        case multiStreamItemTagResultSetBatch:
           final rs = BinaryProtocolParser.parse(payload);
           items.add(MultiResultItemResultSet(rs));
 

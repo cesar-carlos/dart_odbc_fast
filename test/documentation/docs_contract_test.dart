@@ -153,6 +153,7 @@ void main() {
       expect(apiSurface, contains('recommendedResultEncoding'));
       expect(apiSurface, contains('zeroCopyResultThresholdBytes'));
       expect(apiSurface, contains('odbc_stream_start_batched'));
+      expect(apiSurface, contains('odbc_stream_start_batched_options'));
       expect(apiSurface, contains('**96**'));
     });
   });

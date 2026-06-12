@@ -181,6 +181,7 @@ pub extern "C" fn odbc_stream_start_batched(
                 sql_owned,
                 fetch_size,
                 chunk_size,
+                ResultEncoding::RowMajor,
             ),
             StreamStartTarget::Pooled { pool_id, pooled } => executor.start_batched_stream_pooled(
                 Arc::clone(pooled),
@@ -188,6 +189,7 @@ pub extern "C" fn odbc_stream_start_batched(
                 fetch_size,
                 chunk_size,
                 Some(pooled_stream_completion(conn_id, *pool_id)),
+                ResultEncoding::RowMajor,
             ),
         };
 
@@ -212,6 +214,104 @@ pub extern "C" fn odbc_stream_start_batched(
                     &mut state,
                     conn_id,
                     format!("odbc_stream_start_batched failed: {}", e),
+                );
+                0
+            }
+        }
+    })
+}
+
+/// Start batched streaming with an explicit result wire encoding (v4.2).
+///
+/// `result_encoding`: 0=row-major v1, 1=columnar v2, 2=columnar v2 compressed.
+/// Older clients keep using `odbc_stream_start_batched` (row-major).
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_batched_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        let Some(sql_str) = parse_stream_sql(sql) else {
+            return 0;
+        };
+
+        let encoding = match ResultEncoding::from_wire(result_encoding) {
+            Some(encoding) => encoding,
+            None => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!("Invalid result_encoding: {}", result_encoding),
+                );
+                return 0;
+            }
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+
+        let reservation = match reserve_stream_start(&mut state, conn_id) {
+            Ok(reservation) => reservation,
+            Err(e) => {
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return 0;
+            }
+        };
+
+        let fetch_size = resolve_fetch_size(fetch_size);
+        let chunk_size = resolve_chunk_size(chunk_size);
+        let sql_owned = sql_str.to_string();
+
+        drop(state);
+
+        let executor = StreamingExecutor::new(chunk_size);
+        let start_result = match &reservation.target {
+            StreamStartTarget::Regular { handles } => executor.start_batched_stream(
+                handles.clone(),
+                conn_id,
+                sql_owned,
+                fetch_size,
+                chunk_size,
+                encoding,
+            ),
+            StreamStartTarget::Pooled { pool_id, pooled } => executor.start_batched_stream_pooled(
+                Arc::clone(pooled),
+                sql_owned,
+                fetch_size,
+                chunk_size,
+                Some(pooled_stream_completion(conn_id, *pool_id)),
+                encoding,
+            ),
+        };
+
+        match start_result {
+            Ok(batched_state) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                insert_stream(
+                    &mut state,
+                    reservation.stream_id,
+                    conn_id,
+                    StreamKind::Batched(batched_state),
+                )
+            }
+            Err(e) => {
+                release_pooled_stream_reservation(conn_id, &reservation.target);
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!("odbc_stream_start_batched_options failed: {}", e),
                 );
                 0
             }
@@ -260,6 +360,7 @@ pub extern "C" fn odbc_stream_start_async(
                 sql_owned,
                 fetch_size,
                 chunk_size,
+                ResultEncoding::RowMajor,
             ),
             StreamStartTarget::Pooled { pool_id, pooled } => executor.start_async_stream_pooled(
                 Arc::clone(pooled),
@@ -267,6 +368,7 @@ pub extern "C" fn odbc_stream_start_async(
                 fetch_size,
                 chunk_size,
                 Some(pooled_stream_completion(conn_id, *pool_id)),
+                ResultEncoding::RowMajor,
             ),
         };
 

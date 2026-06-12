@@ -54,13 +54,8 @@ where
             if cancel_check() {
                 return Err(OdbcError::Cancelled);
             }
-            let cursor = encode_cursor_batched(
-                cursor,
-                fetch_size,
-                result_encoding,
-                on_item,
-                cancel_check,
-            )?;
+            let cursor =
+                encode_cursor_batched(cursor, fetch_size, result_encoding, on_item, cancel_check)?;
             let _stmt_ref = cursor.into_stmt();
             true
         } else {
@@ -120,13 +115,8 @@ where
         if cols > 0 {
             // SAFETY: just observed cols > 0 with no other live borrow.
             let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-            let cursor = encode_cursor_batched(
-                cursor,
-                fetch_size,
-                result_encoding,
-                on_item,
-                cancel_check,
-            )?;
+            let cursor =
+                encode_cursor_batched(cursor, fetch_size, result_encoding, on_item, cancel_check)?;
             let _stmt_ref = cursor.into_stmt();
         } else {
             let rc = stmt

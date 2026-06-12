@@ -11,6 +11,7 @@ use odbc_engine::engine::StreamingExecutor;
 use odbc_engine::pool::ConnectionPool;
 use odbc_engine::{
     execute_query_with_connection, BinaryProtocolDecoder, OdbcConnection, OdbcEnvironment,
+    ResultEncoding,
 };
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -286,6 +287,7 @@ fn bench_select_cold_warm_streaming(c: &mut Criterion) {
                         Ok(())
                     },
                     None,
+                    ResultEncoding::RowMajor,
                 )
                 .unwrap();
             black_box(bytes)

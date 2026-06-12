@@ -1,9 +1,10 @@
-use super::columns::{describe_streaming_columns, encode_row_buffer};
+use super::columns::{describe_streaming_columns, encode_row_buffer_with_encoding};
 use super::state::{
     AsyncStreamingState, BatchedMessage, BatchedStreamingState, StreamState, StreamingState,
     StreamingStateFileBacked, WorkerCompletion,
 };
 use crate::engine::core::{DiskSpillStream, DiskSpillWriter};
+use crate::engine::query::ResultEncoding;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
@@ -49,7 +50,7 @@ impl StreamingExecutor {
         // FOR JSON normalisation — buffer-mode materialises the full result
         // before encoding, so coalescing is safe here. See `engine::sqlserver_json`.
         coalesce_for_json_rows(&mut row_buffer);
-        encode_row_buffer(&row_buffer)
+        encode_row_buffer_with_encoding(&row_buffer, ResultEncoding::RowMajor)
     }
 
     /// Legacy buffer-mode streaming: materialises the full result set before
@@ -125,7 +126,7 @@ impl StreamingExecutor {
                 }
             }
         } else {
-            let encoded = encode_row_buffer(&row_buffer)?;
+            let encoded = encode_row_buffer_with_encoding(&row_buffer, ResultEncoding::RowMajor)?;
             Ok(StreamState::InMemory(StreamingState {
                 data: encoded,
                 offset: 0,
@@ -153,6 +154,7 @@ impl StreamingExecutor {
         fetch_size: usize,
         mut on_batch: F,
         cancel_requested: Option<Arc<AtomicBool>>,
+        result_encoding: ResultEncoding,
     ) -> Result<()>
     where
         F: FnMut(Vec<u8>) -> Result<()>,
@@ -188,13 +190,13 @@ impl StreamingExecutor {
 
             if row_buffer.row_count() == 0 {
                 if first_batch {
-                    let encoded = encode_row_buffer(&row_buffer)?;
+                    let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
                     on_batch(encoded)?;
                 }
                 break;
             }
 
-            let encoded = encode_row_buffer(&row_buffer)?;
+            let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
             on_batch(encoded)?;
             first_batch = false;
         }
@@ -214,6 +216,7 @@ impl StreamingExecutor {
         sql: String,
         fetch_size: usize,
         chunk_size: usize,
+        result_encoding: ResultEncoding,
     ) -> Result<BatchedStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
@@ -249,6 +252,7 @@ impl StreamingExecutor {
                         .map_err(|e| OdbcError::InternalError(e.to_string()))
                 },
                 Some(cancel),
+                result_encoding,
             ) {
                 Ok(()) => {
                     let _ = tx.send(BatchedMessage::Done);
@@ -283,6 +287,7 @@ impl StreamingExecutor {
         sql: String,
         fetch_size: usize,
         chunk_size: usize,
+        result_encoding: ResultEncoding,
     ) -> Result<AsyncStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
@@ -318,6 +323,7 @@ impl StreamingExecutor {
                         .map_err(|e| OdbcError::InternalError(e.to_string()))
                 },
                 Some(cancel),
+                result_encoding,
             ) {
                 Ok(()) => {
                     let _ = tx.send(BatchedMessage::Done);
@@ -352,6 +358,7 @@ impl StreamingExecutor {
         fetch_size: usize,
         chunk_size: usize,
         on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+        result_encoding: ResultEncoding,
     ) -> Result<BatchedStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
@@ -378,6 +385,7 @@ impl StreamingExecutor {
                             .map_err(|e| OdbcError::InternalError(e.to_string()))
                     },
                     Some(cancel),
+                    result_encoding,
                 ) {
                     Ok(()) => {
                         let _ = tx.send(BatchedMessage::Done);
@@ -410,6 +418,7 @@ impl StreamingExecutor {
         fetch_size: usize,
         chunk_size: usize,
         on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+        result_encoding: ResultEncoding,
     ) -> Result<AsyncStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
@@ -436,6 +445,7 @@ impl StreamingExecutor {
                             .map_err(|e| OdbcError::InternalError(e.to_string()))
                     },
                     Some(cancel),
+                    result_encoding,
                 ) {
                     Ok(()) => {
                         let _ = tx.send(BatchedMessage::Done);

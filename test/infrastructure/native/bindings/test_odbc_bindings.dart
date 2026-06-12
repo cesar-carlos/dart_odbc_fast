@@ -826,6 +826,22 @@ class TestOdbcBindings extends OdbcBindings {
       super.odbc_stream_start_batched(connId, sql, fetchSize, chunkSize);
 
   @override
+  int? odbc_stream_start_batched_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) =>
+      super.odbc_stream_start_batched_options(
+        connId,
+        sql,
+        fetchSize,
+        chunkSize,
+        resultEncoding,
+      );
+
+  @override
   int odbc_stream_fetch(
     int streamId,
     ffi.Pointer<ffi.Uint8> outBuf,

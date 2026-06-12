@@ -20,11 +20,15 @@ class StreamStartBatchedRequest extends WorkerRequest {
     this.sql, {
     this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
+    this.resultEncodingWire = 0,
   }) : super(requestId, RequestType.streamStartBatched);
   final int connectionId;
   final String sql;
   final int fetchSize;
   final int chunkSize;
+
+  /// [ResultEncoding.wireCode]; 0 = row-major (default).
+  final int resultEncodingWire;
 }
 
 /// Start low-level async batched streaming query.

@@ -20,7 +20,7 @@ pub use chunk::StreamCopyResult;
 pub use multi_result::{
     start_multi_async_stream, start_multi_async_stream_pooled, start_multi_batched_stream,
     start_multi_batched_stream_pooled, MULTI_STREAM_ITEM_TAG_RESULT_SET,
-    MULTI_STREAM_ITEM_TAG_ROW_COUNT,
+    MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
 pub use state::{
     AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState, StreamState, StreamingState,

@@ -9,7 +9,7 @@ use crate::protocol::{
 use odbc_api::{Cursor, ResultSetMetadata};
 
 /// Encodes a row buffer for query / optional-cursor paths (row-major or columnar).
-pub(super) fn encode_query_result_payload(
+pub(crate) fn encode_query_result_payload(
     row_buffer: &RowBuffer,
     use_columnar: bool,
     use_compression: bool,

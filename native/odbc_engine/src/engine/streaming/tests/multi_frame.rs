@@ -1,7 +1,8 @@
 use super::super::chunk::StreamCopyResult;
 use super::super::columns::encode_row_buffer;
 use super::super::multi_result::{
-    frame_item, MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
+    frame_item, MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH,
+    MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
 use super::super::state::{
     AsyncStreamStatus, AsyncStreamingState, BatchedMessage, BatchedStreamingState, StreamState,
@@ -43,13 +44,22 @@ fn test_frame_item_row_count_tag_encodes_i64_payload() {
     assert_eq!(i64::from_le_bytes(framed[5..13].try_into().unwrap()), 42);
 }
 #[test]
-fn test_multi_stream_item_tags_are_distinct() {
+fn test_multi_stream_batch_tag_is_distinct_from_row_count() {
+    assert_eq!(MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH, 2);
     assert_ne!(
-        MULTI_STREAM_ITEM_TAG_RESULT_SET,
+        MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH,
+        MULTI_STREAM_ITEM_TAG_RESULT_SET
+    );
+    assert_ne!(
+        MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH,
         MULTI_STREAM_ITEM_TAG_ROW_COUNT
     );
-    assert_eq!(MULTI_STREAM_ITEM_TAG_RESULT_SET, 0);
-    assert_eq!(MULTI_STREAM_ITEM_TAG_ROW_COUNT, 1);
+}
+#[test]
+fn test_frame_item_result_set_batch_tag_encodes_payload() {
+    let framed = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH, vec![4, 5, 6]).unwrap();
+    assert_eq!(framed[0], MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH);
+    assert_eq!(&framed[5..], &[4, 5, 6]);
 }
 #[test]
 fn test_frame_item_empty_payload() {

@@ -21,6 +21,7 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           request.sql,
           fetchSize: request.fetchSize,
           chunkSize: request.chunkSize,
+          resultEncodingWire: request.resultEncodingWire,
         );
         sendPort.send(IntResponse(request.requestId, streamId));
 

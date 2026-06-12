@@ -94,6 +94,9 @@ class MultiResultParser {
   /// Tag for row count item.
   static const int tagRowCount = 1;
 
+  /// Tag for a continuation batch of the current result set (v4.2).
+  static const int tagResultSetBatch = 2;
+
   /// Header size for the legacy v1 framing: 4 bytes for item count.
   static const int headerSize = 4;
 
@@ -164,7 +167,9 @@ class MultiResultParser {
       final tag = data[offset];
       offset += 1;
 
-      if (tag != tagResultSet && tag != tagRowCount) {
+      if (tag != tagResultSet &&
+          tag != tagRowCount &&
+          tag != tagResultSetBatch) {
         throw FormatException('Unknown multi-result item tag: $tag');
       }
 
@@ -181,6 +186,7 @@ class MultiResultParser {
 
       switch (tag) {
         case tagResultSet:
+        case tagResultSetBatch:
           final resultSet = BinaryProtocolParser.parse(payload);
           items.add(MultiResultItemResultSet(resultSet));
 
@@ -261,7 +267,9 @@ class MultiResultParser {
       }
       final tag = data[offset];
       offset += 1;
-      if (tag != tagResultSet && tag != tagRowCount) {
+      if (tag != tagResultSet &&
+          tag != tagRowCount &&
+          tag != tagResultSetBatch) {
         throw FormatException('Unknown multi-result item tag: $tag');
       }
       final length = byteData.getUint32(offset, _littleEndian);
@@ -274,6 +282,7 @@ class MultiResultParser {
       final payload = Uint8List.sublistView(data, offset, offset + length);
       switch (tag) {
         case tagResultSet:
+        case tagResultSetBatch:
           items.add(
             MultiResultItemResultSet(BinaryProtocolParser.parse(payload)),
           );

@@ -1,3 +1,5 @@
+use crate::engine::core::execution::result_encoding::encode_query_result_payload;
+use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 use odbc_api::ResultSetMetadata;
@@ -27,5 +29,17 @@ where
 }
 
 pub(crate) fn encode_row_buffer(row_buffer: &RowBuffer) -> Result<Vec<u8>> {
-    RowBufferEncoder::encode_result(row_buffer)
+    encode_row_buffer_with_encoding(row_buffer, ResultEncoding::RowMajor)
+}
+
+/// Encodes a fetch batch using the requested wire layout (v4.2 streaming).
+pub(crate) fn encode_row_buffer_with_encoding(
+    row_buffer: &RowBuffer,
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>> {
+    match encoding {
+        ResultEncoding::RowMajor => RowBufferEncoder::encode_result(row_buffer),
+        ResultEncoding::Columnar => encode_query_result_payload(row_buffer, true, false),
+        ResultEncoding::ColumnarCompressed => encode_query_result_payload(row_buffer, true, true),
+    }
 }

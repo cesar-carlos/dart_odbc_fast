@@ -23,6 +23,7 @@ mixin _AsyncStreaming
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamStartBatchedRequest(
@@ -31,6 +32,7 @@ mixin _AsyncStreaming
         sql,
         fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       ),
     );
     return r.value;
@@ -161,12 +163,14 @@ mixin _AsyncStreaming
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int? maxBufferBytes,
+    int resultEncodingWire = 0,
   }) async* {
     final streamId = await _streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,
       chunkSize: chunkSize,
+      resultEncodingWire: resultEncodingWire,
     );
     if (streamId == 0) {
       final workerError = await _safeGetWorkerError();
