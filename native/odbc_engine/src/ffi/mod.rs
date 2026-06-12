@@ -4,6 +4,7 @@
 
 pub mod columnar_decompress;
 pub mod guard;
+pub mod release_buffer;
 pub mod state;
 
 mod bulk;

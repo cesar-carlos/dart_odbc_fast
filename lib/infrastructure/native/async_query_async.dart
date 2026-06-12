@@ -24,7 +24,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
         ? Uint8List(0)
         : serializedParams;
     final r = await _sendRequest<IntResponse>(
-      ExecuteAsyncStartParamsRequest(
+      ExecuteAsyncStartParamsRequest.withSerializedParams(
         _nextRequestId(),
         connectionId,
         sql,

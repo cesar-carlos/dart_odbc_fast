@@ -97,5 +97,23 @@ void main() {
 
       expect(result, isEmpty);
     });
+
+    test('returns copied list for payloads below zero-copy threshold', () {
+      const n = zeroCopyResultThresholdBytes - 1;
+      final result = callWithBuffer(
+        (buf, bufLen, outWritten) {
+          expect(bufLen, greaterThanOrEqualTo(n));
+          buf.asTypedList(n).fillRange(0, n, 7);
+          outWritten.value = n;
+          return 0;
+        },
+        initialSize: zeroCopyResultThresholdBytes,
+        maxSize: zeroCopyResultThresholdBytes,
+      );
+
+      expect(result, isNotNull);
+      expect(result, hasLength(n));
+      expect(result, everyElement(7));
+    });
   });
 }

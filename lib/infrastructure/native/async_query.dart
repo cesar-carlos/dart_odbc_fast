@@ -48,7 +48,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     final bytes =
         params == null || params.isEmpty ? null : serializeParams(params);
     final r = await _sendRequest<QueryResponse>(
-      ExecutePreparedRequest(
+      ExecutePreparedRequest.withSerializedParams(
         _nextRequestId(),
         stmtId,
         bytes ?? Uint8List(0),
@@ -134,7 +134,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final r = await _sendRequest<QueryResponse>(
-      ExecuteQueryParamsRequest(
+      ExecuteQueryParamsRequest.withSerializedParams(
         _nextRequestId(),
         connectionId,
         sql,
@@ -249,7 +249,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int? maxBufferBytes,
   }) async {
     final r = await _sendRequest<QueryResponse>(
-      ExecuteQueryMultiParamsRequest(
+      ExecuteQueryMultiParamsRequest.withSerializedParams(
         _nextRequestId(),
         connectionId,
         sql,

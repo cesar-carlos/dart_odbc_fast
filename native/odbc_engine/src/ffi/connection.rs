@@ -6,7 +6,6 @@ use super::global::*;
 use crate::ffi::guard;
 use crate::ffi::state;
 
-use crate::engine::Transaction;
 use std::os::raw::{c_char, c_int, c_uint};
 
 pub(crate) fn validate_connection_string_format(s: &str) -> Option<String> {
@@ -211,80 +210,52 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
             return -1;
         };
 
-        #[cfg(feature = "sqlserver-bcp")]
-        let _ = state.connection_strings.remove(&conn_id);
-
-        if state.transaction_begins_in_progress.contains(&conn_id) {
-            set_connection_error(
-                &mut state,
-                conn_id,
-                "Cannot disconnect while transaction begin is in progress".to_string(),
-            );
-            return 1;
-        }
-
-        if let Some(conn) = state.connections.remove(&conn_id) {
-            let transactions: Vec<Transaction> =
-                take_transactions_for_connection(&mut state, conn_id)
-                    .into_iter()
-                    .map(|(_, txn)| txn)
-                    .collect();
-            let stmts_to_drop: Vec<u32> = state
-                .statements
-                .iter()
-                .filter(|(_, s)| s.conn_id() == conn_id)
-                .map(|(id, _)| *id)
-                .collect();
-            for stmt_id in &stmts_to_drop {
-                state.statements.remove(stmt_id);
+        match with_disconnect_cleanup(&mut state, conn_id) {
+            Err(DisconnectCleanupError::BeginInProgress) => {
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    "Cannot disconnect while transaction begin is in progress".to_string(),
+                );
+                return 1;
             }
-            let streams_to_drop: Vec<u32> = state
-                .stream_connections
-                .iter()
-                .filter_map(|(stream_id, stream_conn_id)| {
-                    (*stream_conn_id == conn_id).then_some(*stream_id)
-                })
-                .collect();
-            for stream_id in streams_to_drop {
-                if let Some(stream) = state.streams.remove(&stream_id) {
-                    stream.cancel();
+            Err(DisconnectCleanupError::InvalidConnection) => {
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    format!("Invalid connection ID: {}", conn_id),
+                );
+                return 1;
+            }
+            Ok(cleanup) => {
+                drop(state);
+                if let Some(mut async_mgr) = lock_async_requests() {
+                    async_mgr.free_for_connection(conn_id);
                 }
-                state.stream_connections.remove(&stream_id);
-            }
-            drop(state);
-            if let Some(mut async_mgr) = lock_async_requests() {
-                async_mgr.free_for_connection(conn_id);
-            }
 
-            for txn in transactions {
-                let _ = txn.rollback();
-            }
-            let disconnect_result = conn.disconnect();
-
-            let Some(mut state) = try_lock_global_state() else {
-                return -1;
-            };
-            match disconnect_result {
-                Ok(_) => {
-                    state::clear_connection_error(conn_id);
-                    0
+                for txn in cleanup.transactions {
+                    let _ = txn.rollback();
                 }
-                Err(e) => {
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        format!("odbc_disconnect failed: {}", e),
-                    );
-                    1
+                let disconnect_result = cleanup.connection.disconnect();
+
+                let Some(mut state) = try_lock_global_state() else {
+                    return -1;
+                };
+                match disconnect_result {
+                    Ok(_) => {
+                        state::clear_connection_error(conn_id);
+                        0
+                    }
+                    Err(e) => {
+                        set_connection_error(
+                            &mut state,
+                            conn_id,
+                            format!("odbc_disconnect failed: {}", e),
+                        );
+                        1
+                    }
                 }
             }
-        } else {
-            set_connection_error(
-                &mut state,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
-            1
         }
     })
 }

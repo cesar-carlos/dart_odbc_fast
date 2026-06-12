@@ -429,3 +429,65 @@ pub(crate) fn pool_has_begin_in_progress(state: &GlobalState, pool_id: u32) -> b
             .unwrap_or(false)
     })
 }
+
+pub(crate) struct DisconnectCleanup {
+    pub connection: OdbcConnection,
+    pub transactions: Vec<Transaction>,
+}
+
+pub(crate) enum DisconnectCleanupError {
+    BeginInProgress,
+    InvalidConnection,
+}
+
+pub(crate) fn with_disconnect_cleanup(
+    state: &mut GlobalState,
+    conn_id: u32,
+) -> std::result::Result<DisconnectCleanup, DisconnectCleanupError> {
+    #[cfg(feature = "sqlserver-bcp")]
+    {
+        let _ = state.connection_strings.remove(&conn_id);
+    }
+
+    if state.transaction_begins_in_progress.contains(&conn_id) {
+        return Err(DisconnectCleanupError::BeginInProgress);
+    }
+
+    let Some(connection) = state.connections.remove(&conn_id) else {
+        return Err(DisconnectCleanupError::InvalidConnection);
+    };
+
+    let transactions: Vec<Transaction> = take_transactions_for_connection(state, conn_id)
+        .into_iter()
+        .map(|(_, txn)| txn)
+        .collect();
+
+    let stmts_to_drop: Vec<u32> = state
+        .statements
+        .iter()
+        .filter(|(_, stmt)| stmt.conn_id() == conn_id)
+        .map(|(id, _)| *id)
+        .collect();
+    for stmt_id in &stmts_to_drop {
+        state.statements.remove(stmt_id);
+    }
+
+    let streams_to_drop: Vec<u32> = state
+        .stream_connections
+        .iter()
+        .filter_map(|(stream_id, stream_conn_id)| {
+            (*stream_conn_id == conn_id).then_some(*stream_id)
+        })
+        .collect();
+    for stream_id in streams_to_drop {
+        if let Some(stream) = state.streams.remove(&stream_id) {
+            stream.cancel();
+        }
+        state.stream_connections.remove(&stream_id);
+    }
+
+    Ok(DisconnectCleanup {
+        connection,
+        transactions,
+    })
+}

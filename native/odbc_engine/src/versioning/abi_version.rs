@@ -14,7 +14,7 @@ impl AbiVersion {
     }
 
     pub fn current() -> Self {
-        Self::new(1, 0)
+        Self::new(1, 1)
     }
 
     pub fn is_compatible_with(&self, other: &AbiVersion) -> bool {
@@ -53,7 +53,7 @@ mod tests {
     fn test_abi_version_current() {
         let v = AbiVersion::current();
         assert_eq!(v.major, 1);
-        assert_eq!(v.minor, 0);
+        assert_eq!(v.minor, 1);
     }
 
     #[test]

@@ -1,19 +1,72 @@
 part of 'message_protocol.dart';
 
 class ExecuteQueryParamsRequest extends WorkerRequest {
-  const ExecuteQueryParamsRequest(
+  ExecuteQueryParamsRequest(
     int requestId,
     this.connectionId,
     this.sql,
-    this.serializedParams, {
+    Uint8List serializedParams, {
     this.maxResultBufferBytes,
     this.resultEncoding = ResultEncoding.rowMajor,
-  }) : super(requestId, RequestType.executeQueryParams);
+  })  : _serializedParams = serializedParams,
+        _transferableParams = null,
+        super(requestId, RequestType.executeQueryParams);
+
+  ExecuteQueryParamsRequest._transferable(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    TransferableTypedData transferableParams, {
+    this.maxResultBufferBytes,
+    this.resultEncoding = ResultEncoding.rowMajor,
+  })  : _serializedParams = null,
+        _transferableParams = transferableParams,
+        super(requestId, RequestType.executeQueryParams);
+
+  factory ExecuteQueryParamsRequest.withSerializedParams(
+    int requestId,
+    int connectionId,
+    String sql,
+    Uint8List serializedParams, {
+    int? maxResultBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+  }) {
+    final transferableParams = transferableIsolatePayload(serializedParams);
+    if (transferableParams != null) {
+      return ExecuteQueryParamsRequest._transferable(
+        requestId,
+        connectionId,
+        sql,
+        transferableParams,
+        maxResultBufferBytes: maxResultBufferBytes,
+        resultEncoding: resultEncoding,
+      );
+    }
+    return ExecuteQueryParamsRequest(
+      requestId,
+      connectionId,
+      sql,
+      serializedParams,
+      maxResultBufferBytes: maxResultBufferBytes,
+      resultEncoding: resultEncoding,
+    );
+  }
+
+  Uint8List? _serializedParams;
+  final TransferableTypedData? _transferableParams;
   final int connectionId;
   final String sql;
-  final Uint8List serializedParams;
   final int? maxResultBufferBytes;
   final ResultEncoding resultEncoding;
+
+  Uint8List get serializedParams {
+    final inline = _serializedParams;
+    if (inline != null) {
+      return inline;
+    }
+    return _serializedParams =
+        _transferableParams!.materialize().asUint8List();
+  }
 }
 
 /// Execute query returning multiple result sets.
@@ -31,17 +84,66 @@ class ExecuteQueryMultiRequest extends WorkerRequest {
 
 /// Execute parameterised multi-result query (M5 in v3.2.0).
 class ExecuteQueryMultiParamsRequest extends WorkerRequest {
-  const ExecuteQueryMultiParamsRequest(
+  ExecuteQueryMultiParamsRequest(
     int requestId,
     this.connectionId,
     this.sql,
-    this.serializedParams, {
+    Uint8List serializedParams, {
     this.maxResultBufferBytes,
-  }) : super(requestId, RequestType.executeQueryMultiParams);
+  })  : _serializedParams = serializedParams,
+        _transferableParams = null,
+        super(requestId, RequestType.executeQueryMultiParams);
+
+  ExecuteQueryMultiParamsRequest._transferable(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    TransferableTypedData transferableParams, {
+    this.maxResultBufferBytes,
+  })  : _serializedParams = null,
+        _transferableParams = transferableParams,
+        super(requestId, RequestType.executeQueryMultiParams);
+
+  factory ExecuteQueryMultiParamsRequest.withSerializedParams(
+    int requestId,
+    int connectionId,
+    String sql,
+    Uint8List serializedParams, {
+    int? maxResultBufferBytes,
+  }) {
+    final transferableParams = transferableIsolatePayload(serializedParams);
+    if (transferableParams != null) {
+      return ExecuteQueryMultiParamsRequest._transferable(
+        requestId,
+        connectionId,
+        sql,
+        transferableParams,
+        maxResultBufferBytes: maxResultBufferBytes,
+      );
+    }
+    return ExecuteQueryMultiParamsRequest(
+      requestId,
+      connectionId,
+      sql,
+      serializedParams,
+      maxResultBufferBytes: maxResultBufferBytes,
+    );
+  }
+
+  Uint8List? _serializedParams;
+  final TransferableTypedData? _transferableParams;
   final int connectionId;
   final String sql;
-  final Uint8List serializedParams;
   final int? maxResultBufferBytes;
+
+  Uint8List get serializedParams {
+    final inline = _serializedParams;
+    if (inline != null) {
+      return inline;
+    }
+    return _serializedParams =
+        _transferableParams!.materialize().asUint8List();
+  }
 }
 
 /// Begin transaction.
@@ -59,19 +161,72 @@ class PrepareRequest extends WorkerRequest {
 
 /// Execute prepared statement. Params sent as serialized Uint8List.
 class ExecutePreparedRequest extends WorkerRequest {
-  const ExecutePreparedRequest(
+  ExecutePreparedRequest(
     int requestId,
     this.stmtId,
-    this.serializedParams, {
+    Uint8List serializedParams, {
     this.timeoutOverrideMs = 0,
     this.fetchSize = 1000,
     this.maxResultBufferBytes,
-  }) : super(requestId, RequestType.executePrepared);
+  })  : _serializedParams = serializedParams,
+        _transferableParams = null,
+        super(requestId, RequestType.executePrepared);
+
+  ExecutePreparedRequest._transferable(
+    int requestId,
+    this.stmtId,
+    TransferableTypedData transferableParams, {
+    this.timeoutOverrideMs = 0,
+    this.fetchSize = 1000,
+    this.maxResultBufferBytes,
+  })  : _serializedParams = null,
+        _transferableParams = transferableParams,
+        super(requestId, RequestType.executePrepared);
+
+  factory ExecutePreparedRequest.withSerializedParams(
+    int requestId,
+    int stmtId,
+    Uint8List serializedParams, {
+    int timeoutOverrideMs = 0,
+    int fetchSize = 1000,
+    int? maxResultBufferBytes,
+  }) {
+    final transferableParams = transferableIsolatePayload(serializedParams);
+    if (transferableParams != null) {
+      return ExecutePreparedRequest._transferable(
+        requestId,
+        stmtId,
+        transferableParams,
+        timeoutOverrideMs: timeoutOverrideMs,
+        fetchSize: fetchSize,
+        maxResultBufferBytes: maxResultBufferBytes,
+      );
+    }
+    return ExecutePreparedRequest(
+      requestId,
+      stmtId,
+      serializedParams,
+      timeoutOverrideMs: timeoutOverrideMs,
+      fetchSize: fetchSize,
+      maxResultBufferBytes: maxResultBufferBytes,
+    );
+  }
+
+  Uint8List? _serializedParams;
+  final TransferableTypedData? _transferableParams;
   final int stmtId;
-  final Uint8List serializedParams;
   final int timeoutOverrideMs;
   final int fetchSize;
   final int? maxResultBufferBytes;
+
+  Uint8List get serializedParams {
+    final inline = _serializedParams;
+    if (inline != null) {
+      return inline;
+    }
+    return _serializedParams =
+        _transferableParams!.materialize().asUint8List();
+  }
 }
 
 /// Cancel prepared statement execution.
@@ -293,17 +448,66 @@ class ExecuteAsyncStartRequest extends WorkerRequest {
 
 /// Start non-blocking async execution with serialized parameters.
 class ExecuteAsyncStartParamsRequest extends WorkerRequest {
-  const ExecuteAsyncStartParamsRequest(
+  ExecuteAsyncStartParamsRequest(
     int requestId,
     this.connectionId,
     this.sql,
-    this.serializedParams, {
+    Uint8List serializedParams, {
     this.resultEncodingWire = 0,
-  }) : super(requestId, RequestType.executeAsyncStartParams);
+  })  : _serializedParams = serializedParams,
+        _transferableParams = null,
+        super(requestId, RequestType.executeAsyncStartParams);
+
+  ExecuteAsyncStartParamsRequest._transferable(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    TransferableTypedData transferableParams, {
+    this.resultEncodingWire = 0,
+  })  : _serializedParams = null,
+        _transferableParams = transferableParams,
+        super(requestId, RequestType.executeAsyncStartParams);
+
+  factory ExecuteAsyncStartParamsRequest.withSerializedParams(
+    int requestId,
+    int connectionId,
+    String sql,
+    Uint8List serializedParams, {
+    int resultEncodingWire = 0,
+  }) {
+    final transferableParams = transferableIsolatePayload(serializedParams);
+    if (transferableParams != null) {
+      return ExecuteAsyncStartParamsRequest._transferable(
+        requestId,
+        connectionId,
+        sql,
+        transferableParams,
+        resultEncodingWire: resultEncodingWire,
+      );
+    }
+    return ExecuteAsyncStartParamsRequest(
+      requestId,
+      connectionId,
+      sql,
+      serializedParams,
+      resultEncodingWire: resultEncodingWire,
+    );
+  }
+
+  Uint8List? _serializedParams;
+  final TransferableTypedData? _transferableParams;
   final int connectionId;
   final String sql;
-  final Uint8List serializedParams;
   final int resultEncodingWire;
+
+  Uint8List get serializedParams {
+    final inline = _serializedParams;
+    if (inline != null) {
+      return inline;
+    }
+    return _serializedParams =
+        _transferableParams!.materialize().asUint8List();
+  }
 }
 
 /// Poll async request status.

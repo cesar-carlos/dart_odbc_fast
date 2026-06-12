@@ -97,6 +97,7 @@ include = [
     "odbc_metadata_cache_clear",
     "odbc_columnar_decompress",
     "odbc_columnar_decompress_free",
+    "odbc_release_buffer",
     "otel_init",
     "otel_export_trace",
     "otel_export_trace_to_string",
