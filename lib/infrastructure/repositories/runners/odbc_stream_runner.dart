@@ -229,7 +229,7 @@ class OdbcStreamRunner {
   /// Cursor-based batched streaming (`odbc_stream_start_batched`).
   ///
   /// `streamQuery` routes here directly; buffer-mode `odbc_stream_start` is
-  /// retained only on [NativeOdbcConnection.streamQueryBuffer] for legacy use.
+  /// retained only on `NativeOdbcConnection.streamQueryBuffer` for legacy use.
   Stream<ParsedRowBuffer> streamNativeQueryWithFallback(
     int nativeId,
     String sql, {

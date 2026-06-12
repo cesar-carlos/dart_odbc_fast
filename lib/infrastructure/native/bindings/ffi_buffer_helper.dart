@@ -27,10 +27,6 @@ typedef BufferCallback = int Function(
   ffi.Pointer<ffi.Uint32> outWritten,
 );
 
-typedef _OdbcReleaseBufferNative = ffi.Void Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Uint32,
-);
 typedef _OdbcReleaseBufferDart = void Function(
   ffi.Pointer<ffi.Uint8>,
   int,
@@ -67,7 +63,8 @@ bool get isZeroCopyResultBufferAvailable {
 Uint8List? callWithBuffer(BufferCallback fn, {int? maxSize, int? initialSize}) {
   final limit = maxSize ?? maxBufferSize;
   final size = initialSize ?? initialBufferSize;
-  if (isZeroCopyResultBufferAvailable && limit >= zeroCopyResultThresholdBytes) {
+  if (isZeroCopyResultBufferAvailable &&
+      limit >= zeroCopyResultThresholdBytes) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,
@@ -122,17 +119,20 @@ Uint8List? _callWithTransientBuffer(
       }
       if (code == -2) {
         final requested = outWritten.value;
-        malloc.free(buf);
-        malloc.free(outWritten);
+        malloc
+          ..free(buf)
+          ..free(outWritten);
         size = requested > size ? requested : size * 2;
         continue;
       }
-      malloc.free(buf);
-      malloc.free(outWritten);
+      malloc
+        ..free(buf)
+        ..free(outWritten);
       return null;
     } on Object {
-      malloc.free(buf);
-      malloc.free(outWritten);
+      malloc
+        ..free(buf)
+        ..free(outWritten);
       rethrow;
     }
   }
@@ -247,7 +247,9 @@ void _bindReleaseBufferOnce() {
   try {
     final lib = loadOdbcLibrary();
     _releaseBufferNative = lib
-        .lookup<ffi.NativeFunction<_OdbcReleaseBufferNative>>(
+        .lookup<
+            ffi.NativeFunction<
+                ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.Uint32)>>(
           'odbc_release_buffer',
         )
         .asFunction<_OdbcReleaseBufferDart>();

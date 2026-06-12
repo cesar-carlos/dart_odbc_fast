@@ -164,8 +164,9 @@ void main() {
       expect(identical(request.dataBuffer, request.dataBuffer), isTrue);
     });
 
-    test('ExecuteAsyncStartParamsRequest uses transferable payload above threshold',
-        () {
+    test(
+        'ExecuteAsyncStartParamsRequest uses transferable payload above '
+        'threshold', () {
       final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
       final request = ExecuteAsyncStartParamsRequest.withSerializedParams(
         1,
@@ -175,8 +176,10 @@ void main() {
       );
 
       expect(request.serializedParams, bytes);
-      expect(identical(request.serializedParams, request.serializedParams),
-          isTrue);
+      expect(
+        identical(request.serializedParams, request.serializedParams),
+        isTrue,
+      );
     });
 
     test('BulkInsertArrayRequest uses transferable payload above threshold',

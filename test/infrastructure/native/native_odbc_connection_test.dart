@@ -916,8 +916,6 @@ int _xaRecoverCount3(int _) => 3;
 
 int _xaRecoverCountZero(int _) => 0;
 
-int _streamStartOne(int _, ffi.Pointer<odbc_bindings.Utf8> __, int ___) => 1;
-
 int _streamStartBatchedZero(
   int _,
   ffi.Pointer<odbc_bindings.Utf8> __,
