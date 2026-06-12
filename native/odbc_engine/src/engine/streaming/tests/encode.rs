@@ -22,8 +22,7 @@ fn test_encode_row_buffer_matches_row_buffer_encoder() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("n".to_string(), OdbcType::Integer);
     buffer.add_row(vec![Some(7i32.to_le_bytes().to_vec())]);
-    let via_helper =
-        encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap();
+    let via_helper = encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap();
     let direct = RowBufferEncoder::encode(&buffer).unwrap();
     assert_eq!(via_helper, direct);
 }
@@ -31,16 +30,14 @@ fn test_encode_row_buffer_matches_row_buffer_encoder() {
 fn test_encode_row_buffer_surfaces_resource_limit() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("x".repeat(usize::from(u16::MAX) + 1), OdbcType::Varchar);
-    let err =
-        encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap_err();
+    let err = encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap_err();
     assert!(matches!(err, OdbcError::ResourceLimitReached(_)));
     assert!(err.to_string().contains("encoding"));
 }
 #[test]
 fn test_encode_row_buffer_empty_schema_succeeds() {
     let buffer = RowBuffer::new();
-    let encoded =
-        encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap();
+    let encoded = encode_row_buffer_with_encoding(&buffer, ResultEncoding::RowMajor).unwrap();
     assert_eq!(encoded, RowBufferEncoder::encode(&buffer).unwrap());
 }
 #[test]

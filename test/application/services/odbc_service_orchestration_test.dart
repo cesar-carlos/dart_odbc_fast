@@ -77,7 +77,6 @@ void main() {
           expect(mockRepo.executeQueryParamValuesCalled, isTrue);
         },
       );
-
     });
 
     group('beginTransaction defaults', () {

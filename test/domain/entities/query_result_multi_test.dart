@@ -46,7 +46,6 @@ void main() {
       expect(result.isEmpty, isTrue);
       expect(result.isNotEmpty, isFalse);
     });
-
   });
 
   group('QueryResultMultiItem', () {

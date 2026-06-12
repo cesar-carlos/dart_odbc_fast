@@ -426,13 +426,12 @@ void main() {
     test(
       'executePrepared returns ValidationError when statement id is unknown',
       () async {
-        final result =
-            await repository.executePreparedParamValuesFromObjects(
-              connectionId,
-              99999,
-              [],
-              null,
-            );
+        final result = await repository.executePreparedParamValuesFromObjects(
+          connectionId,
+          99999,
+          [],
+          null,
+        );
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),
@@ -624,11 +623,11 @@ void main() {
 
         final executeResult =
             await repository.executePreparedParamValuesFromObjects(
-              connectionId,
-              stmtId!,
-              [],
-              null,
-            );
+          connectionId,
+          stmtId!,
+          [],
+          null,
+        );
         expect(executeResult.isSuccess(), isFalse);
         executeResult.fold(
           (_) => fail('Expected failure'),

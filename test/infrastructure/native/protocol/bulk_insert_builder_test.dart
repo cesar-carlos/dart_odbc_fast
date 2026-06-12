@@ -826,9 +826,8 @@ void main() {
 
     test('columnar binary preserves embedded nul bytes in v2', () {
       final blob = Uint8List.fromList([1, 0, 2]);
-      final enc = BulkInsertBuilder()
-          .table('t')
-          .addColumnBinary('p', [blob])          .build();
+      final enc =
+          BulkInsertBuilder().table('t').addColumnBinary('p', [blob]).build();
       expect(enc, isNotEmpty);
     });
   });

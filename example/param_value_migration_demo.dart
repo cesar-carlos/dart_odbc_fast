@@ -72,5 +72,6 @@ Future<void> main() async {
   );
 
   print('');
-  print('Use executeQueryParamValues / executeQueryDirectedParams at call sites.');
+  print(
+      'Use executeQueryParamValues / executeQueryDirectedParams at call sites.');
 }

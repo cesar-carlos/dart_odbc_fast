@@ -68,8 +68,7 @@ void main() {
         expect(
           dartLookups,
           contains(symbol),
-          reason:
-              '$symbol must resolve via opentelemetry_ffi.dart, '
+          reason: '$symbol must resolve via opentelemetry_ffi.dart, '
               'not OdbcBindings',
         );
       }

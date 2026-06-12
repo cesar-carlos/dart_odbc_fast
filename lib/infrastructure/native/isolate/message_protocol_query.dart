@@ -64,8 +64,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     if (inline != null) {
       return inline;
     }
-    return _serializedParams =
-        _transferableParams!.materialize().asUint8List();
+    return _serializedParams = _transferableParams!.materialize().asUint8List();
   }
 }
 
@@ -141,8 +140,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     if (inline != null) {
       return inline;
     }
-    return _serializedParams =
-        _transferableParams!.materialize().asUint8List();
+    return _serializedParams = _transferableParams!.materialize().asUint8List();
   }
 }
 
@@ -224,8 +222,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     if (inline != null) {
       return inline;
     }
-    return _serializedParams =
-        _transferableParams!.materialize().asUint8List();
+    return _serializedParams = _transferableParams!.materialize().asUint8List();
   }
 }
 
@@ -505,8 +502,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
     if (inline != null) {
       return inline;
     }
-    return _serializedParams =
-        _transferableParams!.materialize().asUint8List();
+    return _serializedParams = _transferableParams!.materialize().asUint8List();
   }
 }
 

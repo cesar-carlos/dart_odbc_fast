@@ -1,4 +1,3 @@
-
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 import 'package:test/test.dart';

@@ -235,8 +235,7 @@ class OdbcQueryMultiRunner {
 
     Future<Result<QueryResultMulti>> run() async {
       try {
-        final paramsBuffer =
-            params.isEmpty ? null : serializeParams(params);
+        final paramsBuffer = params.isEmpty ? null : serializeParams(params);
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryMultiParams(
                 nativeId,

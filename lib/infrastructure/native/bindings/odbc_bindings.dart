@@ -1,6 +1,7 @@
 // FFI bindings must match native C/Rust symbol names exactly.
 
 library;
+
 import 'dart:ffi' as ffi;
 
 part 'odbc_bindings_connection.dart';
