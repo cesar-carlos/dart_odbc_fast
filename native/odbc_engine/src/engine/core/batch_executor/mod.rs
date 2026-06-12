@@ -1,14 +1,21 @@
+mod execution;
+mod inference;
+mod planning;
+
 use super::pipeline::QueryPipeline;
-use crate::engine::cell_reader::CellReader;
-use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{
-    has_null_param, param_values_to_input_params, param_values_to_input_params_with_descriptions,
-    param_values_to_input_params_with_inference, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+    param_values_to_input_params, param_values_to_input_params_with_descriptions,
+    param_values_to_input_params_with_inference, ParamValue,
 };
-use odbc_api::handles::{AsStatementRef, ParameterDescription};
-use odbc_api::parameter::InputParameter;
-use odbc_api::{Connection, Cursor, ParameterCollectionRef, Prepared, ResultSetMetadata};
+use inference::batch_param_to_param_value;
+use odbc_api::handles::ParameterDescription;
+use odbc_api::Connection;
+
+pub(crate) use planning::{
+    batch_param_set_chunk_count, batch_query_uses_optimized_path, plan_batch_param_binding,
+    should_skip_batch_optimized_execution, BatchParamBindingPlan,
+};
 use std::sync::Arc;
 
 pub struct BatchQuery {
@@ -53,7 +60,7 @@ impl BatchExecutor {
         self.batch_size
     }
 
-    fn effective_batch_size(&self) -> usize {
+    pub(crate) fn effective_batch_size(&self) -> usize {
         self.batch_size.max(1)
     }
 
@@ -149,184 +156,12 @@ impl BatchExecutor {
 
         Ok(results)
     }
-
-    fn execute_prepared_and_encode<S, P>(
-        &self,
-        stmt: &mut Prepared<S>,
-        params: P,
-    ) -> Result<Vec<u8>>
-    where
-        S: AsStatementRef,
-        P: ParameterCollectionRef,
-    {
-        let mut cursor = stmt.execute(params).map_err(OdbcError::from)?;
-        if let Some(mut c) = cursor.take() {
-            return self.encode_result_cursor(&mut c);
-        }
-        drop(cursor);
-        let row_count = stmt.row_count().map_err(OdbcError::from)?.unwrap_or(0) as i64;
-        Ok(crate::protocol::encode_row_count_only(row_count))
-    }
-
-    fn encode_result_cursor<C>(&self, cursor: &mut C) -> Result<Vec<u8>>
-    where
-        C: Cursor + ResultSetMetadata,
-    {
-        let mut row_buffer = RowBuffer::new();
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
-
-        let mut cell_reader = CellReader::new();
-        while let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::with_capacity(column_types.len());
-            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                let col_number: u16 = (col_idx + 1)
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-                row_data.push(cell_data);
-            }
-            row_buffer.add_row(row_data);
-        }
-
-        coalesce_for_json_rows(&mut row_buffer);
-        RowBufferEncoder::encode_result(&row_buffer)
-    }
-
-    fn execute_direct_param_set(
-        &self,
-        conn: &Connection<'static>,
-        sql: &str,
-        parameters: Vec<Box<dyn InputParameter>>,
-    ) -> Result<Vec<u8>> {
-        let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
-        let mut cursor = if parameters.is_empty() {
-            prealloc.execute(sql, ()).map_err(OdbcError::from)?
-        } else {
-            prealloc
-                .execute(sql, parameters.as_slice())
-                .map_err(OdbcError::from)?
-        };
-
-        let mut taken = cursor.take();
-        if taken.is_none() {
-            drop(taken);
-            drop(cursor);
-            let row_count = prealloc.row_count().map_err(OdbcError::from)?.unwrap_or(0) as i64;
-            return Ok(crate::protocol::encode_row_count_only(row_count));
-        }
-
-        let Some(mut c) = taken.take() else {
-            return Err(OdbcError::InternalError(
-                "Expected result cursor after successful execute".to_string(),
-            ));
-        };
-        let mut row_buffer = RowBuffer::new();
-        let cols_i16 = c.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = c.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = c.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
-
-        let mut cell_reader = CellReader::new();
-        while let Some(mut row) = c.next_row().map_err(OdbcError::from)? {
-            let mut row_data = Vec::with_capacity(column_types.len());
-            for (col_idx, &odbc_type) in column_types.iter().enumerate() {
-                let col_number: u16 = (col_idx + 1)
-                    .try_into()
-                    .map_err(|_| OdbcError::InternalError("Invalid column number".to_string()))?;
-                let cell_data = cell_reader.read_cell_bytes(&mut row, col_number, odbc_type)?;
-                row_data.push(cell_data);
-            }
-            row_buffer.add_row(row_data);
-        }
-
-        coalesce_for_json_rows(&mut row_buffer);
-        RowBufferEncoder::encode_result(&row_buffer)
-    }
-}
-
-fn batch_param_to_param_value(param: &BatchParam) -> ParamValue {
-    match param {
-        BatchParam::String(s) => ParamValue::String(s.clone()),
-        BatchParam::Integer(n) => ParamValue::Integer(*n),
-        BatchParam::BigInt(n) => ParamValue::BigInt(*n),
-        BatchParam::Null => ParamValue::Null,
-    }
-}
-
-/// How [`BatchExecutor::execute_batch_optimized`] binds one param set before ODBC I/O.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BatchParamBindingPlan {
-    Empty,
-    InferenceDirect,
-    PreparedStandard,
-    PreparedNullAware,
-}
-
-pub(crate) fn plan_batch_param_binding(
-    param_values: &[ParamValue],
-) -> Result<BatchParamBindingPlan> {
-    if param_values.is_empty() {
-        return Ok(BatchParamBindingPlan::Empty);
-    }
-    if param_values_to_input_params_with_inference(param_values)?.is_some() {
-        return Ok(BatchParamBindingPlan::InferenceDirect);
-    }
-    if has_null_param(param_values) {
-        return Ok(BatchParamBindingPlan::PreparedNullAware);
-    }
-    Ok(BatchParamBindingPlan::PreparedStandard)
-}
-
-/// Mirrors [`BatchExecutor::execute_batch`] direct vs optimized dispatch (no ODBC).
-pub(crate) fn batch_query_uses_optimized_path(query: &BatchQuery) -> bool {
-    !query.params.is_empty()
-}
-
-/// Mirrors [`BatchExecutor::execute_batch_optimized`] early return when there are no param sets.
-pub(crate) fn should_skip_batch_optimized_execution(param_sets: &[Vec<BatchParam>]) -> bool {
-    param_sets.is_empty()
-}
-
-/// Chunk count for `param_sets.chunks(effective_batch_size)` (no ODBC).
-pub(crate) fn batch_param_set_chunk_count(
-    param_sets_len: usize,
-    effective_batch_size: usize,
-) -> usize {
-    if param_sets_len == 0 {
-        0
-    } else {
-        param_sets_len.div_ceil(effective_batch_size.max(1))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{decode_multi, encode_row_count_only, MultiResultItem, ParamValue};
 
     #[test]
     fn test_batch_query_new() {
@@ -555,63 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn should_plan_empty_param_values_for_prepared_execute_without_binds() {
-        assert_eq!(
-            plan_batch_param_binding(&[]).expect("empty plan"),
-            BatchParamBindingPlan::Empty
-        );
-    }
-
-    #[test]
-    fn should_plan_homogeneous_integer_batch_for_inference_direct_path() {
-        let params = vec![ParamValue::Integer(1), ParamValue::Integer(2)];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("integer inference plan"),
-            BatchParamBindingPlan::InferenceDirect
-        );
-    }
-
-    #[test]
-    fn should_plan_mixed_integer_and_bigint_batch_for_inference_direct_path() {
-        let params = vec![ParamValue::Integer(1), ParamValue::BigInt(2)];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("promoted inference plan"),
-            BatchParamBindingPlan::InferenceDirect
-        );
-    }
-
-    #[test]
-    fn should_plan_non_null_standard_batch_without_inference() {
-        let params = vec![ParamValue::String("a".to_string()), ParamValue::Integer(1)];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("standard plan"),
-            BatchParamBindingPlan::PreparedStandard
-        );
-    }
-
-    #[test]
-    fn should_plan_null_batch_for_prepared_null_aware_path() {
-        let params = vec![
-            ParamValue::String("x".to_string()),
-            ParamValue::Integer(1),
-            ParamValue::Null,
-        ];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("null-aware plan"),
-            BatchParamBindingPlan::PreparedNullAware
-        );
-    }
-
-    #[test]
-    fn should_plan_homogeneous_nullable_integer_batch_for_inference() {
-        let params = vec![ParamValue::Integer(1), ParamValue::Null];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("nullable integer inference"),
-            BatchParamBindingPlan::InferenceDirect
-        );
-    }
-
-    #[test]
     fn should_map_all_batch_param_variants_to_param_values() {
         let cases = [
             (
@@ -628,43 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_batch_optimized_when_param_sets_empty() {
-        assert!(should_skip_batch_optimized_execution(&[]));
-        assert!(!should_skip_batch_optimized_execution(&[vec![
-            BatchParam::Integer(1)
-        ]]));
-    }
-
-    #[test]
-    fn should_plan_bigint_only_batch_for_inference_direct_path() {
-        let params = vec![ParamValue::BigInt(1), ParamValue::BigInt(2)];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("bigint inference"),
-            BatchParamBindingPlan::InferenceDirect
-        );
-    }
-
-    #[test]
-    fn should_plan_string_only_batch_for_inference_direct_path() {
-        let params = vec![ParamValue::String("a".to_string())];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("string inference"),
-            BatchParamBindingPlan::InferenceDirect
-        );
-    }
-
-    #[test]
-    fn should_plan_all_null_batch_for_prepared_null_aware_path() {
-        let params = vec![ParamValue::Null, ParamValue::Null];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("all-null plan"),
-            BatchParamBindingPlan::PreparedNullAware
-        );
-    }
-
-    #[test]
     fn encode_row_count_only_round_trips_through_multi_decoder() {
-        use crate::protocol::{decode_multi, encode_row_count_only, MultiResultItem};
         let wire = encode_row_count_only(99);
         let items = decode_multi(&wire).expect("decode");
         assert_eq!(items, vec![MultiResultItem::RowCount(99)]);
@@ -677,32 +419,6 @@ mod tests {
         parameterized.add_param(BatchParam::Integer(1));
         assert!(!batch_query_uses_optimized_path(&direct));
         assert!(batch_query_uses_optimized_path(&parameterized));
-    }
-
-    #[test]
-    fn should_count_batch_chunks_using_effective_batch_size_helper() {
-        assert_eq!(batch_param_set_chunk_count(0, 10), 0);
-        assert_eq!(batch_param_set_chunk_count(5, 2), 3);
-        assert_eq!(batch_param_set_chunk_count(4, 2), 2);
-        assert_eq!(batch_param_set_chunk_count(3, 0), 3);
-    }
-
-    #[test]
-    fn should_plan_single_null_param_for_prepared_null_aware_path() {
-        let params = vec![ParamValue::Null];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("single null plan"),
-            BatchParamBindingPlan::PreparedNullAware
-        );
-    }
-
-    #[test]
-    fn should_plan_mixed_string_and_integer_for_prepared_standard_path() {
-        let params = vec![ParamValue::String("a".to_string()), ParamValue::Integer(1)];
-        assert_eq!(
-            plan_batch_param_binding(&params).expect("mixed standard plan"),
-            BatchParamBindingPlan::PreparedStandard
-        );
     }
 
     #[test]

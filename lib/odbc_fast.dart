@@ -56,6 +56,7 @@
 /// See [README.md](https://github.com/cesar-carlos/dart_odbc_fast) for more details.
 library;
 
+export 'application/repositories/odbc_repository_extensions.dart';
 export 'application/services/i_admin_service.dart';
 export 'application/services/i_pool_service.dart';
 export 'application/services/i_query_service.dart';

@@ -17,6 +17,8 @@ pub extern "C" fn odbc_pool_create(conn_str: *const c_char, max_size: c_uint) ->
             return 0;
         }
 
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees a
+        // valid NUL-terminated C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(conn_str) }) else {
             return 0;
         };
@@ -48,6 +50,8 @@ pub extern "C" fn odbc_pool_create_with_options(
         if conn_str.is_null() {
             return 0;
         }
+        // SAFETY: `conn_str` is non-null (checked above); caller guarantees a
+        // valid NUL-terminated C string for the duration of this call.
         let Some(c_str) = (unsafe { guard::ptr_to_cstr(conn_str) }) else {
             return 0;
         };

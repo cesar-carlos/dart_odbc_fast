@@ -370,7 +370,8 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 `runInTransactionFor`, ...) so call sites no longer thread
 `connection.id` around.
 
-- Query execution: `executeQuery`, `executeQueryParams`,
+- Query execution: `executeQueryParamValues` (`List<ParamValue>` — preferred),
+  `executeQuery`, `executeQueryParams` (deprecated untyped),
   `executeQueryNamed`, `executeQueryDirectedParams` (DRT1 `IN`/`OUT`/`INOUT`),
   `executeQueryColumnar` (returns `TypedColumnarResult`)
 - Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`,
@@ -428,6 +429,15 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 
 ### Parameterized execution
 
+- **Typed parameters (preferred):** use `executeQueryParamValues` /
+  `executePreparedParamValues` with `List<ParamValue>` (sealed hierarchy in
+  `lib/domain/entities/param_value.dart`). Helpers `paramValuesFromObjects` and
+  `ParamValue.*` constructors build wire-safe values. Directed `OUT` / `INOUT`
+  bindings use `executeQueryDirectedParams` with `List<DirectedParam>`.
+- **Legacy untyped surface:** `executeQuery`, `executeQueryParams`, and related
+  `List<dynamic>` overloads remain available but are `@Deprecated`; migrate to
+  `ParamValue` before the next major release. See
+  [CHANGELOG](CHANGELOG.md) — [Unreleased] for the migration scope.
 - Positional and prepared execution support a dynamic number of parameters,
   subject to the package protocol safety cap and the underlying driver/database.
 - Named placeholders preserve occurrence order. Repeating `@id` or `:id` in the
@@ -475,7 +485,7 @@ connection string:
 
 ### v3.0 — Pool eviction/timeout options
 
-[`PoolOptions`](lib/infrastructure/native/pool_options.dart) +
+[`PoolOptions`](lib/domain/entities/pool_options.dart) +
 [`OdbcPoolFactory`](lib/infrastructure/native/pool_options.dart)
 expose the new FFI `odbc_pool_create_with_options`:
 
@@ -513,7 +523,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.10.0
+  odbc_fast: ^3.10.1
 ```
 
 Then:
@@ -1224,45 +1234,82 @@ Cross-platform Python helper script:
 python scripts/build.py
 ```
 
-For more script options, see [scripts/README.md](scripts/README.md)
+For more script options, see [scripts/README.md](scripts/README.md).
+
+The experimental Cargo feature `columnar-v2` gates sketch constants and the
+`columnar_v2_placeholder` bench only; production columnar encoding and
+`odbc_columnar_decompress` stay on the default build. See
+[`doc/notes/columnar_protocol_sketch.md`](doc/notes/columnar_protocol_sketch.md).
 
 ## Testing
 
+Copy [`.env.example`](.env.example) to `.env` and set `ODBC_TEST_DSN` before
+any live-driver scope. Canonical opt-in flags are listed in
+[doc/TESTING.md](doc/TESTING.md).
+
 ```bash
-# all tests
+# Dart — CI-equivalent unit + docs (no live DSN)
+dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart test/documentation test/example
+
+# Dart — full suite (integration/e2e/stress self-skip without env)
 dart test
 
-# integration
+# Dart — integration (requires ODBC_TEST_DSN)
 dart test test/integration/
 
-# stress
-dart test test/stress/
+# Dart — live DB tests gated by RUN_LIVE_TESTS=1 (see .env.example)
+# Dart — slow/stress: RUN_SKIPPED_TESTS=1
 
-# validation
+# Dart — validation / stress / benchmarks
 dart test test/validation/
-
-# benchmarks (or: python scripts/run_dart_benchmarks.py --smoke --harness)
+dart test test/stress/
 dart run benchmarks/m1_baseline.dart
 dart run benchmarks/m2_performance.dart
+# or: python scripts/run_dart_benchmarks.py --smoke --harness
 
-# rust bulk insert benchmark (array vs parallel)
+# Rust — from native/ (lib unit tests; integration #[ignore] without env)
+cd native
+cargo test --workspace -- --test-threads=1
+
+# Rust E2E — ENABLE_E2E_TESTS=1 + ODBC_TEST_DSN in .env (25 e2e_* suites)
+powershell scripts/run_e2e_tests.ps1           # full incl. slow stress
+powershell scripts/run_e2e_tests.ps1 -Quick    # live E2E only
+./scripts/run_e2e_tests.sh                     # Linux/macOS equivalent
+
+# Rust bulk insert benchmark (array vs parallel; from native/odbc_engine)
 cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture
 ```
 
-Integration/stress tests require `ODBC_TEST_DSN` in `.env` or environment.
-For the Rust bulk benchmark, also set `ENABLE_E2E_TESTS=true`.
-Optional tuning: `BULK_BENCH_SMALL_ROWS` and `BULK_BENCH_MEDIUM_ROWS`.
+| Variable | Scope | Purpose |
+| -------- | ----- | ------- |
+| `ENABLE_E2E_TESTS` | Rust | `1` — run live `e2e_*` integration tests |
+| `RUN_LIVE_TESTS` | Dart | `1` — run DSN-dependent live tests outside integration |
+| `RUN_SKIPPED_TESTS` | Dart | `1` — include slow/stress Dart tests |
+| `ENABLE_SLOW_E2E_TESTS` | Rust | `1` — long-running `#[ignore]` E2E stress paths (`run_e2e_tests` maps `RUN_SKIPPED_TESTS` when unset) |
+
+Optional Rust bulk benchmark tuning: `BULK_BENCH_SMALL_ROWS` and
+`BULK_BENCH_MEDIUM_ROWS`.
 
 ## Project structure
 
 ```text
 dart_odbc_fast/
-|- native/        # Rust workspace (odbc_engine)
-|- lib/           # Dart package sources
-|- hook/          # Native assets hooks
-|- test/          # Test suites
-`- doc/           # Documentation
+├── lib/
+│   ├── application/    # IOdbcService, capability delegates, telemetry decorators
+│   ├── domain/         # entities (ParamValue, PoolOptions), IOdbcRepository, OdbcError
+│   ├── infrastructure/ # FFI, protocol, repository runners, NativeOdbcConnection
+│   ├── core/           # ServiceLocator, logging
+│   └── odbc_fast.dart  # public barrel
+├── native/
+│   └── odbc_engine/    # Rust FFI engine (plugins, protocol, streaming, transaction)
+├── hook/               # Native assets hooks
+├── scripts/            # build, E2E runners, validation
+├── test/               # Dart suites (unit, integration, e2e, stress)
+└── doc/                # Architecture, testing, build guides
 ```
+
+Layering and service wiring: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md).
+Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/ARCHITECTURE.md).
 
 ## Documentation
 

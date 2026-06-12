@@ -1,5 +1,6 @@
 mod dialect_sql;
 mod savepoint;
+mod test_helpers;
 
 pub(crate) use savepoint::resolve_savepoint_dialect_for_engine;
 pub use savepoint::{Savepoint, SavepointDialect};
@@ -200,7 +201,7 @@ pub enum TransactionState {
 }
 
 #[derive(Clone)]
-enum TransactionConnection {
+pub(crate) enum TransactionConnection {
     Regular(SharedHandleManager),
     Pooled(SharedPooledConnection),
 }
@@ -810,121 +811,6 @@ impl Transaction {
         self.connection
             .handles()
             .unwrap_or_else(|| Arc::new(Mutex::new(HandleManager::new())))
-    }
-
-    /// Test-only constructor. Builds a `Transaction` value without touching the
-    /// driver — useful for unit / regression tests that exercise validation
-    /// logic (identifier quoting, state-machine guards) in isolation.
-    /// Hidden from rustdoc; not part of the public API surface.
-    #[doc(hidden)]
-    pub fn for_test(
-        handles: SharedHandleManager,
-        conn_id: u32,
-        state: TransactionState,
-        isolation_level: IsolationLevel,
-    ) -> Self {
-        Self {
-            connection: TransactionConnection::Regular(handles),
-            conn_id,
-            state: Arc::new(Mutex::new(state)),
-            isolation_level,
-            savepoint_dialect: SavepointDialect::Sql92,
-            access_mode: TransactionAccessMode::ReadWrite,
-            lock_timeout: LockTimeout::engine_default(),
-        }
-    }
-
-    /// Test-only constructor that lets the caller pin a specific
-    /// `SavepointDialect`. See [`for_test`] for caveats.
-    #[doc(hidden)]
-    pub fn for_test_with_dialect(
-        handles: SharedHandleManager,
-        conn_id: u32,
-        state: TransactionState,
-        isolation_level: IsolationLevel,
-        savepoint_dialect: SavepointDialect,
-    ) -> Self {
-        Self {
-            connection: TransactionConnection::Regular(handles),
-            conn_id,
-            state: Arc::new(Mutex::new(state)),
-            isolation_level,
-            savepoint_dialect,
-            access_mode: TransactionAccessMode::ReadWrite,
-            lock_timeout: LockTimeout::engine_default(),
-        }
-    }
-
-    /// Test-only constructor that lets the caller pin both the dialect and
-    /// the access mode. See [`for_test`] for caveats.
-    #[doc(hidden)]
-    pub fn for_test_with_access_mode(
-        handles: SharedHandleManager,
-        conn_id: u32,
-        state: TransactionState,
-        isolation_level: IsolationLevel,
-        savepoint_dialect: SavepointDialect,
-        access_mode: TransactionAccessMode,
-    ) -> Self {
-        Self {
-            connection: TransactionConnection::Regular(handles),
-            conn_id,
-            state: Arc::new(Mutex::new(state)),
-            isolation_level,
-            savepoint_dialect,
-            access_mode,
-            lock_timeout: LockTimeout::engine_default(),
-        }
-    }
-
-    /// Test-only constructor that lets the caller pin every dimension
-    /// (dialect + access mode + lock timeout). See [`for_test`] for
-    /// caveats.
-    #[doc(hidden)]
-    pub fn for_test_with_lock_timeout(
-        handles: SharedHandleManager,
-        conn_id: u32,
-        state: TransactionState,
-        isolation_level: IsolationLevel,
-        savepoint_dialect: SavepointDialect,
-        access_mode: TransactionAccessMode,
-        lock_timeout: LockTimeout,
-    ) -> Self {
-        Self {
-            connection: TransactionConnection::Regular(handles),
-            conn_id,
-            state: Arc::new(Mutex::new(state)),
-            isolation_level,
-            savepoint_dialect,
-            access_mode,
-            lock_timeout,
-        }
-    }
-
-    /// Test-only constructor that builds a fresh empty `SharedHandleManager`
-    /// internally — useful for **integration tests** (`tests/`) that cannot
-    /// import the private `handles` module.
-    /// Hidden from rustdoc; not part of the public API surface.
-    #[doc(hidden)]
-    pub fn for_test_no_conn(
-        state: TransactionState,
-        isolation_level: IsolationLevel,
-        savepoint_dialect: SavepointDialect,
-    ) -> Self {
-        let handles: SharedHandleManager =
-            Arc::new(Mutex::new(crate::handles::HandleManager::new()));
-        Self {
-            connection: TransactionConnection::Regular(handles),
-            // u32::MAX is guaranteed not to collide with a real connection id;
-            // identifier validation runs BEFORE any handle lookup so this is
-            // safe for tests that only exercise `savepoint_*` validation paths.
-            conn_id: u32::MAX,
-            state: Arc::new(Mutex::new(state)),
-            isolation_level,
-            savepoint_dialect,
-            access_mode: TransactionAccessMode::ReadWrite,
-            lock_timeout: LockTimeout::engine_default(),
-        }
     }
 }
 

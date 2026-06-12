@@ -8,6 +8,8 @@ use std::os::raw::{c_char, c_int, c_uint};
 #[no_mangle]
 pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_uint {
     crate::ffi_guard_id!(c_uint, {
+        // SAFETY: `sql` must be a valid NUL-terminated C string for this call;
+        // `parse_sql_owned` copies immediately so no foreign pointer is retained.
         let sql_str = match unsafe { parse_sql_owned(sql) } {
             Some(s) => s,
             None => return 0,
@@ -61,6 +63,8 @@ pub extern "C" fn odbc_execute_async_params(
             }
         };
 
+        // SAFETY: `sql` must be a valid NUL-terminated C string for this call;
+        // `parse_sql_owned` copies immediately so no foreign pointer is retained.
         let sql_str = match unsafe { parse_sql_owned(sql) } {
             Some(s) => s,
             None => return 0,
@@ -122,6 +126,8 @@ pub extern "C" fn odbc_execute_async_params_options(
             }
         };
 
+        // SAFETY: `sql` must be a valid NUL-terminated C string for this call;
+        // `parse_sql_owned` copies immediately so no foreign pointer is retained.
         let sql_str = match unsafe { parse_sql_owned(sql) } {
             Some(s) => s,
             None => return 0,

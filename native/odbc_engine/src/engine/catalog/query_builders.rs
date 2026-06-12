@@ -1,212 +1,6 @@
-use crate::engine::core::shared_row_major_pipeline;
-use crate::engine::identifier::validate_identifier;
-use crate::error::{OdbcError, Result};
-use crate::plugins::capabilities::catalog_provider::CatalogQuery;
 use crate::protocol::ParamValue;
-use odbc_api::Connection;
 
-/// Resolve the dialect-specific `CatalogQuery` for the live connection. Falls
-/// back to the supplied default when no `CatalogProvider` plugin matches.
-///
-/// `live_query` is invoked with `&dyn CatalogProvider` *if* the connection's
-/// DBMS name maps to a registered plugin that implements the trait. This is
-/// what makes `list_tables` work on Oracle/Sybase/SQLite/Db2 (which do NOT
-/// have `INFORMATION_SCHEMA`) without changing the FFI signature.
-fn dispatch_catalog<F>(conn: &Connection<'static>, live_query: F) -> Option<Result<CatalogQuery>>
-where
-    F: FnOnce(
-        &dyn crate::plugins::capabilities::catalog_provider::CatalogProvider,
-    ) -> Result<CatalogQuery>,
-{
-    use crate::engine::core::DriverCapabilities;
-    use crate::plugins::{
-        capabilities::catalog_provider::CatalogProvider, db2::Db2Plugin, mariadb::MariaDbPlugin,
-        mysql::MySqlPlugin, oracle::OraclePlugin, postgres::PostgresPlugin,
-        snowflake::SnowflakePlugin, sqlite::SqlitePlugin, sqlserver::SqlServerPlugin,
-        sybase::SybasePlugin, PluginRegistry,
-    };
-
-    // 1. Ask the live connection who it is via `SQLGetInfo(SQL_DBMS_NAME)`.
-    let dbms_name = conn.database_management_system_name().ok()?;
-    let caps = DriverCapabilities::from_driver_name(&dbms_name);
-    let plugin_id = PluginRegistry::plugin_id_for_dbms_name(&caps.driver_name)?;
-
-    // 2. Dispatch to the concrete plugin (each implements `CatalogProvider`).
-    let q = match plugin_id {
-        "sqlserver" => live_query(&SqlServerPlugin::new() as &dyn CatalogProvider),
-        "postgres" => live_query(&PostgresPlugin::new() as &dyn CatalogProvider),
-        "mysql" => live_query(&MySqlPlugin::new() as &dyn CatalogProvider),
-        "mariadb" => live_query(&MariaDbPlugin::new() as &dyn CatalogProvider),
-        "oracle" => live_query(&OraclePlugin::new() as &dyn CatalogProvider),
-        "sybase" => live_query(&SybasePlugin::new() as &dyn CatalogProvider),
-        "sqlite" => live_query(&SqlitePlugin::new() as &dyn CatalogProvider),
-        "db2" => live_query(&Db2Plugin::new() as &dyn CatalogProvider),
-        "snowflake" => live_query(&SnowflakePlugin::new() as &dyn CatalogProvider),
-        _ => return None,
-    };
-    Some(q)
-}
-
-fn execute_catalog_query(conn: &Connection<'static>, q: CatalogQuery) -> Result<Vec<u8>> {
-    let pipeline = shared_row_major_pipeline();
-    if q.params.is_empty() {
-        pipeline.execute_direct(conn, &q.sql)
-    } else {
-        pipeline.execute_with_params(conn, &q.sql, &q.params)
-    }
-}
-
-/// Lists tables. Uses the dialect-specific `CatalogProvider` of the
-/// connection's plugin (Oracle ALL_TABLES, Sybase sysobjects, SQLite
-/// sqlite_master, Db2 SYSCAT, ...) when available, falling back to
-/// `INFORMATION_SCHEMA` for engines without a registered plugin.
-///
-/// Returns binary protocol (same as `odbc_exec_query`).
-pub fn list_tables(
-    conn: &Connection<'static>,
-    catalog: Option<&str>,
-    schema: Option<&str>,
-) -> Result<Vec<u8>> {
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_tables_sql(catalog, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    // Fallback: legacy INFORMATION_SCHEMA path used when no plugin matches.
-    let (sql, params) = information_schema_list_tables_query(catalog, schema);
-
-    let pipeline = shared_row_major_pipeline();
-    if params.is_empty() {
-        pipeline.execute_direct(conn, &sql)
-    } else {
-        pipeline.execute_with_params(conn, &sql, &params)
-    }
-}
-
-/// Parses `schema.table` or bare `table` for catalog ODBC calls.
-///
-/// Structural validation only (non-empty segments after trim). Catalog SQL
-/// binds the returned strings as parameters; callers must not interpolate
-/// untrusted values into identifier positions.
-pub fn parse_catalog_table_ref(table: &str) -> Result<(Option<String>, String)> {
-    validate_and_parse_table(table)
-}
-
-pub(crate) fn validate_and_parse_table(table: &str) -> Result<(Option<String>, String)> {
-    let table = table.trim();
-    if table.is_empty() {
-        return Err(OdbcError::ValidationError(
-            "Table name cannot be empty".to_string(),
-        ));
-    }
-    let (schema, table_name) = if let Some(dot) = table.rfind('.') {
-        let s = table[..dot].trim().to_string();
-        let t = table[dot + 1..].trim();
-        if t.is_empty() {
-            return Err(OdbcError::ValidationError(
-                "Invalid table name (empty after schema)".to_string(),
-            ));
-        }
-        (Some(s), t.to_string())
-    } else {
-        (None, table.to_string())
-    };
-    validate_table_identifiers(schema.as_deref(), &table_name)?;
-    Ok((schema, table_name))
-}
-
-fn validate_table_identifiers(schema: Option<&str>, table_name: &str) -> Result<()> {
-    validate_identifier(table_name)?;
-    if let Some(s) = schema {
-        for segment in s.split('.') {
-            let segment = segment.trim();
-            if segment.is_empty() {
-                return Err(OdbcError::ValidationError(
-                    "Invalid schema (empty segment)".to_string(),
-                ));
-            }
-            validate_identifier(segment)?;
-        }
-    }
-    Ok(())
-}
-
-/// Lists columns for a table. Uses the dialect-specific `CatalogProvider`
-/// when available; falls back to `INFORMATION_SCHEMA.COLUMNS` otherwise.
-pub fn list_columns(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_columns_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    let (sql, params) = information_schema_list_columns_query(&table_name, schema);
-
-    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
-}
-
-/// Returns distinct data types from INFORMATION_SCHEMA.COLUMNS.
-/// Minimal type info for tools; full ODBC SQLGetTypeInfo would require lower-level API.
-/// Returns binary protocol (same as odbc_exec_query).
-pub fn get_type_info(conn: &Connection<'static>) -> Result<Vec<u8>> {
-    shared_row_major_pipeline().execute_direct(conn, information_schema_type_info_sql())
-}
-
-/// Lists primary keys for a table from INFORMATION_SCHEMA.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
-/// Result columns: TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, CONSTRAINT_NAME
-pub fn list_primary_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_primary_keys_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    let (sql, params) = information_schema_list_primary_keys_query(&table_name, schema);
-
-    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
-}
-
-/// Lists foreign keys for a table from INFORMATION_SCHEMA.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
-/// Result columns: CONSTRAINT_NAME, FROM_TABLE, FROM_COLUMN, TO_TABLE, TO_COLUMN, UPDATE_RULE, DELETE_RULE
-pub fn list_foreign_keys(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_foreign_keys_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    let (sql, params) = information_schema_list_foreign_keys_query(&table_name, schema);
-
-    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
-}
-
-/// Lists indexes for a table.
-/// table: TABLE_NAME (and optionally TABLE_SCHEMA via "schema.table").
-/// Returns binary protocol (same as odbc_exec_query).
-/// Result columns: INDEX_NAME, TABLE_NAME, COLUMN_NAME, IS_UNIQUE, IS_PRIMARY, ORDINAL_POSITION
-///
-/// Note: INFORMATION_SCHEMA doesn't have a standard INDEXES view, so this implementation
-/// uses database-specific queries. For maximum portability, we construct a union query
-/// that works across SQL Server, PostgreSQL, MySQL, and Oracle.
-pub fn list_indexes(conn: &Connection<'static>, table: &str) -> Result<Vec<u8>> {
-    let (schema, table_name) = validate_and_parse_table(table)?;
-    let schema = schema.as_deref();
-    if let Some(q) = dispatch_catalog(conn, |p| p.list_indexes_sql(&table_name, schema)) {
-        return execute_catalog_query(conn, q?);
-    }
-
-    // Unified query that works across major databases
-    // We return indexes from constraints (PKs and unique constraints) as a baseline
-    // Note: This is a simplified version; full index metadata would require database-specific queries
-    let (sql, params) = information_schema_list_indexes_query(&table_name, schema);
-
-    shared_row_major_pipeline().execute_with_params(conn, &sql, &params)
-}
-
-/// INFORMATION_SCHEMA fallback for [`list_tables`] when no dialect plugin matches.
+/// INFORMATION_SCHEMA fallback for [`super::list_tables`] when no dialect plugin matches.
 pub(crate) fn information_schema_list_tables_query(
     catalog: Option<&str>,
     schema: Option<&str>,
@@ -257,7 +51,7 @@ pub(crate) fn information_schema_list_tables_query(
     }
 }
 
-/// INFORMATION_SCHEMA fallback for [`list_columns`].
+/// INFORMATION_SCHEMA fallback for [`super::list_columns`].
 pub(crate) fn information_schema_list_columns_query(
     table_name: &str,
     schema: Option<&str>,
@@ -288,14 +82,14 @@ pub(crate) fn information_schema_list_columns_query(
     }
 }
 
-/// INFORMATION_SCHEMA SQL for [`get_type_info`].
+/// INFORMATION_SCHEMA SQL for [`super::get_type_info`].
 pub(crate) fn information_schema_type_info_sql() -> &'static str {
     "SELECT DISTINCT DATA_TYPE AS type_name \
      FROM INFORMATION_SCHEMA.COLUMNS \
      ORDER BY type_name"
 }
 
-/// INFORMATION_SCHEMA fallback for [`list_primary_keys`].
+/// INFORMATION_SCHEMA fallback for [`super::list_primary_keys`].
 pub(crate) fn information_schema_list_primary_keys_query(
     table_name: &str,
     schema: Option<&str>,
@@ -343,7 +137,7 @@ pub(crate) fn information_schema_list_primary_keys_query(
     }
 }
 
-/// INFORMATION_SCHEMA fallback for [`list_foreign_keys`].
+/// INFORMATION_SCHEMA fallback for [`super::list_foreign_keys`].
 pub(crate) fn information_schema_list_foreign_keys_query(
     table_name: &str,
     schema: Option<&str>,
@@ -401,7 +195,7 @@ pub(crate) fn information_schema_list_foreign_keys_query(
     }
 }
 
-/// INFORMATION_SCHEMA fallback for [`list_indexes`].
+/// INFORMATION_SCHEMA fallback for [`super::list_indexes`].
 pub(crate) fn information_schema_list_indexes_query(
     table_name: &str,
     schema: Option<&str>,
@@ -456,55 +250,7 @@ pub(crate) fn information_schema_list_indexes_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_and_parse_table_empty() {
-        let r = validate_and_parse_table("");
-        assert!(r.is_err());
-        let r = validate_and_parse_table("   ");
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_name_only() {
-        let (schema, name) = validate_and_parse_table("mytable").unwrap();
-        assert!(schema.is_none());
-        assert_eq!(name, "mytable");
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_schema_dot_table() {
-        let (schema, name) = validate_and_parse_table("dbo.mytable").unwrap();
-        assert_eq!(schema.as_deref(), Some("dbo"));
-        assert_eq!(name, "mytable");
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_empty_after_dot() {
-        let r = validate_and_parse_table("dbo.");
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_trimmed_schema_and_table() {
-        let (schema, name) = validate_and_parse_table("  dbo  .  mytable  ").unwrap();
-        assert_eq!(schema.as_deref(), Some("dbo"));
-        assert_eq!(name, "mytable");
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_multiple_dots_uses_last_as_separator() {
-        let (schema, name) = validate_and_parse_table("cat.schema.mytable").unwrap();
-        assert_eq!(schema.as_deref(), Some("cat.schema"));
-        assert_eq!(name, "mytable");
-    }
-
-    #[test]
-    fn test_validate_and_parse_table_single_char_table() {
-        let (schema, name) = validate_and_parse_table("x").unwrap();
-        assert!(schema.is_none());
-        assert_eq!(name, "x");
-    }
+    use crate::protocol::ParamValue;
 
     fn assert_string_param(value: &ParamValue, expected: &str) {
         match value {
@@ -650,56 +396,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_and_parse_table_preserves_ascii_table_name_bytes() {
-        let (schema, name) = validate_and_parse_table("dbo.Users_Table1").unwrap();
-        assert_eq!(schema.as_deref(), Some("dbo"));
-        assert_eq!(name, "Users_Table1");
-    }
-
-    #[test]
-    fn should_reject_validate_and_parse_table_when_name_is_only_whitespace() {
-        let err = validate_and_parse_table("   ").unwrap_err();
-        assert!(matches!(err, OdbcError::ValidationError(_)));
-    }
-
-    #[test]
-    fn should_reject_validate_and_parse_table_when_segment_after_dot_is_blank() {
-        let err = validate_and_parse_table("dbo.   ").unwrap_err();
-        assert!(matches!(err, OdbcError::ValidationError(_)));
-    }
-
-    #[test]
     fn information_schema_list_foreign_keys_query_binds_schema_when_provided() {
         let (sql, params) = information_schema_list_foreign_keys_query("child", Some("dbo"));
         assert!(sql.contains("kcu1.TABLE_SCHEMA = ?"));
         assert_eq!(params.len(), 2);
         assert_string_param(&params[0], "dbo");
         assert_string_param(&params[1], "child");
-    }
-
-    #[test]
-    fn should_reject_validate_and_parse_table_when_table_has_sql_injection_chars() {
-        let err = validate_and_parse_table("dbo;drop--").unwrap_err();
-        assert!(matches!(err, OdbcError::ValidationError(_)));
-    }
-
-    #[test]
-    fn should_reject_validate_and_parse_table_when_schema_segment_is_invalid() {
-        let err = validate_and_parse_table("bad-name.mytable").unwrap_err();
-        assert!(matches!(err, OdbcError::ValidationError(_)));
-    }
-
-    #[test]
-    fn should_validate_each_schema_segment_when_qualified_name_has_multiple_dots() {
-        let (schema, name) = validate_and_parse_table("cat.schema.mytable").unwrap();
-        assert_eq!(schema.as_deref(), Some("cat.schema"));
-        assert_eq!(name, "mytable");
-    }
-
-    #[test]
-    fn should_reject_validate_and_parse_table_when_any_schema_segment_is_invalid() {
-        let err = validate_and_parse_table("good.bad-name.mytable").unwrap_err();
-        assert!(matches!(err, OdbcError::ValidationError(_)));
     }
 
     #[test]

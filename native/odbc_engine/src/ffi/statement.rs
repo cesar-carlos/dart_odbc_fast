@@ -17,6 +17,8 @@ pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: 
             return 0;
         }
 
+        // SAFETY: `sql` is non-null (checked above); caller guarantees a valid
+        // NUL-terminated C string for the duration of this call.
         let c_str = unsafe { CStr::from_ptr(sql) };
         let sql_str = match c_str.to_str() {
             Ok(s) => s.to_string(),
