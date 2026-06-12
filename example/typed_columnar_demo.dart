@@ -1,5 +1,5 @@
-// Typed columnar query demo: `executeQueryColumnarParamValues` +
-// `TypedColumnarResult` consumption.
+// Typed columnar query demo: `executeQueryColumnarParamValues`,
+// `streamQueryColumnar`, and `TypedColumnarResult` consumption.
 //
 // Row-major `QueryResult` remains the default. Use the columnar surface when
 // numeric pipelines benefit from `Int32List` / `Int64List` / `Float64List`
@@ -59,9 +59,8 @@ Future<void> main() async {
     result.fold(
       (typed) {
         AppLogger.info('rowCount=${typed.rowCount}');
-        final columnSummary = typed.columns
-            .map((c) => '${c.name}:${c.kind.name}')
-            .join(', ');
+        final columnSummary =
+            typed.columns.map((c) => '${c.name}:${c.kind.name}').join(', ');
         AppLogger.info('columns=$columnSummary');
 
         final ids = typed.column<TypedColumnInt32>('id');
@@ -77,6 +76,24 @@ Future<void> main() async {
       },
       (error) => AppLogger.warning('columnar query failed: $error'),
     );
+
+    var chunkIndex = 0;
+    await for (final chunk in service.streamQueryColumnar(connId, sql)) {
+      chunk.fold(
+        (typed) {
+          AppLogger.info(
+            'streamQueryColumnar chunk $chunkIndex: rowCount=${typed.rowCount}',
+          );
+          final ids = typed.column<TypedColumnInt32>('id');
+          if (typed.rowCount > 0 && !ids.isNullAt(0)) {
+            AppLogger.info('  first id=${ids.values[0]}');
+          }
+        },
+        (error) =>
+            AppLogger.warning('streamQueryColumnar chunk failed: $error'),
+      );
+      chunkIndex++;
+    }
   } finally {
     await service.disconnect(connId);
     locator.shutdown();
