@@ -10,7 +10,7 @@
 
 Current package version: **3.10.1**. The 3.10 line is a backward-compatible
 minor series: additive public APIs only, with a deprecation window opening for
-`IOdbcRepository.getAsyncWorkerPoolStats` and legacy `List<dynamic>` parameter
+legacy `List<dynamic>` parameter APIs removed in 4.0 — use typed `ParamValue`
 overloads. Wire format and exported ABI are unchanged.
 
 - **Sub-interfaces of `IOdbcService`** — `IQueryService`,
@@ -42,9 +42,7 @@ overloads. Wire format and exported ABI are unchanged.
   keeps working.
 - **`IAdminService.getWorkerPoolStats()`** — infallible bridge that
   returns `null` in sync mode instead of `Failure(UnsupportedFeatureError)`.
-  Coexists with `IOdbcRepository.getAsyncWorkerPoolStats()` (now marked
-  `@Deprecated`, kept for at least the next minor per the deprecation
-  policy in `doc/version/VERSIONING_STRATEGY.md`).
+  Replaces the removed `getAsyncWorkerPoolStats()` API from 3.x.
 - **Opt-in performance helpers** — `BinaryProtocolParser.parse(lazyStrings:
   true)` yields `LazyString` for text cells (decoding on demand;
   `==` against `String` literals still works); `SqlPointerCache` keeps a
@@ -469,10 +467,11 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
   `executeQueryParamValuesFromObjects` / `…FromObjectsFor` extension methods
   on `IOdbcRepository`. Directed `OUT` / `INOUT` bindings use
   `executeQueryDirectedParams` with `List<DirectedParam>`.
-- **Legacy untyped surface:** `executeQuery`, `executeQueryParams`, and related
-  `List<dynamic>` overloads remain available but are `@Deprecated`; migrate to
-  `ParamValue` or the `…FromObjects` bridges before the next major release.
-  See [CHANGELOG](CHANGELOG.md) — [Unreleased] for the migration scope.
+- **Typed parameters (4.0+):** use `executeQueryParamValues` /
+  `executePreparedParamValues` with `List<ParamValue>`, or the `…FromObjects`
+  extension bridges on `IOdbcService` / `IOdbcRepository`. Legacy
+  `List<dynamic>` service/repository overloads were removed in 4.0.0 — see
+  [CHANGELOG](CHANGELOG.md) migration table.
 - Positional and prepared execution support a dynamic number of parameters,
   subject to the package protocol safety cap and the underlying driver/database.
 - Named placeholders preserve occurrence order. Repeating `@id` or `:id` in the

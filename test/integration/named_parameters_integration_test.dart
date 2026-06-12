@@ -328,7 +328,7 @@ void main() {
       final stmtId =
           stmtResult.getOrElse((_) => throw Exception('prepare failed'));
 
-      final result = await locator!.syncService.executePrepared(
+      final result = await locator!.syncService.executePreparedParamValuesFromObjects(
         connection.id,
         stmtId,
         [11, 22, 33, 44, 55, 66],
@@ -396,7 +396,7 @@ void main() {
         final connection =
             conn.getOrElse((_) => throw Exception('connect failed'));
 
-        final result = await locator!.syncService.executeQueryMultiParams(
+        final result = await locator!.syncService.executeQueryMultiParamValuesFromObjects(
           connection.id,
           'SELECT ? AS a, ? AS b, ? AS c; SELECT ? AS d, ? AS e, ? AS f;',
           [1, 2, 3, 4, 5, 6],

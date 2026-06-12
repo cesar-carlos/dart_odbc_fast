@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show OdbcMetrics, PreparedStatementMetrics;
@@ -426,7 +427,12 @@ void main() {
       'executePrepared returns ValidationError when statement id is unknown',
       () async {
         final result =
-            await repository.executePrepared(connectionId, 99999, []);
+            await repository.executePreparedParamValuesFromObjects(
+              connectionId,
+              99999,
+              [],
+              null,
+            );
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),
@@ -449,7 +455,12 @@ void main() {
         final id2 = conn2.getOrNull()!.id;
         final prep = await repository.prepare(connectionId, 'SELECT 1');
         final stmtId = prep.getOrNull()!;
-        final result = await repository.executePrepared(id2, stmtId, []);
+        final result = await repository.executePreparedParamValuesFromObjects(
+          id2,
+          stmtId,
+          [],
+          null,
+        );
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),
@@ -612,7 +623,12 @@ void main() {
         expect(clearResult.isSuccess(), isTrue);
 
         final executeResult =
-            await repository.executePrepared(connectionId, stmtId!, []);
+            await repository.executePreparedParamValuesFromObjects(
+              connectionId,
+              stmtId!,
+              [],
+              null,
+            );
         expect(executeResult.isSuccess(), isFalse);
         executeResult.fold(
           (_) => fail('Expected failure'),
@@ -1127,7 +1143,7 @@ void main() {
     test(
       'executeQueryParams returns QueryError when native returns null buffer',
       () async {
-        final result = await repository.executeQueryParams(
+        final result = await repository.executeQueryParamValuesFromObjects(
           connectionId,
           'SELECT 1',
           <dynamic>[],
@@ -1231,7 +1247,7 @@ void main() {
     test(
       'executeQueryMultiParams maps null native buffer to empty multi-result',
       () async {
-        final result = await repository.executeQueryMultiParams(
+        final result = await repository.executeQueryMultiParamValuesFromObjects(
           connectionId,
           'SELECT 1',
           <dynamic>[],

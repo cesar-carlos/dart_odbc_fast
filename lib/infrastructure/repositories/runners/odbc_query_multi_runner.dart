@@ -219,10 +219,10 @@ class OdbcQueryMultiRunner {
     );
   }
 
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
-    List<dynamic> params,
+    List<ParamValue> params,
   ) async {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
@@ -235,9 +235,8 @@ class OdbcQueryMultiRunner {
 
     Future<Result<QueryResultMulti>> run() async {
       try {
-        final paramValues = paramValuesFromObjects(params);
         final paramsBuffer =
-            paramValues.isEmpty ? null : serializeParams(paramValues);
+            params.isEmpty ? null : serializeParams(params);
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryMultiParams(
                 nativeId,

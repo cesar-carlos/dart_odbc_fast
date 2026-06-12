@@ -10,19 +10,6 @@ import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped `IOdbcService` forwards for the telemetry decorator façade.
 mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      query.executeQueryParams(
-        connectionId,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
-      );
-
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
@@ -59,14 +46,6 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int timeoutMs = 0,
   }) =>
       query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
-
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) =>
-      query.executePrepared(connectionId, stmtId, params, options);
 
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
@@ -112,13 +91,6 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
   ) =>
       query.executeQueryMultiFull(connectionId, sql);
 
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) =>
-      query.executeQueryMultiParams(connectionId, sql, params);
-
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
@@ -145,13 +117,6 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     Map<String, Object?> namedParams,
   ) =>
       query.streamQueryNamed(connectionId, sql, namedParams);
-
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) =>
-      query.executeQueryColumnar(connectionId, sql, params: params);
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
@@ -242,12 +207,10 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
 
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   }) =>
       query.executeQuery(
         sql,
-        params: params,
         connectionId: connectionId,
       );
 }

@@ -8,8 +8,6 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
-    show paramValuesFromObjects;
 import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped telemetry delegate for the ODBC service decorator façade.
@@ -19,22 +17,6 @@ class TelemetryOdbcQueryDecorator {
 
   final IOdbcService _service;
   final TelemetryOdbcOperations _ops;
-
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      _ops.inOperation(
-        'ODBC.executeQueryParams',
-        () => _service.executeQueryParamValues(
-          connectionId,
-          sql,
-          paramValuesFromObjects(params),
-          resultEncoding: resultEncoding,
-        ),
-      );
 
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
@@ -86,24 +68,6 @@ class TelemetryOdbcQueryDecorator {
       _ops.inOperation(
         'ODBC.prepareNamed',
         () => _service.prepareNamed(connectionId, sql, timeoutMs: timeoutMs),
-      );
-
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) =>
-      _ops.inOperation(
-        'ODBC.executePrepared',
-        () => _service.executePreparedParamValues(
-          connectionId,
-          stmtId,
-          params == null || params.isEmpty
-              ? null
-              : paramValuesFromObjects(params),
-          options,
-        ),
       );
 
   Future<Result<QueryResult>> executePreparedParamValues(
@@ -168,20 +132,6 @@ class TelemetryOdbcQueryDecorator {
         () => _service.executeQueryMultiFull(connectionId, sql),
       );
 
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryMultiParams',
-        () => _service.executeQueryMultiParamValues(
-          connectionId,
-          sql,
-          paramValuesFromObjects(params),
-        ),
-      );
-
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
@@ -219,20 +169,6 @@ class TelemetryOdbcQueryDecorator {
       _ops.wrapStream(
         'ODBC.streamQueryNamed',
         () => _service.streamQueryNamed(connectionId, sql, namedParams),
-      );
-
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) =>
-      _ops.inOperation(
-        'ODBC.executeQueryColumnar',
-        () => _service.executeQueryColumnarParamValues(
-          connectionId,
-          sql,
-          params: params == null ? null : paramValuesFromObjects(params),
-        ),
       );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -354,7 +290,6 @@ class TelemetryOdbcQueryDecorator {
 
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   }) =>
       _ops.inOperation(
@@ -371,9 +306,7 @@ class TelemetryOdbcQueryDecorator {
           return _service.executeQueryParamValues(
             cid,
             sql,
-            params == null || params.isEmpty
-                ? const <ParamValue>[]
-                : paramValuesFromObjects(params),
+            const <ParamValue>[],
           );
         },
       );

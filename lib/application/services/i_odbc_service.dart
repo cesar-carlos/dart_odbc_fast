@@ -54,18 +54,6 @@ abstract class IOdbcService
   @override
   Future<Result<void>> disconnect(String connectionId);
 
-  @Deprecated(
-    'Use executeQueryParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  });
-
   /// Typed positional parameters via [ParamValue] wire tags.
   ///
   /// Same FFI path as positional `executeQueryParams`; avoids
@@ -140,8 +128,10 @@ abstract class IOdbcService
   /// final result = await service.runInTransaction<int>(
   ///   connId,
   ///   (txnId) async {
-  ///     final r1 = await service.executeQueryParams(
-  ///       connId, 'INSERT INTO logs(msg) VALUES (?)', ['hi'],
+  ///     final r1 = await service.executeQueryParamValues(
+  ///       connId,
+  ///       'INSERT INTO logs(msg) VALUES (?)',
+  ///       [ParamValueString('hi')],
   ///     );
   ///     if (r1.isError()) return Failure(r1.exceptionOrNull()!);
   ///     return const Success(42);
@@ -205,19 +195,6 @@ abstract class IOdbcService
     int timeoutMs = 0,
   });
 
-  /// Migration: prefer [executePreparedParamValues] for typed parameters.
-  @Deprecated(
-    'Use executePreparedParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  );
-
-  /// Typed sibling of positional `executePrepared`.
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
     int stmtId,
@@ -256,18 +233,6 @@ abstract class IOdbcService
   ///
   /// Supports positional `?` parameters using the same wire format as
   /// [executeQueryMultiFull]. New in v3.2.0.
-  /// Migration: prefer [executeQueryMultiParamValues].
-  @Deprecated(
-    'Use executeQueryMultiParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  );
-
-  /// Typed sibling of `executeQueryMultiParams`.
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
@@ -300,17 +265,6 @@ abstract class IOdbcService
     String sql,
     Map<String, Object?> namedParams,
   );
-
-  @Deprecated(
-    'Use executeQueryColumnarParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  @override
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  });
 
   @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -399,12 +353,6 @@ abstract class IOdbcService
   @override
   Future<Result<OdbcMetrics>> getMetrics();
 
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode instead of '
-    'Failure. Will be removed in a future major release.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
-
   bool isInitialized();
 
   Future<Result<void>> clearStatementCache();
@@ -476,14 +424,9 @@ abstract class IOdbcService
 
   Future<String?> detectDriver(String connectionString);
 
-  @Deprecated(
-    'Use executeQueryParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
   @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   });
 

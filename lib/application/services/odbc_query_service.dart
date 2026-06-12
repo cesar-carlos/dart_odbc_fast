@@ -8,8 +8,6 @@ import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
-    show paramValuesFromObjects;
 import 'package:result_dart/result_dart.dart';
 
 /// Query / catalog / bulk capability delegate for the ODBC service façade.
@@ -17,19 +15,6 @@ class OdbcQueryService {
   OdbcQueryService(this._repository);
 
   final IOdbcRepository _repository;
-
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      executeQueryParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-        resultEncoding: resultEncoding,
-      );
 
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
@@ -67,21 +52,6 @@ class OdbcQueryService {
     int timeoutMs = 0,
   }) =>
       _repository.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
-
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) =>
-      executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
-        options,
-      );
 
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
@@ -127,17 +97,6 @@ class OdbcQueryService {
   ) =>
       _repository.executeQueryMultiFull(connectionId, sql);
 
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) =>
-      executeQueryMultiParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-      );
-
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
@@ -164,17 +123,6 @@ class OdbcQueryService {
     Map<String, Object?> namedParams,
   ) =>
       _repository.streamQueryNamed(connectionId, sql, namedParams);
-
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) =>
-      executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params: params == null ? null : paramValuesFromObjects(params),
-      );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
@@ -277,7 +225,6 @@ class OdbcQueryService {
 
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   }) async {
     if (connectionId == null || connectionId.isEmpty) {
@@ -291,9 +238,7 @@ class OdbcQueryService {
     return executeQueryParamValues(
       connectionId,
       sql,
-      params == null || params.isEmpty
-          ? const <ParamValue>[]
-          : paramValuesFromObjects(params),
+      const <ParamValue>[],
     );
   }
 }

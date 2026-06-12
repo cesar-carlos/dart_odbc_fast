@@ -68,20 +68,6 @@ class OdbcAdminRunner {
     }
   }
 
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
-    if (!ffi.isAsync) {
-      return const Failure(
-        UnsupportedFeatureError(
-          message: 'Async worker-pool stats require async native backend',
-        ),
-      );
-    }
-
-    return Success(
-      ffi.async.getWorkerPoolStats(),
-    );
-  }
-
   Future<AsyncWorkerPoolStats?> getWorkerPoolStats() async {
     return switch (ffi.backend) {
       SyncBackend() => null,

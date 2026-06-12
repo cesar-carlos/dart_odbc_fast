@@ -87,20 +87,6 @@ class OdbcService implements IOdbcService {
       _admin.disconnect(connectionId);
 
   @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      _query.executeQueryParams(
-        connectionId,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
-      );
-
-  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
@@ -223,15 +209,6 @@ class OdbcService implements IOdbcService {
       _query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
 
   @override
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) =>
-      _query.executePrepared(connectionId, stmtId, params, options);
-
-  @override
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
     int stmtId,
@@ -282,14 +259,6 @@ class OdbcService implements IOdbcService {
       _query.executeQueryMultiFull(connectionId, sql);
 
   @override
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) =>
-      _query.executeQueryMultiParams(connectionId, sql, params);
-
-  @override
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
@@ -319,14 +288,6 @@ class OdbcService implements IOdbcService {
     Map<String, Object?> namedParams,
   ) =>
       _query.streamQueryNamed(connectionId, sql, namedParams);
-
-  @override
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) =>
-      _query.executeQueryColumnar(connectionId, sql, params: params);
 
   @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -464,14 +425,6 @@ class OdbcService implements IOdbcService {
   Future<Result<OdbcMetrics>> getMetrics() => _admin.getMetrics();
 
   @override
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode. '
-    'Will be removed alongside IOdbcRepository.getAsyncWorkerPoolStats.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
-      _admin.getAsyncWorkerPoolStats();
-
-  @override
   bool isInitialized() => _admin.isInitialized();
 
   @override
@@ -590,10 +543,9 @@ class OdbcService implements IOdbcService {
   @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   }) =>
-      _query.executeQuery(sql, params: params, connectionId: connectionId);
+      _query.executeQuery(sql, connectionId: connectionId);
 
   @override
   void dispose() => _repository.dispose();

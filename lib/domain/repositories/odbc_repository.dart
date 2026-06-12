@@ -31,11 +31,11 @@ import 'package:result_dart/result_dart.dart';
 /// Implementations should handle errors and return [Result] types
 /// for type-safe error handling.
 ///
-/// **Migrating off `List<dynamic>` parameters:** prefer
-/// [executeQueryParamValues], [executePreparedParamValues], and
-/// [executeQueryMultiParamValues] with explicit [ParamValue] tags, or the
-/// `…FromObjects` / `…ParamValuesFromObjects` extension methods on
-/// `IOdbcRepository` (see `odbc_repository_extensions.dart`, exported from
+/// **Typed parameters:** use [executeQueryParamValues],
+/// [executePreparedParamValues], and [executeQueryMultiParamValues] with
+/// explicit [ParamValue] tags, or the `…FromObjects` /
+/// `…ParamValuesFromObjects` extension methods on `IOdbcRepository` (see
+/// `odbc_repository_extensions.dart`, exported from
 /// `package:odbc_fast/odbc_fast.dart`). Use [paramValuesFromObjects] when
 /// building typed tag lists from plain Dart values.
 abstract class IOdbcRepository {
@@ -215,20 +215,6 @@ abstract class IOdbcRepository {
   ///
   /// The [options] can override timeout and fetch size for this execution.
   ///
-  /// Migration: prefer [executePreparedParamValues] for new code. Untyped
-  /// `List<dynamic>?` parameters remain supported but will be removed in a
-  /// future major release once call sites migrate to [ParamValue].
-  @Deprecated(
-    'Use executePreparedParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  );
-
   /// Typed positional execution for statements prepared with [prepare].
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
@@ -266,20 +252,6 @@ abstract class IOdbcRepository {
   /// Convenience method that combines prepare and execute in a single call.
   /// The [params] list should contain values for each '?' placeholder in [sql].
   ///
-  /// Migration: prefer [executeQueryParamValues] for new code. Untyped
-  /// `List<dynamic>` parameters remain supported but will be removed in a
-  /// future major release once call sites migrate to [ParamValue].
-  @Deprecated(
-    'Use executeQueryParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  });
-
   /// Typed positional parameters via [ParamValue] wire tags.
   ///
   /// Preferred positional execute API using explicit [ParamValue] wire tags.
@@ -355,19 +327,6 @@ abstract class IOdbcRepository {
   /// Same wire format as [executeQueryMultiFull] but accepts positional `?`
   /// parameters. New in v3.2.0 (M5).
   ///
-  /// Migration: prefer [executeQueryMultiParamValues] for new code. Untyped
-  /// `List<dynamic>` parameters remain supported but will be removed in a
-  /// future major release once call sites migrate to [ParamValue].
-  @Deprecated(
-    'Use executeQueryMultiParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  );
-
   /// Typed positional multi-result execute API.
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
@@ -521,18 +480,7 @@ abstract class IOdbcRepository {
 
   /// Gets async worker-pool diagnostics when the backend is async.
   ///
-  /// Returns `Failure(UnsupportedFeatureError)` in sync mode. Prefer
-  /// the infallible [getWorkerPoolStats] for new code: it returns
-  /// `null` in sync mode, which is friendlier for dashboards and
-  /// admin endpoints that prefer "stats not available" over a typed
-  /// failure.
-  @Deprecated(
-    'Use getWorkerPoolStats() — it returns null in sync mode instead of '
-    'a typed Failure. This API will be removed in a future major release.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats();
-
-  /// Convenience variant that returns `null` in sync mode instead of
+  /// Returns `null` in sync mode instead of
   /// `UnsupportedFeatureError`. Suitable for dashboards /
   /// `IAdminService` consumers that prefer "stats not available" over
   /// a typed failure. Infallible by design.

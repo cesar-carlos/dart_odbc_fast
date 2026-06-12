@@ -39,16 +39,6 @@ class TelemetryOdbcAdminDecorator {
   Future<Result<OdbcMetrics>> getMetrics() =>
       _ops.inOperation('ODBC.getMetrics', _service.getMetrics);
 
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode. '
-    'Will be removed alongside the IOdbcService deprecation.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
-      _ops.inOperation(
-        'ODBC.getAsyncWorkerPoolStats',
-        _service.getAsyncWorkerPoolStats,
-      );
-
   bool isInitialized() => _service.isInitialized();
 
   Future<Result<void>> clearStatementCache() => _ops.inOperation(

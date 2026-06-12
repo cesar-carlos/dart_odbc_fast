@@ -68,7 +68,7 @@ Future<void> _demoExecuteQueryParams(
   OdbcService service,
   String connectionId,
 ) async {
-  final result = await service.executeQueryParams(
+  final result = await service.executeQueryParamValuesFromObjects(
     connectionId,
     'SELECT ? AS number_value, ? AS text_value',
     [42, 'params-ok'],
@@ -94,7 +94,7 @@ Future<void> _demoPrepareExecuteClose(
     return;
   }
 
-  final exec = await service.executePrepared(
+  final exec = await service.executePreparedParamValuesFromObjects(
     connectionId,
     stmtId,
     [9001, 'prepared-row'],

@@ -24,8 +24,6 @@ import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
-    show paramValuesFromObjects;
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_admin_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_bulk_runner.dart';
@@ -277,29 +275,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       _query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
 
   @override
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId, [
-    List<dynamic>? params,
-    StatementOptions? options,
-  ]) =>
-      executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
-        options,
-      );
-
-  @override
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
     StatementOptions? options,
   ) =>
-      _query.executePrepared(connectionId, stmtId, params, options);
+      _query.executePreparedParamValues(connectionId, stmtId, params, options);
 
   @override
   Future<Result<QueryResult>> executePreparedNamed(
@@ -324,27 +306,13 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       _query.cancelStatement(connectionId, stmtId);
 
   @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      executeQueryParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-        resultEncoding: resultEncoding,
-      );
-
-  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
-      _query.executeQueryParams(
+      _query.executeQueryParamValues(
         connectionId,
         sql,
         params,
@@ -404,24 +372,12 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       _query.executeQueryMultiFull(connectionId, sql);
 
   @override
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) =>
-      executeQueryMultiParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-      );
-
-  @override
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params,
   ) =>
-      _query.executeQueryMultiParams(connectionId, sql, params);
+      _query.executeQueryMultiParamValues(connectionId, sql, params);
 
   @override
   Future<Result<QueryResult>> catalogTables(
@@ -530,14 +486,6 @@ class OdbcRepositoryImpl implements IOdbcRepository {
 
   @override
   Future<Result<OdbcMetrics>> getMetrics() => _admin.getMetrics();
-
-  @override
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
-      _admin.getAsyncWorkerPoolStats();
 
   @override
   Future<AsyncWorkerPoolStats?> getWorkerPoolStats() =>

@@ -60,6 +60,7 @@ export 'application/repositories/odbc_repository_extensions.dart';
 export 'application/services/i_admin_service.dart';
 export 'application/services/i_pool_service.dart';
 export 'application/services/i_query_service.dart';
+export 'application/services/i_query_service_extensions.dart';
 export 'application/services/i_transaction_service.dart';
 export 'application/services/odbc_service.dart';
 export 'core/di/async_backpressure_mode.dart';

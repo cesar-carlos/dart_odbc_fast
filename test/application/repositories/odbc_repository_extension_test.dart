@@ -43,20 +43,6 @@ class _FakeRepository implements IOdbcRepository {
   }
 
   @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) async {
-    capturedConnectionId = connectionId;
-    capturedSql = sql;
-    capturedPositionalParams = params;
-    capturedEncoding = resultEncoding;
-    return const Success(_emptyResult);
-  }
-
-  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,

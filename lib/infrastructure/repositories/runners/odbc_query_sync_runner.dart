@@ -97,10 +97,10 @@ class OdbcQuerySyncRunner {
     );
   }
 
-  Future<Result<QueryResult>> executeQueryParams(
+  Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
-    List<dynamic> params, {
+    List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final nativeId = state.connectionIds[connectionId];
@@ -114,14 +114,13 @@ class OdbcQuerySyncRunner {
 
     Future<Result<QueryResult>> run() async {
       try {
-        final pv = paramValuesFromObjects(params);
         final maxBytes = opts?.maxResultBufferBytes;
         final queryTimeout = opts?.queryTimeout;
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryParams(
                 nativeId,
                 sql,
-                pv,
+                params,
                 maxBufferBytes: maxBytes,
                 timeout: queryTimeout,
                 resultEncoding: resultEncoding,
@@ -129,7 +128,7 @@ class OdbcQuerySyncRunner {
             : ffi.sync.executeQueryParams(
                 nativeId,
                 sql,
-                pv,
+                params,
                 maxBufferBytes: maxBytes,
                 resultEncoding: resultEncoding,
               );
@@ -199,7 +198,11 @@ class OdbcQuerySyncRunner {
         namedParams: namedParams,
         paramNames: extract.paramNames,
       );
-      return executeQueryParams(connectionId, extract.cleanedSql, positional);
+      return executeQueryParamValues(
+        connectionId,
+        extract.cleanedSql,
+        paramValuesFromObjects(positional),
+      );
     } on ParameterMissingException catch (e) {
       return Failure<QueryResult, OdbcError>(
         ValidationError(message: e.message),

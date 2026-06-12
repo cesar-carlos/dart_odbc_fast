@@ -20,24 +20,6 @@ import 'package:result_dart/result_dart.dart';
 /// Mirrors `OdbcQueryService` behaviour so repository consumers do not need
 /// the service façade for column-major reads.
 extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
-  /// Executes SQL and returns a typed column-major result.
-  @Deprecated(
-    'Use executeQueryColumnarParamValues() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) =>
-      executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params: params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
-      );
-
   /// Typed columnar execute using [ParamValue] wire tags.
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
@@ -94,24 +76,6 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql,
   ) =>
       executeQuery(conn.id, sql);
-
-  /// `executeQueryParams` overload that accepts a [Connection].
-  @Deprecated(
-    'Use executeQueryParamValuesFor() with typed ParamValue parameters. '
-    'Will be removed in a future major release.',
-  )
-  Future<Result<QueryResult>> executeQueryParamsFor(
-    Connection conn,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) =>
-      executeQueryParams(
-        conn.id,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
-      );
 
   /// `executeQueryParamValues` overload that accepts a [Connection].
   Future<Result<QueryResult>> executeQueryParamValuesFor(
@@ -220,7 +184,7 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
 
 /// Typed positional helpers that convert plain Dart values to wire tags.
 ///
-/// Preferred over deprecated `List<dynamic>` repository methods for new code.
+/// Typed positional helpers that convert plain Dart values to wire tags.
 extension IOdbcRepositoryTypedParamExtensions on IOdbcRepository {
   /// Positional execute with automatic [ParamValue] conversion.
   Future<Result<QueryResult>> executeQueryParamValuesFromObjects(

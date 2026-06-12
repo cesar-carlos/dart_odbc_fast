@@ -7,11 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-06-12
+
+Major breaking release completing the typed-parameter migration and removing
+legacy Dart APIs deprecated since v3.9–v3.10. Native ABI, wire-format
+(`MAGIC = 0x4F444243`, MULT v2), and exported Rust symbols are unchanged.
+
+### Removed — breaking Dart API cleanup
+
+- **Untyped `List<dynamic>` parameter surfaces** on `IQueryService`,
+  `IOdbcService`, `IOdbcRepository`, telemetry decorators, and repository
+  runners:
+  - `executeQueryParams` → `executeQueryParamValues` or
+    `executeQueryParamValuesFromObjects`
+  - `executePrepared` → `executePreparedParamValues` or
+    `executePreparedParamValuesFromObjects`
+  - `executeQueryMultiParams` → `executeQueryMultiParamValues` or
+    `executeQueryMultiParamValuesFromObjects`
+  - `executeQueryColumnar` → `executeQueryColumnarParamValues` or
+    `executeQueryColumnarFromObjects`
+  - `executeQuery(sql, {params, connectionId})` no longer accepts `params`;
+    use typed execute APIs or `executeQuery(sql, connectionId: id)` for
+    parameterless convenience queries.
+- **Deprecated connection overloads:** `executeQueryParamsFor`,
+  `executeQueryColumnarFor`, and repository `executeQueryParamsFor`.
+- **`QueryResultMulti.firstResultSet`** — use `firstResultSetOrNull` (distinguishes
+  “no cursor” from “empty cursor”).
+- **`MultiResultItem(...)` legacy factory** — use `MultiResultItemResultSet` /
+  `MultiResultItemRowCount`.
+- **`getAsyncWorkerPoolStats()`** — use `getWorkerPoolStats()` (`null` in sync
+  mode).
+
+### Added
+
+- **`IQueryService` / `IOdbcService` typed bridges** in
+  `i_query_service_extensions.dart`: `executeQueryParamValuesFromObjects`,
+  `executePreparedParamValuesFromObjects`, `executeQueryMultiParamValuesFromObjects`,
+  `executeQueryColumnarFromObjects` (exported from `package:odbc_fast/odbc_fast.dart`
+  and re-exported via `ServiceLocator` for DI consumers).
+
+### Migration guide (3.x → 4.0)
+
+| 3.x (removed) | 4.0 replacement |
+|---------------|-----------------|
+| `executeQueryParams(id, sql, [1, 'a'])` | `executeQueryParamValuesFromObjects(id, sql, [1, 'a'])` or `executeQueryParamValues(id, sql, paramValuesFromObjects([...]))` |
+| `executePrepared(id, stmt, [val], opts)` | `executePreparedParamValuesFromObjects(id, stmt, [val], opts)` |
+| `executeQueryMultiParams(id, sql, params)` | `executeQueryMultiParamValuesFromObjects(...)` |
+| `executeQuery(sql, params: [...], connectionId: id)` | `executeQueryParamValuesFromObjects(id, sql, [...])` |
+| `result.firstResultSet` | `result.firstResultSetOrNull ?? QueryResult(...)` when a placeholder is required |
+| `getAsyncWorkerPoolStats()` | `getWorkerPoolStats()` |
+
+`QueryResult.rows` remains `List<List<dynamic>>`; use `QueryResultAccess` for
+typed reads. Native low-level APIs (`NativeOdbcConnection.executeQueryParams`,
+`executePrepared`) are unchanged.
+
+### Changed — internal refactor (carried from 3.10.x prep, no ABI change)
+
 Internal refactor and audit pass across the Rust native engine and Dart
 layers. No public ABI, wire-format (`MAGIC = 0x4F444243`, MULT v2), or
-exported-symbol changes; `pubspec.yaml` version is unchanged. Behaviour is
-preserved; the work improves module boundaries, test isolation, and
-maintainability ahead of the typed-parameter migration.
+exported-symbol changes. Behaviour is preserved; the work improves module
+boundaries, test isolation, and maintainability.
 
 ### Changed — Dart clean architecture and service modularization
 
@@ -66,20 +121,6 @@ maintainability ahead of the typed-parameter migration.
   `TelemetryOdbcAdminDecorator`, and `TelemetryOdbcTransactionDecorator`
   with shared helpers in `telemetry_odbc_operations.dart`; the root decorator
   is a thin façade matching the `OdbcService` delegate layout.
-
-### Deprecated — soft migration away from `List<dynamic>` parameters (phase 3)
-
-Non-breaking `@Deprecated` annotations on legacy untyped parameter surfaces.
-Phase 3 completes the annotation pass across service, repository, telemetry,
-and test contracts. Callers should migrate to `executeQueryParamValues()` with
-`List<ParamValue>` or `executeQueryDirectedParams()` for `OUT` / `INOUT`
-bindings. Removal is planned for a future major release only.
-
-- `IQueryService` / `IOdbcService`: `executeQuery`, `executeQueryParams`,
-  prepared and multi-result variants that accept `List<dynamic>`.
-- `IOdbcRepository`: matching repository-level overloads.
-- Capability telemetry decorators and test fakes mirror the same deprecation
-  messages for contract parity.
 
 ### Changed — Rust native engine module splits
 

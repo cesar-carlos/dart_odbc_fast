@@ -44,13 +44,6 @@ class OdbcAdminService {
 
   Future<Result<OdbcMetrics>> getMetrics() => _repository.getMetrics();
 
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode. '
-    'Will be removed alongside IOdbcRepository.getAsyncWorkerPoolStats.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
-      _repository.getAsyncWorkerPoolStats();
-
   bool isInitialized() => _repository.isInitialized();
 
   Future<Result<void>> clearStatementCache() =>

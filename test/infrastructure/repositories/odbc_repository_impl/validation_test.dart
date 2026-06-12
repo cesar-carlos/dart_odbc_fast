@@ -1,4 +1,5 @@
 
+import 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
@@ -61,7 +62,7 @@ void main() {
 
     test('executeQueryParams returns ValidationError when connectionId invalid',
         () async {
-      final result = await repository.executeQueryParams(
+      final result = await repository.executeQueryParamValuesFromObjects(
         'invalid-id',
         'SELECT 1',
         [],
@@ -355,7 +356,7 @@ void main() {
           'SELECT ?',
           null,
         ),
-        await repository.executeQueryMultiParams(
+        await repository.executeQueryMultiParamValuesFromObjects(
           'invalid-id',
           'SELECT ?',
           [1],
@@ -529,10 +530,11 @@ void main() {
 
     test('executePrepared returns ValidationError when connectionId invalid',
         () async {
-      final result = await repository.executePrepared(
+      final result = await repository.executePreparedParamValuesFromObjects(
         'invalid-id',
         1,
         [],
+        null,
       );
       expect(result.isSuccess(), isFalse);
       result.fold(
@@ -674,7 +676,7 @@ void main() {
       'executeQueryParams rejects whitespace-only connection id',
       () async {
         expectInvalidConnectionId(
-          await repository.executeQueryParams('  \t  ', 'SELECT 1', []),
+          await repository.executeQueryParamValuesFromObjects('  \t  ', 'SELECT 1', []),
         );
       },
     );

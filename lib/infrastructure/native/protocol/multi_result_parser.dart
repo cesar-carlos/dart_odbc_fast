@@ -33,34 +33,19 @@ const int _headerV2Len = 12;
 /// }
 /// ```
 ///
-/// The legacy two-field constructor
-/// (`MultiResultItem(resultSet:..., rowCount:...)`) is preserved as a
-/// deprecated factory so existing code keeps compiling for one minor cycle.
 sealed class MultiResultItem {
-  /// Legacy constructor preserved for one minor cycle. Prefer building items
-  /// via [MultiResultItemResultSet] or [MultiResultItemRowCount] directly.
-  @Deprecated('Use MultiResultItemResultSet / MultiResultItemRowCount instead.')
-  const factory MultiResultItem({
-    required ParsedRowBuffer? resultSet,
-    required int? rowCount,
-  }) = _LegacyMultiResultItem;
-
   const MultiResultItem._();
 
-  /// Backward-compatible accessor: returns the result set if this is a
-  /// [MultiResultItemResultSet], otherwise `null`.
+  /// Returns the result set if this is a [MultiResultItemResultSet].
   ParsedRowBuffer? get resultSet => switch (this) {
         MultiResultItemResultSet(:final value) => value,
         MultiResultItemRowCount() => null,
-        _LegacyMultiResultItem(:final resultSetField) => resultSetField,
       };
 
-  /// Backward-compatible accessor: returns the row count if this is a
-  /// [MultiResultItemRowCount], otherwise `null`.
+  /// Returns the row count if this is a [MultiResultItemRowCount].
   int? get rowCount => switch (this) {
         MultiResultItemResultSet() => null,
         MultiResultItemRowCount(:final value) => value,
-        _LegacyMultiResultItem(:final rowCountField) => rowCountField,
       };
 }
 
@@ -74,21 +59,6 @@ final class MultiResultItemResultSet extends MultiResultItem {
 final class MultiResultItemRowCount extends MultiResultItem {
   const MultiResultItemRowCount(this.value) : super._();
   final int value;
-}
-
-/// Legacy concrete class returned by the deprecated 2-field constructor.
-/// Lets old callers that did `MultiResultItem(resultSet: rs, rowCount: null)`
-/// keep compiling. Internally normalises to one of the variants when read
-/// back through the sealed accessors.
-final class _LegacyMultiResultItem extends MultiResultItem {
-  const _LegacyMultiResultItem({
-    required ParsedRowBuffer? resultSet,
-    required int? rowCount,
-  })  : resultSetField = resultSet,
-        rowCountField = rowCount,
-        super._();
-  final ParsedRowBuffer? resultSetField;
-  final int? rowCountField;
 }
 
 /// Parser for multi-result protocol.

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/directed_param.dart';
+import 'package:odbc_fast/domain/entities/param_value.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
@@ -66,13 +67,13 @@ class OdbcQueryRunner {
   ) =>
       _sync.executeQuery(connectionId, sql);
 
-  Future<Result<QueryResult>> executeQueryParams(
+  Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
-    List<dynamic> params, {
+    List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
-      _sync.executeQueryParams(
+      _sync.executeQueryParamValues(
         connectionId,
         sql,
         params,
@@ -118,12 +119,12 @@ class OdbcQueryRunner {
   ) =>
       _multi.executeQueryMultiFull(connectionId, sql);
 
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
+  Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
-    List<dynamic> params,
+    List<ParamValue> params,
   ) =>
-      _multi.executeQueryMultiParams(connectionId, sql, params);
+      _multi.executeQueryMultiParamValues(connectionId, sql, params);
 
   Future<Result<int>> prepare(
     String connectionId,
@@ -139,13 +140,18 @@ class OdbcQueryRunner {
   }) =>
       _prepared.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
 
-  Future<Result<QueryResult>> executePrepared(
+  Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
-    int stmtId, [
-    List<dynamic>? params,
+    int stmtId,
+    List<ParamValue>? params,
     StatementOptions? options,
-  ]) =>
-      _prepared.executePrepared(connectionId, stmtId, params, options);
+  ) =>
+      _prepared.executePreparedParamValues(
+        connectionId,
+        stmtId,
+        params,
+        options,
+      );
 
   Future<Result<QueryResult>> executePreparedNamed(
     String connectionId,

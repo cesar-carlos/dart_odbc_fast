@@ -1,13 +1,4 @@
-// Reason: exercises legacy Connection overload shims under test; remove when
-// dynamic-param APIs are deleted.
-// ignore_for_file: deprecated_member_use_from_same_package
-
 /// Unit tests for [IQueryServiceConnectionOverloads].
-///
-/// Verifies the ergonomic extension overloads delegate to the underlying
-/// `connectionId`-based methods of [IQueryService] with the connection id
-/// extracted from the supplied [Connection]. The tests use a hand-rolled
-/// fake to capture forwarded arguments without spinning the FFI stack.
 library;
 
 import 'package:odbc_fast/application/services/i_query_service.dart';
@@ -24,7 +15,7 @@ import 'package:test/test.dart';
 class _FakeQueryService implements IQueryService {
   String? capturedSql;
   String? capturedConnectionId;
-  List<dynamic>? capturedPositionalParams;
+  List<Object?>? capturedPositionalParams;
   List<DirectedParam>? capturedDirectedParams;
   Map<String, Object?>? capturedNamedParams;
   ResultEncoding? capturedEncoding;
@@ -48,26 +39,10 @@ class _FakeQueryService implements IQueryService {
   @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
-    List<dynamic>? params,
     String? connectionId,
   }) async {
     capturedSql = sql;
     capturedConnectionId = connectionId;
-    capturedPositionalParams = params;
-    return Success(_stubResult);
-  }
-
-  @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) async {
-    capturedConnectionId = connectionId;
-    capturedSql = sql;
-    capturedPositionalParams = params;
-    capturedEncoding = resultEncoding;
     return Success(_stubResult);
   }
 
@@ -146,18 +121,6 @@ class _FakeQueryService implements IQueryService {
   }
 
   @override
-  Future<Result<TypedColumnarResult>> executeQueryColumnar(
-    String connectionId,
-    String sql, {
-    List<dynamic>? params,
-  }) async {
-    capturedConnectionId = connectionId;
-    capturedSql = sql;
-    capturedPositionalParams = params;
-    return Success(_stubColumnar);
-  }
-
-  @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
     String sql, {
@@ -196,31 +159,29 @@ void main() {
   });
 
   group('IQueryServiceConnectionOverloads.executeQueryFor', () {
-    test('should_forward_sql_and_connection_id_without_params', () async {
+    test('should_forward_sql_and_connection_id', () async {
       await fake.executeQueryFor(conn, 'SELECT 1');
       expect(fake.capturedSql, equals('SELECT 1'));
       expect(fake.capturedConnectionId, equals('conn-42'));
-      expect(fake.capturedPositionalParams, isNull);
-    });
-
-    test('should_forward_positional_params_when_provided', () async {
-      await fake.executeQueryFor(conn, 'SELECT ?', params: [10]);
-      expect(fake.capturedPositionalParams, equals(<dynamic>[10]));
     });
   });
 
-  group('IQueryServiceConnectionOverloads.executeQueryParamsFor', () {
+  group('IQueryServiceConnectionOverloads.executeQueryParamValuesFor', () {
     test('should_forward_default_encoding_as_rowMajor', () async {
-      await fake.executeQueryParamsFor(conn, 'SELECT ?', [1]);
+      await fake.executeQueryParamValuesFor(
+        conn,
+        'SELECT ?',
+        const [ParamValueInt32(1)],
+      );
       expect(fake.capturedConnectionId, equals('conn-42'));
       expect(fake.capturedEncoding, equals(ResultEncoding.rowMajor));
     });
 
     test('should_forward_columnar_encoding_override', () async {
-      await fake.executeQueryParamsFor(
+      await fake.executeQueryParamValuesFor(
         conn,
         'SELECT ?',
-        [1],
+        const [ParamValueInt32(1)],
         resultEncoding: ResultEncoding.columnar,
       );
       expect(fake.capturedEncoding, equals(ResultEncoding.columnar));
@@ -236,18 +197,6 @@ void main() {
       );
       expect(fake.capturedConnectionId, equals('conn-42'));
       expect(fake.capturedNamedParams, equals(<String, Object?>{':id': 7}));
-    });
-  });
-
-  group('IQueryServiceConnectionOverloads.executeQueryColumnarFor', () {
-    test('should_forward_optional_positional_params', () async {
-      await fake.executeQueryColumnarFor(
-        conn,
-        'SELECT col FROM t WHERE id = ?',
-        params: ['x'],
-      );
-      expect(fake.capturedConnectionId, equals('conn-42'));
-      expect(fake.capturedPositionalParams, equals(<dynamic>['x']));
     });
   });
 

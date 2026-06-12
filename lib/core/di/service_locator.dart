@@ -1,3 +1,5 @@
+export 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
+export 'package:odbc_fast/application/services/i_query_service_extensions.dart';
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';

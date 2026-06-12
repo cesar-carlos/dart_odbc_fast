@@ -23,13 +23,6 @@ mixin TelemetryOdbcServiceAdminForwards on TelemetryOdbcServiceDecoratorBase {
 
   Future<Result<OdbcMetrics>> getMetrics() => admin.getMetrics();
 
-  @Deprecated(
-    'Use getWorkerPoolStats() — returns null in sync mode. '
-    'Will be removed alongside the IOdbcService deprecation.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() =>
-      admin.getAsyncWorkerPoolStats();
-
   bool isInitialized() => admin.isInitialized();
 
   Future<Result<void>> clearStatementCache() => admin.clearStatementCache();

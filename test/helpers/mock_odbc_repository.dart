@@ -24,8 +24,6 @@ import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart'
-    show paramValuesFromObjects;
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -42,7 +40,6 @@ class MockOdbcRepository implements IOdbcRepository {
   bool disconnectCalled = false;
   bool executeQueryCalled = false;
   bool streamQueryCalled = false;
-  bool executeQueryParamsCalled = false;
   bool executeQueryParamValuesCalled = false;
   bool executePreparedParamValuesCalled = false;
   bool executeQueryMultiParamValuesCalled = false;
@@ -177,22 +174,6 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) async {
-    executeQueryParamsCalled = true;
-    return executeQueryParamValues(
-      connectionId,
-      sql,
-      paramValuesFromObjects(params),
-      resultEncoding: resultEncoding,
-    );
-  }
-
-  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
@@ -299,21 +280,6 @@ class MockOdbcRepository implements IOdbcRepository {
   }) async {
     prepareNamedCalled = true;
     return const Success(2);
-  }
-
-  @override
-  Future<Result<QueryResult>> executePrepared(
-    String connectionId,
-    int stmtId,
-    List<dynamic>? params,
-    StatementOptions? options,
-  ) async {
-    return executePreparedParamValues(
-      connectionId,
-      stmtId,
-      params == null || params.isEmpty ? null : paramValuesFromObjects(params),
-      options,
-    );
   }
 
   @override
@@ -477,19 +443,6 @@ class MockOdbcRepository implements IOdbcRepository {
         ],
         rowCount: 1,
       ),
-    );
-  }
-
-  @override
-  Future<Result<QueryResultMulti>> executeQueryMultiParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params,
-  ) async {
-    return executeQueryMultiParamValues(
-      connectionId,
-      sql,
-      paramValuesFromObjects(params),
     );
   }
 
@@ -754,20 +707,6 @@ class MockOdbcRepository implements IOdbcRepository {
 
   @override
   Stream<OdbcEvent> get events => _ensureEventsController().stream;
-
-  @override
-  @Deprecated(
-    'Use getWorkerPoolStats() — kept here only to satisfy the deprecated '
-    'IOdbcRepository.getAsyncWorkerPoolStats contract during the deprecation '
-    'window.',
-  )
-  Future<Result<AsyncWorkerPoolStats>> getAsyncWorkerPoolStats() async {
-    return const Failure(
-      UnsupportedFeatureError(
-        message: 'Async worker-pool stats require async native backend',
-      ),
-    );
-  }
 
   @override
   bool isInitialized() {

@@ -1,8 +1,8 @@
-// ParamValue migration demo — deprecated untyped params vs typed ParamValue.
+// ParamValue migration demo — plain objects vs typed ParamValue.
 //
 // Runs DSN-free with a tiny in-memory fake. Shows the same consumer query
-// written twice: once with legacy `executeQueryParams` (`List<dynamic>`) and
-// once with `executeQueryParamValues` (`List<ParamValue>`).
+// written with `executeQueryParamValuesFromObjects` (bridge) and with
+// `executeQueryParamValues` (`List<ParamValue>`).
 //
 // Run: dart run example/param_value_migration_demo.dart
 
@@ -20,34 +20,23 @@ class _MigrationDemoService implements IOdbcService {
   );
 
   @override
-  Future<Result<QueryResult>> executeQueryParams(
-    String connectionId,
-    String sql,
-    List<dynamic> params, {
-    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
-  }) async {
-    _logParams('executeQueryParams (deprecated)', params);
-    return const Success(_stubResult);
-  }
-
-  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
-    _logParams('executeQueryParamValues (preferred)', params);
+    _logParams('executeQueryParamValues', params);
     return const Success(_stubResult);
   }
 
-  void _logParams(String label, List<dynamic> params) {
+  void _logParams(String label, List<ParamValue> params) {
     print('  $label params=$params');
   }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
-        'demo fake exposes only the two execute overloads under comparison',
+        'demo fake exposes only executeQueryParamValues for comparison',
       );
 }
 
@@ -59,19 +48,19 @@ Future<void> main() async {
   const sql = 'SELECT id, name FROM users WHERE id = ?';
   final service = _MigrationDemoService();
 
-  print('Legacy path — List<dynamic>:');
-  final legacy = await service.executeQueryParams(
+  print('Bridge path — paramValuesFromObjects via extension:');
+  final bridged = await service.executeQueryParamValuesFromObjects(
     connId,
     sql,
     const [1],
   );
-  legacy.fold(
+  bridged.fold(
     (r) => print('  rows=${r.rowCount}'),
     (e) => print('  error: $e'),
   );
 
   print('');
-  print('Preferred path — List<ParamValue>:');
+  print('Preferred path — explicit List<ParamValue>:');
   final typed = await service.executeQueryParamValues(
     connId,
     sql,
@@ -83,6 +72,5 @@ Future<void> main() async {
   );
 
   print('');
-  print('Migrate call sites to executeQueryParamValues / ');
-  print('executeQueryDirectedParams before the next major release.');
+  print('Use executeQueryParamValues / executeQueryDirectedParams at call sites.');
 }

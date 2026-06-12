@@ -43,7 +43,7 @@ void main() async {
   final connId = connect.getOrThrow().id;
   try {
     for (final encoding in ResultEncoding.values) {
-      final result = await service.executeQueryParams(
+      final result = await service.executeQueryParamValuesFromObjects(
         connId,
         sql,
         const <Object?>[],

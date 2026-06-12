@@ -47,40 +47,6 @@ void main() {
       expect(result.isNotEmpty, isFalse);
     });
 
-    test('firstResultSet (deprecated) should_return_empty_placeholder', () {
-      const result = QueryResultMulti(
-        items: [
-          QueryResultMultiItem.rowCount(10),
-        ],
-      );
-      // Intentionally exercise the deprecated empty-placeholder behaviour.
-      // ignore: deprecated_member_use_from_same_package
-      final set = result.firstResultSet;
-      expect(set.columns, isEmpty);
-      expect(set.rowCount, equals(0));
-    });
-
-    test('firstResultSet (deprecated) should_return_first_set_when_present',
-        () {
-      const result = QueryResultMulti(
-        items: [
-          QueryResultMultiItem.resultSet(
-            QueryResult(
-              columns: ['id'],
-              rows: [
-                [1],
-              ],
-              rowCount: 1,
-            ),
-          ),
-        ],
-      );
-      // Intentionally exercise the deprecated accessor to pin its behaviour
-      // until v4.0 removes it.
-      // ignore: deprecated_member_use_from_same_package
-      final set = result.firstResultSet;
-      expect(set.columns, equals(['id']));
-    });
   });
 
   group('QueryResultMultiItem', () {

@@ -5,6 +5,7 @@ library;
 
 import 'dart:io';
 
+import 'package:odbc_fast/application/services/i_query_service_extensions.dart';
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -71,7 +72,7 @@ void main() {
     test('ExecuteQueryParams operation', () async {
       await service.initialize();
       final connResult = await service.connect('test');
-      final result = await service.executeQueryParams(
+      final result = await service.executeQueryParamValuesFromObjects(
         connResult.getOrNull()!.id,
         'SELECT * FROM users WHERE id = ?',
         [1],
@@ -387,7 +388,7 @@ void main() {
 
     test('StatementOptions functionality - timeout override', () async {
       await service.initialize();
-      final result = await service.executePrepared(
+      final result = await service.executePreparedParamValuesFromObjects(
         'conn-1',
         1,
         [],
@@ -398,7 +399,7 @@ void main() {
 
     test('StatementOptions functionality - fetchSize override', () async {
       await service.initialize();
-      final result = await service.executePrepared(
+      final result = await service.executePreparedParamValuesFromObjects(
         'conn-1',
         1,
         [],
@@ -409,7 +410,7 @@ void main() {
 
     test('StatementOptions functionality - both options', () async {
       await service.initialize();
-      final result = await service.executePrepared(
+      final result = await service.executePreparedParamValuesFromObjects(
         'conn-1',
         1,
         [],
@@ -463,7 +464,7 @@ void main() {
           final connection =
               connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-          final queryResult = await locator!.syncService.executeQueryParams(
+          final queryResult = await locator!.syncService.executeQueryParamValuesFromObjects(
             connection.id,
             'SELECT 1',
             [],

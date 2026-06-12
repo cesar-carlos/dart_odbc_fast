@@ -1,6 +1,7 @@
 /// Unit tests for [OdbcService] Dart-side validation, defaults, and routing.
 library;
 
+import 'package:odbc_fast/application/services/i_query_service_extensions.dart';
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
@@ -77,36 +78,6 @@ void main() {
         },
       );
 
-      test(
-        'should_route_to_executeQueryParamValues_when_params_are_nonempty',
-        () async {
-          mockRepo.executeQueryParamValuesCalled = false;
-          final result = await service.executeQuery(
-            'SELECT * FROM t WHERE id = ?',
-            params: [42],
-            connectionId: connectionId,
-          );
-
-          expect(result.isSuccess(), isTrue);
-          expect(mockRepo.executeQueryParamValuesCalled, isTrue);
-        },
-      );
-
-      test(
-        'should_route_to_executeQueryParamValues_with_empty_list_when_'
-        'params_empty',
-        () async {
-          mockRepo.executeQueryParamValuesCalled = false;
-          final result = await service.executeQuery(
-            'SELECT 1',
-            params: [],
-            connectionId: connectionId,
-          );
-
-          expect(result.isSuccess(), isTrue);
-          expect(mockRepo.executeQueryParamValuesCalled, isTrue);
-        },
-      );
     });
 
     group('beginTransaction defaults', () {
@@ -189,17 +160,11 @@ void main() {
       );
 
       test(
-        'should_propagate_async_worker_pool_stats_failure_from_repository',
+        'should_return_null_worker_pool_stats_in_sync_mode',
         () async {
           await service.initialize();
-          // Pinning the deprecated API contract: should keep returning
-          // UnsupportedFeatureError in sync mode until the API is
-          // removed. New code should use getWorkerPoolStats().
-          // ignore: deprecated_member_use_from_same_package
-          final result = await service.getAsyncWorkerPoolStats();
-
-          expect(result.isError(), isTrue);
-          expect(result.exceptionOrNull(), isA<UnsupportedFeatureError>());
+          final stats = await service.getWorkerPoolStats();
+          expect(stats, isNull);
         },
       );
     });
@@ -220,7 +185,7 @@ void main() {
       test(
         'should_delegate_executeQueryMultiParams_to_repository',
         () async {
-          final result = await service.executeQueryMultiParams(
+          final result = await service.executeQueryMultiParamValuesFromObjects(
             connectionId,
             'SELECT 1; SELECT 2',
             [1],
@@ -287,7 +252,7 @@ void main() {
     group('executeQueryColumnar', () {
       test('delegates to executeQueryParams + toTypedColumnar conversion',
           () async {
-        final r = await service.executeQueryColumnar(
+        final r = await service.executeQueryColumnarFromObjects(
           'test-connection',
           'SELECT id FROM t',
         );
@@ -300,7 +265,7 @@ void main() {
       });
 
       test('forwards positional params to underlying repository', () async {
-        final r = await service.executeQueryColumnar(
+        final r = await service.executeQueryColumnarFromObjects(
           'test-connection',
           'SELECT id FROM t WHERE id = ?',
           params: [1],

@@ -96,12 +96,12 @@ void main() {
           (_) => throw Exception('setUp connect failed'),
         );
         try {
-          await locator!.syncService.executeQueryParams(
+          await locator!.syncService.executeQueryParamValuesFromObjects(
             c.id,
             _sqlDrop,
             <dynamic>[],
           );
-          final createResult = await locator!.syncService.executeQueryParams(
+          final createResult = await locator!.syncService.executeQueryParamValuesFromObjects(
             c.id,
             _ddlCreate,
             <dynamic>[],
@@ -126,7 +126,7 @@ void main() {
             (_) => throw Exception('teardown connect failed'),
           );
           try {
-            await locator!.syncService.executeQueryParams(
+            await locator!.syncService.executeQueryParamValuesFromObjects(
               c.id,
               _sqlDrop,
               <dynamic>[],
@@ -154,7 +154,7 @@ void main() {
         );
         final connectionId = connection.id;
         try {
-          final smoke = await locator!.syncService.executeQueryParams(
+          final smoke = await locator!.syncService.executeQueryParamValuesFromObjects(
             connectionId,
             'SELECT 1',
             <dynamic>[],

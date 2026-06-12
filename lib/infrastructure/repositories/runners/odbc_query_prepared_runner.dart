@@ -108,12 +108,12 @@ class OdbcQueryPreparedRunner {
     }
   }
 
-  Future<Result<QueryResult>> executePrepared(
+  Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
-    int stmtId, [
-    List<dynamic>? params,
+    int stmtId,
+    List<ParamValue>? params,
     StatementOptions? options,
-  ]) async {
+  ) async {
     final ownership = state.validateStatementOwnership<QueryResult>(
       connectionId: connectionId,
       stmtId: stmtId,
@@ -122,8 +122,7 @@ class OdbcQueryPreparedRunner {
     if (ownership != null) return ownership;
 
     try {
-      final list = params ?? [];
-      final pv = list.isEmpty ? null : paramValuesFromObjects(list);
+      final pv = params == null || params.isEmpty ? null : params;
       final timeoutMs = options?.timeout?.inMilliseconds ?? 0;
       final fetchSizeVal = options?.fetchSize ?? 1000;
       final maxBuf = options?.maxBufferSize;
@@ -197,7 +196,12 @@ class OdbcQueryPreparedRunner {
         namedParams: namedParams,
         paramNames: paramOrder,
       );
-      return executePrepared(connectionId, stmtId, positional, options);
+      return executePreparedParamValues(
+        connectionId,
+        stmtId,
+        paramValuesFromObjects(positional),
+        options,
+      );
     } on ParameterMissingException catch (e) {
       return Failure<QueryResult, OdbcError>(
         ValidationError(message: e.message),
