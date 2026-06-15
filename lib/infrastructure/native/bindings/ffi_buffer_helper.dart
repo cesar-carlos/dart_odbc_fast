@@ -38,9 +38,7 @@ ffi.NativeFinalizer? _zeroCopyFinalizer;
 final Expando<ffi.Finalizable> _zeroCopyOwners = Expando<ffi.Finalizable>();
 var _releaseBindingAttempted = false;
 
-final class _ZeroCopyFfiOwner implements ffi.Finalizable {
-  const _ZeroCopyFfiOwner();
-}
+final class _ZeroCopyFfiOwner implements ffi.Finalizable {}
 
 /// True when the native engine exports `odbc_release_buffer` (ABI 1.1+).
 bool get isZeroCopyResultBufferAvailable {
@@ -255,7 +253,7 @@ Uint8List _materializeFfiBytes(
       length >= zeroCopyResultThresholdBytes &&
       _zeroCopyFinalizer != null) {
     final view = buf.asTypedList(length);
-    const owner = _ZeroCopyFfiOwner();
+    final owner = _ZeroCopyFfiOwner();
     _zeroCopyOwners[view] = owner;
     _zeroCopyFinalizer!.attach(owner, buf.cast(), detach: owner);
     return view;
