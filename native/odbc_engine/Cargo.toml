@@ -230,8 +230,8 @@ required-features = ["test-helpers"]
 [[bench]]
 name = "bulk_operations_bench"
 harness = false
-# `bulk_operations_bench` exercises a live ODBC pool, so it depends on
-# `load_dotenv` from the test-helpers feature.
+# `streaming_copy_next_chunk` uses `StreamingState::from_bytes_for_benchmark`,
+# which is only compiled with the `test-helpers` feature.
 required-features = ["test-helpers"]
 
 [[bench]]

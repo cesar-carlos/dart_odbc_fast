@@ -254,6 +254,8 @@ def run_rust_micro(root: Path) -> int:
         [
             "cargo",
             "bench",
+            "--features",
+            "test-helpers",
             "--bench",
             "bulk_operations_bench",
             "--bench",
@@ -281,6 +283,8 @@ def run_rust_micro(root: Path) -> int:
                 [
                     "cargo",
                     "bench",
+                    "--features",
+                    "test-helpers",
                     "--bench",
                     "bulk_operations_bench",
                     "--bench",

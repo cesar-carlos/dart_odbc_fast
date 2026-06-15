@@ -147,9 +147,9 @@ Set<String> _collectDartLookups() {
     throw StateError('Missing Dart native root: $_dartNativeRoot');
   }
 
+  // Match multiline `.lookup<NativeFunction<...>>(` forms (see ffi_buffer_helper).
   final lookupPattern = RegExp(
-    r'\.lookup(?:<[^()]*>)?\s*\(\s*'
-    '''['"]((?:odbc|otel)_[A-Za-z0-9_]+)['"]''',
+    r"lookup(?:<[\s\S]*?>)?\(\s*'((?:odbc|otel)_[A-Za-z0-9_]+)'",
     multiLine: true,
   );
   final symbols = <String>{};

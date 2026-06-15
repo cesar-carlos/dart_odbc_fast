@@ -39,7 +39,7 @@ jobs:
       - name: Run micro benchmarks (no DB)
         run: |
           cd native
-          cargo bench --bench bulk_operations_bench -- --noplot
+          cargo bench --features test-helpers --bench bulk_operations_bench -- --noplot
           cargo bench --bench columnar_v1_v2_encode -- --noplot
           cargo bench --bench metadata_cache_bench -- --noplot
 
