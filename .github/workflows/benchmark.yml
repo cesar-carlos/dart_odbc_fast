@@ -119,8 +119,9 @@ jobs:
       - name: Run benchmarks (with regression check)
         id: bench
         run: |
+          set -o pipefail
           cd native
-          cargo bench --bench comparative_bench -- --verbose --baseline main 2>&1 | tee benchmark_output.txt
+          cargo bench --features test-helpers --bench comparative_bench -- --verbose --baseline main 2>&1 | tee benchmark_output.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v7
