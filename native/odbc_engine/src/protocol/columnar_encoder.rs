@@ -198,7 +198,7 @@ impl ColumnarEncoder {
 
     /// Encode row-oriented buffer for bulk operations: transpose to columnar,
     /// then encode with compression. Optimal for analytical workloads.
-    pub fn encode_for_bulk(buffer: &RowBuffer) -> Result<Vec<u8>> {
+    pub fn encode_for_bulk(buffer: RowBuffer) -> Result<Vec<u8>> {
         let columnar = row_buffer_to_columnar(buffer)?;
         Self::encode(&columnar, true)
     }
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn encode_for_bulk_empty_row_buffer() {
         let rb = crate::protocol::row_buffer::RowBuffer::new();
-        let out = ColumnarEncoder::encode_for_bulk(&rb).expect("empty bulk encode");
+        let out = ColumnarEncoder::encode_for_bulk(rb).expect("empty bulk encode");
         let magic = u32::from_le_bytes([out[0], out[1], out[2], out[3]]);
         assert_eq!(magic, MAGIC);
     }
@@ -652,7 +652,7 @@ mod tests {
         let mut rb = crate::protocol::row_buffer::RowBuffer::new();
         rb.add_column("n".to_string(), OdbcType::Integer);
         rb.add_row(vec![Some(42i32.to_le_bytes().to_vec())]);
-        let out = ColumnarEncoder::encode_for_bulk(&rb).expect("bulk");
+        let out = ColumnarEncoder::encode_for_bulk(rb).expect("bulk");
         assert!(out.len() > 19);
         let b = 42i32.to_le_bytes();
         assert!(out.windows(4).any(|w| w == b));

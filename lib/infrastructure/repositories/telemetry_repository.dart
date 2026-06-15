@@ -487,6 +487,7 @@ class _RetryHelper {
             : TelemetryException(
                 message: e.toString(),
                 code: 'RETRY_WRAP_ERROR',
+                stackTrace: e,
               ),
       ),
     );
@@ -513,6 +514,9 @@ class _RetryHelperImpl {
     Future<ResultDart<void, Exception>> Function() operation, {
     String? operationName,
   }) async {
+    Exception? lastException;
+    StackTrace? lastStackTrace;
+
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
         final result = await operation();
@@ -526,11 +530,15 @@ class _RetryHelperImpl {
           return result;
         }
 
+        lastException = failure;
+
         if (attempt < _maxRetries) {
           final delay = _calculateDelay(attempt);
           await Future<void>.delayed(delay);
         }
-      } on Exception catch (_) {
+      } on Exception catch (e, st) {
+        lastException = e;
+        lastStackTrace = st;
         if (attempt < _maxRetries) {
           final delay = _calculateDelay(attempt);
           await Future<void>.delayed(delay);
@@ -545,6 +553,7 @@ class _RetryHelperImpl {
       TelemetryExportException(
         message: msg,
         attemptNumber: _maxRetries,
+        stackTrace: lastStackTrace ?? lastException,
       ),
     );
   }

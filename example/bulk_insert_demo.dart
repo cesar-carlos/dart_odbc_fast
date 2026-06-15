@@ -25,7 +25,9 @@ Future<void> main() async {
     return;
   }
 
-  final service = OdbcService(OdbcRepositoryImpl(NativeOdbcConnection()));
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
+
   if ((await service.initialize()).isError()) {
     AppLogger.severe('initialize failed');
     return;

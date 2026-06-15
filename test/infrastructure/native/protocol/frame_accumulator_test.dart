@@ -30,7 +30,9 @@ void main() {
       expect(accumulator.length, equals(0));
     });
 
-    test('returns a view when the complete frame is already in one chunk', () {
+    test(
+        'returns a sublistView when the complete frame is already in one chunk',
+        () {
       final frame = _frame([1, 2, 3, 4]);
       final backing = Uint8List.fromList([0x99, ...frame, 0x88]);
       final frameView = Uint8List.sublistView(
@@ -43,11 +45,11 @@ void main() {
       final drained = accumulator.drainFrames().single;
 
       expect(drained, equals(frame));
-      expect(drained.offsetInBytes, equals(frameView.offsetInBytes));
+      expect(drained.offsetInBytes, equals(0));
       expect(accumulator.length, equals(0));
     });
 
-    test('copies only when frame spans many chunks', () {
+    test('assembles cross-chunk frames in a reusable buffer', () {
       final frame = _frame([1, 2, 3, 4, 5]);
       final accumulator = BinaryFrameAccumulator();
       for (final byte in frame) {
@@ -57,7 +59,7 @@ void main() {
       final drained = accumulator.drainFrames().single;
 
       expect(drained, equals(frame));
-      expect(drained.buffer, isNot(same(frame.buffer)));
+      expect(drained.offsetInBytes, equals(0));
       expect(accumulator.length, equals(0));
     });
 

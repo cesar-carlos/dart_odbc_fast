@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
@@ -95,6 +96,61 @@ void main() {
             );
           },
         );
+      },
+    );
+
+    test(
+      'streamQueryMulti passes default result encoding to native multi-start',
+      () async {
+        native
+          ..streamMultiStartBatchedResult = 42
+          ..streamFetchResponses = [
+            StreamFetchResponse(0, success: true),
+          ];
+        await repository.streamQueryMulti(connectionId, 'SELECT 1').toList();
+        expect(native.lastStreamMultiStartResultEncodingWire, equals(0));
+      },
+    );
+
+    test(
+      'streamQueryMulti passes columnar default encoding to native multi-start',
+      () async {
+        final columnarRepo = OdbcRepositoryImpl(
+          native,
+          defaultResultEncoding: ResultEncoding.columnar,
+        );
+        await columnarRepo.initialize();
+        final colConn =
+            (await columnarRepo.connect('Driver={Test}')).getOrNull()!;
+        native
+          ..streamMultiStartBatchedResult = 43
+          ..streamFetchResponses = [
+            StreamFetchResponse(0, success: true),
+          ];
+        await columnarRepo.streamQueryMulti(colConn.id, 'SELECT 1').toList();
+        expect(native.lastStreamMultiStartResultEncodingWire, equals(1));
+      },
+    );
+
+    test(
+      'streamQueryMulti passes columnarCompressed default encoding to native',
+      () async {
+        final compressedRepo = OdbcRepositoryImpl(
+          native,
+          defaultResultEncoding: ResultEncoding.columnarCompressed,
+        );
+        await compressedRepo.initialize();
+        final compressedConn =
+            (await compressedRepo.connect('Driver={Test}')).getOrNull()!;
+        native
+          ..streamMultiStartBatchedResult = 44
+          ..streamFetchResponses = [
+            StreamFetchResponse(0, success: true),
+          ];
+        await compressedRepo
+            .streamQueryMulti(compressedConn.id, 'SELECT 1')
+            .toList();
+        expect(native.lastStreamMultiStartResultEncodingWire, equals(2));
       },
     );
 

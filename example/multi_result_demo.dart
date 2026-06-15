@@ -2,8 +2,8 @@
 // and MultiResultParser.
 // Run: dart run example/multi_result_demo.dart
 
-import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 

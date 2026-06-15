@@ -7,6 +7,7 @@
 //! - [`multi_result`]: multi-result ODBC drive + framed wire items
 //! - [`state`]: consumer-facing stream state machines (memory/file-backed)
 
+mod batched_fetch;
 mod chunk;
 mod columns;
 mod multi_result;

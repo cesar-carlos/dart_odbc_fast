@@ -88,13 +88,11 @@ where
 
 /// Batched streaming variant. Fills `row_buffer.rows` (preserving its
 /// existing capacity) with up to `batch_size` rows from `cursor`, returning
-/// `(cursor, fetched)` so the caller can decide whether to keep iterating.
+/// the number of rows fetched.
 ///
-/// This deliberately stays on the per-cell path even when
-/// `block-cursor-fetch` is enabled: streaming callers already control the
-/// batch size externally and rebinding a `ColumnarAnyBuffer` per batch
-/// would amortise nothing. The block-cursor path is reserved for the
-/// "fetch everything into one buffer and encode" call sites.
+/// Callers that can bind a `ColumnarAnyBuffer` (see
+/// [`crate::engine::streaming::batched_fetch`]) should prefer the block-cursor
+/// session path instead of this per-cell loop.
 pub(crate) fn fetch_batch_into_row_buffer<C>(
     cursor: &mut C,
     column_types: &[OdbcType],

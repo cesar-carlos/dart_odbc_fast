@@ -55,7 +55,10 @@ fn decode_bigint_cell(
 ///
 /// New code should prefer the direct path when both a cursor and the
 /// `block-cursor-fetch` feature are available.
-pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> Result<RowBufferV2> {
+///
+/// Takes ownership of [buffer] so varchar/binary cells move out of the
+/// row-major grid via [`Option::take`] instead of cloning each `Vec<u8>`.
+pub fn row_buffer_to_columnar(mut buffer: RowBuffer) -> Result<RowBufferV2> {
     let col_count = buffer.column_count();
     let mut v2 = RowBufferV2::with_capacity(col_count);
     v2.set_row_count(buffer.row_count());
@@ -89,9 +92,9 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> Result<RowBufferV2> {
             }
             OdbcType::Binary => {
                 let mut binary_data = Vec::with_capacity(buffer.row_count());
-                for row in &buffer.rows {
-                    if let Some(cell) = row.get(col_idx) {
-                        binary_data.push(cell.clone());
+                for row in &mut buffer.rows {
+                    if col_idx < row.len() {
+                        binary_data.push(row[col_idx].take());
                     } else {
                         binary_data.push(None);
                     }
@@ -100,9 +103,9 @@ pub fn row_buffer_to_columnar(buffer: &RowBuffer) -> Result<RowBufferV2> {
             }
             _ => {
                 let mut varchar_data = Vec::with_capacity(buffer.row_count());
-                for row in &buffer.rows {
-                    if let Some(cell) = row.get(col_idx) {
-                        varchar_data.push(cell.clone());
+                for row in &mut buffer.rows {
+                    if col_idx < row.len() {
+                        varchar_data.push(row[col_idx].take());
                     } else {
                         varchar_data.push(None);
                     }
@@ -126,7 +129,7 @@ mod tests {
     #[test]
     fn test_row_buffer_to_columnar_empty() {
         let buffer = RowBuffer::new();
-        let v2 = row_buffer_to_columnar(&buffer).expect("empty buffer");
+        let v2 = row_buffer_to_columnar(buffer).expect("empty buffer");
         assert_eq!(v2.column_count(), 0);
         assert_eq!(v2.row_count, 0);
     }
@@ -139,7 +142,7 @@ mod tests {
         buffer.add_row(vec![Some(100i32.to_le_bytes().to_vec())]);
         buffer.add_row(vec![None]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("integer column");
+        let v2 = row_buffer_to_columnar(buffer).expect("integer column");
         assert_eq!(v2.column_count(), 1);
         assert_eq!(v2.row_count, 3);
         assert_eq!(v2.columns[0].metadata.name, "id");
@@ -163,7 +166,7 @@ mod tests {
         buffer.add_row(vec![Some(1234567890i64.to_le_bytes().to_vec())]);
         buffer.add_row(vec![None]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("bigint column");
+        let v2 = row_buffer_to_columnar(buffer).expect("bigint column");
         assert_eq!(v2.column_count(), 1);
         assert_eq!(v2.row_count, 2);
 
@@ -185,7 +188,7 @@ mod tests {
         buffer.add_row(vec![Some(b"Bob".to_vec())]);
         buffer.add_row(vec![None]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("varchar column");
+        let v2 = row_buffer_to_columnar(buffer).expect("varchar column");
         assert_eq!(v2.column_count(), 1);
         assert_eq!(v2.row_count, 3);
 
@@ -207,7 +210,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![0x01, 0x02, 0x03])]);
         buffer.add_row(vec![None]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("binary column");
+        let v2 = row_buffer_to_columnar(buffer).expect("binary column");
         assert_eq!(v2.column_count(), 1);
         assert_eq!(v2.row_count, 2);
 
@@ -235,7 +238,7 @@ mod tests {
             Some(b"Bob".to_vec()),
         ]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("multiple columns");
+        let v2 = row_buffer_to_columnar(buffer).expect("multiple columns");
         assert_eq!(v2.column_count(), 2);
         assert_eq!(v2.row_count, 2);
         assert_eq!(v2.columns[0].metadata.name, "id");
@@ -249,7 +252,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![1, 2, 3])]);
 
         assert!(matches!(
-            row_buffer_to_columnar(&buffer),
+            row_buffer_to_columnar(buffer),
             Err(OdbcError::ValidationError(msg)) if msg.contains("expected 4 wire bytes")
         ));
     }
@@ -261,7 +264,7 @@ mod tests {
         buffer.add_row(vec![Some(vec![1, 2, 3, 4, 5])]);
 
         assert!(matches!(
-            row_buffer_to_columnar(&buffer),
+            row_buffer_to_columnar(buffer),
             Err(OdbcError::ValidationError(msg)) if msg.contains("expected 8 wire bytes")
         ));
     }
@@ -272,7 +275,7 @@ mod tests {
         buffer.add_column("d".to_string(), OdbcType::Date);
         buffer.add_row(vec![Some(b"2024-01-01".to_vec())]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("date as varchar storage");
+        let v2 = row_buffer_to_columnar(buffer).expect("date as varchar storage");
         match &v2.columns[0].data {
             ColumnData::Varchar(values) => {
                 assert_eq!(values.len(), 1);
@@ -293,7 +296,7 @@ mod tests {
         ]);
         buffer.add_row(vec![Some(3i32.to_le_bytes().to_vec())]);
 
-        let v2 = row_buffer_to_columnar(&buffer).expect("short row");
+        let v2 = row_buffer_to_columnar(buffer).expect("short row");
         match (&v2.columns[0].data, &v2.columns[1].data) {
             (ColumnData::Integer(a), ColumnData::Integer(b)) => {
                 assert_eq!(a, &vec![Some(1), Some(3)]);

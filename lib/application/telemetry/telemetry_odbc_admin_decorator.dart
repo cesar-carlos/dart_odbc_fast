@@ -1,3 +1,4 @@
+import 'package:odbc_fast/application/services/i_admin_service.dart';
 import 'package:odbc_fast/application/services/i_odbc_service.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_operations.dart';
 import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
@@ -9,35 +10,48 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:result_dart/result_dart.dart';
 
-/// Admin-shaped telemetry delegate for the ODBC service decorator façade.
-class TelemetryOdbcAdminDecorator {
-  /// Creates an admin telemetry delegate.
-  TelemetryOdbcAdminDecorator(this._service, this._ops);
+/// Admin-shaped telemetry decorator implementing [IAdminService].
+class TelemetryOdbcAdminDecorator implements IAdminService {
+  /// Creates an admin telemetry decorator.
+  TelemetryOdbcAdminDecorator(
+    IAdminService admin,
+    this._ops, [
+    IOdbcService? aggregate,
+  ])  : _admin = admin,
+        _aggregate = aggregate ?? (admin is IOdbcService ? admin : null);
 
-  final IOdbcService _service;
+  final IAdminService _admin;
   final TelemetryOdbcOperations _ops;
+  final IOdbcService? _aggregate;
 
-  Stream<OdbcEvent> get events => _service.events;
+  IOdbcService get _service => _aggregate ?? _admin as IOdbcService;
 
+  @override
+  Stream<OdbcEvent> get events => _admin.events;
+
+  @override
   Future<Result<void>> initialize() =>
-      _ops.inOperation('ODBC.initialize', _service.initialize);
+      _ops.inOperation('ODBC.initialize', _admin.initialize);
 
+  @override
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
   }) =>
       _ops.inOperation(
         'ODBC.connect',
-        () => _service.connect(connectionString, options: options),
+        () => _admin.connect(connectionString, options: options),
       );
 
+  @override
   Future<Result<void>> disconnect(String connectionId) => _ops.inOperation(
         'ODBC.disconnect',
-        () => _service.disconnect(connectionId),
+        () => _admin.disconnect(connectionId),
       );
 
+  @override
   Future<Result<OdbcMetrics>> getMetrics() =>
-      _ops.inOperation('ODBC.getMetrics', _service.getMetrics);
+      _ops.inOperation('ODBC.getMetrics', _admin.getMetrics);
 
   bool isInitialized() => _service.isInitialized();
 
@@ -58,22 +72,25 @@ class TelemetryOdbcAdminDecorator {
   Future<Result<Map<String, String>>> getVersion() =>
       _ops.inOperation('ODBC.getVersion', _service.getVersion);
 
+  @override
   Future<Result<void>> validateConnectionString(String connectionString) =>
       _ops.inOperation(
         'ODBC.validateConnectionString',
-        () => _service.validateConnectionString(connectionString),
+        () => _admin.validateConnectionString(connectionString),
       );
 
+  @override
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   ) =>
       _ops.inOperation(
         'ODBC.getDriverCapabilities',
-        () => _service.getDriverCapabilities(connectionString),
+        () => _admin.getDriverCapabilities(connectionString),
       );
 
+  @override
   Future<AsyncWorkerPoolStats?> getWorkerPoolStats() =>
-      _service.getWorkerPoolStats();
+      _admin.getWorkerPoolStats();
 
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) =>
       _ops.inOperation(

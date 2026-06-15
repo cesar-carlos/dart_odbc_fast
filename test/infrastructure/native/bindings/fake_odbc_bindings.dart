@@ -289,8 +289,13 @@ class StubOdbcBindingsHandlers {
     this.xaEnd,
     this.streamMultiStartBatched,
     this.streamMultiStartAsync,
+    this.streamStartAsyncOptions,
+    this.streamMultiStartBatchedOptions,
+    this.streamMultiStartAsyncOptions,
     this.forceSupportsMultiResultStream,
     this.forceSupportsAsyncMultiResultStream,
+    this.forceSupportsStreamAsyncEncodingOptions,
+    this.forceSupportsMultiResultStreamEncodingOptions,
     this.forceSupportsStructuredErrorForConnection,
   });
 
@@ -408,8 +413,34 @@ class StubOdbcBindingsHandlers {
   final int? Function(int connId, ffi.Pointer<Utf8> sql, int chunkSize)?
       streamMultiStartAsync;
 
+  final int? Function(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  )? streamStartAsyncOptions;
+
+  final int? Function(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  )? streamMultiStartBatchedOptions;
+
+  final int? Function(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  )? streamMultiStartAsyncOptions;
+
   final bool? forceSupportsMultiResultStream;
   final bool? forceSupportsAsyncMultiResultStream;
+  final bool? forceSupportsStreamAsyncEncodingOptions;
+  final bool? forceSupportsMultiResultStreamEncodingOptions;
   final bool? forceSupportsStructuredErrorForConnection;
 }
 
@@ -432,6 +463,16 @@ class StubOdbcBindings extends TestOdbcBindings {
   bool get supportsAsyncMultiResultStream =>
       _handlers.forceSupportsAsyncMultiResultStream ??
       super.supportsAsyncMultiResultStream;
+
+  @override
+  bool get supportsStreamAsyncEncodingOptions =>
+      _handlers.forceSupportsStreamAsyncEncodingOptions ??
+      super.supportsStreamAsyncEncodingOptions;
+
+  @override
+  bool get supportsMultiResultStreamEncodingOptions =>
+      _handlers.forceSupportsMultiResultStreamEncodingOptions ??
+      super.supportsMultiResultStreamEncodingOptions;
 
   @override
   bool get supportsStructuredErrorForConnection =>
@@ -715,5 +756,77 @@ class StubOdbcBindings extends TestOdbcBindings {
       return handler(connId, sql, chunkSize);
     }
     return super.odbc_stream_multi_start_async(connId, sql, chunkSize);
+  }
+
+  @override
+  int? odbc_stream_start_async_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) {
+    if (_handlers.forceSupportsStreamAsyncEncodingOptions == false) {
+      return null;
+    }
+    final handler = _handlers.streamStartAsyncOptions;
+    if (handler != null) {
+      return handler(connId, sql, fetchSize, chunkSize, resultEncoding);
+    }
+    return super.odbc_stream_start_async_options(
+      connId,
+      sql,
+      fetchSize,
+      chunkSize,
+      resultEncoding,
+    );
+  }
+
+  @override
+  int? odbc_stream_multi_start_batched_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) {
+    if (_handlers.forceSupportsMultiResultStreamEncodingOptions == false) {
+      return null;
+    }
+    final handler = _handlers.streamMultiStartBatchedOptions;
+    if (handler != null) {
+      return handler(connId, sql, fetchSize, chunkSize, resultEncoding);
+    }
+    return super.odbc_stream_multi_start_batched_options(
+      connId,
+      sql,
+      fetchSize,
+      chunkSize,
+      resultEncoding,
+    );
+  }
+
+  @override
+  int? odbc_stream_multi_start_async_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) {
+    if (_handlers.forceSupportsMultiResultStreamEncodingOptions == false) {
+      return null;
+    }
+    final handler = _handlers.streamMultiStartAsyncOptions;
+    if (handler != null) {
+      return handler(connId, sql, fetchSize, chunkSize, resultEncoding);
+    }
+    return super.odbc_stream_multi_start_async_options(
+      connId,
+      sql,
+      fetchSize,
+      chunkSize,
+      resultEncoding,
+    );
   }
 }

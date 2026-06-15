@@ -12,7 +12,7 @@ fn columnar_round_trip_preserves_i32_values() {
     rb.add_row(vec![Some((-1i32).to_le_bytes().to_vec())]);
     rb.add_row(vec![None]);
 
-    let v2 = row_buffer_to_columnar(&rb).expect("valid integer cells");
+    let v2 = row_buffer_to_columnar(rb).expect("valid integer cells");
     assert_eq!(v2.row_count, 3);
     match &v2.columns[0].data {
         ColumnData::Integer(values) => {
@@ -31,7 +31,7 @@ fn columnar_preserves_i64_values() {
     rb.add_row(vec![Some(i64::MAX.to_le_bytes().to_vec())]);
     rb.add_row(vec![Some(i64::MIN.to_le_bytes().to_vec())]);
 
-    let v2 = row_buffer_to_columnar(&rb).expect("valid bigint cells");
+    let v2 = row_buffer_to_columnar(rb).expect("valid bigint cells");
     match &v2.columns[0].data {
         ColumnData::BigInt(values) => {
             assert_eq!(values[0], Some(i64::MAX));
@@ -48,7 +48,7 @@ fn columnar_conversion_rejects_malformed_integer_width() {
     rb.add_row(vec![Some(vec![0x01, 0x02, 0x03])]);
 
     assert!(matches!(
-        row_buffer_to_columnar(&rb),
+        row_buffer_to_columnar(rb),
         Err(OdbcError::ValidationError(_))
     ));
 }

@@ -322,7 +322,7 @@ impl ExecutionEngine {
             if drain.is_empty() {
                 // Fast path: single result set â€” preserve the original wire format.
                 let body = encode_query_result_payload(
-                    &row_buffer,
+                    row_buffer,
                     self.use_columnar,
                     self.use_compression,
                 )?;
@@ -330,7 +330,7 @@ impl ExecutionEngine {
             } else {
                 // Multi-result path: wrap every item in a MULT envelope, then append OUT1.
                 let first_body = encode_query_result_payload(
-                    &row_buffer,
+                    row_buffer,
                     self.use_columnar,
                     self.use_compression,
                 )?;
@@ -511,7 +511,7 @@ impl ExecutionEngine {
         let mut main_buffer = RowBuffer::new();
         coalesce_for_json_rows(&mut main_buffer);
         let main_body =
-            encode_query_result_payload(&main_buffer, self.use_columnar, self.use_compression)?;
+            encode_query_result_payload(main_buffer, self.use_columnar, self.use_compression)?;
         let body = RowBufferEncoder::append_output_footer_result(main_body, &out_vals)?;
         RowBufferEncoder::append_ref_cursor_footer_result(body, &ref_blobs)
     }

@@ -28,7 +28,7 @@ mod tests {
         let row1 = vec![Some(1i32.to_le_bytes().to_vec()), Some(b"Alice".to_vec())];
         v1.add_row(row1);
 
-        let v2 = row_buffer_to_columnar(&v1).expect("valid v1 fixture");
+        let v2 = row_buffer_to_columnar(v1).expect("valid v1 fixture");
         assert_eq!(v2.column_count(), 2);
         assert_eq!(v2.row_count, 1);
     }

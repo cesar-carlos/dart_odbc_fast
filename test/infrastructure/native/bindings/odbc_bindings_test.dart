@@ -230,6 +230,64 @@ void main() {
       }
     });
 
+    test('should_route_stream_multi_batched_options_when_encoding_requested',
+        () {
+      int? capturedEncoding;
+      final bindings = FakeOdbcBindings.stub(
+        handlers: StubOdbcBindingsHandlers(
+          forceSupportsMultiResultStream: true,
+          forceSupportsMultiResultStreamEncodingOptions: true,
+          streamMultiStartBatchedOptions: (_, __, ___, ____, encoding) {
+            capturedEncoding = encoding;
+            return 66;
+          },
+        ),
+      );
+      final sql = 'SELECT 1'.toNativeUtf8().cast<odbc_bindings.Utf8>();
+
+      try {
+        expect(
+          bindings.odbc_stream_multi_start_batched_options(
+            1,
+            sql,
+            1000,
+            1024,
+            1,
+          ),
+          equals(66),
+        );
+        expect(capturedEncoding, equals(1));
+      } finally {
+        calloc.free(sql);
+      }
+    });
+
+    test(
+        'should_return_null_for_stream_multi_batched_options_'
+        'when_stub_forces_absent', () {
+      final bindings = FakeOdbcBindings.stub(
+        handlers: const StubOdbcBindingsHandlers(
+          forceSupportsMultiResultStreamEncodingOptions: false,
+        ),
+      );
+      final sql = 'SELECT 1'.toNativeUtf8().cast<odbc_bindings.Utf8>();
+
+      try {
+        expect(
+          bindings.odbc_stream_multi_start_batched_options(
+            1,
+            sql,
+            1000,
+            1024,
+            1,
+          ),
+          isNull,
+        );
+      } finally {
+        calloc.free(sql);
+      }
+    });
+
     test(
         'should_return_minus_one_for_structured_error_for_connection_'
         'when_absent', () {

@@ -3,10 +3,7 @@ part of 'worker_isolate.dart';
 mixin _WorkerIsolateHelpers on _WorkerIsolateState {
   @override
   QueryResponse queryDataResponse(int requestId, Uint8List data) =>
-      QueryResponse(
-        requestId,
-        transferableData: TransferableTypedData.fromList([data]),
-      );
+      isolateQueryDataResponse(requestId, data);
 
   @override
   StreamFetchResponse streamDataResponse({
@@ -16,11 +13,10 @@ mixin _WorkerIsolateHelpers on _WorkerIsolateState {
     required bool hasMore,
     String? error,
   }) =>
-      StreamFetchResponse(
-        requestId,
+      isolateStreamDataResponse(
+        requestId: requestId,
         success: success,
-        transferableData:
-            data == null ? null : TransferableTypedData.fromList([data]),
+        data: data,
         hasMore: hasMore,
         error: error,
       );

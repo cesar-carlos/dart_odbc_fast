@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart'
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -196,7 +197,7 @@ class OdbcAdminRunner {
           QueryError(message: 'Invalid connection DBMS info payload format'),
         );
       }
-      return Success(DbmsInfo.fromJson(decoded));
+      return Success(DriverCapabilitiesMapper.dbmsInfoFromJson(decoded));
     } on FormatException catch (e) {
       return Failure<DbmsInfo, OdbcError>(
         QueryError(message: 'Invalid connection DBMS info JSON: ${e.message}'),

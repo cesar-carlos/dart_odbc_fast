@@ -9,6 +9,8 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
+    show zeroCopyResultThresholdBytes;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 
 // ---------------------------------------------------------------------------
@@ -43,7 +45,13 @@ typedef _OdbcDecompressFreeD = void Function(
 
 _OdbcDecompressD? _decomp;
 _OdbcDecompressFreeD? _decompFree;
+ffi.NativeFinalizer? _decompressFinalizer;
+final Map<int, (int len, int cap)> _pendingDecompressRelease = {};
 var _tried = false;
+
+final class _DecompressZeroCopyOwner implements ffi.Finalizable {
+  const _DecompressZeroCopyOwner();
+}
 
 /// True if `odbc_columnar_decompress` / _free` resolved after [loadOdbcLibrary].
 bool get isColumnarNativeDecompressAvailable {
@@ -62,17 +70,23 @@ Uint8List? columnarDecompressWithNative(
   if (d == null || freeFn == null) {
     return null;
   }
-  if (compressed.lengthInBytes > 0x7fffffff) {
+  final inLen = compressed.lengthInBytes;
+  if (inLen > 0x7fffffff) {
     return null;
   }
-  final inP = malloc<ffi.Uint8>(compressed.length);
-  inP.asTypedList(compressed.length).setAll(0, compressed);
+  var inP = ffi.Pointer<ffi.Uint8>.fromAddress(0);
+  var inOwned = false;
+  if (inLen > 0) {
+    inP = malloc<ffi.Uint8>(inLen);
+    inOwned = true;
+    inP.asTypedList(inLen).setAll(0, compressed);
+  }
   final outP = malloc<ffi.Pointer<ffi.Uint8>>();
   outP.value = ffi.Pointer<ffi.Uint8>.fromAddress(0);
   final oLen = malloc<ffi.Uint32>();
   final oCap = malloc<ffi.Uint32>();
   try {
-    final st = d(algorithm, inP, compressed.length, outP, oLen, oCap);
+    final st = d(algorithm, inP, inLen, outP, oLen, oCap);
     if (st != 0) {
       return null;
     }
@@ -81,14 +95,33 @@ Uint8List? columnarDecompressWithNative(
       return null;
     }
     final len = oLen.value;
+    final cap = oCap.value;
+    if (len >= zeroCopyResultThresholdBytes && _decompressFinalizer != null) {
+      _pendingDecompressRelease[ptr.address] = (len, cap);
+      final view = ptr.asTypedList(len);
+      const owner = _DecompressZeroCopyOwner();
+      _decompressFinalizer!.attach(owner, ptr.cast(), detach: owner);
+      return view;
+    }
     final out = Uint8List.fromList(ptr.asTypedList(len));
-    freeFn(ptr, len, oCap.value);
+    freeFn(ptr, len, cap);
     return out;
   } finally {
-    malloc.free(inP);
+    if (inOwned) {
+      malloc.free(inP);
+    }
     malloc.free(outP);
     malloc.free(oLen);
     malloc.free(oCap);
+  }
+}
+
+void _columnarDecompressNativeFree(ffi.Pointer<ffi.Void> pointer) {
+  final ptr = pointer.cast<ffi.Uint8>();
+  final meta = _pendingDecompressRelease.remove(ptr.address);
+  final freeFn = _decompFree;
+  if (meta != null && freeFn != null) {
+    freeFn(ptr, meta.$1, meta.$2);
   }
 }
 
@@ -109,9 +142,13 @@ void _bindOnce() {
           'odbc_columnar_decompress_free',
         )
         .asFunction<_OdbcDecompressFreeD>();
+    _decompressFinalizer = ffi.NativeFinalizer(
+      ffi.Pointer.fromFunction(_columnarDecompressNativeFree),
+    );
   } on Object {
     _decomp = null;
     _decompFree = null;
+    _decompressFinalizer = null;
   }
 }
 
@@ -119,4 +156,6 @@ void resetColumnarDecompressForTest() {
   _tried = false;
   _decomp = null;
   _decompFree = null;
+  _decompressFinalizer = null;
+  _pendingDecompressRelease.clear();
 }

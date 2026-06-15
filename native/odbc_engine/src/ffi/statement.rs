@@ -29,8 +29,7 @@ pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: 
             return 0;
         };
 
-        if !state.connections.contains_key(&conn_id)
-            && !state.pooled_connections.contains_key(&conn_id)
+        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
         {
             set_connection_error(
                 &mut state,

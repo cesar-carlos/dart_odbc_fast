@@ -171,6 +171,30 @@ String? skipIfDatabase(
   return null;
 }
 
+/// Returns a skip reason when live ODBC database tests should not run.
+///
+/// Live tests require `RUN_LIVE_TESTS=1` and `ODBC_TEST_DSN` or `ODBC_DSN`.
+String? skipUnlessLiveOdbcTest() {
+  if (!runLiveTests) {
+    return 'Set RUN_LIVE_TESTS=1 to run live ODBC database tests';
+  }
+  final dsn = getTestEnv('ODBC_TEST_DSN') ?? getTestEnv('ODBC_DSN');
+  if (dsn == null || dsn.isEmpty) {
+    return 'ODBC_TEST_DSN/ODBC_DSN not configured';
+  }
+  return null;
+}
+
+/// Returns a skip reason when E2E smoke tests should not run.
+///
+/// Requires `ENABLE_E2E_TESTS=1`, `RUN_LIVE_TESTS=1`, and `ODBC_TEST_DSN`.
+String? skipUnlessE2eTest() {
+  if (!isE2eEnabled()) {
+    return 'Set ENABLE_E2E_TESTS=1 to run E2E tests';
+  }
+  return skipUnlessLiveOdbcTest();
+}
+
 /// Returns a skip reason if the test should ONLY run on specific databases
 String? skipUnlessDatabase(
   List<DatabaseType> onlyFor, {

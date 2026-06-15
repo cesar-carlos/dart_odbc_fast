@@ -49,9 +49,13 @@ fn copy_nullable_i32(
             "Block fetch: column {col_idx} expected nullable i32 slice"
         ))
     })?;
+    let mut scratch = Vec::with_capacity(4);
     for (row_offset, value) in view.into_iter().enumerate() {
         if let Some(&v) = value {
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(v.to_le_bytes().to_vec());
+            scratch.clear();
+            scratch.extend_from_slice(&v.to_le_bytes());
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::replace(&mut scratch, Vec::with_capacity(4)));
         }
     }
     Ok(())
@@ -68,9 +72,13 @@ fn copy_nullable_i64(
             "Block fetch: column {col_idx} expected nullable i64 slice"
         ))
     })?;
+    let mut scratch = Vec::with_capacity(8);
     for (row_offset, value) in view.into_iter().enumerate() {
         if let Some(&v) = value {
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(v.to_le_bytes().to_vec());
+            scratch.clear();
+            scratch.extend_from_slice(&v.to_le_bytes());
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::replace(&mut scratch, Vec::with_capacity(8)));
         }
     }
     Ok(())
@@ -89,7 +97,9 @@ fn copy_binary(
     })?;
     for (row_offset, cell) in view.iter().enumerate() {
         if let Some(bytes) = cell {
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes.to_vec());
+            let mut buf = Vec::with_capacity(bytes.len());
+            buf.extend_from_slice(bytes);
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(buf);
         }
     }
     Ok(())
@@ -102,7 +112,7 @@ fn copy_binary(
 /// 4 digits; negative years are rare (BC dates) and rendered with a
 /// leading minus so the wire byte count grows by one for them — the
 /// Dart datetime parser handles either width.
-pub(super) fn format_date_into(buf: &mut Vec<u8>, date: &odbc_api::sys::Date) {
+pub(crate) fn format_date_into(buf: &mut Vec<u8>, date: &odbc_api::sys::Date) {
     use std::fmt::Write;
     // Reserve the worst case to avoid extra growth; `write!` is
     // infallible on `String`.
@@ -116,7 +126,7 @@ pub(super) fn format_date_into(buf: &mut Vec<u8>, date: &odbc_api::sys::Date) {
 /// Matches the second-precision T-SQL `TIME(0)` and PostgreSQL `TIME`
 /// representations. Sub-second precision is exposed via `Timestamp`
 /// values (`TIME(7)` / `TIMETZ` round-trip via the WText fallback).
-pub(super) fn format_time_into(buf: &mut Vec<u8>, time: &odbc_api::sys::Time) {
+pub(crate) fn format_time_into(buf: &mut Vec<u8>, time: &odbc_api::sys::Time) {
     use std::fmt::Write;
     let mut s = String::with_capacity(8);
     let _ = write!(s, "{:02}:{:02}:{:02}", time.hour, time.minute, time.second);
@@ -127,7 +137,7 @@ pub(super) fn format_time_into(buf: &mut Vec<u8>, time: &odbc_api::sys::Time) {
 /// `YYYY-MM-DD HH:MM:SS.ffffff` ASCII bytes (six-digit microsecond
 /// fraction). See the comment on `OdbcType::Timestamp` in
 /// `driver_adapters::buffer_desc_for` for the precision rationale.
-pub(super) fn format_timestamp_into(buf: &mut Vec<u8>, ts: &odbc_api::sys::Timestamp) {
+pub(crate) fn format_timestamp_into(buf: &mut Vec<u8>, ts: &odbc_api::sys::Timestamp) {
     use std::fmt::Write;
     let mut s = String::with_capacity(26);
     // `fraction` is u32 nanoseconds (0..=999_999_999). Divide by 1_000
@@ -156,11 +166,13 @@ fn copy_nullable_date(
                 "Block fetch: column {col_idx} expected nullable Date slice"
             ))
         })?;
+    let mut scratch = Vec::with_capacity(10);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(date) = cell {
-            let mut bytes = Vec::with_capacity(10);
-            format_date_into(&mut bytes, date);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes);
+            scratch.clear();
+            format_date_into(&mut scratch, date);
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::replace(&mut scratch, Vec::with_capacity(10)));
         }
     }
     Ok(())
@@ -179,11 +191,13 @@ fn copy_nullable_time(
                 "Block fetch: column {col_idx} expected nullable Time slice"
             ))
         })?;
+    let mut scratch = Vec::with_capacity(8);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(time) = cell {
-            let mut bytes = Vec::with_capacity(8);
-            format_time_into(&mut bytes, time);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes);
+            scratch.clear();
+            format_time_into(&mut scratch, time);
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::replace(&mut scratch, Vec::with_capacity(8)));
         }
     }
     Ok(())
@@ -202,11 +216,13 @@ fn copy_nullable_timestamp(
                 "Block fetch: column {col_idx} expected nullable Timestamp slice"
             ))
         })?;
+    let mut scratch = Vec::with_capacity(26);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(ts) = cell {
-            let mut bytes = Vec::with_capacity(26);
-            format_timestamp_into(&mut bytes, ts);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes);
+            scratch.clear();
+            format_timestamp_into(&mut scratch, ts);
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::replace(&mut scratch, Vec::with_capacity(26)));
         }
     }
     Ok(())
@@ -223,13 +239,15 @@ fn copy_wide_text(
             "Block fetch: column {col_idx} expected wide text view"
         ))
     })?;
+    let mut scratch = Vec::new();
     for (row_offset, cell) in view.iter().enumerate() {
         if let Some(wide) = cell {
             // `wide` is `&U16Str`; `as_slice()` exposes the underlying
             // `&[u16]` we feed to `String::from_utf16_lossy`. Matches the
             // legacy `wide_text_to_utf8_bytes` behaviour exactly.
-            let utf8 = String::from_utf16_lossy(wide.as_slice()).into_bytes();
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(utf8);
+            scratch.clear();
+            scratch.extend_from_slice(&String::from_utf16_lossy(wide.as_slice()).into_bytes());
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(std::mem::take(&mut scratch));
         }
     }
     Ok(())

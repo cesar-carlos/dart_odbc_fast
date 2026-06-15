@@ -41,6 +41,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   int beginTransactionResult = 0;
   int bulkInsertResult = 0;
   int streamMultiStartBatchedResult = 0;
+  int? lastStreamMultiStartResultEncodingWire;
   Uint8List? executePreparedResult;
   Uint8List? executeQueryMultiResult;
 
@@ -138,9 +139,13 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   Future<int> streamMultiStartBatched(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
-  }) async =>
-      streamMultiStartBatchedResult;
+    int resultEncodingWire = 0,
+  }) async {
+    lastStreamMultiStartResultEncodingWire = resultEncodingWire;
+    return streamMultiStartBatchedResult;
+  }
 
   @override
   Future<StreamFetchResponse> streamFetch(int streamId) async {

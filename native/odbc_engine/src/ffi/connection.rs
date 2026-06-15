@@ -101,7 +101,7 @@ pub extern "C" fn odbc_connect(conn_str: *const c_char) -> c_uint {
         match result {
             Ok(conn) => {
                 let conn_id = conn.get_connection_id();
-                state.connections.insert(conn_id, conn);
+                state::insert_connection(conn_id, conn);
                 #[cfg(feature = "sqlserver-bcp")]
                 state
                     .connection_strings
@@ -181,7 +181,7 @@ pub extern "C" fn odbc_connect_with_timeout(conn_str: *const c_char, timeout_ms:
         match result {
             Ok(conn) => {
                 let conn_id = conn.get_connection_id();
-                state.connections.insert(conn_id, conn);
+                state::insert_connection(conn_id, conn);
                 #[cfg(feature = "sqlserver-bcp")]
                 state
                     .connection_strings

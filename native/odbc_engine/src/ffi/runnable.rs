@@ -13,7 +13,6 @@ use super::global::try_cached_legacy_params;
 use super::global_state::{
     set_connection_error, set_connection_structured_error, set_out_written_zero,
     try_lock_global_state, write_connection_output_buffer, GlobalState, StreamKind, FFI_OK,
-    MAX_ID_ALLOC_ATTEMPTS,
 };
 use super::state;
 
@@ -51,8 +50,7 @@ pub(crate) fn take_runnable_connection(
     state: &mut GlobalState,
     conn_id: u32,
 ) -> Result<RunnableConnection> {
-    if let Some(conn) = state.connections.get(&conn_id) {
-        let handles = conn.get_handles();
+    if let Some(handles) = state::connection_handles(conn_id) {
         let conn_arc = {
             let handles_guard = handles.lock().map_err(|_| {
                 OdbcError::InternalError("Failed to lock handles mutex".to_string())
@@ -118,22 +116,15 @@ pub(crate) struct StreamReservation {
 }
 
 pub(crate) fn allocate_stream_id(state: &mut GlobalState, conn_id: u32) -> u32 {
-    for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-        let candidate = state.next_stream_id;
-        state.next_stream_id = state.next_stream_id.wrapping_add(1);
-        if candidate != 0 && !state.streams.contains_key(&candidate) {
-            return candidate;
-        }
-    }
-    set_connection_error(state, conn_id, "Failed to allocate stream ID".to_string());
-    0
+    let _ = state;
+    state::allocate_stream_id(conn_id)
 }
 
 pub(crate) fn reserve_stream_start(
     state: &mut GlobalState,
     conn_id: u32,
 ) -> Result<StreamReservation> {
-    let target = if let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) {
+    let target = if let Some(handles) = state::connection_handles(conn_id) {
         StreamStartTarget::Regular { handles }
     } else if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
         *state.pooled_busy_counts.entry(entry.pool_id).or_insert(0) += 1;
@@ -182,13 +173,12 @@ pub(crate) fn release_pooled_stream_reservation(conn_id: u32, target: &StreamSta
 }
 
 pub(crate) fn insert_stream(
-    state: &mut GlobalState,
+    _state: &mut GlobalState,
     stream_id: u32,
     conn_id: u32,
     stream: StreamKind,
 ) -> u32 {
-    state.streams.insert(stream_id, stream);
-    state.stream_connections.insert(stream_id, conn_id);
+    state::insert_stream(stream_id, conn_id, stream);
     stream_id
 }
 

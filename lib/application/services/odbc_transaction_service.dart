@@ -1,17 +1,18 @@
+import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/domain/repositories/i_transaction_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Transaction / savepoint / XA capability delegate for the ODBC service façade.
 class OdbcTransactionService {
   OdbcTransactionService(this._repository);
 
-  final IOdbcRepository _repository;
+  final ITransactionRepository _repository;
 
   Future<Result<int>> beginTransaction(
     String connectionId, {
@@ -193,16 +194,24 @@ class OdbcTransactionService {
       } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
         xa.rollback();
       }
-    } on Object catch (_) {
-      // Best-effort cleanup; original error wins.
+    } on Object catch (cleanupError, cleanupSt) {
+      AppLogger.warning(
+        'XA abort cleanup failed on xid=${xa.xid}',
+        cleanupError,
+        cleanupSt,
+      );
     }
   }
 
   Future<void> _safelyRollback(String connectionId, int txnId) async {
     try {
       await rollbackTransaction(connectionId, txnId);
-    } on Object catch (_) {
-      // Defensive: rollback failures are logged by the repository.
+    } on Object catch (rollbackError, rollbackSt) {
+      AppLogger.warning(
+        'Rollback cleanup failed for connection $connectionId txn $txnId',
+        rollbackError,
+        rollbackSt,
+      );
     }
   }
 }

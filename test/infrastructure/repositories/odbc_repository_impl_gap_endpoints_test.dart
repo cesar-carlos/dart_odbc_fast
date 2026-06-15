@@ -262,6 +262,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async =>
       0;
 
@@ -299,7 +300,9 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
   Future<int> streamMultiStartBatched(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async =>
       streamMultiStartBatchedResult;
 

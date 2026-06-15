@@ -285,7 +285,7 @@ async.dispose();
 
 - `example/async_demo.dart` — prepare/execute com async
 - `example/execute_async_demo.dart` — `executeAsync` e `streamAsync` diretos
-- `example/async_service_locator_demo.dart` — ServiceLocator com `useAsync: true`
+- `example/quick_start_balanced_demo.dart` — ServiceLocator com `OdbcUsageProfile.balanced`
 - `example/high_concurrency_worker_pool_demo.dart` - worker pool com multiplas conexoes
 - `example/high_concurrency_pool_demo.dart` - pool nativo com limite de tarefas em voo
 - `example/async_concurrency_benchmark.dart` - benchmark local de worker pool, pool nativo e streaming

@@ -191,7 +191,7 @@ pub extern "C" fn odbc_exec_query_params_options(
 
             let result = match &mut target {
                 RunnableConnection::Regular(conn_arc) => {
-                    let conn_guard = match conn_arc.lock() {
+                    let mut conn_guard = match conn_arc.lock() {
                         Ok(g) => g,
                         Err(_) => {
                             let Some(mut state) = try_lock_global_state() else {
@@ -206,20 +206,34 @@ pub extern "C" fn odbc_exec_query_params_options(
                             return -1;
                         }
                     };
-                    execute_query_with_param_buffer_encoding(
-                        conn_guard.connection(),
-                        sql_str,
-                        params_slice,
-                        encoding,
-                    )
+                    if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
+                        execute_query_with_cached_connection(&mut conn_guard, sql_str)
+                    } else if encoding == ResultEncoding::RowMajor {
+                        try_cached_legacy_params(&mut conn_guard, sql_str, params_slice)
+                    } else {
+                        execute_query_with_param_buffer_encoding(
+                            conn_guard.connection(),
+                            sql_str,
+                            params_slice,
+                            encoding,
+                        )
+                    }
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                    Ok(conn_guard) => execute_query_with_param_buffer_encoding(
-                        conn_guard.get_connection(),
-                        sql_str,
-                        params_slice,
-                        encoding,
-                    ),
+                    Ok(mut conn_guard) => {
+                        if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
+                            execute_query_with_cached_connection(conn_guard.cached_mut(), sql_str)
+                        } else if encoding == ResultEncoding::RowMajor {
+                            try_cached_legacy_params(conn_guard.cached_mut(), sql_str, params_slice)
+                        } else {
+                            execute_query_with_param_buffer_encoding(
+                                conn_guard.get_connection(),
+                                sql_str,
+                                params_slice,
+                                encoding,
+                            )
+                        }
+                    }
                     Err(_) => Err(OdbcError::InternalError(
                         "Failed to lock pooled connection".to_string(),
                     )),

@@ -240,6 +240,50 @@ TransferableTypedData? transferableIsolatePayload(Uint8List bytes) {
   return TransferableTypedData.fromList([bytes]);
 }
 
+/// Builds a worker [QueryResponse] with inline or transferable payload.
+QueryResponse isolateQueryDataResponse(int requestId, Uint8List data) {
+  final transferable = transferableIsolatePayload(data);
+  if (transferable != null) {
+    return QueryResponse(requestId, transferableData: transferable);
+  }
+  return QueryResponse(requestId, data: data);
+}
+
+/// Builds a worker [StreamFetchResponse] with inline or transferable payload.
+StreamFetchResponse isolateStreamDataResponse({
+  required int requestId,
+  required bool success,
+  required Uint8List? data,
+  required bool hasMore,
+  String? error,
+}) {
+  if (data == null) {
+    return StreamFetchResponse(
+      requestId,
+      success: success,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
+  final transferable = transferableIsolatePayload(data);
+  if (transferable != null) {
+    return StreamFetchResponse(
+      requestId,
+      success: success,
+      transferableData: transferable,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
+  return StreamFetchResponse(
+    requestId,
+    success: success,
+    data: data,
+    hasMore: hasMore,
+    error: error,
+  );
+}
+
 /// Base class for worker responses. All subclasses must be sendable.
 sealed class WorkerResponse {
   const WorkerResponse(this.requestId);

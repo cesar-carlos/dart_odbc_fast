@@ -9,7 +9,7 @@ Oracle ref-cursor wire details and columnar result protocol notes.
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-05-27 (`3.10.0`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 decode hints, certification table, native engine perf follow-ups — wire format unchanged)
+**Last verified against code:** 2026-06-15 (`3.10.0`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 row + typed direct decode, `executeQueryColumnar` / `streamQueryColumnar`, certification table — wire format unchanged)
 
 ---
 
@@ -378,14 +378,20 @@ claims. Other docs should link here instead of repeating the matrix.
 - **Emitter:** `ColumnarEncoder` in the Rust engine (opt-in
   `with_columnar` on the query pipeline) — v2 header in
   [columnar_encoder.rs][colenc].
-- **Dart:** `BinaryProtocolParser.parse` / `parseWithOutputs` accept **v2**
-  (row-major and columnar) and optional `OUT1` after the main message.
-  **Compressed** column blocks call the same decompressors as the engine via
-  the native FFI `odbc_columnar_decompress` (see
-  `lib/.../columnar_decompress_ffi.dart`); if the library is missing *or* the
-  payload is invalid, parsing fails with a [FormatException] whose message
-  includes **hints** (algorithm ids, *build* *path* for `odbc_engine`, pointer
-  to [columnar_protocol_sketch](columnar_protocol_sketch.md)). Uncompressed
+- **Dart — row decode:** `BinaryProtocolParser.parse` / `parseWithOutputs`
+  accept **v2** (row-major and columnar) and optional `OUT1` after the main
+  message. Columnar v2 layout is decoded in
+  `lib/.../binary_protocol_columnar.dart` (`parseColumnarV2ToRowBuffer`).
+- **Dart — typed direct decode:** `parseColumnarV2ToTyped` in the same module
+  and `IOdbcService.executeQueryColumnar` / `streamQueryColumnar` return
+  `TypedColumnarResult` without materializing row lists when the workload fits
+  the typed columnar path (see `stream_columnar_runner.dart`).
+- **Compression:** per-column zstd/LZ4 blocks use the native FFI
+  `odbc_columnar_decompress` (see `lib/.../columnar_decompress_ffi.dart`); if
+  the library is missing *or* the payload is invalid, parsing fails with a
+  [FormatException] whose message includes **hints** (algorithm ids, *build*
+  *path* for `odbc_engine`, pointer to
+  [columnar_protocol_sketch](columnar_protocol_sketch.md)). Uncompressed
   columnar and v1 are unchanged.
 
 - **Sketch:** [columnar_protocol_sketch.md](columnar_protocol_sketch.md).

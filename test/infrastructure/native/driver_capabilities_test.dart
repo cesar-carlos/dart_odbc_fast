@@ -1,5 +1,6 @@
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
 import 'package:odbc_fast/infrastructure/native/native_bcp_runtime.dart';
 import 'package:test/test.dart';
 
@@ -118,9 +119,9 @@ void main() {
     });
   });
 
-  group('DriverCapabilities.fromJson', () {
+  group('DriverCapabilitiesMapper.fromJson', () {
     test('parses expected fields and prefers engine id', () {
-      final caps = DriverCapabilities.fromJson(<String, Object?>{
+      final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{
         'supports_prepared_statements': true,
         'supports_batch_operations': true,
         'supports_streaming': true,
@@ -142,7 +143,7 @@ void main() {
     });
 
     test('falls back to driver-name heuristic when engine missing', () {
-      final caps = DriverCapabilities.fromJson(<String, Object?>{
+      final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{
         'driver_name': 'Microsoft SQL Server',
       });
       expect(caps.databaseType, DatabaseType.sqlServer);
@@ -150,7 +151,7 @@ void main() {
     });
 
     test('parses supports_native_bcp for SQL Server', () {
-      final caps = DriverCapabilities.fromJson(<String, Object?>{
+      final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{
         'driver_name': 'SQL Server',
         'engine': DatabaseEngineIds.sqlserver,
         'supports_native_bcp': true,
@@ -160,12 +161,12 @@ void main() {
     });
 
     test('defaults supports_native_bcp to false', () {
-      final caps = DriverCapabilities.fromJson(<String, Object?>{});
+      final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{});
       expect(caps.supportsNativeBcp, isFalse);
     });
 
     test('uses defaults for missing fields', () {
-      final caps = DriverCapabilities.fromJson(<String, Object?>{});
+      final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{});
       expect(caps.supportsPreparedStatements, isTrue);
       expect(caps.supportsBatchOperations, isTrue);
       expect(caps.supportsStreaming, isTrue);
@@ -180,7 +181,7 @@ void main() {
 
   group('isNativeBcpAvailable', () {
     test('should_be_false_without_runtime_env_even_when_capability_true', () {
-      final caps = DriverCapabilities(
+      const caps = DriverCapabilities(
         supportsPreparedStatements: true,
         supportsBatchOperations: true,
         supportsStreaming: true,
@@ -195,7 +196,7 @@ void main() {
     });
 
     test('should_be_false_when_capability_false', () {
-      final caps = DriverCapabilities(
+      const caps = DriverCapabilities(
         supportsPreparedStatements: true,
         supportsBatchOperations: true,
         supportsStreaming: true,
@@ -210,9 +211,9 @@ void main() {
     });
   });
 
-  group('DbmsInfo.fromJson', () {
+  group('DriverCapabilitiesMapper.dbmsInfoFromJson', () {
     test('parses live introspection JSON with engine id', () {
-      final info = DbmsInfo.fromJson(<String, Object?>{
+      final info = DriverCapabilitiesMapper.dbmsInfoFromJson(<String, Object?>{
         'dbms_name': 'PostgreSQL',
         'engine': DatabaseEngineIds.postgres,
         'max_catalog_name_len': 63,
@@ -244,7 +245,7 @@ void main() {
     });
 
     test('synthesises capabilities when missing', () {
-      final info = DbmsInfo.fromJson(<String, Object?>{
+      final info = DriverCapabilitiesMapper.dbmsInfoFromJson(<String, Object?>{
         'dbms_name': 'MariaDB',
         'engine': DatabaseEngineIds.mariadb,
       });

@@ -83,6 +83,38 @@ void main() {
     );
 
     test(
+      'should_run_telemetry_decorators_demo_without_dsn',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/telemetry_decorators_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('ODBC.initialize'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should_skip_stream_query_columnar_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/stream_query_columnar_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
       'should_run_sub_interfaces_migration_demo_in_describe_only_mode',
       () async {
         // The demo doesn't connect to a DSN — it's purely describing the
@@ -97,6 +129,7 @@ void main() {
         final out = '${result.stdout}\n${result.stderr}';
         expect(out, contains('IOdbcService'));
         expect(out, contains('IQueryService'));
+        expect(out, contains('queryRepository'));
       },
       timeout: const Timeout(Duration(seconds: 60)),
     );

@@ -20,7 +20,8 @@ Future<void> main() async {
   final service = locator.service;
   final tuning = locator.resolvedUsageProfile;
   AppLogger.info(
-    'Profile=${tuning.profile.name}, workers=${tuning.workerCount}, '
+    'Profile=${tuning.profile.name}, async=${tuning.useAsync}, '
+    'workers=${tuning.workerCount}, '
     'pendingCap=${tuning.maxPendingRequests ?? "unbounded"}',
   );
 

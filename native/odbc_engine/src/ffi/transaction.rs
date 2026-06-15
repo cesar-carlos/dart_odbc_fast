@@ -3,6 +3,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use super::global::*;
+use crate::ffi::state;
 
 use crate::engine::{
     IsolationLevel, LockTimeout, SavepointDialect, Transaction, TransactionAccessMode,
@@ -107,8 +108,8 @@ pub extern "C" fn odbc_transaction_begin_v3(
             Pooled(SharedPooledConnection),
         }
 
-        let begin_source = if let Some(conn) = state.connections.get(&conn_id) {
-            TransactionBeginSource::Regular(conn.get_handles())
+        let begin_source = if let Some(handles) = state::connection_handles(conn_id) {
+            TransactionBeginSource::Regular(handles)
         } else if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
             TransactionBeginSource::Pooled(entry.pooled)
         } else {
@@ -181,7 +182,7 @@ pub extern "C" fn odbc_transaction_begin_v3(
         state.transaction_begins_in_progress.remove(&conn_id);
         match txn_result {
             Ok(txn) => {
-                let connection_still_valid = state.connections.contains_key(&conn_id)
+                let connection_still_valid = state::contains_connection(conn_id)
                     || state.pooled_connections.contains_key(&conn_id);
                 if !connection_still_valid {
                     drop(state);

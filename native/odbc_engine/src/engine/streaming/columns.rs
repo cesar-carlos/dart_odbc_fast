@@ -30,12 +30,22 @@ where
 
 /// Encodes a fetch batch using the requested wire layout (v4.2 streaming).
 pub(crate) fn encode_row_buffer_with_encoding(
-    row_buffer: &RowBuffer,
+    row_buffer: &mut RowBuffer,
     encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
     match encoding {
         ResultEncoding::RowMajor => RowBufferEncoder::encode_result(row_buffer),
-        ResultEncoding::Columnar => encode_query_result_payload(row_buffer, true, false),
-        ResultEncoding::ColumnarCompressed => encode_query_result_payload(row_buffer, true, true),
+        ResultEncoding::Columnar | ResultEncoding::ColumnarCompressed => {
+            let rows = std::mem::take(&mut row_buffer.rows);
+            let batch = RowBuffer {
+                columns: row_buffer.columns.clone(),
+                rows,
+            };
+            encode_query_result_payload(
+                batch,
+                true,
+                matches!(encoding, ResultEncoding::ColumnarCompressed),
+            )
+        }
     }
 }

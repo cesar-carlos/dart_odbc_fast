@@ -83,6 +83,30 @@ void main() {
       expect(message.resultEncodingWire, 2);
       expect(message.serializedParams, [1, 2]);
     });
+
+    test('StreamMultiStartBatchedRequest carries result encoding wire code',
+        () async {
+      final receivePort = ReceivePort();
+      final request = StreamMultiStartBatchedRequest(
+        41,
+        3,
+        'SELECT 1; SELECT 2',
+        fetchSize: 500,
+        chunkSize: 32768,
+        resultEncodingWire: ResultEncoding.columnar.wireCode,
+      );
+
+      receivePort.sendPort.send(request);
+      final message = await receivePort.first as StreamMultiStartBatchedRequest;
+      receivePort.close();
+
+      expect(message.requestId, 41);
+      expect(message.connectionId, 3);
+      expect(message.type, RequestType.streamMultiStartBatched);
+      expect(message.fetchSize, 500);
+      expect(message.chunkSize, 32768);
+      expect(message.resultEncodingWire, 1);
+    });
   });
 
   group('message protocol responses', () {
@@ -135,6 +159,22 @@ void main() {
       expect(message.message, 'syntax error');
       expect(message.sqlStateString, '42000');
       expect(message.nativeCode, 102);
+    });
+
+    test('QueryResponse keeps inline payload below threshold', () {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes);
+      final response = QueryResponse(1, data: bytes);
+
+      expect(response.data, bytes);
+      expect(identical(response.data, response.data), isTrue);
+    });
+
+    test('QueryResponse uses transferable payload above threshold', () {
+      final bytes = Uint8List(isolateTransferablePayloadThresholdBytes + 1);
+      final response = isolateQueryDataResponse(1, bytes);
+
+      expect(response.data, bytes);
+      expect(identical(response.data, response.data), isTrue);
     });
 
     test('QueryResponse lazily materializes transferable byte payload', () {

@@ -5,44 +5,44 @@
 // Prerequisites: Set ODBC_TEST_DSN in environment variable or .env.
 // Execute: dart test test/integration/streaming_integration_test.dart
 
-import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:test/test.dart';
 
-import '../helpers/load_env.dart';
+import '../helpers/load_env.dart' as test_env;
 
 void main() {
-  loadTestEnv();
+  test_env.loadTestEnv();
 
-  group('Streaming queries integration tests', () {
-    late NativeOdbcConnection native;
-    var connId = 0;
-    late String streamingTableName;
-    late String emptyTableName;
+  group(
+    'Streaming queries integration tests',
+    () {
+      late NativeOdbcConnection native;
+      var connId = 0;
+      late String streamingTableName;
+      late String emptyTableName;
 
-    setUpAll(() async {
-      final dsn = getTestEnv('ODBC_TEST_DSN') ?? getTestEnv('ODBC_DSN');
-      if (dsn == null || dsn.isEmpty) {
-        print('Skipping integration tests: ODBC_TEST_DSN not set');
-        return;
-      }
+      setUpAll(() async {
+        final dsn = test_env.getTestEnv('ODBC_TEST_DSN') ??
+            test_env.getTestEnv('ODBC_DSN')!;
 
-      final runSuffix = DateTime.now().microsecondsSinceEpoch;
-      streamingTableName = 'streaming_test_$runSuffix';
-      emptyTableName = 'empty_table_$runSuffix';
+        final runSuffix = DateTime.now().microsecondsSinceEpoch;
+        streamingTableName = 'streaming_test_$runSuffix';
+        emptyTableName = 'empty_table_$runSuffix';
 
-      native = NativeOdbcConnection();
-      final initResult = native.initialize();
-      if (!initResult) {
-        throw Exception('ODBC environment initialization failed');
-      }
+        native = NativeOdbcConnection();
+        final initResult = native.initialize();
+        if (!initResult) {
+          throw Exception('ODBC environment initialization failed');
+        }
 
-      connId = native.connect(dsn);
-      if (connId == 0) {
-        throw Exception('Connection failed: ${native.getError()}');
-      }
+        connId = native.connect(dsn);
+        if (connId == 0) {
+          throw Exception('Connection failed: ${native.getError()}');
+        }
 
-      // Create test table
-      final createTableSql = '''
+        // Create test table
+        final createTableSql = '''
         IF OBJECT_ID('$streamingTableName', 'U') IS NOT NULL
           DROP TABLE $streamingTableName;
 
@@ -53,126 +53,127 @@ void main() {
         )
       ''';
 
-      final createStmt = native.prepare(connId, createTableSql);
-      if (createStmt == 0) {
-        throw Exception('Prepare create failed: ${native.getError()}');
-      }
-
-      final createResult =
-          native.executePrepared(createStmt, const <ParamValue>[], 0, 1000);
-      if (createResult == null) {
-        throw Exception('Table creation failed: ${native.getError()}');
-      }
-
-      native.closeStatement(createStmt);
-
-      // Insert test data
-      final insertSql =
-          'INSERT INTO $streamingTableName (name, value) VALUES (?, ?)';
-      for (var i = 1; i <= 100; i++) {
-        final insertStmt = native.prepare(connId, insertSql);
-        if (insertStmt != 0) {
-          native
-            ..executePrepared(
-              insertStmt,
-              [
-                ParamValueString('Item_$i'),
-                ParamValueDecimal((i * 1.5).toStringAsFixed(2)),
-              ],
-              0,
-              1000,
-            )
-            ..closeStatement(insertStmt);
+        final createStmt = native.prepare(connId, createTableSql);
+        if (createStmt == 0) {
+          throw Exception('Prepare create failed: ${native.getError()}');
         }
-      }
-    });
 
-    tearDownAll(() {
-      if (connId != 0) {
-        final dropSql = '''
+        final createResult =
+            native.executePrepared(createStmt, const <ParamValue>[], 0, 1000);
+        if (createResult == null) {
+          throw Exception('Table creation failed: ${native.getError()}');
+        }
+
+        native.closeStatement(createStmt);
+
+        // Insert test data
+        final insertSql =
+            'INSERT INTO $streamingTableName (name, value) VALUES (?, ?)';
+        for (var i = 1; i <= 100; i++) {
+          final insertStmt = native.prepare(connId, insertSql);
+          if (insertStmt != 0) {
+            native
+              ..executePrepared(
+                insertStmt,
+                [
+                  ParamValueString('Item_$i'),
+                  ParamValueDecimal((i * 1.5).toStringAsFixed(2)),
+                ],
+                0,
+                1000,
+              )
+              ..closeStatement(insertStmt);
+          }
+        }
+      });
+
+      tearDownAll(() {
+        if (connId != 0) {
+          final dropSql = '''
           IF OBJECT_ID('$streamingTableName', 'U') IS NOT NULL
             DROP TABLE $streamingTableName;
           IF OBJECT_ID('$emptyTableName', 'U') IS NOT NULL
             DROP TABLE $emptyTableName;
         ''';
-        final dropStmt = native.prepare(connId, dropSql);
-        if (dropStmt != 0) {
-          native
-            ..executePrepared(dropStmt, const <ParamValue>[], 0, 1000)
-            ..closeStatement(dropStmt);
+          final dropStmt = native.prepare(connId, dropSql);
+          if (dropStmt != 0) {
+            native
+              ..executePrepared(dropStmt, const <ParamValue>[], 0, 1000)
+              ..closeStatement(dropStmt);
+          }
+          native.disconnect(connId);
         }
-        native.disconnect(connId);
-      }
-    });
+      });
 
-    test('streamQueryBatched returns data in chunks', () async {
-      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
+      test('streamQueryBatched returns data in chunks', () async {
+        final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
-      var totalRows = 0;
-      var chunkCount = 0;
-      final stream = native.streamQueryBatched(
-        connId,
-        selectSql,
-        fetchSize: 20,
-      );
+        num totalRows = 0;
+        var chunkCount = 0;
+        final stream = native.streamQueryBatched(
+          connId,
+          selectSql,
+          fetchSize: 20,
+        );
 
-      await for (final chunk in stream) {
-        chunkCount++;
-        final rowCount = chunk.rowCount;
-        totalRows += rowCount;
+        await for (final chunk in stream) {
+          chunkCount++;
+          final rowCount = chunk.rowCount;
+          totalRows += rowCount;
 
-        expect(rowCount, greaterThan(0));
-        expect(rowCount, lessThanOrEqualTo(20));
-      }
+          expect(rowCount, greaterThan(0));
+          expect(rowCount, lessThanOrEqualTo(20));
+        }
 
-      expect(chunkCount, greaterThan(1));
-      expect(totalRows, 100);
-    });
+        expect(chunkCount, greaterThan(1));
+        expect(totalRows, 100);
+      });
 
-    test('streamQuery with custom fetch size yields multiple chunks', () async {
-      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
+      test('streamQuery with custom fetch size yields multiple chunks',
+          () async {
+        final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
-      var totalRows = 0;
-      var chunkCount = 0;
-      final stream = native.streamQuery(
-        connId,
-        selectSql,
-        chunkSize: 25,
-      );
+        num totalRows = 0;
+        var chunkCount = 0;
+        final stream = native.streamQuery(
+          connId,
+          selectSql,
+          chunkSize: 25,
+        );
 
-      await for (final chunk in stream) {
-        chunkCount++;
-        totalRows += chunk.rowCount;
-      }
+        await for (final chunk in stream) {
+          chunkCount++;
+          totalRows += chunk.rowCount;
+        }
 
-      // streamQuery delegates to batched streaming; chunkSize is fetchSize.
-      expect(chunkCount, greaterThan(1));
-      expect(totalRows, 100);
-    });
+        // streamQuery delegates to batched streaming; chunkSize is fetchSize.
+        expect(chunkCount, greaterThan(1));
+        expect(totalRows, 100);
+      });
 
-    test('streamQueryBatched with large fetchSize returns fewer chunks',
-        () async {
-      final selectSql = 'SELECT id, name, value FROM $streamingTableName';
+      test('streamQueryBatched with large fetchSize returns fewer chunks',
+          () async {
+        final selectSql = 'SELECT id, name, value FROM $streamingTableName';
 
-      var chunkCount = 0;
-      var totalRows = 0;
-      final stream = native.streamQueryBatched(
-        connId,
-        selectSql,
-        fetchSize: 100,
-      );
+        var chunkCount = 0;
+        num totalRows = 0;
+        final stream = native.streamQueryBatched(
+          connId,
+          selectSql,
+          fetchSize: 100,
+        );
 
-      await for (final chunk in stream) {
-        chunkCount++;
-        totalRows += chunk.rowCount;
-      }
+        await for (final chunk in stream) {
+          chunkCount++;
+          totalRows += chunk.rowCount;
+        }
 
-      expect(totalRows, 100);
-      expect(chunkCount, inInclusiveRange(1, 2));
-    });
+        expect(totalRows, 100);
+        expect(chunkCount, inInclusiveRange(1, 2));
+      });
 
-    test('Streaming query handles empty result set', () async {
-      final createEmptyTableSql = '''
+      test('Streaming query handles empty result set', () async {
+        final createEmptyTableSql = '''
         IF OBJECT_ID('$emptyTableName', 'U') IS NOT NULL
           DROP TABLE $emptyTableName;
 
@@ -182,50 +183,56 @@ void main() {
         )
       ''';
 
-      final createStmt = native.prepare(connId, createEmptyTableSql);
-      if (createStmt == 0) {
-        fail('Prepare create failed: ${native.getError()}');
-      }
+        final createStmt = native.prepare(connId, createEmptyTableSql);
+        if (createStmt == 0) {
+          fail('Prepare create failed: ${native.getError()}');
+        }
 
-      final createResult =
-          native.executePrepared(createStmt, const <ParamValue>[], 0, 1000);
-      if (createResult == null) {
-        fail('Table creation failed: ${native.getError()}');
-      }
+        final createResult =
+            native.executePrepared(createStmt, const <ParamValue>[], 0, 1000);
+        if (createResult == null) {
+          fail('Table creation failed: ${native.getError()}');
+        }
 
-      native.closeStatement(createStmt);
+        native.closeStatement(createStmt);
 
-      final selectSql = 'SELECT * FROM $emptyTableName';
+        final selectSql = 'SELECT * FROM $emptyTableName';
 
-      var rowCount = 0;
-      final stream = native.streamQueryBatched(
-        connId,
-        selectSql,
-        fetchSize: 10,
-      );
+        num rowCount = 0;
+        final stream = native.streamQueryBatched(
+          connId,
+          selectSql,
+          fetchSize: 10,
+        );
 
-      await for (final chunk in stream) {
-        rowCount += chunk.rowCount;
-      }
+        await for (final chunk in stream) {
+          rowCount += chunk.rowCount;
+        }
 
-      expect(rowCount, 0);
-    });
+        expect(rowCount, 0);
+      });
 
-    test('Streaming query with WHERE clause filters results', () async {
-      final selectSql = 'SELECT * FROM $streamingTableName WHERE id <= 50';
+      test('Streaming query with WHERE clause filters results', () async {
+        final selectSql = 'SELECT * FROM $streamingTableName WHERE id <= 50';
 
-      var totalRows = 0;
-      final stream = native.streamQueryBatched(
-        connId,
-        selectSql,
-        fetchSize: 20,
-      );
+        num totalRows = 0;
+        final stream = native.streamQueryBatched(
+          connId,
+          selectSql,
+          fetchSize: 20,
+        );
 
-      await for (final chunk in stream) {
-        totalRows += chunk.rowCount;
-      }
+        await for (final chunk in stream) {
+          totalRows += chunk.rowCount;
+        }
 
-      expect(totalRows, 50);
-    });
-  });
+        expect(totalRows, 50);
+      });
+    },
+    skip: test_env.skipUnlessLiveOdbcTest() ??
+        test_env.skipUnlessDatabase(
+          [test_env.DatabaseType.sqlServer],
+          reason: 'SQL Server-specific DDL (IDENTITY, OBJECT_ID)',
+        ),
+  );
 }

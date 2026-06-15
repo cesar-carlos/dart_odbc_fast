@@ -25,11 +25,14 @@
 mod column_buffers;
 mod driver_adapters;
 mod fetch_loop;
+mod streaming_session;
 
+pub(crate) use column_buffers::{format_date_into, format_time_into, format_timestamp_into};
 pub use driver_adapters::plan_buffer_descs;
 pub use fetch_loop::{
     configured_batch_size, fetch_rows_into, BATCH_SIZE_ENV_VAR, DEFAULT_BATCH_SIZE,
 };
+pub(crate) use streaming_session::RowMajorBlockSession;
 
 /// Hard upper bound on the per-cell buffer size we are willing to allocate
 /// inline. Cells advertising more than this fall back to the per-row path

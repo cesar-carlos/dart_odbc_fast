@@ -8,6 +8,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_connection_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -79,6 +80,13 @@ class OdbcQueryRunner {
         params,
         resultEncoding: resultEncoding,
       );
+
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) =>
+      _sync.executeQueryColumnarParamValues(connectionId, sql, params);
 
   Future<Result<QueryResult>> executeQueryParamBuffer(
     String connectionId,

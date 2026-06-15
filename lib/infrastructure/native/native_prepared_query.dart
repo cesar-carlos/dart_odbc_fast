@@ -171,15 +171,22 @@ mixin _NativePreparedQuery on _NativeOdbcState {
   /// Starts a streaming multi-result batch in batched mode and returns the
   /// new stream id (or `null` on failure / unsupported native lib).
   /// Use `streamFetch` / `streamCancel` / `streamClose` to drive it.
+  /// When [resultEncodingWire] is non-zero and the native library exports
+  /// `odbc_stream_multi_start_batched_options`, result-set frames use
+  /// columnar v2 wire layout.
   int? streamMultiStartBatched(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) =>
       _native.streamMultiStartBatched(
         connectionId,
         sql,
+        fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       );
 
   /// Async variant of [streamMultiStartBatched]. Combine with
@@ -187,12 +194,16 @@ mixin _NativePreparedQuery on _NativeOdbcState {
   int? streamMultiStartAsync(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) =>
       _native.streamMultiStartAsync(
         connectionId,
         sql,
+        fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       );
 
   /// Executes a parameterised batch SQL that may return multiple result sets.

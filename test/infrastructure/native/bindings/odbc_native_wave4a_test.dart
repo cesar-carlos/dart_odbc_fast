@@ -272,6 +272,111 @@ void main() {
 
       expect(native.streamMultiStartAsync(2, 'SELECT 2'), equals(88));
     });
+
+    test('should_route_stream_multi_batched_options_when_columnar_requested',
+        () {
+      int? capturedEncoding;
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.stub(
+          handlers: StubOdbcBindingsHandlers(
+            forceSupportsMultiResultStream: true,
+            forceSupportsMultiResultStreamEncodingOptions: true,
+            streamMultiStartBatchedOptions: (_, __, ___, ____, encoding) {
+              capturedEncoding = encoding;
+              return 91;
+            },
+          ),
+        ),
+      );
+
+      expect(
+        native.streamMultiStartBatched(
+          1,
+          'SELECT 1',
+          resultEncodingWire: 1,
+        ),
+        equals(91),
+      );
+      expect(capturedEncoding, equals(1));
+    });
+
+    test('should_fall_back_to_row_major_multi_batched_when_options_absent', () {
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.stub(
+          handlers: StubOdbcBindingsHandlers(
+            forceSupportsMultiResultStream: true,
+            forceSupportsMultiResultStreamEncodingOptions: false,
+            streamMultiStartBatched: (_, __, ___) => 77,
+          ),
+        ),
+      );
+
+      expect(
+        native.streamMultiStartBatched(
+          1,
+          'SELECT 1',
+          resultEncodingWire: 1,
+        ),
+        equals(77),
+      );
+    });
+
+    test(
+      'should_route_stream_multi_start_async_options_when_columnar_requested',
+      () {
+        int? capturedEncoding;
+        final native = OdbcNative.withBindings(
+          FakeOdbcBindings.stub(
+            handlers: StubOdbcBindingsHandlers(
+              forceSupportsAsyncMultiResultStream: true,
+              forceSupportsMultiResultStreamEncodingOptions: true,
+              streamMultiStartAsyncOptions: (_, __, ___, ____, encoding) {
+                capturedEncoding = encoding;
+                return 93;
+              },
+            ),
+          ),
+        );
+
+        expect(
+          native.streamMultiStartAsync(
+            1,
+            'SELECT 1',
+            resultEncodingWire: 2,
+          ),
+          equals(93),
+        );
+        expect(capturedEncoding, equals(2));
+      },
+    );
+
+    test('should_route_stream_start_async_options_when_columnar_requested', () {
+      int? capturedEncoding;
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.stub(
+          capabilities: const TestOdbcBindingsCapabilities(
+            supportsAsyncStreamApi: true,
+          ),
+          handlers: StubOdbcBindingsHandlers(
+            forceSupportsStreamAsyncEncodingOptions: true,
+            streamStartAsyncOptions: (_, __, ___, ____, encoding) {
+              capturedEncoding = encoding;
+              return 92;
+            },
+          ),
+        ),
+      );
+
+      expect(
+        native.streamStartAsync(
+          1,
+          'SELECT 1',
+          resultEncodingWire: 1,
+        ),
+        equals(92),
+      );
+      expect(capturedEncoding, equals(1));
+    });
   });
 
   group('OdbcNative pool and audit edge cases', () {

@@ -26,15 +26,20 @@ void main() async {
 
   final sql = Platform.environment['ODBC_COLUMNAR_QUERY'] ??
       "SELECT 1 AS id, 'alpha' AS label";
-  final native = NativeOdbcConnection();
-  final repository = OdbcRepositoryImpl(native);
-  final service = OdbcService(repository);
+
+  final locator = ServiceLocator()
+    ..initialize(profile: OdbcUsageProfile.balanced);
+  final service = locator.service;
 
   if ((await service.initialize()).isError()) {
     AppLogger.severe('initialize failed');
+    locator.shutdown();
     return;
   }
-  final connect = await service.connect(dsn);
+  final connect = await service.connect(
+    dsn,
+    options: locator.recommendedConnectionOptions,
+  );
   if (connect.isError()) {
     AppLogger.severe('connect: ${connect.exceptionOrNull()}');
     return;
@@ -64,5 +69,6 @@ void main() async {
     }
   } finally {
     await service.disconnect(connId);
+    locator.shutdown();
   }
 }

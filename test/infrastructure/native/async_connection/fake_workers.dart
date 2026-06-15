@@ -5,6 +5,21 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
+/// Fake worker: initialize handshake fails (success=false).
+void fakeWorkerInitFailure(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: false));
+    }
+  });
+}
+
 /// Fake worker: responds to InitializeRequest only, never responds to others.
 void fakeWorkerNoResponse(SendPort mainSendPort) {
   final receivePort = ReceivePort();

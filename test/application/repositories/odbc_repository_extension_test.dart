@@ -59,6 +59,19 @@ class _FakeRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) async {
+    capturedConnectionId = connectionId;
+    capturedSql = sql;
+    capturedParamValues = params;
+    capturedEncoding = ResultEncoding.columnar;
+    return Success(toTypedColumnar(_emptyResult));
+  }
+
+  @override
   Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
@@ -162,6 +175,7 @@ void main() {
       final result = await fake.executeQueryColumnarParamValues(
         'conn-repo',
         'SELECT c',
+        const <ParamValue>[],
       );
       expect(fake.capturedEncoding, equals(ResultEncoding.columnar));
       expect(result.isSuccess(), isTrue);

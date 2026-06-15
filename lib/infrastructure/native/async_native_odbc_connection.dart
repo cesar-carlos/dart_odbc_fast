@@ -10,6 +10,7 @@ import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
@@ -20,6 +21,7 @@ import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart'
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dart';
 
 export 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 

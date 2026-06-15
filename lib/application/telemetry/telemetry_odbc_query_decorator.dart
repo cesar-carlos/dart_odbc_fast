@@ -1,4 +1,5 @@
 import 'package:odbc_fast/application/services/i_odbc_service.dart';
+import 'package:odbc_fast/application/services/i_query_service.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_operations.dart';
 import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/entities/param_value.dart';
@@ -10,14 +11,30 @@ import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:result_dart/result_dart.dart';
 
-/// Query-shaped telemetry delegate for the ODBC service decorator façade.
-class TelemetryOdbcQueryDecorator {
-  /// Creates a query telemetry delegate.
-  TelemetryOdbcQueryDecorator(this._service, this._ops);
+/// Query-shaped telemetry decorator implementing [IQueryService].
+///
+/// Extra methods beyond [IQueryService] (prepare, bulk insert, catalog) are
+/// available when the wrapped service is an [IOdbcService].
+class TelemetryOdbcQueryDecorator implements IQueryService {
+  /// Creates a query telemetry decorator.
+  ///
+  /// Pass [aggregate] when wrapping a non-[IOdbcService] [IQueryService] but
+  /// still needing aggregate-only forwards (for example from the aggregate
+  /// telemetry decorator façade).
+  TelemetryOdbcQueryDecorator(
+    IQueryService queries,
+    this._ops, [
+    IOdbcService? aggregate,
+  ])  : _queries = queries,
+        _aggregate = aggregate ?? (queries is IOdbcService ? queries : null);
 
-  final IOdbcService _service;
+  final IQueryService _queries;
   final TelemetryOdbcOperations _ops;
+  final IOdbcService? _aggregate;
 
+  IOdbcService get _service => _aggregate ?? _queries as IOdbcService;
+
+  @override
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
@@ -26,7 +43,7 @@ class TelemetryOdbcQueryDecorator {
   }) =>
       _ops.inOperation(
         'ODBC.executeQueryParamValues',
-        () => _service.executeQueryParamValues(
+        () => _queries.executeQueryParamValues(
           connectionId,
           sql,
           params,
@@ -34,6 +51,7 @@ class TelemetryOdbcQueryDecorator {
         ),
       );
 
+  @override
   Future<Result<QueryResult>> executeQueryDirectedParams(
     String connectionId,
     String sql,
@@ -41,13 +59,14 @@ class TelemetryOdbcQueryDecorator {
   ) =>
       _ops.inOperation(
         'ODBC.executeQueryDirectedParams',
-        () => _service.executeQueryDirectedParams(connectionId, sql, params),
+        () => _queries.executeQueryDirectedParams(connectionId, sql, params),
       );
 
+  @override
   Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
       _ops.wrapStream(
         'ODBC.streamQuery',
-        () => _service.streamQuery(connectionId, sql),
+        () => _queries.streamQuery(connectionId, sql),
       );
 
   Future<Result<int>> prepare(
@@ -142,15 +161,17 @@ class TelemetryOdbcQueryDecorator {
         () => _service.executeQueryMultiParamValues(connectionId, sql, params),
       );
 
+  @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
     String sql,
   ) =>
       _ops.wrapStream(
         'ODBC.streamQueryMulti',
-        () => _service.streamQueryMulti(connectionId, sql),
+        () => _queries.streamQueryMulti(connectionId, sql),
       );
 
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,
@@ -158,9 +179,10 @@ class TelemetryOdbcQueryDecorator {
   ) =>
       _ops.inOperation(
         'ODBC.executeQueryNamed',
-        () => _service.executeQueryNamed(connectionId, sql, namedParams),
+        () => _queries.executeQueryNamed(connectionId, sql, namedParams),
       );
 
+  @override
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
@@ -168,9 +190,10 @@ class TelemetryOdbcQueryDecorator {
   ) =>
       _ops.wrapStream(
         'ODBC.streamQueryNamed',
-        () => _service.streamQueryNamed(connectionId, sql, namedParams),
+        () => _queries.streamQueryNamed(connectionId, sql, namedParams),
       );
 
+  @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
     String sql, {
@@ -178,20 +201,21 @@ class TelemetryOdbcQueryDecorator {
   }) =>
       _ops.inOperation(
         'ODBC.executeQueryColumnarParamValues',
-        () => _service.executeQueryColumnarParamValues(
+        () => _queries.executeQueryColumnarParamValues(
           connectionId,
           sql,
           params: params,
         ),
       );
 
+  @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
     String sql,
   ) =>
       _ops.wrapStream(
         'ODBC.streamQueryColumnar',
-        () => _service.streamQueryColumnar(connectionId, sql),
+        () => _queries.streamQueryColumnar(connectionId, sql),
       );
 
   Future<Result<QueryResult>> catalogTables({
@@ -288,6 +312,7 @@ class TelemetryOdbcQueryDecorator {
         ),
       );
 
+  @override
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     String? connectionId,
@@ -303,7 +328,7 @@ class TelemetryOdbcQueryDecorator {
               ),
             );
           }
-          return _service.executeQueryParamValues(
+          return _queries.executeQueryParamValues(
             cid,
             sql,
             const <ParamValue>[],

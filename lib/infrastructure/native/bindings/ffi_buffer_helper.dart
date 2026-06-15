@@ -53,6 +53,93 @@ bool get isZeroCopyResultBufferAvailable {
 bool preferTransientFfiBufferForParams(Uint8List params) =>
     params.length >= zeroCopyResultThresholdBytes;
 
+/// Result of a streaming FFI buffer callback (includes has-more flag).
+class StreamBufferFetchResult {
+  const StreamBufferFetchResult({
+    required this.data,
+    required this.hasMore,
+  });
+
+  final Uint8List? data;
+  final bool hasMore;
+}
+
+typedef StreamBufferCallback = int Function(
+  ffi.Pointer<ffi.Uint8> buf,
+  int bufLen,
+  ffi.Pointer<ffi.Uint32> outWritten,
+  ffi.Pointer<ffi.Uint8> hasMore,
+);
+
+/// Like [callWithBuffer] for stream fetch callbacks that also return hasMore.
+StreamBufferFetchResult? streamCallWithBuffer(
+  StreamBufferCallback fn, {
+  int? maxSize,
+  int? initialSize,
+}) {
+  final limit = maxSize ?? maxBufferSize;
+  var size = initialSize ?? initialBufferSize;
+  while (size <= limit) {
+    final buf = malloc<ffi.Uint8>(size);
+    final outWritten = malloc<ffi.Uint32>()..value = 0;
+    final hasMore = malloc<ffi.Uint8>()..value = 0;
+    try {
+      final code = fn(buf, size, outWritten, hasMore);
+      if (code == 0) {
+        final n = outWritten.value;
+        final more = hasMore.value != 0;
+        malloc
+          ..free(outWritten)
+          ..free(hasMore);
+        final data = n > 0
+            ? materializeFfiBytes(
+                buf,
+                n,
+                transferOwnership: true,
+                allowZeroCopy: isZeroCopyResultBufferAvailable,
+              )
+            : null;
+        return StreamBufferFetchResult(data: data, hasMore: more);
+      }
+      if (code == -2) {
+        final requested = outWritten.value;
+        malloc
+          ..free(buf)
+          ..free(outWritten)
+          ..free(hasMore);
+        size = requested > size ? requested : size * 2;
+        continue;
+      }
+      malloc
+        ..free(buf)
+        ..free(outWritten)
+        ..free(hasMore);
+      return null;
+    } on Object {
+      malloc
+        ..free(buf)
+        ..free(outWritten)
+        ..free(hasMore);
+      rethrow;
+    }
+  }
+  return null;
+}
+
+/// Materializes FFI bytes using the same zero-copy policy as [callWithBuffer].
+Uint8List materializeFfiBytes(
+  ffi.Pointer<ffi.Uint8> buf,
+  int length, {
+  required bool transferOwnership,
+  required bool allowZeroCopy,
+}) =>
+    _materializeFfiBytes(
+      buf,
+      length,
+      transferOwnership: transferOwnership,
+      allowZeroCopy: allowZeroCopy,
+    );
+
 /// Calls a buffer callback function with dynamically sized buffers.
 ///
 /// Starts with [initialSize] or [initialBufferSize] and doubles the buffer
@@ -71,11 +158,12 @@ Uint8List? callWithBuffer(
   int? maxSize,
   int? initialSize,
   bool preferTransient = false,
+  bool? allowZeroCopy,
 }) {
   final limit = maxSize ?? maxBufferSize;
   final size = initialSize ?? initialBufferSize;
-  if (isZeroCopyResultBufferAvailable &&
-      (preferTransient || limit >= zeroCopyResultThresholdBytes)) {
+  final zeroCopy = allowZeroCopy ?? isZeroCopyResultBufferAvailable;
+  if (zeroCopy && (preferTransient || limit >= zeroCopyResultThresholdBytes)) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,
@@ -89,7 +177,7 @@ Uint8List? callWithBuffer(
       fn,
       limit: limit,
       initialSize: size,
-      allowZeroCopy: isZeroCopyResultBufferAvailable,
+      allowZeroCopy: zeroCopy,
     );
   }
   try {
@@ -97,7 +185,7 @@ Uint8List? callWithBuffer(
       fn,
       limit: limit,
       initialSize: size,
-      allowZeroCopy: isZeroCopyResultBufferAvailable,
+      allowZeroCopy: zeroCopy,
     );
   } finally {
     scratch.release();

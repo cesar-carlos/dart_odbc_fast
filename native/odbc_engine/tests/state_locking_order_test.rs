@@ -3,8 +3,10 @@
 //! Canonical order (documented in `ffi/state/mod.rs`):
 //!
 //! 1. `GLOBAL_STATE` (residual outer Mutex on `GlobalState`)
-//! 2. `ASYNC_REQUESTS` (own Mutex)
-//! 3. `connection_errors` (own RwLock)
+//! 2. Connection registry (`ffi::state::connections`)
+//! 3. Stream maps (`ffi::state::streams`)
+//! 4. `ASYNC_REQUESTS` (own Mutex)
+//! 5. `connection_errors` (own RwLock)
 //!
 //! Immutable accessors (`ffi_metrics`, `ffi_audit_logger`) never lock and
 //! may interleave at any point.
@@ -15,15 +17,34 @@
 //! poisoned data.
 
 use odbc_engine::ffi::state::{
-    clear_connection_error, ffi_audit_logger, ffi_metrics, get_connection_error_message,
-    get_connection_structured_error, legacy_global_error_message, legacy_global_error_write,
-    legacy_global_structured_error, set_connection_error, set_connection_structured_error,
-    set_legacy_global_error, set_legacy_global_structured_error,
+    clear_connection_error, contains_connection, ffi_audit_logger, ffi_metrics,
+    get_connection_error_message, get_connection_structured_error, legacy_global_error_message,
+    legacy_global_error_write, legacy_global_structured_error, set_connection_error,
+    set_connection_structured_error, set_legacy_global_error, set_legacy_global_structured_error,
 };
 use odbc_engine::StructuredError;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
+#[test]
+fn connection_registry_reads_do_not_deadlock_under_contention() {
+    const THREADS: usize = 4;
+    const LOOKUPS: usize = 500;
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            thread::spawn(move || {
+                for i in 0..LOOKUPS {
+                    let conn_id = 20_000 + (t as u32) * 1000 + (i as u32);
+                    let _ = contains_connection(conn_id);
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().expect("connection lookup thread");
+    }
+}
 
 #[test]
 fn concurrent_error_writes_never_deadlock_or_corrupt() {

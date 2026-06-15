@@ -14,6 +14,7 @@
 // Requires ODBC_TEST_DSN or ODBC_DSN in .env or the environment.
 
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 

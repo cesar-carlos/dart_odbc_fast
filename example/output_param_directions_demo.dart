@@ -12,6 +12,7 @@
 // `SELECT CAST(? AS INT)` with a directed *input* parameter (same DRT1 path).
 
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 

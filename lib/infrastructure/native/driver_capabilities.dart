@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
 
 export 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 
@@ -25,7 +26,7 @@ class OdbcDriverCapabilities {
     if (decoded is! Map<String, Object?>) {
       return null;
     }
-    return DriverCapabilities.fromJson(decoded);
+    return DriverCapabilitiesMapper.fromJson(decoded);
   }
 
   /// Live DBMS introspection (v2.1). Returns [DbmsInfo] for the open
@@ -40,6 +41,6 @@ class OdbcDriverCapabilities {
     if (decoded is! Map<String, Object?>) {
       return null;
     }
-    return DbmsInfo.fromJson(decoded);
+    return DriverCapabilitiesMapper.dbmsInfoFromJson(decoded);
   }
 }

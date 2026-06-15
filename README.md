@@ -568,6 +568,18 @@ dart pub get
 
 Native binary resolution order is documented in [doc/BUILD.md](doc/BUILD.md).
 
+### Package entrypoints
+
+| Import | When to use |
+| ------ | ----------- |
+| `package:odbc_fast/odbc_fast.dart` | **Default** — domain types, `ServiceLocator`, `IOdbcService` / sub-interfaces, segregated `IQueryRepository` / `IPoolRepository` / etc., protocol helpers (`ParamValue`, `BulkInsertBuilder`, `ParsedRowBuffer`), and telemetry. Enough for most apps and examples. |
+| `package:odbc_fast/odbc_fast_native.dart` | **Opt-in** — direct FFI surfaces: `NativeOdbcConnection`, `AsyncNativeOdbcConnection`, `OdbcRepositoryImpl`, `OdbcPoolFactory`, `AsyncError` types, and OpenTelemetry FFI. Use when you bypass `ServiceLocator`, construct the repository yourself, or need low-level native types documented in examples such as [`simple_demo.dart`](example/simple_demo.dart) and [`async_demo.dart`](example/async_demo.dart). |
+| `package:odbc_fast/infrastructure/...` | **Internal / advanced** — only when a symbol is not re-exported by the barrels above (e.g. `BinaryProtocolParser` internals, `multi_result_parser.dart`). Prefer extending the public barrels over deep infrastructure imports in application code. |
+
+`odbc_fast.dart` deliberately does **not** export `OdbcRepositoryImpl` or
+`NativeOdbcConnection`; add `import 'package:odbc_fast/odbc_fast_native.dart';`
+when your code needs those types.
+
 ## Quick Start (High-level service)
 
 `ServiceLocator` is exported by `package:odbc_fast/odbc_fast.dart`.
@@ -890,7 +902,7 @@ dart run example/pool_with_options_demo.dart           # NEW v3.0 (PoolOptions)
 
 # Async
 dart run example/async_demo.dart
-dart run example/async_service_locator_demo.dart
+dart run example/quick_start_balanced_demo.dart
 dart run example/execute_async_demo.dart
 dart run example/high_concurrency_worker_pool_demo.dart
 dart run example/high_concurrency_pool_demo.dart

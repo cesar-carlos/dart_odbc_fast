@@ -1,4 +1,4 @@
-# Oracle `SYS_REFCURSOR` OUT — *spike* e plano de implementação
+# Oracle `SYS_REFCURSOR` OUT — integração e maturação
 
 **Estado (motor, Oracle + plugin activo):** `ParamValue::RefCursorOut` no buffer DRT1
 activa o *path* `engine::core::ref_cursor_oracle` + `execute_oracle_ref_cursor_path` em

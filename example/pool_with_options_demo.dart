@@ -8,8 +8,8 @@
 //   - the loaded native library predates the v3.0
 //     `odbc_pool_create_with_options` entry point.
 
-import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 void main() {
   AppLogger.initialize();

@@ -6,8 +6,8 @@
 // parsing the connection string: works for DSN-only strings and
 // distinguishes MariaDB from MySQL, ASE from ASA, etc.
 
-import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 

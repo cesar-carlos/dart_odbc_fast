@@ -43,6 +43,7 @@ mixin _AsyncStreaming
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamStartAsyncRequest(
@@ -51,6 +52,7 @@ mixin _AsyncStreaming
         sql,
         fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       ),
     );
     return r.value;
@@ -62,12 +64,14 @@ mixin _AsyncStreaming
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async {
     return _streamStartAsync(
       connectionId,
       sql,
       fetchSize: fetchSize,
       chunkSize: chunkSize,
+      resultEncodingWire: resultEncodingWire,
     );
   }
 
@@ -78,14 +82,18 @@ mixin _AsyncStreaming
   Future<int> streamMultiStartBatched(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamMultiStartBatchedRequest(
         _nextRequestId(),
         connectionId,
         sql,
+        fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       ),
     );
     return r.value;
@@ -96,14 +104,18 @@ mixin _AsyncStreaming
   Future<int> streamMultiStartAsync(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamMultiStartAsyncRequest(
         _nextRequestId(),
         connectionId,
         sql,
+        fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       ),
     );
     return r.value;
@@ -164,6 +176,7 @@ mixin _AsyncStreaming
     int chunkSize = 64 * 1024,
     int? maxBufferBytes,
     int resultEncodingWire = 0,
+    bool lazyStrings = false,
   }) async* {
     final streamId = await _streamStartBatched(
       connectionId,
@@ -205,7 +218,86 @@ mixin _AsyncStreaming
           }
 
           for (final msg in pending.drainFrames()) {
-            yield BinaryProtocolParser.parse(msg);
+            yield decodeBatchedStreamFrame(
+              msg,
+              lazyStrings: lazyStrings,
+            );
+          }
+        }
+
+        if (!fetched.hasMore) {
+          break;
+        }
+      }
+
+      if (pending.length > 0) {
+        throw const FormatException(
+          'Leftover bytes after stream; expected complete protocol messages',
+        );
+      }
+      completed = true;
+    } finally {
+      if (!completed) {
+        await streamCancel(streamId);
+      }
+      await _streamClose(streamId);
+    }
+  }
+
+  /// Batched columnar streaming with direct [TypedColumnarResult] decode.
+  Stream<TypedColumnarResult> streamQueryColumnarBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int? maxBufferBytes,
+    bool lazyStrings = false,
+    ResultEncoding resultEncoding = ResultEncoding.columnar,
+  }) async* {
+    final streamId = await _streamStartBatched(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      resultEncodingWire: resultEncoding.wireCode,
+    );
+    if (streamId == 0) {
+      final workerError = await _safeGetWorkerError();
+      throw AsyncError(
+        code: AsyncErrorCode.queryFailed,
+        message: workerError ?? 'Failed to start batched columnar stream',
+      );
+    }
+
+    final pending = BinaryFrameAccumulator();
+    final limit = maxBufferBytes;
+    var completed = false;
+    try {
+      while (true) {
+        final fetched = await _streamFetch(streamId);
+        if (!fetched.success) {
+          final workerError = fetched.error ?? await _safeGetWorkerError();
+          throw AsyncError(
+            code: AsyncErrorCode.queryFailed,
+            message: workerError ?? 'Batched columnar stream fetch failed',
+          );
+        }
+
+        final data = fetched.data;
+        if (data != null && data.isNotEmpty) {
+          pending.add(data);
+          if (limit != null && pending.length > limit) {
+            throw const AsyncError(
+              code: AsyncErrorCode.queryFailed,
+              message: 'Streaming buffer exceeded maxBufferBytes',
+            );
+          }
+
+          for (final msg in pending.drainFrames()) {
+            yield BinaryProtocolParser.parseColumnarToTyped(
+              msg,
+              lazyStrings: lazyStrings,
+            );
           }
         }
 
@@ -252,6 +344,7 @@ mixin _AsyncStreaming
     String sql, {
     int chunkSize = 1000,
     int? maxBufferBytes,
+    bool lazyStrings = false,
   }) async* {
     final streamId = await _streamStart(
       connectionId,
@@ -297,7 +390,10 @@ mixin _AsyncStreaming
       }
 
       if (buffer.length > 0) {
-        yield BinaryProtocolParser.parse(buffer.toBytes());
+        yield decodeBatchedStreamFrame(
+          buffer.toBytes(),
+          lazyStrings: lazyStrings,
+        );
       }
       completed = true;
     } finally {
@@ -320,12 +416,15 @@ mixin _AsyncStreaming
     int chunkSize = 64 * 1024,
     Duration pollInterval = const Duration(milliseconds: 10),
     int? maxBufferBytes,
+    int resultEncodingWire = 0,
+    bool lazyStrings = false,
   }) async* {
     final streamId = await _streamStartAsync(
       connectionId,
       sql,
       fetchSize: fetchSize,
       chunkSize: chunkSize,
+      resultEncodingWire: resultEncodingWire,
     );
     if (streamId == 0) {
       final workerError = await _safeGetWorkerError();
@@ -395,7 +494,10 @@ mixin _AsyncStreaming
           }
 
           for (final msg in pending.drainFrames()) {
-            yield BinaryProtocolParser.parse(msg);
+            yield decodeBatchedStreamFrame(
+              msg,
+              lazyStrings: lazyStrings,
+            );
           }
         }
       }

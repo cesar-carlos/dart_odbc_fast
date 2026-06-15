@@ -17,6 +17,7 @@
 //! helper as [`crate::engine::core::block_fetch`] so both fast paths
 //! agree on what is bindable.
 
+use crate::engine::core::block_fetch::{format_date_into, format_time_into, format_timestamp_into};
 use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnData, ColumnMetadata, RowBufferV2};
 use crate::protocol::OdbcType;
@@ -82,16 +83,106 @@ where
 
     let (cursor, _buffer) = block_cursor.unbind().map_err(OdbcError::from)?;
 
+    Ok((
+        cursor,
+        accumulators_into_v2(column_metas, accumulators, total_rows)?,
+    ))
+}
+
+/// Long-lived block-cursor session for columnar batched streaming.
+pub(crate) struct ColumnarStreamingSession<C: Cursor> {
+    block_cursor: odbc_api::BlockCursor<C, ColumnarAnyBuffer>,
+    column_metas: Vec<ColumnMetadata>,
+    column_types: Vec<OdbcType>,
+    exhausted: bool,
+}
+
+impl<C: Cursor> ColumnarStreamingSession<C> {
+    pub(crate) fn try_begin(
+        cursor: C,
+        column_metas: Vec<ColumnMetadata>,
+        column_types: Vec<OdbcType>,
+        buffer_descs: Vec<BufferDesc>,
+        batch_size: usize,
+    ) -> Result<Self> {
+        debug_assert_eq!(column_metas.len(), column_types.len());
+        debug_assert_eq!(column_metas.len(), buffer_descs.len());
+
+        let batch_size = batch_size.max(1);
+        let buffer = ColumnarAnyBuffer::try_from_descs(batch_size, buffer_descs).map_err(|e| {
+            OdbcError::InternalError(format!("ColumnarAnyBuffer allocation failed: {e}"))
+        })?;
+        let block_cursor = cursor.bind_buffer(buffer).map_err(OdbcError::from)?;
+        Ok(Self {
+            block_cursor,
+            column_metas,
+            column_types,
+            exhausted: false,
+        })
+    }
+
+    /// Fetches the next ODBC batch into a fresh `RowBufferV2`, or `None`
+    /// when the cursor is exhausted.
+    pub(crate) fn fetch_next_batch_v2(&mut self) -> Result<Option<RowBufferV2>> {
+        if self.exhausted {
+            return Ok(None);
+        }
+
+        let Some(batch) = self
+            .block_cursor
+            .fetch_with_truncation_check(true)
+            .map_err(OdbcError::from)?
+        else {
+            self.exhausted = true;
+            return Ok(None);
+        };
+
+        let batch_rows = batch.num_rows();
+        if batch_rows == 0 {
+            self.exhausted = true;
+            return Ok(None);
+        }
+
+        let mut accumulators: Vec<ColumnAccumulator> = self
+            .column_types
+            .iter()
+            .copied()
+            .map(ColumnAccumulator::new)
+            .collect();
+
+        for (col_idx, accumulator) in accumulators.iter_mut().enumerate() {
+            accumulator.append_from_slice(batch.column(col_idx), col_idx)?;
+        }
+
+        let metas = self
+            .column_metas
+            .iter()
+            .map(|m| ColumnMetadata {
+                name: m.name.clone(),
+                odbc_type: m.odbc_type,
+            })
+            .collect();
+
+        Ok(Some(accumulators_into_v2(metas, accumulators, batch_rows)?))
+    }
+
+    pub(crate) fn into_cursor(self) -> Result<C> {
+        let (cursor, _buffer) = self.block_cursor.unbind().map_err(OdbcError::from)?;
+        Ok(cursor)
+    }
+}
+
+fn accumulators_into_v2(
+    column_metas: Vec<ColumnMetadata>,
+    accumulators: Vec<ColumnAccumulator>,
+    row_count: usize,
+) -> Result<RowBufferV2> {
     let mut v2 = RowBufferV2::with_capacity(column_metas.len());
-    v2.set_row_count(total_rows);
-    // `ColumnMetadata` is intentionally non-`Clone` (its `name: String`
-    // can be large); the caller hands ownership over to us so each column
-    // moves into `v2` exactly once with zero allocations.
+    v2.set_row_count(row_count);
     for (meta, accumulator) in column_metas.into_iter().zip(accumulators.into_iter()) {
         v2.add_column(meta, accumulator.into_column_data());
     }
-
-    Ok((cursor, v2))
+    Ok(v2)
 }
 
 /// Per-column accumulator typed by the destination `ColumnData` variant.
@@ -108,6 +199,7 @@ impl ColumnAccumulator {
             OdbcType::Integer => Self::Integer(Vec::new()),
             OdbcType::BigInt => Self::BigInt(Vec::new()),
             OdbcType::Binary => Self::Binary(Vec::new()),
+            OdbcType::Date | OdbcType::Time | OdbcType::Timestamp => Self::Varchar(Vec::new()),
             _ => Self::Varchar(Vec::new()),
         }
     }
@@ -137,17 +229,56 @@ impl ColumnAccumulator {
                 }
             }
             Self::Varchar(values) => {
+                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Date>() {
+                    values.reserve(view.len());
+                    for cell in view.into_iter() {
+                        match cell {
+                            Some(date) => {
+                                let mut bytes = Vec::with_capacity(10);
+                                format_date_into(&mut bytes, date);
+                                values.push(Some(bytes));
+                            }
+                            None => values.push(None),
+                        }
+                    }
+                    return Ok(());
+                }
+                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Time>() {
+                    values.reserve(view.len());
+                    for cell in view.into_iter() {
+                        match cell {
+                            Some(time) => {
+                                let mut bytes = Vec::with_capacity(8);
+                                format_time_into(&mut bytes, time);
+                                values.push(Some(bytes));
+                            }
+                            None => values.push(None),
+                        }
+                    }
+                    return Ok(());
+                }
+                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Timestamp>() {
+                    values.reserve(view.len());
+                    for cell in view.into_iter() {
+                        match cell {
+                            Some(ts) => {
+                                let mut bytes = Vec::with_capacity(26);
+                                format_timestamp_into(&mut bytes, ts);
+                                values.push(Some(bytes));
+                            }
+                            None => values.push(None),
+                        }
+                    }
+                    return Ok(());
+                }
                 let view = slice.as_w_text_view().ok_or_else(|| {
                     OdbcError::InternalError(format!(
-                        "Columnar fetch: column {col_idx} expected wide text view"
+                        "Columnar fetch: column {col_idx} expected wide text or temporal view"
                     ))
                 })?;
                 for cell in view.iter() {
                     match cell {
                         Some(wide) => {
-                            // Match the legacy CellReader behaviour: UTF-16
-                            // → UTF-8 with U+FFFD replacement for unpaired
-                            // surrogates.
                             let bytes = String::from_utf16_lossy(wide.as_slice()).into_bytes();
                             values.push(Some(bytes));
                         }
@@ -163,7 +294,11 @@ impl ColumnAccumulator {
                 })?;
                 for cell in view.iter() {
                     match cell {
-                        Some(bytes) => values.push(Some(bytes.to_vec())),
+                        Some(bytes) => {
+                            let mut owned = Vec::with_capacity(bytes.len());
+                            owned.extend_from_slice(bytes);
+                            values.push(Some(owned));
+                        }
                         None => values.push(None),
                     }
                 }
@@ -190,10 +325,6 @@ mod tests {
     #[test]
     fn column_accumulator_integer_collects_options_in_order() {
         let mut acc = ColumnAccumulator::new(OdbcType::Integer);
-        // Drive the accumulator manually because we can't easily synthesise
-        // an `AnySlice` without a real ODBC fetch. The append path is
-        // covered by the regression suite under `cargo test --features
-        // block-cursor-fetch`, which exercises the full BlockCursor pipe.
         match &mut acc {
             ColumnAccumulator::Integer(v) => {
                 v.push(Some(1));
@@ -254,9 +385,6 @@ mod tests {
 
     #[test]
     fn rowbufferv2_capacity_helper_matches_columnar_fetch_assumption() {
-        // Smoke check: `with_capacity` must yield an empty buffer ready
-        // to receive columns. If this invariant ever changes the
-        // `fetch_columnar_into` initialisation needs to follow.
         let v2 = RowBufferV2::with_capacity(3);
         assert_eq!(v2.column_count(), 0);
         assert_eq!(v2.row_count, 0);

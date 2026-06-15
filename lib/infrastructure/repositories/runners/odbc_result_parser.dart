@@ -8,6 +8,8 @@ import 'package:odbc_fast/domain/entities/query_result.dart'
         DirectedRowCountItem,
         QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
@@ -60,6 +62,66 @@ class OdbcResultParser {
     } on FormatException catch (e, st) {
       AppLogger.warning(
         'BinaryProtocolParser failed (buf len=${buf.length}): ${e.message}',
+        e,
+        st,
+      );
+      return null;
+    }
+  }
+
+  /// Decodes a native buffer directly to [TypedColumnarResult] when the wire
+  /// layout is columnar v2; row-major and multi-result buffers fall back to
+  /// [toTypedColumnar] after row materialization.
+  TypedColumnarResult? parseBufferToTypedColumnar(
+    Uint8List? buf, {
+    bool lazyStrings = false,
+  }) {
+    if (buf == null) return null;
+    if (buf.isEmpty) {
+      return TypedColumnarResult(columns: const [], rowCount: 0);
+    }
+    try {
+      if (buf.length >= 4) {
+        final firstWord =
+            ByteData.sublistView(buf, 0, 4).getUint32(0, Endian.little);
+        if (firstWord == multiResultMagic) {
+          final qr = _parseMultiDirectedBuffer(buf);
+          return toTypedColumnar(qr);
+        }
+      }
+      if (BinaryProtocolParser.isColumnarV2Message(buf)) {
+        return BinaryProtocolParser.parseColumnarToTyped(
+          buf,
+          lazyStrings: lazyStrings,
+        );
+      }
+      final p = BinaryProtocolParser.parseWithOutputs(
+        buf,
+        lazyStrings: lazyStrings,
+      );
+      return toTypedColumnar(
+        QueryResult(
+          columns: p.rowBuffer.columnNames,
+          columnsMetadata: p.rowBuffer.columns,
+          rows: p.rowBuffer.rows,
+          rowCount: p.rowBuffer.rowCount,
+          outputParamValues: p.outputParamValues,
+          refCursorResults: p.refCursorRowBuffers
+              .map(
+                (b) => QueryResult(
+                  columns: b.columnNames,
+                  columnsMetadata: b.columns,
+                  rows: b.rows,
+                  rowCount: b.rowCount,
+                ),
+              )
+              .toList(growable: false),
+        ),
+      );
+    } on FormatException catch (e, st) {
+      AppLogger.warning(
+        'BinaryProtocolParser typed columnar decode failed '
+        '(buf len=${buf.length}): ${e.message}',
         e,
         st,
       );

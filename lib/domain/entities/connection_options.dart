@@ -1,5 +1,8 @@
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart'
+    show LazyString;
+import 'package:odbc_fast/odbc_fast.dart' show LazyString;
 
 /// Default maximum result buffer size in bytes (16 MB).
 ///
@@ -35,6 +38,7 @@ class ConnectionOptions {
     this.maxReconnectAttempts,
     this.reconnectBackoff,
     this.slowQueryThreshold,
+    this.lazyStrings = false,
   });
 
   /// Preset timeouts and reconnect policy for a usage profile.
@@ -95,6 +99,11 @@ class ConnectionOptions {
   /// The threshold is observability-only — it does **not** cancel the
   /// query. Useful for dashboards / alerting on regressions.
   final Duration? slowQueryThreshold;
+
+  /// When true, text cells in binary protocol decode paths are wrapped in
+  /// [LazyString] instead of eagerly decoded. Opt-in for workloads that
+  /// inspect only a subset of string columns.
+  final bool lazyStrings;
 
   /// Effective login timeout in milliseconds:
   /// [loginTimeout] ?? [connectionTimeout], or 0 if neither is set.

@@ -599,11 +599,18 @@ Rolls back and ends the transaction.
 ## XA / 2PC
 
 X/Open distributed-transaction lifecycle for engines that support
-2PC at the SQL level: PostgreSQL, MySQL/MariaDB, DB2. SQL Server
-(MSDTC) and Oracle (OCI XA) ship Phase 1 scaffolding behind the
-`xa-dtc` / `xa-oci` Cargo features but Phase 2 wiring is pending —
-both engines currently return a feature-aware `UnsupportedFeature`.
-SQLite / Snowflake have no 2PC support.
+2PC at the SQL level:
+
+| Engine | Status |
+| ------ | ------ |
+| PostgreSQL, MySQL/MariaDB, DB2 | Full SQL-level 2PC (`xa_start` → `xa_prepare` → Phase 2 commit/rollback) |
+| Oracle 10g+ | `DBMS_XA` PL/SQL path (production default through any Oracle ODBC driver) |
+| SQL Server | MSDTC enlistment on Windows with `--features xa-dtc`; advanced `Reenlist` / RM recovery remains operational scope |
+| SQLite / Snowflake / others | `UnsupportedFeature` — no 2PC |
+
+Optional OCI XA (`xa-oci` Cargo feature) is scaffolded in `xa_oci.rs` as a
+future alternative if the underlying `OCIServer*` handle becomes reachable;
+deployments should use the `DBMS_XA` path documented in `example/xa_2pc_demo.dart`.
 
 ### `odbc_xa_start(conn_id, format_id, gtrid_ptr, gtrid_len, bqual_ptr, bqual_len) -> unsigned int`
 

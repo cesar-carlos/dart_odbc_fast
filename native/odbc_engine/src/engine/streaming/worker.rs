@@ -1,4 +1,5 @@
-use super::columns::{describe_streaming_columns, encode_row_buffer_with_encoding};
+use super::batched_fetch::drain_cursor_in_batches;
+use super::columns::describe_streaming_columns;
 use super::state::{
     AsyncStreamingState, BatchedMessage, BatchedStreamingState, StreamState, StreamingState,
     StreamingStateFileBacked, WorkerCompletion,
@@ -9,7 +10,6 @@ use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::pool::SharedPooledConnection;
-use crate::protocol::{RowBuffer, RowBufferEncoder};
 use odbc_api::Connection;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,6 +35,8 @@ impl StreamingExecutor {
     /// Prefer [`Self::execute_streaming_batched`] or [`Self::start_batched_stream`]
     /// for bounded-memory cursor streaming.
     fn materialize_cursor_to_encoded(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
+        use super::columns::encode_row_buffer_with_encoding;
+        use crate::protocol::RowBuffer;
         let mut row_buffer = RowBuffer::new();
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
@@ -50,7 +52,7 @@ impl StreamingExecutor {
         // FOR JSON normalisation — buffer-mode materialises the full result
         // before encoding, so coalescing is safe here. See `engine::sqlserver_json`.
         coalesce_for_json_rows(&mut row_buffer);
-        encode_row_buffer_with_encoding(&row_buffer, ResultEncoding::RowMajor)
+        encode_row_buffer_with_encoding(&mut row_buffer, ResultEncoding::RowMajor)
     }
 
     /// Legacy buffer-mode streaming: materialises the full result set before
@@ -84,6 +86,8 @@ impl StreamingExecutor {
         sql: &str,
         spill_threshold_mb: Option<usize>,
     ) -> Result<StreamState> {
+        use super::columns::encode_row_buffer_with_encoding;
+        use crate::protocol::RowBuffer;
         let mut row_buffer = RowBuffer::new();
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
@@ -103,6 +107,7 @@ impl StreamingExecutor {
         if let Some(threshold_mb) = spill_threshold_mb.filter(|&t| t > 0) {
             let mut spill = DiskSpillStream::new(threshold_mb);
             let mut writer = DiskSpillWriter::new(&mut spill);
+            use crate::protocol::RowBufferEncoder;
             RowBufferEncoder::encode_to_writer_result(&row_buffer, &mut writer)?;
             writer
                 .flush()
@@ -126,7 +131,8 @@ impl StreamingExecutor {
                 }
             }
         } else {
-            let encoded = encode_row_buffer_with_encoding(&row_buffer, ResultEncoding::RowMajor)?;
+            let encoded =
+                encode_row_buffer_with_encoding(&mut row_buffer, ResultEncoding::RowMajor)?;
             Ok(StreamState::InMemory(StreamingState {
                 data: encoded,
                 offset: 0,
@@ -163,43 +169,22 @@ impl StreamingExecutor {
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
         let cursor = stmt.execute(()).map_err(OdbcError::from)?;
 
-        let mut cursor = match cursor {
+        let cursor = match cursor {
             Some(c) => c,
             None => return Ok(()),
         };
 
-        let mut row_buffer = RowBuffer::new();
-        let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
-
-        let mut first_batch = true;
-        loop {
-            if cancel_requested
-                .as_ref()
-                .is_some_and(|c| c.load(Ordering::Relaxed))
-            {
-                return Err(OdbcError::InternalError("Stream cancelled".to_string()));
-            }
-
-            row_buffer.rows.clear();
-            crate::engine::fetch::fetch_batch_into_row_buffer(
-                &mut cursor,
-                &column_types,
-                batch_size,
-                &mut row_buffer,
-            )?;
-
-            if row_buffer.row_count() == 0 {
-                if first_batch {
-                    let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
-                    on_batch(encoded)?;
-                }
-                break;
-            }
-
-            let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
-            on_batch(encoded)?;
-            first_batch = false;
-        }
+        drain_cursor_in_batches(
+            cursor,
+            batch_size,
+            result_encoding,
+            &mut |batch| on_batch(batch),
+            || {
+                cancel_requested
+                    .as_ref()
+                    .is_some_and(|c| c.load(Ordering::Relaxed))
+            },
+        )?;
 
         Ok(())
     }

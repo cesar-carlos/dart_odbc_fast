@@ -7,6 +7,7 @@
 import 'dart:io';
 
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 Future<void> main() async {
   AppLogger.initialize();

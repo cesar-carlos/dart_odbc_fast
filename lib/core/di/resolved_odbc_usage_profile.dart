@@ -3,8 +3,8 @@ import 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 
 /// Effective profile configuration used by high-level Dart composition helpers.
 ///

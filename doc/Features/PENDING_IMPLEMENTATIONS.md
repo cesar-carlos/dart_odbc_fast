@@ -6,7 +6,9 @@ maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.10.0`
 `IAdminService.events` + `OdbcEvent`, `executeQueryColumnar` /
 `streamQueryColumnar`, `TypedColumnarResult`, `QueryResult.columnsMetadata`,
 follow-ups de perf nativa com `block-cursor-fetch` / `statement-handle-reuse`
-default ON, sharding do `GlobalState`, `OwnedPreparedStatement`, env var
+default ON, sharding **parcial** do `GlobalState` (sub-locks para metricas,
+audit, erros e async requests; mapas cross-category ainda no mutex residual),
+`OwnedPreparedStatement`, env var
 `ODBC_FAST_BLOCK_FETCH_BATCH`).
 
 Esta lista nao repete entregas ja fechadas. Quando uma pendencia virar codigo
@@ -111,6 +113,17 @@ ODBC local, DSN e permissao no banco. A grafia canonica dos flags opt-in vive em
 - SQL Server `OUT + MULT`: `test/e2e/mssql_directed_out_multi_rset_test.dart`;
 - Oracle ref cursor: `native/odbc_engine/tests/e2e_oracle_ref_cursor_test.rs`.
 
+### 2.5 `GlobalState` — sharding parcial (follow-up)
+
+O hot path FFI ja saiu do mutex monolitico: metricas e audit sao singletons
+`Arc`, erros por conexao e async requests tem locks dedicados, e o slot de erro
+global legado ficou em `RwLock` proprio. O que **permanece** no `GlobalState`
+residual e a atomicidade cross-category — mapas de conexoes, pools, transacoes,
+streams e branches XA ainda compartilham o mutex externo. Splitar essas
+categorias sem duplicar cleanup (`with_disconnect_cleanup`) e follow-up
+documentado em [`doc/PERFORMANCE.md`](../PERFORMANCE.md); nao bloqueia consumo
+Dart atual.
+
 ## 3. Deferido por decisao de produto
 
 ### 3.1 OCI XA integrado ao fluxo principal
@@ -146,4 +159,4 @@ Remover ou encurtar uma secao quando:
 3. os exemplos e comandos opt-in estiverem atualizados;
 4. o item nao exigir mais decisao externa de produto/infra.
 
-Ultima atualizacao: 2026-05-25.
+Ultima atualizacao: 2026-06-15.

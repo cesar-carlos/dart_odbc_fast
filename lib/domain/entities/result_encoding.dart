@@ -13,4 +13,7 @@ enum ResultEncoding {
 
   /// ABI code passed to native `_options` FFI entry points.
   final int wireCode;
+
+  /// True for [columnar] and [columnarCompressed] wire layouts (v2).
+  bool get isColumnar => this != ResultEncoding.rowMajor;
 }

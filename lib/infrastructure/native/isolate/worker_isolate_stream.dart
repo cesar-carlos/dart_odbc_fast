@@ -31,6 +31,7 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           request.sql,
           fetchSize: request.fetchSize,
           chunkSize: request.chunkSize,
+          resultEncodingWire: request.resultEncodingWire,
         );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
@@ -38,7 +39,9 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
         final streamId = conn.streamMultiStartBatched(
           request.connectionId,
           request.sql,
+          fetchSize: request.fetchSize,
           chunkSize: request.chunkSize,
+          resultEncodingWire: request.resultEncodingWire,
         );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
@@ -46,7 +49,9 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
         final streamId = conn.streamMultiStartAsync(
           request.connectionId,
           request.sql,
+          fetchSize: request.fetchSize,
           chunkSize: request.chunkSize,
+          resultEncodingWire: request.resultEncodingWire,
         );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 

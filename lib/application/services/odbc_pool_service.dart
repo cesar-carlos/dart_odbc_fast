@@ -1,14 +1,14 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
-import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/domain/repositories/i_pool_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Pool capability delegate for the ODBC service façade.
 class OdbcPoolService {
   OdbcPoolService(this._repository);
 
-  final IOdbcRepository _repository;
+  final IPoolRepository _repository;
 
   Future<Result<int>> poolCreate(
     String connectionString,

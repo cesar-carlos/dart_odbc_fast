@@ -87,7 +87,7 @@ fn fixture_row_buffer_v2() -> RowBufferV2 {
 #[test]
 fn direct_v2_matches_row_to_columnar_byte_for_byte_uncompressed() {
     let row_major = fixture_row_buffer();
-    let via_transpose = row_buffer_to_columnar(&row_major).expect("transpose");
+    let via_transpose = row_buffer_to_columnar(row_major).expect("transpose");
     let direct = fixture_row_buffer_v2();
 
     let bytes_via_transpose = ColumnarEncoder::encode(&via_transpose, false).expect("encode");
@@ -102,7 +102,7 @@ fn direct_v2_matches_row_to_columnar_byte_for_byte_uncompressed() {
 #[test]
 fn direct_v2_matches_row_to_columnar_byte_for_byte_compressed() {
     let row_major = fixture_row_buffer();
-    let via_transpose = row_buffer_to_columnar(&row_major).expect("transpose");
+    let via_transpose = row_buffer_to_columnar(row_major).expect("transpose");
     let direct = fixture_row_buffer_v2();
 
     let bytes_via_transpose = ColumnarEncoder::encode(&via_transpose, true).expect("encode");
@@ -130,7 +130,7 @@ fn row_major_encoder_roundtrip_matches_decoder_for_fixture() {
 #[test]
 fn empty_buffer_parity_uncompressed() {
     let rb = RowBuffer::new();
-    let via_transpose = row_buffer_to_columnar(&rb).expect("transpose");
+    let via_transpose = row_buffer_to_columnar(rb).expect("transpose");
     let direct = RowBufferV2::with_capacity(0);
 
     let bytes_via_transpose = ColumnarEncoder::encode(&via_transpose, false).expect("encode");
@@ -146,7 +146,7 @@ fn integer_only_parity() {
     for i in 0i32..50 {
         rb.add_row(vec![Some(i.to_le_bytes().to_vec())]);
     }
-    let via_transpose = row_buffer_to_columnar(&rb).expect("transpose");
+    let via_transpose = row_buffer_to_columnar(rb).expect("transpose");
 
     let mut direct = RowBufferV2::with_capacity(1);
     direct.set_row_count(50);
@@ -173,7 +173,7 @@ fn varchar_with_nulls_parity() {
     rb.add_row(vec![Some(b"".to_vec())]);
     rb.add_row(vec![Some("café".as_bytes().to_vec())]);
 
-    let via_transpose = row_buffer_to_columnar(&rb).expect("transpose");
+    let via_transpose = row_buffer_to_columnar(rb).expect("transpose");
 
     let mut direct = RowBufferV2::with_capacity(1);
     direct.set_row_count(4);

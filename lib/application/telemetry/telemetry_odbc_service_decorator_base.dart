@@ -11,10 +11,10 @@ abstract class TelemetryOdbcServiceDecoratorBase {
   /// Creates capability delegates for telemetry forwarding mixins.
   TelemetryOdbcServiceDecoratorBase(this.service, this.telemetry) {
     final ops = TelemetryOdbcOperations(telemetry);
-    admin = TelemetryOdbcAdminDecorator(service, ops);
-    query = TelemetryOdbcQueryDecorator(service, ops);
-    pool = TelemetryOdbcPoolDecorator(service, ops);
-    transaction = TelemetryOdbcTransactionDecorator(service, ops);
+    admin = TelemetryOdbcAdminDecorator(service, ops, service);
+    query = TelemetryOdbcQueryDecorator(service, ops, service);
+    pool = TelemetryOdbcPoolDecorator(service, ops, service);
+    transaction = TelemetryOdbcTransactionDecorator(service, ops, service);
   }
 
   /// Underlying service (used for lifecycle forwarding).

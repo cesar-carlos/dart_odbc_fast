@@ -4,6 +4,7 @@
 
 use super::global::*;
 use super::prelude::*;
+use crate::ffi::state;
 
 use crate::engine::{XaTransaction, Xid};
 use std::os::raw::{c_int, c_uint};
@@ -118,7 +119,7 @@ pub extern "C" fn odbc_xa_start(
             }
         };
 
-        if !state.connections.contains_key(&conn_id) {
+        if !state::contains_connection(conn_id) {
             set_connection_error(
                 &mut state,
                 conn_id,
@@ -130,7 +131,7 @@ pub extern "C" fn odbc_xa_start(
         // Get the connection's handles + id; release the connection borrow
         // before calling XaTransaction::start (which re-locks via the
         // SharedHandleManager).
-        let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) else {
+        let Some(handles) = state::connection_handles(conn_id) else {
             return 0;
         };
         drop(state);
@@ -354,7 +355,7 @@ pub extern "C" fn odbc_xa_recover_count(conn_id: c_uint) -> c_int {
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-        let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) else {
+        let Some(handles) = state::connection_handles(conn_id) else {
             set_connection_error(
                 &mut state,
                 conn_id,
@@ -499,7 +500,7 @@ pub extern "C" fn odbc_xa_resume_prepared(
                 return 0;
             }
         };
-        let Some(handles) = state.connections.get(&conn_id).map(|c| c.get_handles()) else {
+        let Some(handles) = state::connection_handles(conn_id) else {
             set_connection_error(
                 &mut state,
                 conn_id,

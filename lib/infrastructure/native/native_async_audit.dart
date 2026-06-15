@@ -82,17 +82,21 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
   /// Starts async stream and returns stream ID.
   ///
   /// Returns `null` when API is unavailable. Returns `0` on native failure.
+  /// When [resultEncodingWire] is non-zero and the native library exports
+  /// `odbc_stream_start_async_options`, columnar v2 batches are used.
   int? streamStartAsync(
     int connectionId,
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) =>
       _native.streamStartAsync(
         connectionId,
         sql,
         fetchSize: fetchSize,
         chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
       );
 
   /// Polls async stream status:

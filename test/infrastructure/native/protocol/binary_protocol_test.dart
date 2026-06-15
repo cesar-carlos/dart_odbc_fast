@@ -1,7 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:test/test.dart';
 
@@ -189,6 +193,46 @@ void main() {
       ]);
     });
 
+    test('parseColumnarToTyped matches toTypedColumnar for columnar v2', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'id', type: 2),
+          (name: 'name', type: 1),
+          (name: 'count', type: 3),
+        ],
+        rows: [
+          [1, 'Alice', 10000000000],
+          [2, null, 20000000000],
+          [3, 'Carol', null],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(data);
+      final rowMajor = BinaryProtocolParser.parse(data);
+      final viaRows = toTypedColumnar(
+        QueryResult(
+          columns: rowMajor.columnNames,
+          rows: rowMajor.rows,
+          rowCount: rowMajor.rowCount,
+        ),
+      );
+
+      expect(typed.rowCount, equals(viaRows.rowCount));
+      expect(typed.columnCount, equals(viaRows.columnCount));
+      expect(
+        typed.column<TypedColumnInt32>('id').values,
+        orderedEquals(viaRows.column<TypedColumnInt32>('id').values),
+      );
+      expect(
+        typed.column<TypedColumnObject<String>>('name').values,
+        orderedEquals(viaRows.column<TypedColumnObject<String>>('name').values),
+      );
+      expect(
+        typed.column<TypedColumnInt64>('count').values,
+        orderedEquals(viaRows.column<TypedColumnInt64>('count').values),
+      );
+    });
+
     test('columnar v2 binary cells decode as Uint8List', () {
       final data = _createColumnarV2Buffer(
         columns: const [
@@ -207,6 +251,55 @@ void main() {
       expect(parsed.rows[0][0], isA<Uint8List>());
       expect(parsed.rows[0][0], equals([0x01, 0x02, 0x03]));
       expect(parsed.rows[1][0], isNull);
+    });
+
+    test('parseColumnarToTyped skips row-major intermediate for int column',
+        () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'id', type: 2),
+          (name: 'name', type: 1),
+        ],
+        rows: [
+          [1, 'Alice'],
+          [2, null],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(data);
+
+      expect(typed.rowCount, 2);
+      expect(typed.columnCount, 2);
+      final idCol = typed.column<TypedColumnInt32>('id');
+      expect(idCol.values, Int32List.fromList([1, 2]));
+      expect(idCol.isNullAt(1), isFalse);
+      final nameCol = typed.column<TypedColumnObject<String>>('name');
+      expect(nameCol.values[0], 'Alice');
+      expect(nameCol.values[1], isNull);
+    });
+
+    test('parseColumnarToTyped preserves LazyString when lazyStrings is true',
+        () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'name', type: 1),
+        ],
+        rows: [
+          ['Bob'],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(
+        data,
+        lazyStrings: true,
+      );
+
+      final nameCell =
+          typed.column<TypedColumnObject<Object>>('name').values.single!;
+      expect(nameCell, isA<LazyString>());
+      final lazy = nameCell as LazyString;
+      expect(lazy.isDecoded, isFalse);
+      expect(lazy.value, 'Bob');
     });
 
     test('should parse multiple columns and rows', () {

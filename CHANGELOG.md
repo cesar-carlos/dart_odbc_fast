@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`package:odbc_fast/odbc_fast_native.dart`** — opt-in barrel for direct FFI and
+  infrastructure surfaces (`NativeOdbcConnection`, `AsyncNativeOdbcConnection`,
+  `OdbcRepositoryImpl`, `OdbcPoolFactory`, `AsyncError`, OpenTelemetry FFI,
+  `DriverCapabilitiesMapper`). The main barrel stays domain- and service-oriented.
+- **Segregated repository contracts** — `IConnectionRepository`, `IQueryRepository`,
+  `ITransactionRepository`, `IPoolRepository`, and `IAdminRepository` exported from
+  `odbc_fast.dart`; `IOdbcRepository` composes them without changing the aggregate
+  method set.
+- **`ServiceLocator` repository accessors** — `connectionRepository`, `queryRepository`,
+  `transactionRepository`, `poolRepository`, and `adminRepository` for callers that
+  depend on a narrow contract.
+- **`TelemetryOdbcDecorators`** — factory helpers (`query`, `pool`, `transaction`,
+  `admin`) to wrap sub-interfaces with capability-scoped telemetry instead of the
+  aggregate `TelemetryOdbcServiceDecorator` only.
+- **`BinaryProtocolParser`**, **`MultiResultParser`**, and **`MultiResultItem`**
+  exported from `odbc_fast.dart` for advanced protocol consumers.
+- **`DriverCapabilitiesMapper`** — infrastructure JSON → domain mapping for
+  `DriverCapabilities` and `DbmsInfo` (via `odbc_fast_native.dart`).
+- **Columnar v2 direct decode** — `BinaryProtocolParser` and stream decoders parse
+  columnar v2 wire layouts straight into `TypedColumnarResult` where possible,
+  avoiding row-major materialisation on the hot path.
+- **Zero-copy columnar decompress** — `columnarDecompressWithNative` uses
+  `NativeFinalizer` + `odbc_columnar_decompress_free` for large decompressed blocks
+  (same threshold policy as query-result zero-copy).
+- **`streamQueryMulti` encoding** — batched multi-result streaming passes the
+  repository `defaultResultEncoding` wire code to
+  `streamMultiStartBatched` / async equivalent (columnar on server profiles).
+- **Examples** — `telemetry_decorators_demo.dart` (narrow `TelemetryOdbcDecorators`
+  ISP), `stream_query_columnar_demo.dart` (`balancedServer` + `streamQueryColumnar`);
+  `sub_interfaces_migration_demo.dart` extended with segregated repository getters.
+
+### Changed
+
+- **Public barrel split** — `odbc_fast.dart` no longer re-exports native connection
+  types, `OdbcRepositoryImpl`, or OpenTelemetry FFI; README and `doc/API_SURFACE.md`
+  document the two-entrypoint model.
+- **`IOdbcRepository` source layout** — monolithic interface file replaced by focused
+  `i_*_repository.dart` contracts; behaviour unchanged at the aggregate boundary.
+- **Stream runners refactor** — `OdbcStreamRunner` delegates to
+  `StreamQueryRunner`, `StreamColumnarRunner`, `StreamCapabilityPolicy`,
+  `StreamErrorMapper`, and `StreamAsyncLifecycleRunner`.
+- **Binary protocol module split** — columnar, row-major, cell decode, trailers, and
+  stream frame helpers extracted from the monolithic parser for maintainability.
+- **`doc/ARCHITECTURE.md`**, **`doc/API_SURFACE.md`**, and **`example/README.md`**
+  aligned with segregated repositories, native barrel, and streaming decode paths.
+- **Removed duplicate `telemetry_service.dart`** — use `itelemetry_service.dart` /
+  `simple_telemetry_service.dart` (already exported from `odbc_fast.dart`).
+
+### Performance
+
+- **Rust streaming columnar batched fetch** — dedicated `batched_fetch` path and
+  `streaming_session` for block-cursor reuse in batched streams.
+- **`GlobalState` connections shard** — regular connection registry isolated in
+  `ffi/state/connections.rs` so read-mostly handle lookups do not contend with
+  pool, transaction, or statement state.
+- **`GlobalState` stream shard** — stream handle registry isolated in
+  `ffi/state/streams.rs` to reduce lock contention on high-concurrency streaming.
+- **`ProtocolByteAccumulator`** — reusable Dart buffer for incremental stream
+  framing; incoming chunks append once and frames materialize via `take` without
+  per-chunk list growth on the hot path.
+- **Native pool module split** — `pool_config` and `pool_health` extracted from the
+  monolithic pool implementation.
+
+### Breaking
+
+- **Import migration for native/FFI types** — code that imported
+  `NativeOdbcConnection`, `AsyncNativeOdbcConnection`, `OdbcRepositoryImpl`,
+  `OdbcPoolFactory`, `AsyncError`, or `OpenTelemetryFFI` from
+  `package:odbc_fast/odbc_fast.dart` must add
+  `import 'package:odbc_fast/odbc_fast_native.dart';`. Examples and benchmarks
+  were updated accordingly.
+
 ## [4.2.0] - 2026-06-12
 
 ### Added

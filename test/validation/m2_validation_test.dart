@@ -1,4 +1,5 @@
-import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/core/di/service_locator.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:test/test.dart';
 
 import '../helpers/load_env.dart';
@@ -8,12 +9,10 @@ void main() {
 
   group('M2 Validation Tests', () {
     late ServiceLocator locator;
-    late String? connectionString;
 
     setUpAll(() async {
       locator = ServiceLocator()..initialize();
       await locator.service.initialize();
-      connectionString = isE2eEnabled() ? getTestEnv('ODBC_TEST_DSN') : null;
     });
 
     test('binary protocol should work', () {
@@ -21,33 +20,32 @@ void main() {
       expect(native, isNotNull);
     });
 
-    test('streaming should work', () async {
-      final dsn = connectionString;
-      if (dsn == null) return;
+    test(
+      'streaming should work',
+      () async {
+        final dsn = getTestEnv('ODBC_TEST_DSN')!;
 
-      final connResult = await locator.service.connect(dsn);
-      final connection =
-          connResult.getOrElse((_) => throw Exception('Failed to connect'));
+        final connResult = await locator.service.connect(dsn);
+        final connection =
+            connResult.getOrElse((_) => throw Exception('Failed to connect'));
 
-      final native = locator.nativeConnection;
-      final stream = native.streamQuery(
-        int.parse(connection.id),
-        'SELECT 1',
-      );
+        final native = locator.nativeConnection;
+        final stream = native.streamQuery(
+          int.parse(connection.id),
+          'SELECT 1',
+        );
 
-      await for (final chunk in stream) {
-        expect(chunk.rowCount, greaterThanOrEqualTo(0));
-        break;
-      }
+        await for (final chunk in stream) {
+          expect(chunk.rowCount, greaterThanOrEqualTo(0));
+          break;
+        }
 
-      await locator.service.disconnect(connection.id);
-    });
+        await locator.service.disconnect(connection.id);
+      },
+      skip: skipUnlessLiveOdbcTest(),
+    );
 
     test('structured errors should work', () async {
-      if (connectionString == null) {
-        return;
-      }
-
       final connResult = await locator.service.connect('INVALID_DSN');
 
       expect(connResult.isSuccess(), isFalse);

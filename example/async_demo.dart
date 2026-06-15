@@ -1,9 +1,8 @@
 // Async ODBC demo using AsyncNativeOdbcConnection.
 // Run: dart run example/async_demo.dart
 
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
-    show BinaryProtocolParser;
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 

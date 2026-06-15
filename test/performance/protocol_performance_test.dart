@@ -233,6 +233,41 @@ void main() {
       );
     });
 
+    test('P2.1 columnar typed parse vs row-major path benchmark', () {
+      const rows = 2000;
+      const iterations = 30;
+      final columnar = _columnarBuffer(rows: rows);
+
+      final rowMajorWatch = Stopwatch()..start();
+      var rowMajorCells = 0;
+      for (var i = 0; i < iterations; i++) {
+        final parsed = BinaryProtocolParser.parse(columnar);
+        rowMajorCells += parsed.rows.length;
+      }
+      rowMajorWatch.stop();
+
+      final typedWatch = Stopwatch()..start();
+      var typedRows = 0;
+      for (var i = 0; i < iterations; i++) {
+        typedRows +=
+            BinaryProtocolParser.parseColumnarToTyped(columnar).rowCount;
+      }
+      typedWatch.stop();
+
+      print(
+        'P2.1 row-major columnar parse: '
+        '${rowMajorWatch.elapsedMilliseconds}ms, '
+        'rows=$rowMajorCells',
+      );
+      print(
+        'P2.1 typed columnar parse: ${typedWatch.elapsedMilliseconds}ms, '
+        'rows=$typedRows',
+      );
+
+      expect(rowMajorCells, equals(rows * iterations));
+      expect(typedRows, equals(rows * iterations));
+    });
+
     test('P4.1 parser and framing synthetic benchmark', () {
       const rows = 2000;
       const iterations = 30;

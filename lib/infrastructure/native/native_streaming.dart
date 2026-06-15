@@ -1,5 +1,11 @@
 part of 'native_odbc_connection.dart';
 
+const _nativeStreamAsyncStatusPending = 0;
+const _nativeStreamAsyncStatusReady = 1;
+const _nativeStreamAsyncStatusDone = 2;
+const _nativeStreamAsyncStatusError = -1;
+const _nativeStreamAsyncStatusCancelled = -2;
+
 mixin _NativeStreaming on _NativeOdbcState {
   /// Gets performance and operational metrics.
   ///
@@ -79,6 +85,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    bool lazyStrings = false,
   }) async* {
     final streamId = _native.streamStartBatched(
       connectionId,
@@ -108,7 +115,67 @@ mixin _NativeStreaming on _NativeOdbcState {
         pending.add(data);
 
         for (final msg in pending.drainFrames()) {
-          yield BinaryProtocolParser.parse(msg);
+          yield decodeBatchedStreamFrame(
+            msg,
+            lazyStrings: lazyStrings,
+          );
+        }
+
+        if (!result.hasMore) break;
+      }
+
+      if (pending.length > 0) {
+        throw const FormatException(
+          'Leftover bytes after stream; expected complete protocol messages',
+        );
+      }
+    } finally {
+      _native.streamClose(streamId);
+    }
+  }
+
+  /// Like [streamQueryBatched] but decodes columnar v2 frames directly to
+  /// [TypedColumnarResult] without a row-major intermediate.
+  Stream<TypedColumnarResult> streamQueryColumnarBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    bool lazyStrings = false,
+    ResultEncoding resultEncoding = ResultEncoding.columnar,
+  }) async* {
+    final streamId = _native.streamStartBatched(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      resultEncodingWire: resultEncoding.wireCode,
+    );
+
+    if (streamId == 0) {
+      throw Exception('Failed to start batched stream: ${_native.getError()}');
+    }
+
+    final pending = BinaryFrameAccumulator();
+    try {
+      while (true) {
+        final result = _native.streamFetch(streamId);
+
+        if (!result.success) {
+          throw Exception('Stream fetch failed: ${_native.getError()}');
+        }
+
+        final data = result.data;
+        if (data == null || data.isEmpty) {
+          break;
+        }
+        pending.add(data);
+
+        for (final msg in pending.drainFrames()) {
+          yield BinaryProtocolParser.parseColumnarToTyped(
+            msg,
+            lazyStrings: lazyStrings,
+          );
         }
 
         if (!result.hasMore) break;
@@ -157,6 +224,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     int connectionId,
     String sql, {
     int chunkSize = 1000,
+    bool lazyStrings = false,
   }) async* {
     final streamId =
         _native.streamStart(connectionId, sql, chunkSize: chunkSize);
@@ -185,8 +253,102 @@ mixin _NativeStreaming on _NativeOdbcState {
         }
       }
       if (buffer.length > 0) {
-        final parsed = BinaryProtocolParser.parse(buffer.toBytes());
+        final parsed = decodeBatchedStreamFrame(
+          buffer.toBytes(),
+          lazyStrings: lazyStrings,
+        );
         yield parsed;
+      }
+    } finally {
+      _native.streamClose(streamId);
+    }
+  }
+
+  /// Poll-based async batched streaming via `odbc_stream_start_async`.
+  ///
+  /// When [resultEncoding] is not [ResultEncoding.rowMajor] and the native
+  /// library exports `odbc_stream_start_async_options`, batches use columnar
+  /// v2 wire layout.
+  Stream<ParsedRowBuffer> streamAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    Duration pollInterval = const Duration(milliseconds: 10),
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    bool lazyStrings = false,
+  }) async* {
+    final streamId = _native.streamStartAsync(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      resultEncodingWire: resultEncoding.wireCode,
+    );
+    if (streamId == null || streamId == 0) {
+      throw Exception('Failed to start async stream: ${_native.getError()}');
+    }
+
+    final pending = BinaryFrameAccumulator();
+    var streamDelay = pollInterval ~/ 10;
+    if (streamDelay == Duration.zero) {
+      streamDelay = const Duration(microseconds: 500);
+    }
+    final streamMaxDelay = pollInterval;
+    try {
+      while (true) {
+        final status = _native.streamPollAsync(streamId);
+        if (status == null) {
+          throw Exception(
+            'Async stream poll unavailable: ${_native.getError()}',
+          );
+        }
+        if (status == _nativeStreamAsyncStatusPending) {
+          await Future<void>.delayed(streamDelay);
+          if (streamDelay < streamMaxDelay) {
+            streamDelay = Duration(
+              microseconds: (streamDelay.inMicroseconds * 2)
+                  .clamp(0, streamMaxDelay.inMicroseconds),
+            );
+          }
+          continue;
+        }
+        streamDelay = pollInterval ~/ 10;
+        if (streamDelay == Duration.zero) {
+          streamDelay = const Duration(microseconds: 500);
+        }
+        if (status == _nativeStreamAsyncStatusDone) {
+          break;
+        }
+        if (status == _nativeStreamAsyncStatusError ||
+            status == _nativeStreamAsyncStatusCancelled) {
+          throw Exception('Async stream failed with status $status');
+        }
+        if (status != _nativeStreamAsyncStatusReady) {
+          throw Exception('Unexpected async stream status: $status');
+        }
+
+        final result = _native.streamFetch(streamId);
+        if (!result.success) {
+          throw Exception('Async stream fetch failed: ${_native.getError()}');
+        }
+
+        final data = result.data;
+        if (data != null && data.isNotEmpty) {
+          pending.add(data);
+          for (final msg in pending.drainFrames()) {
+            yield decodeBatchedStreamFrame(
+              msg,
+              lazyStrings: lazyStrings,
+            );
+          }
+        }
+      }
+
+      if (pending.length > 0) {
+        throw const FormatException(
+          'Leftover bytes after stream; expected complete protocol messages',
+        );
       }
     } finally {
       _native.streamClose(streamId);

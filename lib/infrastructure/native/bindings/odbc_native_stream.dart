@@ -33,18 +33,33 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     String sql, {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) {
     if (!_bindings.supportsAsyncStreamApi) {
       return null;
     }
     return _withSql<int>(
       sql,
-      (sqlPtr) => _bindings.odbc_stream_start_async(
-        connectionId,
-        sqlPtr,
-        fetchSize,
-        chunkSize,
-      ),
+      (sqlPtr) {
+        if (resultEncodingWire != 0) {
+          final optionsId = _bindings.odbc_stream_start_async_options(
+            connectionId,
+            sqlPtr,
+            fetchSize,
+            chunkSize,
+            resultEncodingWire,
+          );
+          if (optionsId != null) {
+            return optionsId;
+          }
+        }
+        return _bindings.odbc_stream_start_async(
+          connectionId,
+          sqlPtr,
+          fetchSize,
+          chunkSize,
+        );
+      },
     );
   }
 
@@ -74,48 +89,21 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
   ///
   /// Returns a [StreamFetchResult] with success status, data, and hasMore flag.
   StreamFetchResult streamFetch(int streamId) {
-    var size = initialBufferSize;
-    const maxSize = maxBufferSize;
-    while (size <= maxSize) {
-      final buf = malloc<ffi.Uint8>(size);
-      final outWritten = malloc<ffi.Uint32>();
-      final hasMore = malloc<ffi.Uint8>();
-      outWritten.value = 0;
-      hasMore.value = 0;
-      try {
-        final code = _bindings.odbc_stream_fetch(
-          streamId,
-          buf,
-          size,
-          outWritten,
-          hasMore,
-        );
-        if (code == 0) {
-          final n = outWritten.value;
-          final data = n > 0 ? Uint8List.fromList(buf.asTypedList(n)) : null;
-          final more = hasMore.value != 0;
-          return StreamFetchResult(
-            success: true,
-            data: data,
-            hasMore: more,
-          );
-        }
-        if (code == -2) {
-          final requested = outWritten.value;
-          size = requested > size ? requested : size * 2;
-          continue;
-        }
-        return StreamFetchResult(
-          success: false,
-          data: null,
-          hasMore: false,
-        );
-      } finally {
-        malloc
-          ..free(buf)
-          ..free(outWritten)
-          ..free(hasMore);
-      }
+    final fetched = streamCallWithBuffer(
+      (buf, bufLen, outWritten, hasMore) => _bindings.odbc_stream_fetch(
+        streamId,
+        buf,
+        bufLen,
+        outWritten,
+        hasMore,
+      ),
+    );
+    if (fetched != null) {
+      return StreamFetchResult(
+        success: true,
+        data: fetched.data,
+        hasMore: fetched.hasMore,
+      );
     }
     return StreamFetchResult(
       success: false,
@@ -204,16 +192,32 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
   int? streamMultiStartBatched(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) {
     if (!_bindings.supportsMultiResultStream) return null;
     return _withSql<int>(
       sql,
-      (sqlPtr) => _bindings.odbc_stream_multi_start_batched(
-        connectionId,
-        sqlPtr,
-        chunkSize,
-      ),
+      (sqlPtr) {
+        if (resultEncodingWire != 0) {
+          final optionsId = _bindings.odbc_stream_multi_start_batched_options(
+            connectionId,
+            sqlPtr,
+            fetchSize,
+            chunkSize,
+            resultEncodingWire,
+          );
+          if (optionsId != null) {
+            return optionsId;
+          }
+        }
+        return _bindings.odbc_stream_multi_start_batched(
+          connectionId,
+          sqlPtr,
+          chunkSize,
+        );
+      },
     );
   }
 
@@ -222,16 +226,32 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
   int? streamMultiStartAsync(
     int connectionId,
     String sql, {
+    int fetchSize = 1000,
     int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
   }) {
     if (!_bindings.supportsAsyncMultiResultStream) return null;
     return _withSql<int>(
       sql,
-      (sqlPtr) => _bindings.odbc_stream_multi_start_async(
-        connectionId,
-        sqlPtr,
-        chunkSize,
-      ),
+      (sqlPtr) {
+        if (resultEncodingWire != 0) {
+          final optionsId = _bindings.odbc_stream_multi_start_async_options(
+            connectionId,
+            sqlPtr,
+            fetchSize,
+            chunkSize,
+            resultEncodingWire,
+          );
+          if (optionsId != null) {
+            return optionsId;
+          }
+        }
+        return _bindings.odbc_stream_multi_start_async(
+          connectionId,
+          sqlPtr,
+          chunkSize,
+        );
+      },
     );
   }
 }

@@ -165,7 +165,6 @@ pub(crate) struct PooledConnectionState {
 
 pub(crate) struct GlobalState {
     pub(crate) env: Option<Arc<Mutex<OdbcEnvironment>>>,
-    pub(crate) connections: HashMap<u32, OdbcConnection>,
     /// Connection strings for native BCP path (conn_id -> conn_str).
     #[cfg(feature = "sqlserver-bcp")]
     pub(crate) connection_strings: HashMap<u32, String>,
@@ -178,15 +177,12 @@ pub(crate) struct GlobalState {
     /// await a Phase 2 decision from the Transaction Manager.
     pub(crate) xa_prepared: HashMap<u32, PreparedXa>,
     pub(crate) statements: HashMap<u32, StatementHandle>,
-    pub(crate) streams: HashMap<u32, StreamKind>,
-    pub(crate) stream_connections: HashMap<u32, u32>, // Map stream_id -> conn_id
     pub(crate) pools: HashMap<u32, Arc<ConnectionPool>>,
     pub(crate) pooled_connections: HashMap<u32, PooledConnectionState>, // pooled_conn_id -> pooled state
     pub(crate) pooled_busy_counts: HashMap<u32, usize>, // pool_id -> active pooled FFI calls
     pub(crate) pooled_connection_busy_counts: HashMap<u32, usize>, // pooled_conn_id -> active FFI calls
     pub(crate) transaction_begins_in_progress: HashSet<u32>, // conn_id -> transaction begin reserved
     pub(crate) pooled_free_ids: HashMap<u32, Vec<u32>>, // pool_id -> reusable pooled connection IDs
-    pub(crate) next_stream_id: u32,
     pub(crate) next_pool_id: u32,
     pub(crate) next_pooled_conn_id: u32,
     pub(crate) next_txn_id: u32,
@@ -208,14 +204,15 @@ pub(crate) struct GlobalState {
     // - `last_error` / `last_structured_error` → [`state::legacy_global_error_read`]
     //   / `_write` and the convenience setters (dedicated `RwLock`,
     //   sprint 4 follow-up A2)
+    // - `connections` → [`state::connections_read`] / `_write`
+    //   (dedicated `RwLock`, sprint 4 follow-up)
     //
-    // The remaining maps (`connections`, `pools`, `transactions`,
-    // `streams`, `xa_*`, `statements`) stay here for now: they need
-    // atomic cross-category transitions on connection close, transaction
-    // commit/rollback, and stream lifecycle. Splitting them further
-    // would require a coordinated multi-lock acquisition layer with
-    // documented lock ordering — captured as a separate future
-    // refactor entry in `engine_perf_follow-ups_b8f0b22a.plan.md`.
+    // The remaining maps (`pools`, `transactions`, `xa_*`, `statements`)
+    // stay here for now: they need atomic cross-category transitions on
+    // connection close, transaction commit/rollback, and stream lifecycle.
+    // Active stream handles live in [`crate::ffi::state::streams`] with
+    // their own mutex. Regular connections live in
+    // [`crate::ffi::state::connections`].
 }
 
 static GLOBAL_STATE: OnceLock<Arc<Mutex<GlobalState>>> = OnceLock::new();
@@ -235,7 +232,6 @@ pub(crate) fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
         );
         Arc::new(Mutex::new(GlobalState {
             env: None,
-            connections: HashMap::new(),
             #[cfg(feature = "sqlserver-bcp")]
             connection_strings: HashMap::new(),
             transactions: HashMap::new(),
@@ -243,15 +239,12 @@ pub(crate) fn get_global_state() -> &'static Arc<Mutex<GlobalState>> {
             xa_preparing: HashMap::new(),
             xa_prepared: HashMap::new(),
             statements: HashMap::new(),
-            streams: HashMap::new(),
-            stream_connections: HashMap::new(),
             pools: HashMap::new(),
             pooled_connections: HashMap::new(),
             pooled_busy_counts: HashMap::new(),
             pooled_connection_busy_counts: HashMap::new(),
             transaction_begins_in_progress: HashSet::new(),
             pooled_free_ids: HashMap::new(),
-            next_stream_id: 1,
             next_pool_id: 1,
             next_pooled_conn_id: 1_000_000,
             next_txn_id: 1,
@@ -453,7 +446,7 @@ pub(crate) fn with_disconnect_cleanup(
         return Err(DisconnectCleanupError::BeginInProgress);
     }
 
-    let Some(connection) = state.connections.remove(&conn_id) else {
+    let Some(connection) = state::remove_connection(conn_id) else {
         return Err(DisconnectCleanupError::InvalidConnection);
     };
 
@@ -472,19 +465,7 @@ pub(crate) fn with_disconnect_cleanup(
         state.statements.remove(stmt_id);
     }
 
-    let streams_to_drop: Vec<u32> = state
-        .stream_connections
-        .iter()
-        .filter_map(|(stream_id, stream_conn_id)| {
-            (*stream_conn_id == conn_id).then_some(*stream_id)
-        })
-        .collect();
-    for stream_id in streams_to_drop {
-        if let Some(stream) = state.streams.remove(&stream_id) {
-            stream.cancel();
-        }
-        state.stream_connections.remove(&stream_id);
-    }
+    state::cancel_streams_for_connection(conn_id);
 
     Ok(DisconnectCleanup {
         connection,

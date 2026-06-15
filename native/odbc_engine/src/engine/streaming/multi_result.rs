@@ -1,10 +1,9 @@
-use super::columns::{describe_streaming_columns, encode_row_buffer_with_encoding};
+use super::batched_fetch::drain_cursor_in_batches;
 use super::state::{AsyncStreamingState, BatchedMessage, BatchedStreamingState, WorkerCompletion};
 use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::pool::SharedPooledConnection;
-use crate::protocol::RowBuffer;
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +17,10 @@ pub const MULTI_STREAM_ITEM_TAG_ROW_COUNT: u8 = 1;
 pub const MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH: u8 = 2;
 
 /// Default ODBC rows per batch when streaming multi-result cursors.
+#[allow(
+    dead_code,
+    reason = "Documented default for multi-stream FFI; wire default is resolve_fetch_size(0)."
+)]
 pub(crate) const DEFAULT_MULTI_STREAM_FETCH_SIZE: usize = 100;
 
 /// Drive a prepared statement that may yield multiple result sets and call
@@ -140,7 +143,7 @@ where
 /// FOR JSON coalescing is skipped here (same rationale as single-result
 /// batched streaming): chunks would be split across batches.
 fn encode_cursor_batched<C, F>(
-    mut cursor: C,
+    cursor: C,
     fetch_size: usize,
     result_encoding: ResultEncoding,
     on_item: &mut F,
@@ -150,43 +153,22 @@ where
     C: Cursor + ResultSetMetadata,
     F: FnMut(Vec<u8>) -> Result<()>,
 {
-    let batch_size = fetch_size.max(1);
-    let mut row_buffer = RowBuffer::new();
-    let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
     let mut first_batch = true;
-
-    loop {
-        if cancel_check() {
-            return Err(OdbcError::Cancelled);
-        }
-
-        row_buffer.rows.clear();
-        let _fetched = crate::engine::fetch::fetch_batch_into_row_buffer(
-            &mut cursor,
-            &column_types,
-            batch_size,
-            &mut row_buffer,
-        )?;
-
-        if row_buffer.row_count() == 0 {
-            if first_batch {
-                let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
-                on_item(frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, encoded)?)?;
-            }
-            break;
-        }
-
-        let tag = if first_batch {
-            MULTI_STREAM_ITEM_TAG_RESULT_SET
-        } else {
-            MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH
-        };
-        let encoded = encode_row_buffer_with_encoding(&row_buffer, result_encoding)?;
-        on_item(frame_item(tag, encoded)?)?;
-        first_batch = false;
-    }
-
-    Ok(cursor)
+    drain_cursor_in_batches(
+        cursor,
+        fetch_size,
+        result_encoding,
+        &mut |encoded| {
+            let tag = if first_batch {
+                MULTI_STREAM_ITEM_TAG_RESULT_SET
+            } else {
+                MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH
+            };
+            first_batch = false;
+            on_item(frame_item(tag, encoded)?)
+        },
+        cancel_check,
+    )
 }
 
 pub(crate) fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
@@ -234,13 +216,22 @@ pub fn start_multi_batched_stream(
     conn_id: u32,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
 ) -> Result<BatchedStreamingState> {
-    spawn_multi_stream_worker(handles, conn_id, sql, chunk_size, /* async = */ false).map(
-        |either| match either {
-            EitherStream::Batched(b) => b,
-            EitherStream::Async(_) => unreachable!(),
-        },
+    spawn_multi_stream_worker(
+        handles,
+        conn_id,
+        sql,
+        chunk_size,
+        fetch_size,
+        result_encoding,
+        /* async = */ false,
     )
+    .map(|either| match either {
+        EitherStream::Batched(b) => b,
+        EitherStream::Async(_) => unreachable!(),
+    })
 }
 
 /// Like [`start_multi_batched_stream`] but returns an `AsyncStreamingState`
@@ -250,12 +241,21 @@ pub fn start_multi_async_stream(
     conn_id: u32,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
 ) -> Result<AsyncStreamingState> {
-    spawn_multi_stream_worker(handles, conn_id, sql, chunk_size, /* async = */ true).map(|either| {
-        match either {
-            EitherStream::Batched(_) => unreachable!(),
-            EitherStream::Async(a) => a,
-        }
+    spawn_multi_stream_worker(
+        handles,
+        conn_id,
+        sql,
+        chunk_size,
+        fetch_size,
+        result_encoding,
+        /* async = */ true,
+    )
+    .map(|either| match either {
+        EitherStream::Batched(_) => unreachable!(),
+        EitherStream::Async(a) => a,
     })
 }
 
@@ -264,12 +264,16 @@ pub fn start_multi_batched_stream_pooled(
     pooled: SharedPooledConnection,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
     on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
 ) -> Result<BatchedStreamingState> {
     spawn_multi_stream_worker_pooled(
         pooled,
         sql,
         chunk_size,
+        fetch_size,
+        result_encoding,
         /* async = */ false,
         on_complete,
     )
@@ -284,12 +288,16 @@ pub fn start_multi_async_stream_pooled(
     pooled: SharedPooledConnection,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
     on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
 ) -> Result<AsyncStreamingState> {
     spawn_multi_stream_worker_pooled(
         pooled,
         sql,
         chunk_size,
+        fetch_size,
+        result_encoding,
         /* async = */ true,
         on_complete,
     )
@@ -309,6 +317,8 @@ fn spawn_multi_stream_worker(
     conn_id: u32,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
     is_async: bool,
 ) -> Result<EitherStream> {
     let chunk_size = chunk_size.max(1);
@@ -342,8 +352,8 @@ fn spawn_multi_stream_worker(
             match drive_multi_result_stream(
                 conn_guard.connection(),
                 &sql,
-                DEFAULT_MULTI_STREAM_FETCH_SIZE,
-                ResultEncoding::RowMajor,
+                fetch_size,
+                result_encoding,
                 &mut on_item,
                 Some(cancel),
             ) {
@@ -381,6 +391,8 @@ fn spawn_multi_stream_worker_pooled(
     pooled: SharedPooledConnection,
     sql: String,
     chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
     is_async: bool,
     on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
 ) -> Result<EitherStream> {
@@ -405,8 +417,8 @@ fn spawn_multi_stream_worker_pooled(
             match drive_multi_result_stream(
                 conn_guard.get_connection(),
                 &sql,
-                DEFAULT_MULTI_STREAM_FETCH_SIZE,
-                ResultEncoding::RowMajor,
+                fetch_size,
+                result_encoding,
                 &mut on_item,
                 Some(cancel),
             ) {

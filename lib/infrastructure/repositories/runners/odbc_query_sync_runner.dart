@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
@@ -173,6 +174,98 @@ class OdbcQuerySyncRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<QueryResult, OdbcError>(
+            QueryError(message: odbcQueryTimedOutMessage),
+          ),
+        );
+      }
+      return run();
+    }
+
+    return connection.withReconnect(
+      connectionId,
+      runWithTimeout,
+      sqlForSlowQueryDetection: sql,
+    );
+  }
+
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) async {
+    final nativeId = state.connectionIds[connectionId];
+    if (nativeId == null) {
+      return const Failure<TypedColumnarResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+    }
+
+    final opts = state.optionsFor(connectionId);
+
+    Future<Result<TypedColumnarResult>> run() async {
+      try {
+        final maxBytes = opts?.maxResultBufferBytes;
+        final queryTimeout = opts?.queryTimeout;
+        final buf = ffi.isAsync
+            ? await ffi.async.executeQueryParams(
+                nativeId,
+                sql,
+                params,
+                maxBufferBytes: maxBytes,
+                timeout: queryTimeout,
+                resultEncoding: ResultEncoding.columnar,
+              )
+            : ffi.sync.executeQueryParams(
+                nativeId,
+                sql,
+                params,
+                maxBufferBytes: maxBytes,
+                resultEncoding: ResultEncoding.columnar,
+              );
+
+        final typed = parser.parseBufferToTypedColumnar(
+          buf,
+          lazyStrings: opts?.lazyStrings ?? false,
+        );
+        if (typed == null) {
+          return await ffi.convertNativeErrorToFailure<TypedColumnarResult>(
+            errorFactory: ({
+              required message,
+              sqlState,
+              nativeCode,
+            }) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Failed to execute columnar query',
+          );
+        }
+        return Success(typed);
+      } on Exception catch (e) {
+        return ffi.convertNativeErrorToFailure<TypedColumnarResult>(
+          errorFactory: ({
+            required message,
+            sqlState,
+            nativeCode,
+          }) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: e.toString(),
+        );
+      }
+    }
+
+    final queryTimeout = opts?.queryTimeout;
+    Future<Result<TypedColumnarResult>> runWithTimeout() {
+      if (queryTimeout != null && queryTimeout != Duration.zero) {
+        return run().timeout(
+          queryTimeout,
+          onTimeout: () => const Failure<TypedColumnarResult, OdbcError>(
             QueryError(message: odbcQueryTimedOutMessage),
           ),
         );

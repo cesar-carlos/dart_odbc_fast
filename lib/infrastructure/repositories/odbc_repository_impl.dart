@@ -140,7 +140,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         nativeConnectionId,
       }) =>
           _ffi.convertNativeErrorToFailure<int>(
-        errorFactory: odbcQueryErrorFactory,
+        errorFactory: odbcBulkErrorFactory,
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
       ),
@@ -342,6 +342,14 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         params,
         resultEncoding: resultEncoding ?? _state.defaultResultEncoding,
       );
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) =>
+      _query.executeQueryColumnarParamValues(connectionId, sql, params);
 
   @override
   Future<Result<QueryResult>> executeQueryParamBuffer(

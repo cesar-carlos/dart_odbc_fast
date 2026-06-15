@@ -1,3 +1,4 @@
+import 'package:odbc_fast/application/services/i_query_service.dart';
 import 'package:odbc_fast/core/di/service_locator.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
@@ -231,6 +232,31 @@ void main() {
       final locator = ServiceLocator()..initialize();
       expect(locator.nativeConnection, isNotNull);
       expect(locator.auditLogger, isA<OdbcAuditLogger>());
+      locator.shutdown();
+    });
+
+    test('should_expose_segregated_repository_views_after_initialize', () {
+      final locator = ServiceLocator()..initialize();
+      final repo = locator.repository;
+
+      expect(locator.queryRepository, isA<IQueryRepository>());
+      expect(locator.poolRepository, isA<IPoolRepository>());
+      expect(locator.adminRepository, isA<IAdminRepository>());
+      expect(locator.transactionRepository, isA<ITransactionRepository>());
+      expect(locator.connectionRepository, isA<IConnectionRepository>());
+      expect(identical(locator.queryRepository, repo), isTrue);
+      expect(identical(locator.poolRepository, repo), isTrue);
+      expect(identical(locator.adminRepository, repo), isTrue);
+      expect(identical(locator.transactionRepository, repo), isTrue);
+      expect(identical(locator.connectionRepository, repo), isTrue);
+      locator.shutdown();
+    });
+
+    test('should_expose_queryService_as_service_view', () {
+      final locator = ServiceLocator()..initialize();
+
+      expect(locator.queryService, isA<IQueryService>());
+      expect(identical(locator.queryService, locator.service), isTrue);
       locator.shutdown();
     });
 

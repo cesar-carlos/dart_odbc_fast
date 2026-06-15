@@ -1,170 +1,112 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:odbc_fast/domain/entities/column_metadata.dart';
-import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
+import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_cell_decode.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_columnar.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_constants.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_row_major.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_trailers.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_types.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
-export 'package:odbc_fast/domain/entities/column_metadata.dart';
-
-const Endian _littleEndian = Endian.little;
-
-/// Typed-view extension over the domain [ColumnMetadata]. Lives in
-/// the infrastructure layer because [OdbcType] is a wire-protocol
-/// concern; the domain stays free of FFI dependencies.
-extension ColumnMetadataTypedView on ColumnMetadata {
-  /// Typed view of `odbcType`. Unknown discriminants degrade to
-  /// [OdbcType.varchar] (forward-compatible).
-  OdbcType get type => OdbcType.fromDiscriminant(odbcType);
-}
-
-/// Parsed result buffer containing rows and column metadata.
-///
-/// Represents a complete query result set with column information
-/// and row data. Each row is a list of dynamic values.
-class ParsedRowBuffer {
-  /// Creates a new [ParsedRowBuffer] instance.
-  ///
-  /// The [columns] list contains metadata for each column.
-  /// The [rows] list contains row data, where each row is a list of values.
-  /// The [rowCount] is the number of rows in the result set.
-  /// The [columnCount] is the number of columns in the result set.
-  ParsedRowBuffer({
-    required this.columns,
-    required this.rows,
-    required this.rowCount,
-    required this.columnCount,
-  });
-
-  /// Column metadata for all columns in the result set.
-  final List<ColumnMetadata> columns;
-
-  /// Row data, where each row is a list of dynamic values.
-  final List<List<dynamic>> rows;
-
-  /// Number of rows in the result set.
-  final int rowCount;
-
-  /// Number of columns in the result set.
-  final int columnCount;
-
-  /// Column names in order.
-  ///
-  /// Cached on first access to avoid repeated allocations in hot paths.
-  late final List<String> columnNames =
-      List.unmodifiable(columns.map((c) => c.name));
-}
-
-/// A parsed ODBC binary message: row/column payload plus optional `OUT1`
-/// parameter values.
-class ParsedQueryMessage {
-  /// Creates a new [ParsedQueryMessage] instance.
-  const ParsedQueryMessage({
-    required this.rowBuffer,
-    this.outputParamValues = const <ParamValue>[],
-    this.refCursorRowBuffers = const <ParsedRowBuffer>[],
-  });
-
-  /// Row set (v1 row-major or v2 columnar, decoded to the same shape as v1).
-  final ParsedRowBuffer rowBuffer;
-
-  /// `OUT` / `INOUT` values from an `OUT1` trailer; empty if none.
-  final List<ParamValue> outputParamValues;
-
-  /// Materialized `SYS_REFCURSOR`-style result sets from an `RC1\0` trailer
-  /// (full v1 messages); empty if none. See
-  /// `BinaryProtocolParser.refCursorFooterMagic`.
-  final List<ParsedRowBuffer> refCursorRowBuffers;
-}
+export 'binary_protocol_constants.dart' show BinaryProtocolConstants;
+export 'binary_protocol_types.dart';
 
 /// Parser for binary protocol query results.
 ///
-/// Parses binary data returned from the native ODBC engine into
-/// structured [ParsedRowBuffer] instances with column metadata and row data.
+/// Facade over row-major, columnar, and trailer sub-parsers. Use
+/// [parseColumnarToTyped] for columnar wire payloads that should stay
+/// column-major; [parse] / [parseWithOutputs] remain for row-major
+/// [ParsedRowBuffer] backward compatibility.
 class BinaryProtocolParser {
-  /// Magic number identifying binary protocol data (ASCII "ODBC").
-  static const int magic = 0x4F444243;
+  BinaryProtocolParser._();
 
-  /// Trailer magic for [ParamValue] output slots (`b"OUT1"`), from the Rust
-  /// engine when the call used DRT1 `OUT` / `INOUT` parameters.
-  /// LE u32 of the four on-wire bytes `O U T 1` (not `0x4F555431` = `1TUO`).
-  static const int outputFooterMagic = 0x3154554F;
+  static const int magic = BinaryProtocolConstants.magic;
+  static const int outputFooterMagic =
+      BinaryProtocolConstants.outputFooterMagic;
+  static const int refCursorFooterMagic =
+      BinaryProtocolConstants.refCursorFooterMagic;
+  static const int protocolVersionRowMajor =
+      BinaryProtocolConstants.protocolVersionRowMajor;
+  static const int protocolVersionColumnarV2 =
+      BinaryProtocolConstants.protocolVersionColumnarV2;
+  static const int headerSizeV1 = BinaryProtocolConstants.headerSizeV1;
+  static const int headerSizeColumnarV2 =
+      BinaryProtocolConstants.headerSizeColumnarV2;
+  static const int headerSize = BinaryProtocolConstants.headerSize;
 
-  /// Trailer for materialized ref-cursor result sets (`b"RC1\0"`), from
-  /// `RowBufferEncoder::append_ref_cursor_footer` in the native encoder.
-  static const int refCursorFooterMagic = 0x00314352;
-
-  /// Row-major wire format (matches [native/.../encoder.rs] v1).
-  static const int protocolVersionRowMajor = 1;
-
-  /// Columnar wire format (matches [native/.../columnar_encoder.rs] v2).
-  static const int protocolVersionColumnarV2 = 2;
-
-  /// Size of the v1 row-major header in bytes.
-  static const int headerSizeV1 = 16;
-
-  /// Size of the v2 columnar fixed header in bytes.
-  static const int headerSizeColumnarV2 = 19;
-
-  /// Size of the protocol header in bytes (v1 — kept for call sites that
-  /// pre-date columnar and `OUT1`).
-  static const int headerSize = headerSizeV1;
-
-  /// Returns total message length (header + payload) from the message header.
-  ///
-  /// Supports v1 row-major and v2 columnar headers. [data] must contain at
-  /// least the full header for the detected version.
   static int messageLengthFromHeader(Uint8List data) {
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
     final byteData = ByteData.sublistView(data);
-    final version = byteData.getUint16(4, _littleEndian);
+    final version = byteData.getUint16(4, Endian.little);
     if (version == protocolVersionRowMajor) {
       if (data.length < headerSizeV1) {
         throw const FormatException('Buffer too small for header');
       }
-      final payloadSize = byteData.getUint32(12, _littleEndian);
+      final payloadSize = byteData.getUint32(12, Endian.little);
       return headerSizeV1 + payloadSize;
     }
     if (version == protocolVersionColumnarV2) {
       if (data.length < headerSizeColumnarV2) {
         throw const FormatException('Buffer too small for columnar v2 header');
       }
-      final payloadSize = byteData.getUint32(15, _littleEndian);
+      final payloadSize = byteData.getUint32(15, Endian.little);
       return headerSizeColumnarV2 + payloadSize;
     }
     throw FormatException('Unsupported protocol version: $version');
   }
 
-  /// Parses a full buffer into rows/columns and optional `OUT1` outputs.
-  ///
-  /// Supports v1 row-major, v2 columnar, optional `OUT1` trailer, optional
-  /// `RC1\0` ref-cursor trailer (each sub-message is a full v1 buffer).
-  ///
-  /// When [lazyStrings] is `true`, text cells are wrapped in [LazyString]
-  /// instead of eagerly decoded. See [parse] for the rationale.
+  /// True when [data] begins with a columnar v2 header.
+  static bool isColumnarV2Message(Uint8List data) {
+    if (data.length < 6) return false;
+    final readMagic =
+        ByteData.sublistView(data, 0, 4).getUint32(0, Endian.little);
+    if (readMagic != magic) return false;
+    final version =
+        ByteData.sublistView(data, 4, 6).getUint16(0, Endian.little);
+    return version == protocolVersionColumnarV2;
+  }
+
   static ParsedQueryMessage parseWithOutputs(
     Uint8List data, {
     bool lazyStrings = false,
   }) {
-    final previousLazy = _lazyStringsActive;
-    _lazyStringsActive = lazyStrings;
+    final previousLazy = binaryProtocolLazyStringsActive;
+    setBinaryProtocolLazyStrings(active: lazyStrings);
     try {
       return _parseWithOutputsInternal(data);
     } finally {
-      _lazyStringsActive = previousLazy;
+      setBinaryProtocolLazyStrings(active: previousLazy);
     }
   }
 
-  /// Active lazy-string mode for the current parse call. Mirrored as a
-  /// static field so the (already pure) `_decodeText` helper can read
-  /// it without threading the flag through every call site. Dart is
-  /// single-isolate, so no cross-isolate races to worry about. Reset
-  /// in the `finally` of [parseWithOutputs].
-  static bool _lazyStringsActive = false;
+  static ParsedColumnarQueryMessage parseColumnarWithOutputs(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
+    final previousLazy = binaryProtocolLazyStringsActive;
+    setBinaryProtocolLazyStrings(active: lazyStrings);
+    try {
+      return _parseColumnarWithOutputsInternal(data);
+    } finally {
+      setBinaryProtocolLazyStrings(active: previousLazy);
+    }
+  }
+
+  /// Decodes columnar v2 wire bytes directly to [TypedColumnarResult].
+  static TypedColumnarResult parseColumnarToTyped(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) =>
+      parseColumnarWithOutputs(data, lazyStrings: lazyStrings).columnarResult;
+
+  static ParsedRowBuffer parse(Uint8List data, {bool lazyStrings = false}) {
+    return parseWithOutputs(data, lazyStrings: lazyStrings).rowBuffer;
+  }
 
   static ParsedQueryMessage _parseWithOutputsInternal(Uint8List data) {
     if (data.length < 6) {
@@ -174,7 +116,7 @@ class BinaryProtocolParser {
       data,
       0,
       4,
-    ).getUint32(0, _littleEndian);
+    ).getUint32(0, Endian.little);
     if (readMagic != magic) {
       throw FormatException(
         'Invalid magic number: 0x${readMagic.toRadixString(16)}',
@@ -184,7 +126,7 @@ class BinaryProtocolParser {
       data,
       4,
       6,
-    ).getUint16(0, _littleEndian);
+    ).getUint16(0, Endian.little);
 
     late final ParsedRowBuffer buffer;
     late final int mainEnd;
@@ -196,49 +138,37 @@ class BinaryProtocolParser {
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for payload');
       }
-      buffer = _parseRowMajorV1(Uint8List.sublistView(data, 0, mainEnd));
+      buffer = parseRowMajorV1(Uint8List.sublistView(data, 0, mainEnd));
     } else if (version == protocolVersionColumnarV2) {
       if (data.length < headerSizeColumnarV2) {
         throw const FormatException('Buffer too small for columnar v2 header');
       }
       final payloadSize =
-          ByteData.sublistView(data, 15, 19).getUint32(0, _littleEndian);
+          ByteData.sublistView(data, 15, 19).getUint32(0, Endian.little);
       mainEnd = headerSizeColumnarV2 + payloadSize;
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for columnar payload');
       }
-      buffer = _parseColumnarV2(Uint8List.sublistView(data, 0, mainEnd));
+      buffer =
+          parseColumnarV2ToRowBuffer(Uint8List.sublistView(data, 0, mainEnd));
     } else {
       throw FormatException('Unsupported protocol version: $version');
     }
 
     var off = mainEnd;
     final outputs = <ParamValue>[];
-    off = _parseOut1IfPresent(
+    off = parseOut1TrailerIfPresent(
       data: data,
       start: off,
       outputs: outputs,
     );
     final refCursors = <ParsedRowBuffer>[];
-    off = _parseRc1IfPresent(
+    off = parseRc1TrailerIfPresent(
       data: data,
       start: off,
       out: refCursors,
     );
-    if (off < data.length) {
-      if (data.length - off >= 4) {
-        final peek = ByteData.sublistView(
-          data,
-          off,
-          off + 4,
-        ).getUint32(0, _littleEndian);
-        if (peek == outputFooterMagic || peek == refCursorFooterMagic) {
-          throw const FormatException(
-            'Buffer too small for complete OUT1 or RC1 trailer',
-          );
-        }
-      }
-    }
+    _assertNoUnknownTrailers(data, off);
     return ParsedQueryMessage(
       rowBuffer: buffer,
       outputParamValues: outputs,
@@ -246,502 +176,99 @@ class BinaryProtocolParser {
     );
   }
 
-  /// Parses binary protocol data into a [ParsedRowBuffer] (v1 and v2;
-  /// ignores a trailing `OUT1` block if present).
-  ///
-  /// When [lazyStrings] is `true`, every text cell is wrapped in a
-  /// [LazyString] instead of eagerly decoded to `String`. Equality
-  /// against literal `String` values keeps working
-  /// (`row[0] == 'foo'`); decode happens on first `.value` /
-  /// `toString()` access. Default keeps eager decoding for compat.
-  ///
-  /// Throws [FormatException] if the data is invalid or malformed.
-  static ParsedRowBuffer parse(Uint8List data, {bool lazyStrings = false}) {
-    return parseWithOutputs(data, lazyStrings: lazyStrings).rowBuffer;
-  }
-
-  static ParsedRowBuffer _parseRowMajorV1(Uint8List data) {
-    final reader = _BufferReader(data);
-
-    final readMagic = reader.readUint32();
+  static ParsedColumnarQueryMessage _parseColumnarWithOutputsInternal(
+    Uint8List data,
+  ) {
+    if (data.length < 6) {
+      throw const FormatException('Buffer too small for version');
+    }
+    final readMagic = ByteData.sublistView(
+      data,
+      0,
+      4,
+    ).getUint32(0, Endian.little);
     if (readMagic != magic) {
       throw FormatException(
         'Invalid magic number: 0x${readMagic.toRadixString(16)}',
       );
     }
+    final version = ByteData.sublistView(
+      data,
+      4,
+      6,
+    ).getUint16(0, Endian.little);
 
-    final version = reader.readUint16();
-    if (version != protocolVersionRowMajor) {
-      throw FormatException('Not a v1 buffer in _parseRowMajorV1: $version');
-    }
-
-    final columnCount = reader.readUint16();
-    final rowCount = reader.readUint32();
-    reader.readUint32();
-
-    // DoS guard: reject header values that cannot possibly fit in the buffer
-    // before allocating nested lists. Each row must consume at least 1 byte
-    // per column (null marker), so rowCount * columnCount is a safe lower
-    // bound on remaining payload size.
-    if (columnCount > data.length || rowCount > data.length) {
-      throw FormatException(
-        'v1 buffer header oversized: rows=$rowCount, cols=$columnCount, '
-        'buffer=${data.length}',
-      );
-    }
-    if (columnCount > 0 && rowCount > data.length ~/ columnCount) {
-      throw FormatException(
-        'v1 buffer header inconsistent: rows=$rowCount, cols=$columnCount '
-        'cannot fit in buffer=${data.length}',
-      );
-    }
-
-    final columns = <ColumnMetadata>[];
-    for (var i = 0; i < columnCount; i++) {
-      final odbcType = reader.readUint16();
-      final nameLen = reader.readUint16();
-      final name = reader.readString(nameLen);
-      columns.add(ColumnMetadata(name: name, odbcType: odbcType));
-    }
-
-    // Pre-allocate fixed-size rows so there are no growable-list header
-    // allocations per row. Mirrors the columnar v2 path.
-    final rows = List<List<dynamic>>.generate(
-      rowCount,
-      (_) => List<dynamic>.filled(columnCount, null),
-      growable: false,
-    );
-    for (var r = 0; r < rowCount; r++) {
-      for (var c = 0; c < columnCount; c++) {
-        final isNull = reader.readUint8();
-        if (isNull != 1) {
-          final cellLen = reader.readUint32();
-          final cellBytes = reader.readBytes(cellLen);
-          rows[r][c] = _convertData(cellBytes, columns[c].odbcType);
-        }
+    late final TypedColumnarResult columnar;
+    late final int mainEnd;
+    if (version == protocolVersionColumnarV2) {
+      if (data.length < headerSizeColumnarV2) {
+        throw const FormatException('Buffer too small for columnar v2 header');
       }
+      final payloadSize =
+          ByteData.sublistView(data, 15, 19).getUint32(0, Endian.little);
+      mainEnd = headerSizeColumnarV2 + payloadSize;
+      if (data.length < mainEnd) {
+        throw const FormatException('Buffer too small for columnar payload');
+      }
+      columnar =
+          parseColumnarV2ToTyped(Uint8List.sublistView(data, 0, mainEnd));
+    } else if (version == protocolVersionRowMajor) {
+      final msg = _parseWithOutputsInternal(data);
+      return ParsedColumnarQueryMessage(
+        columnarResult: _rowBufferToTypedFallback(msg.rowBuffer),
+        outputParamValues: msg.outputParamValues,
+        refCursorRowBuffers: msg.refCursorRowBuffers,
+      );
+    } else {
+      throw FormatException('Unsupported protocol version: $version');
     }
 
-    return ParsedRowBuffer(
-      columns: columns,
-      rows: rows,
-      rowCount: rowCount,
-      columnCount: columnCount,
+    var off = mainEnd;
+    final outputs = <ParamValue>[];
+    off = parseOut1TrailerIfPresent(
+      data: data,
+      start: off,
+      outputs: outputs,
+    );
+    final refCursors = <ParsedRowBuffer>[];
+    off = parseRc1TrailerIfPresent(
+      data: data,
+      start: off,
+      out: refCursors,
+    );
+    _assertNoUnknownTrailers(data, off);
+    return ParsedColumnarQueryMessage(
+      columnarResult: columnar,
+      outputParamValues: outputs,
+      refCursorRowBuffers: refCursors,
     );
   }
 
-  static ParsedRowBuffer _parseColumnarV2(Uint8List data) {
-    if (data.length < headerSizeColumnarV2) {
-      throw const FormatException('Columnar v2: buffer too small');
-    }
-    final colCount = ByteData.sublistView(
-      data,
-      8,
-      10,
-    ).getUint16(0, _littleEndian);
-    final rowCount = ByteData.sublistView(
-      data,
-      10,
-      14,
-    ).getUint32(0, _littleEndian);
-    final paySize = ByteData.sublistView(
-      data,
-      15,
-      19,
-    ).getUint32(0, _littleEndian);
-    if (data.length < headerSizeColumnarV2 + paySize) {
-      throw const FormatException('Columnar v2: truncated payload');
-    }
-    // DoS guard: refuse to allocate rows × cols nested lists when the header
-    // claims more cells than could possibly fit in the payload.
-    if (colCount > data.length || rowCount > data.length) {
-      throw FormatException(
-        'Columnar v2 header oversized: rows=$rowCount, cols=$colCount, '
-        'buffer=${data.length}',
-      );
-    }
-    if (colCount > 0 && rowCount > paySize) {
-      // Each cell occupies at least 1 byte in the payload (null bitmap).
-      throw FormatException(
-        'Columnar v2 header inconsistent: rows=$rowCount cannot fit in '
-        'payload=$paySize',
-      );
-    }
-    if (colCount == 0) {
-      return ParsedRowBuffer(
-        columns: [],
-        rows: [],
-        rowCount: 0,
-        columnCount: 0,
-      );
-    }
-    var off = headerSizeColumnarV2;
-    final end = headerSizeColumnarV2 + paySize;
-    final columnMetas = <ColumnMetadata>[];
-    final rows = List<List<dynamic>>.generate(
-      rowCount,
-      (_) => List<dynamic>.filled(colCount, null),
-      growable: false,
-    );
-
-    for (var c = 0; c < colCount; c++) {
-      if (off + 4 > end) {
-        throw const FormatException('Columnar v2: metadata truncated');
-      }
-      final odbcType = ByteData.sublistView(
-        data,
-        off,
-        off + 2,
-      ).getUint16(0, _littleEndian);
-      off += 2;
-      final nameLen = ByteData.sublistView(
-        data,
-        off,
-        off + 2,
-      ).getUint16(0, _littleEndian);
-      off += 2;
-      if (off + nameLen > end) {
-        throw const FormatException('Columnar v2: name truncated');
-      }
-      final name = utf8.decode(
-        Uint8List.sublistView(data, off, off + nameLen),
-        allowMalformed: true,
-      );
-      off += nameLen;
-      columnMetas.add(ColumnMetadata(name: name, odbcType: odbcType));
-
-      if (off >= end) {
-        throw const FormatException('Columnar v2: missing column payload');
-      }
-      final isCompressed = data[off++];
-
-      final Uint8List raw;
-      if (isCompressed != 0) {
-        if (off + 1 + 4 > end) {
-          throw const FormatException(
-            'Columnar v2: compressed header truncated',
-          );
-        }
-        final algorithm = data[off++];
-        if (off + 4 > end) {
-          throw const FormatException(
-            'Columnar v2: compressed size truncated',
-          );
-        }
-        final compLen = ByteData.sublistView(
+  static void _assertNoUnknownTrailers(Uint8List data, int off) {
+    if (off < data.length) {
+      if (data.length - off >= 4) {
+        final peek = ByteData.sublistView(
           data,
           off,
           off + 4,
-        ).getUint32(0, _littleEndian);
-        off += 4;
-        if (off + compLen > end) {
+        ).getUint32(0, Endian.little);
+        if (peek == outputFooterMagic || peek == refCursorFooterMagic) {
           throw const FormatException(
-            'Columnar v2: compressed data truncated',
+            'Buffer too small for complete OUT1 or RC1 trailer',
           );
         }
-        final comp = Uint8List.sublistView(data, off, off + compLen);
-        off += compLen;
-        final decomp = columnarDecompressWithNative(comp, algorithm);
-        if (decomp == null) {
-          final haveApi = isColumnarNativeDecompressAvailable;
-          final hint = haveApi
-              ? 'odbc_columnar_decompress rejected the payload (wrong '
-                  'algorithm id, corrupt data, or size mismatch).'
-              : 'Native decompress symbols were not loaded. Build or deploy '
-                  'odbc_engine with odbc_columnar_decompress (Windows: '
-                  'odbc_engine.dll; Linux: libodbc_engine.so) — e.g. '
-                  '`cd native/odbc_engine && cargo build --release`, then '
-                  'run from package root or set PATH. Algorithm ids: '
-                  '1=zstd, 2=lz4. See doc/notes/columnar_protocol_sketch.md '
-                  'and library_loader.dart (loadOdbcLibrary).';
-          final head = 'Columnar v2: native decompress failed '
-              '(algorithm=$algorithm, compBytes=$compLen, '
-              'odbcDecompressFfi=$haveApi). ';
-          throw FormatException('$head$hint');
-        }
-        raw = decomp;
-      } else {
-        if (off + 4 > end) {
-          throw const FormatException('Columnar v2: raw size truncated');
-        }
-        final rawLen = ByteData.sublistView(
-          data,
-          off,
-          off + 4,
-        ).getUint32(0, _littleEndian);
-        off += 4;
-        if (off + rawLen > end) {
-          throw const FormatException('Columnar v2: raw data truncated');
-        }
-        raw = Uint8List.sublistView(data, off, off + rawLen);
-        off += rawLen;
       }
-      _fillColumnarRows(
-        odbcType: odbcType,
-        raw: raw,
-        columnIndex: c,
-        rows: rows,
-      );
     }
-    if (off != end) {
-      throw const FormatException('Columnar v2: extra bytes in column payload');
-    }
-    return ParsedRowBuffer(
-      columns: columnMetas,
-      rows: rows,
-      rowCount: rowCount,
-      columnCount: colCount,
+  }
+
+  static TypedColumnarResult _rowBufferToTypedFallback(ParsedRowBuffer buffer) {
+    return toTypedColumnar(
+      QueryResult(
+        columns: buffer.columnNames,
+        columnsMetadata: buffer.columns,
+        rows: buffer.rows,
+        rowCount: buffer.rowCount,
+      ),
     );
-  }
-
-  static void _fillColumnarRows({
-    required int odbcType,
-    required Uint8List raw,
-    required int columnIndex,
-    required List<List<dynamic>> rows,
-  }) {
-    final odbc = OdbcType.fromDiscriminant(odbcType);
-    final bd = ByteData.sublistView(raw);
-    var p = 0;
-    final rowCount = rows.length;
-    for (var i = 0; i < rowCount; i++) {
-      if (p >= raw.length) {
-        throw const FormatException('Columnar v2: row cells truncated');
-      }
-      if (odbc == OdbcType.integer) {
-        final n = raw[p++];
-        if (n == 1) {
-          rows[i][columnIndex] = null;
-        } else {
-          if (p + 4 > raw.length) {
-            throw const FormatException('Columnar v2: int cell truncated');
-          }
-          rows[i][columnIndex] = bd.getInt32(p, _littleEndian);
-          p += 4;
-        }
-      } else if (odbc == OdbcType.bigInt) {
-        final n = raw[p++];
-        if (n == 1) {
-          rows[i][columnIndex] = null;
-        } else {
-          if (p + 8 > raw.length) {
-            throw const FormatException('Columnar v2: bigint cell truncated');
-          }
-          rows[i][columnIndex] = bd.getInt64(p, _littleEndian);
-          p += 8;
-        }
-      } else {
-        final n = raw[p++];
-        if (n == 1) {
-          rows[i][columnIndex] = null;
-        } else {
-          if (p + 4 > raw.length) {
-            throw const FormatException('Columnar v2: varchar len truncated');
-          }
-          final bl = bd.getUint32(p, _littleEndian);
-          p += 4;
-          if (p + bl > raw.length) {
-            throw const FormatException('Columnar v2: varchar data truncated');
-          }
-          final bytes = Uint8List.sublistView(raw, p, p + bl);
-          p += bl;
-          rows[i][columnIndex] = _convertData(bytes, odbcType);
-        }
-      }
-    }
-    if (p != raw.length) {
-      throw const FormatException('Columnar v2: raw not fully consumed');
-    }
-  }
-
-  /// Returns the next offset (unchanged if no `OUT1` at [start]).
-  static int _parseOut1IfPresent({
-    required Uint8List data,
-    required int start,
-    required List<ParamValue> outputs,
-  }) {
-    if (data.length < start + 8) {
-      return start;
-    }
-    final m = ByteData.sublistView(
-      data,
-      start,
-      start + 4,
-    ).getUint32(0, _littleEndian);
-    if (m != outputFooterMagic) {
-      return start;
-    }
-    var p = start + 4;
-    final n = ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
-    p += 4;
-    for (var i = 0; i < n; i++) {
-      final d = deserializeParamValue(data, offset: p);
-      outputs.add(d.value);
-      p += d.consumed;
-    }
-    return p;
-  }
-
-  /// Returns the next offset (unchanged if no `RC1\0` at [start]).
-  static int _parseRc1IfPresent({
-    required Uint8List data,
-    required int start,
-    required List<ParsedRowBuffer> out,
-  }) {
-    if (data.length < start + 8) {
-      return start;
-    }
-    final m = ByteData.sublistView(
-      data,
-      start,
-      start + 4,
-    ).getUint32(0, _littleEndian);
-    if (m != refCursorFooterMagic) {
-      return start;
-    }
-    var p = start + 4;
-    final nCursors =
-        ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
-    p += 4;
-    for (var i = 0; i < nCursors; i++) {
-      if (p + 4 > data.length) {
-        throw const FormatException('RC1: truncated length prefix');
-      }
-      final bl =
-          ByteData.sublistView(data, p, p + 4).getUint32(0, _littleEndian);
-      p += 4;
-      if (p + bl > data.length) {
-        throw const FormatException('RC1: truncated embedded message');
-      }
-      final inner = Uint8List.sublistView(data, p, p + bl);
-      p += bl;
-      out.add(_parseRowMajorV1(inner));
-    }
-    return p;
-  }
-
-  /// Converts binary data to a Dart value based on the protocol
-  /// discriminant. See [OdbcType] for the wire layout per variant.
-  ///
-  /// Returns:
-  /// - [int] for [OdbcType.integer], [OdbcType.bigInt]
-  /// - [Uint8List] for [OdbcType.binary]
-  /// - [String] (UTF-8 decoded) for everything else
-  ///
-  /// Invalid UTF-8 sequences are replaced with U+FFFD (the Unicode
-  /// REPLACEMENT CHARACTER) instead of being silently re-interpreted as
-  /// Latin-1 — see [_decodeText] for the rationale.
-  static dynamic _convertData(Uint8List data, int odbcType) {
-    final type = OdbcType.fromDiscriminant(odbcType);
-    if (type == OdbcType.binary) {
-      // data is already a Uint8List.sublistView into the protocol buffer.
-      // Returning it directly avoids a copy; callers that need a mutable
-      // independent copy should use Uint8List.fromList(cell as Uint8List).
-      return data;
-    }
-    if (type == OdbcType.integer) {
-      if (data.length >= 4) {
-        return ByteData.sublistView(data).getInt32(0, _littleEndian);
-      }
-      return _decodeText(data);
-    }
-    if (type == OdbcType.bigInt) {
-      if (data.length >= 8) {
-        return ByteData.sublistView(data).getInt64(0, _littleEndian);
-      }
-      return _decodeText(data);
-    }
-    // All other variants are UTF-8 text on the wire.
-    return _decodeText(data);
-  }
-
-  /// UTF-8 decoding with a malformed-sequence-tolerant fallback.
-  ///
-  /// The Rust engine is configured to read text columns through
-  /// `SQLGetData(SQL_C_WCHAR)` (odbc-api `default-features = false`,
-  /// no `narrow` feature), so the bytes that arrive here are always the
-  /// driver's UTF-16 → UTF-8 transcoding of the column value. Any byte
-  /// sequence that fails to decode therefore signals a real upstream
-  /// problem (driver bug, mid-Unicode truncation, deliberate corruption)
-  /// — **not** another encoding to be guessed.
-  ///
-  /// Historically this method fell back to `String.fromCharCodes(data)`,
-  /// which silently re-interprets the bytes as Latin-1. That fallback
-  /// caused the user-visible mojibake reported in
-  /// [issue #1](https://github.com/cesar-carlos/dart_odbc_fast/issues/1):
-  /// GBK bytes (when the driver was misconfigured) showed up as
-  /// `"¹ÜÀíÔ±"` instead of an obviously broken `"\uFFFD\uFFFD\uFFFD"`,
-  /// hiding the bug from both users and the test suite.
-  ///
-  /// We now use `utf8.decode(..., allowMalformed: true)` so invalid
-  /// sequences become U+FFFD. The byte stream always survives a round
-  /// trip, the upstream issue is no longer masked as plausible-looking
-  /// Western text, and CJK / GBK regression tests can pin the contract.
-  /// Decodes a text cell payload to either a plain `String` (eager,
-  /// the default) or a `LazyString` (when `lazyStrings:true` was
-  /// passed to [parse] / [parseWithOutputs]).
-  ///
-  /// Returns `Object` instead of `dynamic` so the analyzer can still
-  /// catch accidental null returns or unrelated types. Callers that
-  /// need to treat the cell as a `String` rely on `LazyString`'s
-  /// `==` / `toString()` value-equality contract.
-  static Object _decodeText(Uint8List data) {
-    if (_lazyStringsActive) {
-      // Defensive copy — the [data] slice may be a view into a buffer
-      // that the caller will reuse; LazyString must own its bytes.
-      return LazyString(Uint8List.fromList(data));
-    }
-    return utf8.decode(data, allowMalformed: true);
-  }
-}
-
-/// Internal buffer reader for parsing binary protocol data.
-///
-/// Provides methods to read various data types from a byte buffer
-/// with automatic offset tracking.
-class _BufferReader {
-  /// Creates a new [_BufferReader] instance.
-  ///
-  /// The data parameter is the byte buffer to read from.
-  _BufferReader(this._data) : _byteData = ByteData.sublistView(_data);
-
-  final Uint8List _data;
-  final ByteData _byteData;
-  int _offset = 0;
-
-  /// Reads a single unsigned 8-bit integer.
-  int readUint8() {
-    return _data[_offset++];
-  }
-
-  /// Reads an unsigned 16-bit integer in little-endian format.
-  int readUint16() {
-    final value = _byteData.getUint16(_offset, _littleEndian);
-    _offset += 2;
-    return value;
-  }
-
-  /// Reads an unsigned 32-bit integer in little-endian format.
-  int readUint32() {
-    final value = _byteData.getUint32(_offset, _littleEndian);
-    _offset += 4;
-    return value;
-  }
-
-  /// Reads a UTF-8 string of the specified [length] from the buffer.
-  ///
-  /// Malformed sequences are replaced with U+FFFD to match the convention
-  /// used in [BinaryProtocolParser._decodeText] for cell values.
-  String readString(int length) {
-    final bytes = Uint8List.sublistView(_data, _offset, _offset + length);
-    _offset += length;
-    return utf8.decode(bytes, allowMalformed: true);
-  }
-
-  /// Reads [length] bytes from the buffer as a [Uint8List].
-  Uint8List readBytes(int length) {
-    final bytes = Uint8List.sublistView(_data, _offset, _offset + length);
-    _offset += length;
-    return bytes;
   }
 }

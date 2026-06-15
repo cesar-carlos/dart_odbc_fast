@@ -12,7 +12,7 @@
 
 use odbc_engine::engine::{
     execute_multi_result, start_multi_batched_stream, OdbcConnection, OdbcEnvironment,
-    MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
+    ResultEncoding, MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_ROW_COUNT,
 };
 
 fn dsn() -> Option<String> {
@@ -81,6 +81,8 @@ fn streaming_shape_1_three_cursors() {
         conn_id,
         "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c".to_string(),
         4096,
+        100,
+        ResultEncoding::RowMajor,
     )
     .expect("start stream");
     let items = drain_items(stream);
@@ -121,8 +123,15 @@ fn streaming_shape_3_rowcount_then_cursor() {
         "INSERT INTO {table} (id, val) VALUES (1, 'a'), (2, 'b'); \
          SELECT id, val FROM {table} ORDER BY id"
     );
-    let stream =
-        start_multi_batched_stream(handles.clone(), conn_id, sql, 4096).expect("start stream");
+    let stream = start_multi_batched_stream(
+        handles.clone(),
+        conn_id,
+        sql,
+        4096,
+        100,
+        ResultEncoding::RowMajor,
+    )
+    .expect("start stream");
     let items = drain_items(stream);
 
     assert_eq!(items.len(), 2, "expected 2 items, got {items:?}");
@@ -172,8 +181,15 @@ fn streaming_shape_4_cursor_then_rowcount() {
     ));
 
     let sql = format!("SELECT id, n FROM {table} ORDER BY id; UPDATE {table} SET n = n + 1");
-    let stream =
-        start_multi_batched_stream(handles.clone(), conn_id, sql, 4096).expect("start stream");
+    let stream = start_multi_batched_stream(
+        handles.clone(),
+        conn_id,
+        sql,
+        4096,
+        100,
+        ResultEncoding::RowMajor,
+    )
+    .expect("start stream");
     let items = drain_items(stream);
 
     assert_eq!(items.len(), 2, "expected 2 items, got {items:?}");

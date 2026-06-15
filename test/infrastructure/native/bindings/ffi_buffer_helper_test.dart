@@ -115,5 +115,51 @@ void main() {
       expect(result, hasLength(n));
       expect(result, everyElement(7));
     });
+
+    test('bypasses scratch pool when allowZeroCopy and limit exceeds threshold',
+        () {
+      const n = zeroCopyResultThresholdBytes;
+      var calls = 0;
+
+      final result = callWithBuffer(
+        (buf, bufLen, outWritten) {
+          calls++;
+          expect(bufLen, greaterThanOrEqualTo(n));
+          buf.asTypedList(n).fillRange(0, n, 3);
+          outWritten.value = n;
+          return 0;
+        },
+        initialSize: n,
+        maxSize: n,
+        allowZeroCopy: true,
+      );
+
+      expect(calls, 1);
+      expect(result, hasLength(n));
+      expect(result, everyElement(3));
+    });
+
+    test(
+      'bypasses scratch pool for default maxSize without large params',
+      () {
+        const n = zeroCopyResultThresholdBytes;
+        var calls = 0;
+
+        final result = callWithBuffer(
+          (buf, bufLen, outWritten) {
+            calls++;
+            buf.asTypedList(n).fillRange(0, n, 5);
+            outWritten.value = n;
+            return 0;
+          },
+          initialSize: initialBufferSize,
+          allowZeroCopy: true,
+        );
+
+        expect(calls, 1);
+        expect(result, hasLength(n));
+        expect(result, everyElement(5));
+      },
+    );
   });
 }

@@ -53,8 +53,8 @@ impl ExecutionEngine {
         // `SQLCloseCursor` discards the pending result sets that follow it.
         let had_initial_cursor = {
             let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
-            if let Some(mut cursor) = initial_cursor {
-                let encoded = self.encode_cursor(&mut cursor)?;
+            if let Some(cursor) = initial_cursor {
+                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
                 all_items.push(MultiResultItem::ResultSet(encoded));
                 // Consume cursor *without* close_cursor (preserves pending
                 // result sets for SQLMoreResults below).
@@ -97,8 +97,8 @@ impl ExecutionEngine {
                         .map_err(OdbcError::from)?
                 };
 
-                if let Some(mut cursor) = initial_cursor {
-                    let encoded = self.encode_cursor(&mut cursor)?;
+                if let Some(cursor) = initial_cursor {
+                    let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
                     all_items.push(MultiResultItem::ResultSet(encoded));
                     let _stmt_ref = cursor.into_stmt();
                     true
@@ -142,8 +142,8 @@ impl ExecutionEngine {
                     .map_err(OdbcError::from)?
             };
 
-            if let Some(mut cursor) = initial_cursor {
-                let encoded = self.encode_cursor(&mut cursor)?;
+            if let Some(cursor) = initial_cursor {
+                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
                 all_items.push(MultiResultItem::ResultSet(encoded));
                 // Same SQLCloseCursor avoidance as in `execute_multi_result_inner`.
                 let _stmt_ref = cursor.into_stmt();
@@ -186,8 +186,8 @@ impl ExecutionEngine {
         loop {
             // SAFETY: caller guarantees no live cursor borrow on `stmt`.
             // `Statement::more_results` is `unsafe` precisely because it
-            // would invalidate any outstanding cursor; `encode_cursor` always
-            // consumes the cursor it receives, so this contract holds.
+            // would invalidate any outstanding cursor; `encode_cursor_owned`
+            // always consumes the cursor it receives, so this contract holds.
             let advance = unsafe { stmt.as_stmt_ref().more_results() };
             match advance {
                 SqlResult::NoData => return Ok(()),
@@ -228,8 +228,8 @@ impl ExecutionEngine {
                 // We take care to consume the cursor via `into_stmt()` so the
                 // pending result sets after this one are not discarded by
                 // `SQLCloseCursor`.
-                let mut cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-                let encoded = self.encode_cursor(&mut cursor)?;
+                let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
+                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
                 all_items.push(MultiResultItem::ResultSet(encoded));
                 let _stmt_ref = cursor.into_stmt();
             } else {

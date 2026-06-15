@@ -1,4 +1,5 @@
 import 'package:odbc_fast/application/services/i_odbc_service.dart';
+import 'package:odbc_fast/application/services/i_transaction_service.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_operations.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
@@ -7,14 +8,24 @@ import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:result_dart/result_dart.dart';
 
-/// Transaction-shaped telemetry delegate for the ODBC service decorator façade.
-class TelemetryOdbcTransactionDecorator {
-  /// Creates a transaction telemetry delegate.
-  TelemetryOdbcTransactionDecorator(this._service, this._ops);
+/// Transaction-shaped telemetry decorator implementing [ITransactionService].
+class TelemetryOdbcTransactionDecorator implements ITransactionService {
+  /// Creates a transaction telemetry decorator.
+  TelemetryOdbcTransactionDecorator(
+    ITransactionService transactions,
+    this._ops, [
+    IOdbcService? aggregate,
+  ])  : _transactions = transactions,
+        _aggregate =
+            aggregate ?? (transactions is IOdbcService ? transactions : null);
 
-  final IOdbcService _service;
+  final ITransactionService _transactions;
   final TelemetryOdbcOperations _ops;
+  final IOdbcService? _aggregate;
 
+  IOdbcService get _service => _aggregate ?? _transactions as IOdbcService;
+
+  @override
   Future<Result<int>> beginTransaction(
     String connectionId, {
     IsolationLevel? isolationLevel,
@@ -24,7 +35,7 @@ class TelemetryOdbcTransactionDecorator {
   }) =>
       _ops.inOperation(
         'ODBC.beginTransaction',
-        () => _service.beginTransaction(
+        () => _transactions.beginTransaction(
           connectionId,
           isolationLevel: isolationLevel,
           savepointDialect: savepointDialect,
@@ -33,18 +44,21 @@ class TelemetryOdbcTransactionDecorator {
         ),
       );
 
+  @override
   Future<Result<void>> commitTransaction(String connectionId, int txnId) =>
       _ops.inOperation(
         'ODBC.commitTransaction',
-        () => _service.commitTransaction(connectionId, txnId),
+        () => _transactions.commitTransaction(connectionId, txnId),
       );
 
+  @override
   Future<Result<void>> rollbackTransaction(String connectionId, int txnId) =>
       _ops.inOperation(
         'ODBC.rollbackTransaction',
-        () => _service.rollbackTransaction(connectionId, txnId),
+        () => _transactions.rollbackTransaction(connectionId, txnId),
       );
 
+  @override
   Future<Result<T>> runInTransaction<T extends Object>(
     String connectionId,
     Future<Result<T>> Function(int txnId) action, {
@@ -55,7 +69,7 @@ class TelemetryOdbcTransactionDecorator {
   }) =>
       _ops.inOperation(
         'ODBC.runInTransaction',
-        () => _service.runInTransaction<T>(
+        () => _transactions.runInTransaction<T>(
           connectionId,
           action,
           isolationLevel: isolationLevel,

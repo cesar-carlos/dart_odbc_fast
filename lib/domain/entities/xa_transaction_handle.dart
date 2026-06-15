@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:odbc_fast/domain/entities/xid.dart';
 
 /// Native XA operations used by [XaTransactionHandle].
@@ -143,7 +145,15 @@ class XaTransactionHandle {
         } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
           xa.rollback();
         }
-      } on Object catch (_) {}
+      } on Object catch (cleanupError, cleanupSt) {
+        developer.log(
+          'XA cleanup failed after operation error on xid=${xa.xid}',
+          name: 'odbc_fast.xa',
+          error: cleanupError,
+          stackTrace: cleanupSt,
+          level: 900,
+        );
+      }
       rethrow;
     }
   }
@@ -176,7 +186,15 @@ class XaTransactionHandle {
         if (xa.state == XaState.idle || xa.state == XaState.failed) {
           xa.rollback();
         }
-      } on Object catch (_) {}
+      } on Object catch (cleanupError, cleanupSt) {
+        developer.log(
+          'XA one-phase cleanup failed after operation error on xid=${xa.xid}',
+          name: 'odbc_fast.xa',
+          error: cleanupError,
+          stackTrace: cleanupSt,
+          level: 900,
+        );
+      }
       rethrow;
     }
   }

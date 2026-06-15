@@ -510,6 +510,29 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 ## 7. Suplemento Dart / protocolo
 
+### 7.1 Entrada Dart nativa (`odbc_fast_native.dart`)
+
+A maioria dos consumidores deve importar apenas `package:odbc_fast/odbc_fast.dart`.
+Use `package:odbc_fast/odbc_fast_native.dart` quando precisar de superfícies FFI
+ou de infraestrutura que o barrel principal omite de propósito:
+
+| Símbolo / área | Barrel | `odbc_fast_native.dart` |
+| -------------- | ------ | ----------------------- |
+| `ServiceLocator`, `IOdbcService`, sub-interfaces, `IQueryRepository` / `IPoolRepository` / … | ✅ | reexporta via `odbc_fast.dart` (importe o barrel principal) |
+| `NativeOdbcConnection`, `AsyncNativeOdbcConnection` | ❌ | ✅ |
+| `OdbcRepositoryImpl` (façade que compõe os runners) | ❌ | ✅ |
+| `OdbcPoolFactory`, `PoolOptions` (nativo) | parcial no barrel de domínio | ✅ factory + opções nativas |
+| `AsyncError` / `AsyncErrorCode` | ❌ | ✅ |
+| OpenTelemetry FFI (`OpenTelemetryFFI`) | ❌ | ✅ |
+| `DriverCapabilitiesMapper` (JSON → domínio) | ❌ | ✅ |
+
+Regra prática: **aplicação** → `odbc_fast.dart`; **demo/benchmark que fala FFI
+direto ou monta `OdbcRepositoryImpl`** → acrescente `odbc_fast_native.dart`.
+Evite `package:odbc_fast/infrastructure/...` em código de produto salvo símbolos
+ainda não expostos (ver matriz em [`example/README.md`](../example/README.md)).
+
+### 7.2 Tabela de arquivos
+
 | Área | Arquivo(s) |
 |---|---|
 | 27 kinds `SqlDataType` + `intervalYearToMonth` / `geometry` | `lib/infrastructure/native/protocol/param_value.dart` |

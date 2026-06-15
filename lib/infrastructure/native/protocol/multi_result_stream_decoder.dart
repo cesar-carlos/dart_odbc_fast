@@ -1,14 +1,13 @@
-import 'dart:collection';
 import 'dart:typed_data';
 
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
-    show BinaryProtocolParser;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
     show
         MultiResultItem,
         MultiResultItemResultSet,
         MultiResultItemRowCount,
         MultiResultParser;
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dart';
 
 const Endian _littleEndian = Endian.little;
 
@@ -51,11 +50,14 @@ const int multiStreamItemTagRowCount = MultiResultParser.tagRowCount;
 /// decoder.assertExhausted();
 /// ```
 class MultiResultStreamDecoder {
+  MultiResultStreamDecoder({this.lazyStrings = false});
+
   static const int _frameHeaderSize = 5; // tag(1) + len(4)
 
-  final Queue<Uint8List> _chunks = Queue<Uint8List>();
-  int _headOffset = 0;
-  int _length = 0;
+  /// When true, text cells use lazy UTF-8 wrappers in decode paths.
+  final bool lazyStrings;
+
+  final ProtocolByteAccumulator _buffer = ProtocolByteAccumulator();
 
   /// Number of items decoded so far across all `feed` calls.
   int _itemsDecoded = 0;
@@ -63,7 +65,7 @@ class MultiResultStreamDecoder {
 
   /// Number of bytes currently held back inside the decoder waiting for the
   /// rest of a frame to arrive. Useful for backpressure / observability.
-  int get pendingBytes => _length;
+  int get pendingBytes => _buffer.length;
 
   /// Append [chunk] to the internal buffer and return any items that became
   /// fully available. The returned list may be empty if the chunk only
@@ -72,8 +74,7 @@ class MultiResultStreamDecoder {
   /// Throws [FormatException] if a frame declares an unknown tag.
   List<MultiResultItem> feed(Uint8List chunk) {
     if (chunk.isEmpty) return const [];
-    _chunks.addLast(chunk);
-    _length += chunk.length;
+    _buffer.add(chunk);
     return _drainCompleteFrames();
   }
 
@@ -89,93 +90,27 @@ class MultiResultStreamDecoder {
     }
   }
 
-  Uint8List _peekLogical(int count) {
-    if (_chunks.isEmpty || count > _length) {
-      throw RangeError.range(count, 0, _length, 'count');
-    }
-    final first = _chunks.first;
-    if (_headOffset + count <= first.length) {
-      return Uint8List.sublistView(first, _headOffset, _headOffset + count);
-    }
-    return _copyLogical(count, consume: false);
-  }
-
-  Uint8List _takeLogical(int count) {
-    if (_chunks.isEmpty || count > _length) {
-      throw RangeError.range(count, 0, _length, 'count');
-    }
-    final first = _chunks.first;
-    if (_headOffset + count <= first.length) {
-      final bytes = Uint8List.sublistView(
-        first,
-        _headOffset,
-        _headOffset + count,
-      );
-      _dropLogical(count);
-      return bytes;
-    }
-    return _copyLogical(count, consume: true);
-  }
-
-  Uint8List _copyLogical(int count, {required bool consume}) {
-    final out = Uint8List(count);
-    var written = 0;
-    var localHead = _headOffset;
-
-    for (final chunk in _chunks) {
-      final available = chunk.length - localHead;
-      if (available <= 0) {
-        localHead = 0;
-        continue;
-      }
-      final take = count - written < available ? count - written : available;
-      out.setRange(written, written + take, chunk, localHead);
-      written += take;
-      if (written == count) break;
-      localHead = 0;
-    }
-
-    if (consume) {
-      _dropLogical(count);
-    }
-    return out;
-  }
-
-  void _dropLogical(int count) {
-    var remaining = count;
-    while (remaining > 0) {
-      final first = _chunks.first;
-      final available = first.length - _headOffset;
-      if (remaining < available) {
-        _headOffset += remaining;
-        _length -= count;
-        return;
-      }
-      remaining -= available;
-      _chunks.removeFirst();
-      _headOffset = 0;
-    }
-    _length -= count;
-  }
-
   List<MultiResultItem> _drainCompleteFrames() {
     final items = <MultiResultItem>[];
 
-    while (_length >= _frameHeaderSize) {
-      final headerView = _peekLogical(_frameHeaderSize);
+    while (_buffer.length >= _frameHeaderSize) {
+      final headerView = _buffer.peek(_frameHeaderSize);
       final tag = headerView[0];
       final len = ByteData.sublistView(headerView, 1, _frameHeaderSize)
           .getUint32(0, _littleEndian);
       final frameBytes = _frameHeaderSize + len;
-      if (_length < frameBytes) break;
+      if (_buffer.length < frameBytes) break;
 
-      _dropLogical(_frameHeaderSize);
-      final payload = len == 0 ? Uint8List(0) : _takeLogical(len);
+      _buffer.drop(_frameHeaderSize);
+      final payload = len == 0 ? Uint8List(0) : _buffer.take(len);
 
       switch (tag) {
         case multiStreamItemTagResultSet:
         case multiStreamItemTagResultSetBatch:
-          final rs = BinaryProtocolParser.parse(payload);
+          final rs = decodeBatchedStreamFrame(
+            payload,
+            lazyStrings: lazyStrings,
+          );
           items.add(MultiResultItemResultSet(rs));
 
         case multiStreamItemTagRowCount:

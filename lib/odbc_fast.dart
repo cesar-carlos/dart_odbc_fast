@@ -63,6 +63,12 @@ export 'application/services/i_query_service.dart';
 export 'application/services/i_query_service_extensions.dart';
 export 'application/services/i_transaction_service.dart';
 export 'application/services/odbc_service.dart';
+export 'application/telemetry/telemetry_odbc_admin_decorator.dart';
+export 'application/telemetry/telemetry_odbc_decorators.dart';
+export 'application/telemetry/telemetry_odbc_pool_decorator.dart';
+export 'application/telemetry/telemetry_odbc_query_decorator.dart';
+export 'application/telemetry/telemetry_odbc_service_decorator.dart';
+export 'application/telemetry/telemetry_odbc_transaction_decorator.dart';
 export 'core/di/async_backpressure_mode.dart';
 export 'core/di/resolved_odbc_usage_profile.dart';
 export 'core/di/service_locator.dart';
@@ -99,6 +105,11 @@ export 'domain/errors/telemetry_error.dart';
 export 'domain/helpers/query_result_access.dart';
 export 'domain/helpers/retry_helper.dart';
 export 'domain/helpers/typed_columnar_converter.dart';
+export 'domain/repositories/i_admin_repository.dart';
+export 'domain/repositories/i_connection_repository.dart';
+export 'domain/repositories/i_pool_repository.dart';
+export 'domain/repositories/i_query_repository.dart';
+export 'domain/repositories/i_transaction_repository.dart';
 export 'domain/repositories/itelemetry_repository.dart';
 export 'domain/repositories/odbc_repository.dart';
 export 'domain/services/itelemetry_service.dart';
@@ -106,23 +117,18 @@ export 'domain/services/simple_telemetry_service.dart';
 export 'domain/telemetry/entities.dart';
 export 'domain/types/param_direction.dart';
 export 'domain/types/sql_data_type.dart';
-export 'infrastructure/native/async_native_odbc_connection.dart';
-export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/driver_capabilities.dart';
 export 'infrastructure/native/driver_capabilities_v3.dart';
-export 'infrastructure/native/errors/async_error.dart';
 export 'infrastructure/native/native_bcp_runtime.dart';
-export 'infrastructure/native/native_odbc_connection.dart';
 export 'infrastructure/native/odbc_connection_backend.dart';
-export 'infrastructure/native/pool_options.dart';
-// Re-export public-facing parser types only; BinaryProtocolParser, internal
-// magic numbers, and helpers stay private to the package boundary.
 export 'infrastructure/native/protocol/binary_protocol.dart'
-    show ColumnMetadata, ParsedRowBuffer;
+    show BinaryProtocolParser, ColumnMetadata, ParsedRowBuffer;
 export 'infrastructure/native/protocol/bulk_insert_builder.dart';
 export 'infrastructure/native/protocol/columnar_v2_flags.dart';
 export 'infrastructure/native/protocol/directed_param.dart';
 export 'infrastructure/native/protocol/lazy_string.dart';
+export 'infrastructure/native/protocol/multi_result_parser.dart'
+    show MultiResultItem, MultiResultParser;
 export 'infrastructure/native/protocol/named_parameter_parser.dart';
 export 'infrastructure/native/protocol/param_value.dart'
     hide paramValuesFromObjects, toParamValue;
@@ -134,7 +140,7 @@ export 'infrastructure/native/wrappers/connection_pool.dart';
 export 'infrastructure/native/wrappers/prepared_statement.dart';
 export 'infrastructure/native/wrappers/transaction_handle.dart';
 export 'infrastructure/native/wrappers/xa_transaction_handle.dart';
-export 'infrastructure/repositories/odbc_repository_impl.dart';
 export 'infrastructure/repositories/telemetry_repository.dart';
 
-// Async support - async_native_odbc_connection and async_error exported above
+// Native FFI, repository impl, and async_error: use
+// `package:odbc_fast/odbc_fast_native.dart`.

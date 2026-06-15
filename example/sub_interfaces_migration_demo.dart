@@ -12,6 +12,8 @@
 //
 // Both versions exercise the new "For" overloads (taking a [Connection]
 // directly) so call sites no longer thread `conn.id` strings around.
+// V3 adds segregated [IQueryRepository] / [IPoolRepository] getters on
+// [ServiceLocator] for repository-layer dependency injection.
 //
 // The demo runs DSN-free. It instantiates V2 with a tiny in-memory
 // fake of [IQueryService] and runs it end-to-end. V1 (which would
@@ -130,4 +132,16 @@ Future<void> main() async {
   print('V1 (IOdbcService aggregate) is described above; it would need ');
   print('a fake covering queries + transactions + pool + admin, '
       'illustrating the cost of depending on the full surface.');
+
+  print('');
+  print('V3 — segregated repository getters on ServiceLocator:');
+  final locator = ServiceLocator()..initialize();
+  final queryRepo = locator.queryRepository;
+  final poolRepo = locator.poolRepository;
+  print('  queryRepository runtimeType=${queryRepo.runtimeType}');
+  print('  poolRepository runtimeType=${poolRepo.runtimeType}');
+  print(
+    '  same backing instance: ${identical(locator.repository, queryRepo)}',
+  );
+  locator.shutdown();
 }

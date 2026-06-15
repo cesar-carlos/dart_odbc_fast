@@ -1,3 +1,4 @@
+import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -11,7 +12,6 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
-import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -20,24 +20,6 @@ import 'package:result_dart/result_dart.dart';
 /// Mirrors `OdbcQueryService` behaviour so repository consumers do not need
 /// the service façade for column-major reads.
 extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
-  /// Typed columnar execute using [ParamValue] wire tags.
-  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
-    String connectionId,
-    String sql, {
-    List<ParamValue>? params,
-  }) async {
-    final r = await executeQueryParamValues(
-      connectionId,
-      sql,
-      params ?? const <ParamValue>[],
-      resultEncoding: ResultEncoding.columnar,
-    );
-    return r.fold(
-      (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-      (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-    );
-  }
-
   /// Converts untyped positional values to [ParamValue] tags before execute.
   Future<Result<TypedColumnarResult>> executeQueryColumnarFromObjects(
     String connectionId,
@@ -47,8 +29,8 @@ extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
       executeQueryColumnarParamValues(
         connectionId,
         sql,
-        params: params == null || params.isEmpty
-            ? null
+        params == null || params.isEmpty
+            ? const <ParamValue>[]
             : paramValuesFromObjects(params),
       );
 
@@ -122,7 +104,11 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      executeQueryColumnarParamValues(conn.id, sql, params: params);
+      executeQueryColumnarParamValues(
+        conn.id,
+        sql,
+        params ?? const <ParamValue>[],
+      );
 
   /// `executeQueryColumnarFromObjects` overload that accepts a [Connection].
   Future<Result<TypedColumnarResult>> executeQueryColumnarFromObjectsFor(
@@ -332,7 +318,11 @@ Future<void> _safelyRollbackRepository(
 ) async {
   try {
     await repository.rollbackTransaction(connectionId, txnId);
-  } on Object catch (_) {
-    // Best-effort cleanup; original error wins.
+  } on Object catch (rollbackError, rollbackSt) {
+    AppLogger.warning(
+      'Rollback cleanup failed for connection $connectionId txn $txnId',
+      rollbackError,
+      rollbackSt,
+    );
   }
 }

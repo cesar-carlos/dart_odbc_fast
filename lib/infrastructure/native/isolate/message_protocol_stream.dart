@@ -39,11 +39,15 @@ class StreamStartAsyncRequest extends WorkerRequest {
     this.sql, {
     this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
+    this.resultEncodingWire = 0,
   }) : super(requestId, RequestType.streamStartAsync);
   final int connectionId;
   final String sql;
   final int fetchSize;
   final int chunkSize;
+
+  /// [ResultEncoding.wireCode]; 0 = row-major (default).
+  final int resultEncodingWire;
 }
 
 /// Start streaming multi-result batch (M8 in v3.3.0).
@@ -52,11 +56,17 @@ class StreamMultiStartBatchedRequest extends WorkerRequest {
     int requestId,
     this.connectionId,
     this.sql, {
+    this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
+    this.resultEncodingWire = 0,
   }) : super(requestId, RequestType.streamMultiStartBatched);
   final int connectionId;
   final String sql;
+  final int fetchSize;
   final int chunkSize;
+
+  /// [ResultEncoding.wireCode]; 0 = row-major (default).
+  final int resultEncodingWire;
 }
 
 /// Start async streaming multi-result batch (M8 in v3.3.0).
@@ -65,11 +75,17 @@ class StreamMultiStartAsyncRequest extends WorkerRequest {
     int requestId,
     this.connectionId,
     this.sql, {
+    this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
+    this.resultEncodingWire = 0,
   }) : super(requestId, RequestType.streamMultiStartAsync);
   final int connectionId;
   final String sql;
+  final int fetchSize;
   final int chunkSize;
+
+  /// [ResultEncoding.wireCode]; 0 = row-major (default).
+  final int resultEncodingWire;
 }
 
 /// Poll async stream status.

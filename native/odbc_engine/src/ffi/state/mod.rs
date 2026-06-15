@@ -13,13 +13,14 @@
 //! - `async_requests` is a self-contained subsystem; moves to its own
 //!   [`std::sync::Mutex`] so polling an async request id does not block
 //!   query execution or vice-versa.
+//! - `streams` maps moved to [`streams`] (sprint 4 follow-up) so poll/fetch
+//!   no longer contend on the outer `GlobalState` mutex.
+//! - `connections` moved to [`connections`] (sprint 4 follow-up) so
+//!   read-mostly connection lookups no longer require the outer mutex.
 //!
-//! The remaining maps (`connections`, `pools`, `transactions`, `streams`,
-//! `xa_*`) stay inside `GlobalState` for now: they need atomic transitions
+//! The remaining maps (`pools`, `transactions`, `xa_*`, `statements`)
+//! stay inside `GlobalState` for now: they need atomic transitions
 //! (e.g. removing a connection must also remove its open transactions).
-//! Migrating each of those individually with its own lock is feasible but
-//! out of scope for this sprint per the conservative scope agreed in the
-//! plan; the file structure here is ready to host them.
 //!
 //! ## Lock ordering
 //!
@@ -27,12 +28,26 @@
 //! canonical order to avoid deadlock is:
 //!
 //! 1. `GLOBAL_STATE` (the residual outer mutex on `GlobalState`).
-//! 2. [`async_requests_lock`].
-//! 3. [`connection_errors_lock`] (write side first, then read side if
+//! 2. [`connections::connections_write`] / [`connections::connections_read`]
+//!    (dedicated `RwLock` for regular connections; write after outer when
+//!    both are needed, e.g. disconnect cleanup).
+//! 3. [`streams::try_lock_stream_maps`].
+//! 4. [`async_requests_lock`].
+//! 5. [`connection_errors_lock`] (write side first, then read side if
 //!    promoted; never downgrade-then-reacquire while holding (1)).
 //!
 //! Immutable accessors ([`ffi_metrics`], [`ffi_audit_logger`]) never lock
 //! and may be called at any point in any order.
+
+mod connections;
+mod streams;
+
+pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
+pub use connections::contains_connection;
+pub(crate) use streams::{
+    allocate_stream_id, cancel_streams_for_connection, close_stream, insert_stream,
+    reinsert_stream, remove_stream, request_stream_cancel, stream_connection_id, with_stream_mut,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};

@@ -25,6 +25,7 @@ import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:result_dart/result_dart.dart';
@@ -205,6 +206,19 @@ class MockOdbcRepository implements IOdbcRepository {
         ],
         rowCount: 1,
       ),
+    );
+  }
+
+  @override
+  Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params,
+  ) async {
+    final result = await executeQueryParamValues(connectionId, sql, params);
+    return result.fold(
+      (qr) => Success(toTypedColumnar(qr)),
+      (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
     );
   }
 
@@ -793,7 +807,7 @@ class MockOdbcRepository implements IOdbcRepository {
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) async {
     getConnectionDbmsInfoCalled = true;
     return Success(
-      DbmsInfo.fromJson(const {
+      DriverCapabilitiesMapper.dbmsInfoFromJson(const {
         'dbms_name': 'MockDB',
         'engine': DatabaseEngineIds.sqlite,
         'current_catalog': 'main',

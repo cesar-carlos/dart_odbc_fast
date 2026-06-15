@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
 import 'package:test/test.dart';
@@ -202,6 +203,44 @@ void main() {
       decoder.assertExhausted();
     });
 
+    test('decodes row-major then columnar payloads in 1024-byte chunks', () {
+      final rowMajor = _buildResultSetFrame(
+        ['id', 'name'],
+        List.generate(100, (i) => ['$i', 'n$i']),
+      );
+      final columnar = _buildColumnarV2InnerFrame(
+        columns: const [
+          (name: 'id', type: 2),
+        ],
+        rows: List.generate(100, (i) => [i]),
+      );
+      final columnarFrame = BytesBuilder()
+        ..addByte(multiStreamItemTagResultSet)
+        ..add(
+          (ByteData(4)..setUint32(0, columnar.length, _le))
+              .buffer
+              .asUint8List(),
+        )
+        ..add(columnar);
+      final multi = BytesBuilder()
+        ..add(rowMajor)
+        ..add(columnarFrame.toBytes());
+      final bytes = multi.toBytes();
+
+      final decoder = MultiResultStreamDecoder();
+      var itemCount = 0;
+      const chunkSize = 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = offset + chunkSize < bytes.length
+            ? offset + chunkSize
+            : bytes.length;
+        itemCount +=
+            decoder.feed(Uint8List.sublistView(bytes, offset, end)).length;
+      }
+      expect(itemCount, equals(2));
+      decoder.assertExhausted();
+    });
+
     test('decodes a large result-set frame fed in 1024-byte chunks', () {
       final columns = List<String>.generate(12, (i) => 'c$i');
       final rows = List<List<String>>.generate(
@@ -222,5 +261,99 @@ void main() {
       expect(itemCount, equals(1));
       decoder.assertExhausted();
     });
+
+    test('decodes columnar v2 result-set payload via decodeBatchedStreamFrame',
+        () {
+      final inner = _buildColumnarV2InnerFrame(
+        columns: const [
+          (name: 'id', type: 2),
+        ],
+        rows: [
+          [42],
+        ],
+      );
+      final frame = BytesBuilder()
+        ..addByte(multiStreamItemTagResultSet)
+        ..add(
+          (ByteData(4)..setUint32(0, inner.length, _le)).buffer.asUint8List(),
+        )
+        ..add(inner);
+      final decoder = MultiResultStreamDecoder();
+      final items = decoder.feed(frame.toBytes());
+      expect(items, hasLength(1));
+      expect(items.single, isA<MultiResultItemResultSet>());
+      final rs = (items.single as MultiResultItemResultSet).value;
+      expect(rs.rowCount, 1);
+      expect(rs.rows.single.single, 42);
+      decoder.assertExhausted();
+    });
   });
+}
+
+Uint8List _buildColumnarV2InnerFrame({
+  required List<({String name, int type})> columns,
+  required List<List<dynamic>> rows,
+}) {
+  final payload = <int>[];
+  for (var c = 0; c < columns.length; c++) {
+    final column = columns[c];
+    payload
+      ..addAll(column.type.toBytes(2))
+      ..addAll(column.name.length.toBytes(2))
+      ..addAll(column.name.codeUnits)
+      ..add(0);
+
+    final raw = <int>[];
+    for (final row in rows) {
+      final cell = row[c];
+      if (cell == null) {
+        raw.add(1);
+        continue;
+      }
+      raw.add(0);
+      if (column.type == 2) {
+        raw.addAll((cell as int).toBytes(4));
+      } else {
+        final bytes = _cellToBytes(cell);
+        raw
+          ..addAll(bytes.length.toBytes(4))
+          ..addAll(bytes);
+      }
+    }
+    payload
+      ..addAll(raw.length.toBytes(4))
+      ..addAll(raw);
+  }
+
+  return Uint8List.fromList([
+    ...BinaryProtocolParser.magic.toBytes(4),
+    ...BinaryProtocolParser.protocolVersionColumnarV2.toBytes(2),
+    ...0.toBytes(2),
+    ...columns.length.toBytes(2),
+    ...rows.length.toBytes(4),
+    0,
+    ...payload.length.toBytes(4),
+    ...payload,
+  ]);
+}
+
+List<int> _cellToBytes(dynamic cell) {
+  if (cell is int) {
+    return cell.toBytes(4);
+  } else if (cell is String) {
+    return cell.codeUnits;
+  } else if (cell is List<int>) {
+    return cell;
+  }
+  return [];
+}
+
+extension on int {
+  List<int> toBytes(int length) {
+    final bytes = <int>[];
+    for (var i = 0; i < length; i++) {
+      bytes.add((this >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+  }
 }

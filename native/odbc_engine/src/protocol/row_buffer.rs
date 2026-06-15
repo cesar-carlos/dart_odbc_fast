@@ -5,6 +5,15 @@ pub struct ColumnMetadata {
     pub odbc_type: OdbcType,
 }
 
+impl Clone for ColumnMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            odbc_type: self.odbc_type,
+        }
+    }
+}
+
 pub struct RowBuffer {
     pub columns: Vec<ColumnMetadata>,
     pub rows: Vec<Vec<Option<Vec<u8>>>>,
@@ -38,6 +47,15 @@ impl RowBuffer {
 impl Default for RowBuffer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for RowBuffer {
+    fn clone(&self) -> Self {
+        Self {
+            columns: self.columns.clone(),
+            rows: self.rows.clone(),
+        }
     }
 }
 

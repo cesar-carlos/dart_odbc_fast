@@ -151,30 +151,55 @@ The opt-in `For` extension methods (`executeQueryFor(Connection conn,
 
 ```mermaid
 flowchart LR
-  Repo[OdbcRepositoryImpl\\n~3000 lines, façade] --> State[OdbcRepositoryState\\nstep 1]
-  Repo --> Catalog[OdbcCatalogRunner\\nstep 2]
-  Repo --> Bulk[OdbcBulkRunner\\nstep 3]
-  Repo --> Future[Future runners:\\nQuery, Transaction, Pool, ...]
+  Repo[OdbcRepositoryImpl\\n~551 lines, façade] --> State[OdbcRepositoryState]
+  Repo --> Conn[OdbcConnectionRunner]
+  Repo --> Query[OdbcQueryRunner / OdbcQuerySyncRunner]
+  Repo --> Prep[OdbcQueryPreparedRunner]
+  Repo --> Multi[OdbcQueryMultiRunner]
+  Repo --> Stream[OdbcStreamRunner]
+  Repo --> Txn[OdbcTransactionRunner]
+  Repo --> Pool[OdbcPoolRunner]
+  Repo --> Admin[OdbcAdminRunner]
+  Repo --> Catalog[OdbcCatalogRunner]
+  Repo --> Bulk[OdbcBulkRunner]
 ```
 
-The repository is being split into composition-first runners
-gradually. Each runner is **stateless**: it receives the
-`OdbcBackend`, a `nativeIdLookup` closure, and helpers
-(`parseBuffer`, `convertError`) via constructor injection so the
+The repository is split into composition-first runners. Each runner is
+**stateless**: it receives the `OdbcBackend`, a `nativeIdLookup` closure,
+and helpers (`parseBuffer`, `convertError`) via constructor injection so the
 façade keeps a single source of truth for cross-cutting concerns.
 
 Runners shipped today:
 
+- [`OdbcConnectionRunner`](../lib/infrastructure/repositories/runners/odbc_connection_runner.dart)
+  — connect, disconnect, validate, driver capabilities.
+- [`OdbcQueryRunner`](../lib/infrastructure/repositories/runners/odbc_query_runner.dart)
+  / [`OdbcQuerySyncRunner`](../lib/infrastructure/repositories/runners/odbc_query_sync_runner.dart)
+  — execute, columnar execute, named params.
+- [`OdbcQueryPreparedRunner`](../lib/infrastructure/repositories/runners/odbc_query_prepared_runner.dart)
+  — prepare, execute prepared, statement cache.
+- [`OdbcQueryMultiRunner`](../lib/infrastructure/repositories/runners/odbc_query_multi_runner.dart)
+  — multi-result execute paths.
+- [`OdbcStreamRunner`](../lib/infrastructure/repositories/runners/odbc_stream_runner.dart)
+  — `streamQuery*`, `streamQueryMulti`; uses
+  [`StreamCapabilityPolicy`](../lib/infrastructure/repositories/runners/stream_capability_policy.dart)
+  and [`StreamChunkDecoder`](../lib/infrastructure/repositories/runners/stream_chunk_decoder.dart).
+- [`OdbcTransactionRunner`](../lib/infrastructure/repositories/runners/odbc_transaction_runner.dart)
+  — transactions, savepoints, XA.
+- [`OdbcPoolRunner`](../lib/infrastructure/repositories/runners/odbc_pool_runner.dart)
+  — pool create/resize/health/checkout.
+- [`OdbcAdminRunner`](../lib/infrastructure/repositories/runners/odbc_admin_runner.dart)
+  — initialize, version, metrics, event bus.
 - [`OdbcCatalogRunner`](../lib/infrastructure/repositories/runners/odbc_catalog_runner.dart)
   — `catalogTables`, `catalogColumns`, `catalogTypeInfo`,
   `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`.
 - [`OdbcBulkRunner`](../lib/infrastructure/repositories/runners/odbc_bulk_runner.dart)
-  — `bulkInsert`, `bulkInsertParallel` (with single-connection
-  fallback when `parallelism <= 1`).
+  — `bulkInsert`, `bulkInsertParallel` (with single-connection fallback when
+  `parallelism <= 1`).
 
-The remaining runners (Query, Transaction, Pool) will follow the same
-pattern as features evolve. See `native/doc/repository_split_plan.md`
-for the long-term plan.
+Shared helpers: [`OdbcFfiDispatch`](../lib/infrastructure/repositories/runners/odbc_ffi_dispatch.dart),
+[`OdbcResultParser`](../lib/infrastructure/repositories/runners/odbc_result_parser.dart).
+See `native/doc/repository_split_plan.md` for the long-term plan.
 
 ## Event bus pipeline
 

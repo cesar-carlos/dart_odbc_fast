@@ -1,17 +1,19 @@
 import 'package:odbc_fast/application/services/odbc_service.dart';
+import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator.dart';
 import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
 import 'package:odbc_fast/core/di/resolved_odbc_usage_profile.dart';
 import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
+import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/domain/services/simple_telemetry_service.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/audit/async_odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
-import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 
 export 'package:odbc_fast/application/repositories/odbc_repository_extensions.dart';
@@ -67,11 +69,17 @@ class ServiceLocator {
   NativeOdbcConnection? _nativeConnection;
   IOdbcRepository? _repository;
   OdbcService? _service;
+  TelemetryOdbcServiceDecorator? _syncTelemetryDecorator;
+  TelemetryOdbcServiceDecorator? _asyncTelemetryDecorator;
 
   // Async dependencies (new)
   late AsyncNativeOdbcConnection _asyncNativeConnection;
   late IOdbcRepository _asyncRepository;
   late OdbcService _asyncService;
+
+  /// Optional telemetry sink wired when [initialize] receives [telemetry].
+  SimpleTelemetryService? get telemetry => _telemetry;
+  SimpleTelemetryService? _telemetry;
 
   bool _locatorInitialized = false;
   bool _useAsync = false;
@@ -126,6 +134,7 @@ class ServiceLocator {
     int? asyncMaxPendingRequests,
     AsyncBackpressureMode? asyncBackpressureMode,
     Duration? asyncBackpressureTimeout,
+    SimpleTelemetryService? telemetry,
   }) {
     final preset = OdbcProfileAsyncDefaults.fromUsageProfile(profile);
     final effectiveUseAsync = useAsync ?? preset.useAsync;
@@ -169,7 +178,11 @@ class ServiceLocator {
       _nativeConnection = null;
       _repository = null;
       _service = null;
+      _syncTelemetryDecorator = null;
+      _asyncTelemetryDecorator = null;
     }
+
+    _telemetry = telemetry;
 
     final resolvedUsageProfile = ResolvedOdbcUsageProfile(
       profile: profile,
@@ -209,6 +222,10 @@ class ServiceLocator {
         defaultResultEncoding: resolvedUsageProfile.recommendedResultEncoding,
       );
       _asyncService = OdbcService(_asyncRepository);
+      if (_telemetry != null) {
+        _asyncTelemetryDecorator =
+            TelemetryOdbcServiceDecorator(_asyncService, _telemetry!);
+      }
     }
 
     AppLogger.info(
@@ -243,12 +260,17 @@ class ServiceLocator {
     );
     _repository = repo;
     _service = OdbcService(repo);
+    if (_telemetry != null) {
+      _syncTelemetryDecorator =
+          TelemetryOdbcServiceDecorator(_service!, _telemetry!);
+    }
   }
 
   /// Gets the appropriate service based on initialization mode.
   ///
   /// If [initialize] was called with async mode, returns the async
-  /// service. Otherwise returns the sync service.
+  /// service. Otherwise returns the sync service. When [telemetry] was
+  /// provided to [initialize], returns the instrumented aggregate decorator.
   ///
   /// Throws [StateError] if [initialize] has not been called.
   ///
@@ -256,11 +278,13 @@ class ServiceLocator {
   /// - [syncService] - Always returns sync service
   /// - [asyncService] - Always returns async service (throws if not
   ///   initialized)
-  OdbcService get service {
+  IOdbcService get service {
     _requireInitialized();
-    if (_useAsync) return _asyncService;
+    if (_useAsync) {
+      return _asyncTelemetryDecorator ?? _asyncService;
+    }
     _ensureSyncStack();
-    return _service!;
+    return _syncTelemetryDecorator ?? _service!;
   }
 
   /// Gets the sync [OdbcService] instance.
@@ -304,6 +328,45 @@ class ServiceLocator {
     if (_useAsync) return _asyncRepository;
     _ensureSyncStack();
     return _repository!;
+  }
+
+  /// Narrow repository views for capability-focused dependency injection.
+  IConnectionRepository get connectionRepository => repository;
+
+  IQueryRepository get queryRepository => repository;
+
+  ITransactionRepository get transactionRepository => repository;
+
+  IPoolRepository get poolRepository => repository;
+
+  IAdminRepository get adminRepository => repository;
+
+  /// Narrow service views matching [IQueryService], [ITransactionService],
+  /// [IPoolService], and [IAdminService]. When telemetry is enabled, these
+  /// route through the capability decorators so narrow consumers stay
+  /// instrumented without depending on the full aggregate.
+  IQueryService get queryService {
+    final decorator =
+        _useAsync ? _asyncTelemetryDecorator : _syncTelemetryDecorator;
+    return decorator?.queryService ?? service;
+  }
+
+  ITransactionService get transactionService {
+    final decorator =
+        _useAsync ? _asyncTelemetryDecorator : _syncTelemetryDecorator;
+    return decorator?.transactionService ?? service;
+  }
+
+  IPoolService get poolService {
+    final decorator =
+        _useAsync ? _asyncTelemetryDecorator : _syncTelemetryDecorator;
+    return decorator?.poolService ?? service;
+  }
+
+  IAdminService get adminService {
+    final decorator =
+        _useAsync ? _asyncTelemetryDecorator : _syncTelemetryDecorator;
+    return decorator?.adminService ?? service;
   }
 
   /// Gets the [NativeOdbcConnection] instance.
@@ -375,6 +438,9 @@ class ServiceLocator {
       _nativeConnection = null;
       _repository = null;
       _service = null;
+      _syncTelemetryDecorator = null;
+      _asyncTelemetryDecorator = null;
+      _telemetry = null;
     }
   }
 }

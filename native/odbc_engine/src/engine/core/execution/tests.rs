@@ -616,14 +616,14 @@ fn should_build_bound_params_first_item_as_result_set_when_cursor_present() {
 #[test]
 fn should_encode_empty_row_buffer_row_major() {
     let buffer = RowBuffer::new();
-    let bytes = encode_query_result_payload(&buffer, false, false).expect("encode");
+    let bytes = encode_query_result_payload(buffer, false, false).expect("encode");
     assert!(!bytes.is_empty());
 }
 
 #[test]
 fn should_encode_empty_row_buffer_columnar_with_compression() {
     let buffer = RowBuffer::new();
-    let bytes = encode_query_result_payload(&buffer, true, true).expect("encode");
+    let bytes = encode_query_result_payload(buffer, true, true).expect("encode");
     assert!(!bytes.is_empty());
 }
 
@@ -632,7 +632,7 @@ fn should_encode_nonempty_row_buffer_row_major() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
     buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
-    let bytes = encode_query_result_payload(&buffer, false, false).expect("encode");
+    let bytes = encode_query_result_payload(buffer, false, false).expect("encode");
     assert!(!bytes.is_empty());
 }
 
@@ -734,9 +734,15 @@ fn should_encode_columnar_payload_with_multiple_rows() {
     buffer.add_column("n".to_string(), OdbcType::Integer);
     buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
     buffer.add_row(vec![Some(2i32.to_le_bytes().to_vec())]);
-    let bytes = encode_query_result_payload(&buffer, true, false).expect("columnar encode");
+    let bytes = {
+        let mut columnar_buf = RowBuffer::new();
+        columnar_buf.add_column("n".to_string(), OdbcType::Integer);
+        columnar_buf.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+        columnar_buf.add_row(vec![Some(2i32.to_le_bytes().to_vec())]);
+        encode_query_result_payload(columnar_buf, true, false).expect("columnar encode")
+    };
     assert!(!bytes.is_empty());
-    let row_major = encode_query_result_payload(&buffer, false, false).expect("row-major");
+    let row_major = encode_query_result_payload(buffer, false, false).expect("row-major");
     assert_ne!(bytes, row_major);
 }
 

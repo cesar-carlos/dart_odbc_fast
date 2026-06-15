@@ -78,7 +78,7 @@ fn bench_columnar_via_row_major(c: &mut Criterion) {
         let id = format!("{rows}x{cols}");
         group.bench_with_input(BenchmarkId::from_parameter(id), &buf, |b, buf| {
             b.iter(|| {
-                let v2 = row_buffer_to_columnar(buf).expect("convert");
+                let v2 = row_buffer_to_columnar(buf.clone()).expect("convert");
                 black_box(ColumnarEncoder::encode(&v2, false).expect("encode"))
             });
         });
@@ -95,7 +95,7 @@ fn bench_columnar_via_row_major_compressed(c: &mut Criterion) {
         let id = format!("{rows}x{cols}");
         group.bench_with_input(BenchmarkId::from_parameter(id), &buf, |b, buf| {
             b.iter(|| {
-                let v2 = row_buffer_to_columnar(buf).expect("convert");
+                let v2 = row_buffer_to_columnar(buf.clone()).expect("convert");
                 black_box(ColumnarEncoder::encode(&v2, true).expect("encode"))
             });
         });
@@ -111,7 +111,7 @@ fn bench_row_to_columnar_conversion(c: &mut Criterion) {
         let buf = build_mixed_buffer(rows, cols);
         let id = format!("{rows}x{cols}");
         group.bench_with_input(BenchmarkId::from_parameter(id), &buf, |b, buf| {
-            b.iter(|| black_box(row_buffer_to_columnar(buf).expect("convert")));
+            b.iter(|| black_box(row_buffer_to_columnar(buf.clone()).expect("convert")));
         });
     }
     group.finish();
@@ -185,7 +185,7 @@ fn bench_direct_columnar_vs_via_row_major(c: &mut Criterion) {
             &row_major,
             |b, buf| {
                 b.iter(|| {
-                    let v2 = row_buffer_to_columnar(buf).expect("convert");
+                    let v2 = row_buffer_to_columnar(buf.clone()).expect("convert");
                     black_box(ColumnarEncoder::encode(&v2, false).expect("encode"))
                 });
             },
@@ -198,6 +198,30 @@ fn bench_direct_columnar_vs_via_row_major(c: &mut Criterion) {
     group.finish();
 }
 
+/// Simulates streaming columnar batches: each batch is a `RowBufferV2` slice
+/// (as produced by `ColumnarStreamingSession::fetch_next_batch_v2`) encoded
+/// independently — the path batched streaming takes when `result_encoding`
+/// is columnar and `plan_buffer_descs` succeeds.
+fn bench_streaming_columnar_batch_encode(c: &mut Criterion) {
+    let batch_rows = 100usize;
+    let cols = 10usize;
+    let batches = 100usize;
+
+    let mut group = c.benchmark_group("encoder/streaming_columnar_batch");
+    group.bench_function(format!("{batches}x{batch_rows}x{cols}"), |b| {
+        let batch_v2 = build_mixed_v2(batch_rows, cols);
+        b.iter(|| {
+            let mut total = 0usize;
+            for _ in 0..batches {
+                total +=
+                    black_box(ColumnarEncoder::encode(&batch_v2, false).expect("encode")).len();
+            }
+            black_box(total)
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_row_major_encode,
@@ -205,5 +229,6 @@ criterion_group!(
     bench_columnar_via_row_major_compressed,
     bench_row_to_columnar_conversion,
     bench_direct_columnar_vs_via_row_major,
+    bench_streaming_columnar_batch_encode,
 );
 criterion_main!(benches);

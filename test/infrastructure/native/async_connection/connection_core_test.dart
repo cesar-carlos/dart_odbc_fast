@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:odbc_fast/odbc_fast_native.dart';
 import 'package:test/test.dart';
 
 import '../../../helpers/load_env.dart';

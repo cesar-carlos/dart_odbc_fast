@@ -11,8 +11,8 @@ import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dart';
 import 'package:odbc_fast/odbc_fast.dart'
     hide
         DatabaseEngineIds,
@@ -22,7 +22,6 @@ import 'package:odbc_fast/odbc_fast.dart'
         DriverCapabilities,
         OdbcDriverCapabilities,
         OdbcDriverFeatures,
-        OdbcPoolFactory,
         PoolOptions,
         SessionOptions;
 

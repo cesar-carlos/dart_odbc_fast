@@ -1,5 +1,6 @@
 use super::super::global::*;
 use super::helpers::parse_sql_owned;
+use crate::ffi::state;
 
 use std::os::raw::{c_char, c_int, c_uint};
 
@@ -19,8 +20,7 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
             return 0;
         };
 
-        if !state.connections.contains_key(&conn_id)
-            && !state.pooled_connections.contains_key(&conn_id)
+        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
         {
             set_connection_error(
                 &mut state,
@@ -80,8 +80,7 @@ pub extern "C" fn odbc_execute_async_params(
             return 0;
         };
 
-        if !state.connections.contains_key(&conn_id)
-            && !state.pooled_connections.contains_key(&conn_id)
+        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
         {
             set_connection_error(
                 &mut state,
@@ -143,8 +142,7 @@ pub extern "C" fn odbc_execute_async_params_options(
             return 0;
         };
 
-        if !state.connections.contains_key(&conn_id)
-            && !state.pooled_connections.contains_key(&conn_id)
+        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
         {
             set_connection_error(
                 &mut state,

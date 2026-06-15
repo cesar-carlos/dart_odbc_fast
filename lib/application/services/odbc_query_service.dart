@@ -6,15 +6,14 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
-import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/domain/repositories/i_query_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Query / catalog / bulk capability delegate for the ODBC service façade.
 class OdbcQueryService {
   OdbcQueryService(this._repository);
 
-  final IOdbcRepository _repository;
+  final IQueryRepository _repository;
 
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
@@ -128,18 +127,12 @@ class OdbcQueryService {
     String connectionId,
     String sql, {
     List<ParamValue>? params,
-  }) async {
-    final r = await _repository.executeQueryParamValues(
-      connectionId,
-      sql,
-      params ?? const <ParamValue>[],
-      resultEncoding: ResultEncoding.columnar,
-    );
-    return r.fold(
-      (qr) => Success<TypedColumnarResult, OdbcError>(toTypedColumnar(qr)),
-      (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
-    );
-  }
+  }) =>
+      _repository.executeQueryColumnarParamValues(
+        connectionId,
+        sql,
+        params ?? const <ParamValue>[],
+      );
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,

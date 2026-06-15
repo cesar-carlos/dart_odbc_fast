@@ -1,18 +1,21 @@
 # Columnar protocol v2 — design sketch
 
-> **Status (2026-06, package `3.10.x` / `3.10.1`):** row-major v1 remains the default, but
+> **Status (2026-06-15, package `3.10.0`):** row-major v1 remains the default, but
 > public parameterized query paths can opt into **columnar v2** with
 > `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`. The Rust
 > engine emits v2 when the execution pipeline is built with
 > `ExecutionEngine::with_columnar` / `use_columnar: true` — see
 > `native/odbc_engine/src/engine/core/execution_engine.rs` and
 > `native/odbc_engine/src/protocol/columnar_encoder.rs` (`ColumnarEncoder`).
-> The Dart side decodes v2 in `binary_protocol.dart` (`_parseColumnarV2`):
-> **uncompressed** column blocks are fully supported. **Per-column
-> compression** (zstd/LZ4) uses the same on-disk format as
-> `columnar_encoder.rs` + `protocol/compression.rs`; the Dart path resolves
-> compressed column payloads via the native engine’s `odbc_columnar_decompress`
-> FFI (see PENDING section 2.3, `doc/Features/PENDING_IMPLEMENTATIONS.md`).
+> The Dart side decodes v2 in `binary_protocol_columnar.dart`
+> (`parseColumnarV2ToRowBuffer` for row materialization;
+> `parseColumnarV2ToTyped` for typed direct decode via
+> `executeQueryColumnar` / `streamQueryColumnar`). **Uncompressed** column
+> blocks are fully supported. **Per-column compression** (zstd/LZ4) uses the
+> same on-disk format as `columnar_encoder.rs` + `protocol/compression.rs`;
+> compressed column payloads go through the native engine’s
+> `odbc_columnar_decompress` FFI (see PENDING section 2.3,
+> `doc/Features/PENDING_IMPLEMENTATIONS.md`).
 > Small anchors also live under the Cargo feature `columnar-v2`
 > (`odbc_engine::columnar_v2` magic/version constants;
 > `columnar_v2_placeholder` bench only — production columnar encoding and
@@ -60,10 +63,11 @@ Per column then follows:
 - `u8` compressed flag; if `1`, an extra `u8` compression algorithm id
 - `u32` data size; then that many bytes of (possibly compressed) column data
 
-Production `BinaryProtocolParser` in `lib/.../binary_protocol.dart` performs
-this decode into the same `ParsedRowBuffer` / row lists as v1. The historical
-`ColumnarProtocolParser` sketch below (§Original code) is **not** imported;
-keep it for reference only.
+Production decode lives in `lib/.../binary_protocol_columnar.dart` (invoked from
+`BinaryProtocolParser` in `binary_protocol.dart`) into the same
+`ParsedRowBuffer` / row lists as v1, or into `TypedColumnarResult` on the
+direct path. The historical `ColumnarProtocolParser` sketch below (§Original
+code) is **not** imported; keep it for reference only.
 
 ## Why v1 is still the default
 
@@ -308,11 +312,11 @@ class ColumnarProtocolParser {
     return rows;
   }
 
-  /// Decompresses column data.
-  ///
-  /// Currently not implemented and throws [UnimplementedError].
+  /// Decompresses column data via `columnar_decompress_ffi.dart` when the
+  /// native engine marks a column as compressed (zstd/LZ4).
   static Uint8List _decompress(Uint8List data, int compressionType) {
-    throw UnimplementedError('Decompression not yet implemented in Dart');
+    // Implemented in lib/infrastructure/native/columnar_decompress_ffi.dart.
+    throw UnimplementedError('sketch only — see production decoder');
   }
 }
 

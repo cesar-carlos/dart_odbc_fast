@@ -14,7 +14,8 @@ import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
         callWithBuffer,
         initialBufferSize,
         maxBufferSize,
-        preferTransientFfiBufferForParams;
+        preferTransientFfiBufferForParams,
+        streamCallWithBuffer;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as bindings;
@@ -127,6 +128,14 @@ class OdbcNative extends _OdbcNativeState
   /// True when batched streaming accepts [ResultEncoding] on the wire (v4.2+).
   bool get supportsStreamResultEncodingOptions =>
       _bindings.supportsStreamResultEncodingOptions;
+
+  /// True when async batched streaming accepts [ResultEncoding] on the wire.
+  bool get supportsStreamAsyncEncodingOptions =>
+      _bindings.supportsStreamAsyncEncodingOptions;
+
+  /// True when multi-result batched streaming accepts [ResultEncoding].
+  bool get supportsMultiResultStreamEncodingOptions =>
+      _bindings.supportsMultiResultStreamEncodingOptions;
 
   /// True when the loaded native library exposes metadata cache FFI APIs.
   bool get supportsMetadataCacheApi => _bindings.supportsMetadataCacheApi;
