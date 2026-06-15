@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-06-15
+
+### Fixed
+
+- rustfmt formatting for CI
+
 ## [4.3.0] - 2026-06-15
 
 ### Added
