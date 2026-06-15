@@ -42,8 +42,8 @@
 mod connections;
 mod streams;
 
-pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
 pub use connections::contains_connection;
+pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
 pub(crate) use streams::{
     allocate_stream_id, cancel_streams_for_connection, close_stream, insert_stream,
     reinsert_stream, remove_stream, request_stream_cancel, stream_connection_id, with_stream_mut,

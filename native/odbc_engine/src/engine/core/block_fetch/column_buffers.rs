@@ -247,7 +247,8 @@ fn copy_wide_text(
             // legacy `wide_text_to_utf8_bytes` behaviour exactly.
             scratch.clear();
             scratch.extend_from_slice(&String::from_utf16_lossy(wide.as_slice()).into_bytes());
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(std::mem::take(&mut scratch));
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(std::mem::take(&mut scratch));
         }
     }
     Ok(())
