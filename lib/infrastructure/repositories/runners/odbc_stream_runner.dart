@@ -101,6 +101,7 @@ class OdbcStreamRunner {
     }
 
     var streamId = 0;
+    var completed = false;
     try {
       streamId = _ffi.isAsync
           ? await _ffi.async.streamMultiStartBatched(
@@ -187,12 +188,24 @@ class OdbcStreamRunner {
         );
         return;
       }
+      completed = true;
     } on Exception catch (e) {
       yield Failure<QueryResultMultiItem, OdbcError>(
         QueryError(message: e.toString()),
       );
     } finally {
       if (streamId != 0) {
+        if (!completed) {
+          try {
+            if (_ffi.isAsync) {
+              await _ffi.async.streamCancel(streamId);
+            } else {
+              _ffi.sync.streamCancel(streamId);
+            }
+          } on Object {
+            // Best-effort; always attempt streamClose below.
+          }
+        }
         if (_ffi.isAsync) {
           await _ffi.async.streamClose(streamId);
         } else {

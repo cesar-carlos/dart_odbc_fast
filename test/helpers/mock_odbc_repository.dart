@@ -615,12 +615,16 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) async {
     return const Success(1);
   }
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId) async {
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) async {
     return Success(
       Connection(
         id: 'pooled',

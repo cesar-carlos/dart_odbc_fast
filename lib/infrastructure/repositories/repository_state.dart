@@ -46,6 +46,10 @@ class OdbcRepositoryState {
   /// pool. Used to clean up Dart-side state when a pool is closed.
   final Map<int, Set<String>> poolCheckouts = {};
 
+  /// `poolId` → default [ConnectionOptions] applied to connections checked
+  /// out from that pool unless overridden in `poolGetConnection`.
+  final Map<int, ConnectionOptions?> poolConnectionOptions = {};
+
   /// Domain `connectionId` → owning `poolId` for pooled handles.
   /// Enables O(1) pool membership check and prevents `disconnect()`
   /// being called on pool-acquired connections.
@@ -79,6 +83,7 @@ class OdbcRepositoryState {
     connectionStrings.clear();
     connectionPoolId.clear();
     poolCheckouts.clear();
+    poolConnectionOptions.clear();
     clearAllStatementMetadata();
   }
 

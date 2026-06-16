@@ -100,6 +100,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     }
 
     final pending = BinaryFrameAccumulator();
+    var completed = false;
     try {
       while (true) {
         final result = _native.streamFetch(streamId);
@@ -129,7 +130,11 @@ mixin _NativeStreaming on _NativeOdbcState {
           'Leftover bytes after stream; expected complete protocol messages',
         );
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        _native.streamCancel(streamId);
+      }
       _native.streamClose(streamId);
     }
   }
@@ -157,6 +162,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     }
 
     final pending = BinaryFrameAccumulator();
+    var completed = false;
     try {
       while (true) {
         final result = _native.streamFetch(streamId);
@@ -186,7 +192,11 @@ mixin _NativeStreaming on _NativeOdbcState {
           'Leftover bytes after stream; expected complete protocol messages',
         );
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        _native.streamCancel(streamId);
+      }
       _native.streamClose(streamId);
     }
   }
@@ -234,6 +244,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     }
 
     final buffer = BytesBuilder(copy: false);
+    var completed = false;
     try {
       while (true) {
         final result = _native.streamFetch(streamId);
@@ -259,7 +270,11 @@ mixin _NativeStreaming on _NativeOdbcState {
         );
         yield parsed;
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        _native.streamCancel(streamId);
+      }
       _native.streamClose(streamId);
     }
   }
@@ -295,6 +310,7 @@ mixin _NativeStreaming on _NativeOdbcState {
       streamDelay = const Duration(microseconds: 500);
     }
     final streamMaxDelay = pollInterval;
+    var completed = false;
     try {
       while (true) {
         final status = _native.streamPollAsync(streamId);
@@ -350,7 +366,11 @@ mixin _NativeStreaming on _NativeOdbcState {
           'Leftover bytes after stream; expected complete protocol messages',
         );
       }
+      completed = true;
     } finally {
+      if (!completed) {
+        _native.streamCancel(streamId);
+      }
       _native.streamClose(streamId);
     }
   }

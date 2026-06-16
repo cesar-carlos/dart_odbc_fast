@@ -7,6 +7,7 @@ import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
+import 'package:odbc_fast/infrastructure/repositories/runners/odbc_repository_types.dart';
 import 'package:test/test.dart';
 
 import '../../../helpers/fake_async_native_for_errors.dart';
@@ -178,6 +179,10 @@ void main() {
             final err = e as UnsupportedFeatureError;
             expect(err.sqlState, '0A000');
             expect(err.nativeCode, 5001);
+            expect(
+              err.message,
+              contains(odbcCancelStatementPreferQueryTimeoutHint),
+            );
           },
         );
       },

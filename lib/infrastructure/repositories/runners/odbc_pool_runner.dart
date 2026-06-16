@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
@@ -29,6 +30,7 @@ class OdbcPoolRunner {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) async {
     if (connectionString.trim().isEmpty) {
       return const Failure<int, OdbcError>(
@@ -55,7 +57,12 @@ class OdbcPoolRunner {
       isSuccess: (id) => id != 0,
       errorFactory: odbcConnectionErrorFactory,
       fallbackMessage: 'Failed to create pool',
-    );
+    ).then((result) {
+      if (result.isSuccess()) {
+        state.poolConnectionOptions[result.getOrNull()!] = connectionOptions;
+      }
+      return result;
+    });
   }
 
   Future<Result<Unit>> poolSetSize(int poolId, int newMaxSize) async {
@@ -91,7 +98,10 @@ class OdbcPoolRunner {
     return result;
   }
 
-  Future<Result<Connection>> poolGetConnection(int poolId) async {
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) async {
     if (poolId <= 0) {
       return const Failure<Connection, OdbcError>(
         ValidationError(message: 'Invalid pool ID'),
@@ -116,6 +126,8 @@ class OdbcPoolRunner {
       );
       state.connectionIds[c.id] = connId;
       state.connectionStrings[c.id] = 'pool://$poolId';
+      state.connectionOptions[c.id] =
+          options ?? state.poolConnectionOptions[poolId];
       state.connectionPoolId[c.id] = poolId;
       state.poolCheckouts.putIfAbsent(poolId, () => <String>{}).add(c.id);
       return Success(c);
@@ -208,6 +220,7 @@ class OdbcPoolRunner {
       sync: (n) => n.poolClose(poolId),
       async: (a) => a.poolClose(poolId),
       onSuccess: () {
+        state.poolConnectionOptions.remove(poolId);
         final checkouts =
             state.poolCheckouts.remove(poolId) ?? const <String>{};
         for (final cId in checkouts) {

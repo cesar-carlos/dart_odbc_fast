@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:odbc_fast/application/services/odbc_service.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator.dart';
 import 'package:odbc_fast/core/di/odbc_profile_async_defaults.dart';
@@ -369,11 +371,12 @@ class ServiceLocator {
     return decorator?.adminService ?? service;
   }
 
-  /// Gets the [NativeOdbcConnection] instance.
+  /// Gets the lazily created sync [NativeOdbcConnection] stack.
   ///
-  /// This is the underlying sync connection that both sync and async modes use.
-  /// The async mode wraps this connection in an [AsyncNativeOdbcConnection].
-  /// In async mode the sync stack is created lazily on first access.
+  /// In async mode this is a separate sync environment from the worker
+  /// isolates behind [asyncNativeConnection]; it is materialized on first
+  /// access (for example via [syncService] or this getter). In legacy mode
+  /// the sync stack is created eagerly during [initialize].
   ///
   /// Throws [StateError] if [initialize] has not been called.
   NativeOdbcConnection get nativeConnection {
@@ -429,12 +432,23 @@ class ServiceLocator {
   /// previous resources automatically.
   void shutdown() {
     if (_locatorInitialized) {
+      final closeEventsFutures = <Future<void>>[];
+      if (_service != null) {
+        closeEventsFutures.add(_service!.closeEvents());
+      }
+      if (_useAsync) {
+        closeEventsFutures.add(_asyncService.closeEvents());
+      }
+      if (closeEventsFutures.isNotEmpty) {
+        unawaited(Future.wait(closeEventsFutures));
+      }
       if (_useAsync) {
         _asyncNativeConnection.dispose();
+        _asyncRepository.dispose();
         _useAsync = false;
       }
-      // Only dispose sync stack if it was actually created.
       _nativeConnection?.dispose();
+      _repository?.dispose();
       _nativeConnection = null;
       _repository = null;
       _service = null;

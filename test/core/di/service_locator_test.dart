@@ -365,5 +365,11 @@ void main() {
         },
       );
     });
+    test('shutdown_should_invoke_service_closeEvents', () async {
+      final locator = ServiceLocator()..initialize();
+      final service = locator.syncService;
+      locator.shutdown();
+      await service.closeEvents();
+    });
   });
 }

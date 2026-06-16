@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/repositories/i_pool_repository.dart';
@@ -14,15 +15,20 @@ class OdbcPoolService {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) =>
       _repository.poolCreate(
         connectionString,
         maxSize,
         options: options,
+        connectionOptions: connectionOptions,
       );
 
-  Future<Result<Connection>> poolGetConnection(int poolId) =>
-      _repository.poolGetConnection(poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) =>
+      _repository.poolGetConnection(poolId, options: options);
 
   Future<Result<void>> poolReleaseConnection(String connectionId) =>
       _repository.poolReleaseConnection(connectionId);

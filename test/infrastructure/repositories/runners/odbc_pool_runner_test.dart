@@ -1,6 +1,7 @@
 /// Unit tests for [OdbcPoolRunner].
 library;
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
@@ -93,6 +94,42 @@ void main() {
       expect(state.connectionIds[conn.id], equals(11));
       expect(state.connectionPoolId[conn.id], equals(5));
       expect(state.poolCheckouts[5], contains(conn.id));
+    });
+
+    test('should_apply_pool_connection_options_on_checkout', () async {
+      const poolOptions = ConnectionOptions(queryTimeout: Duration(seconds: 5));
+      final create = await runner.poolCreate(
+        'DSN=pool',
+        4,
+        connectionOptions: poolOptions,
+      );
+      expect(create.isSuccess(), isTrue);
+      final poolId = create.getOrNull()!;
+
+      final checkout = await runner.poolGetConnection(poolId);
+      expect(checkout.isSuccess(), isTrue);
+      final conn = checkout.getOrNull()!;
+      expect(state.connectionOptions[conn.id], same(poolOptions));
+    });
+
+    test('should_allow_checkout_override_of_pool_connection_options', () async {
+      const poolOptions = ConnectionOptions(queryTimeout: Duration(seconds: 5));
+      const checkoutOptions = ConnectionOptions(
+        queryTimeout: Duration(seconds: 9),
+      );
+      final create = await runner.poolCreate(
+        'DSN=pool',
+        4,
+        connectionOptions: poolOptions,
+      );
+      final poolId = create.getOrNull()!;
+
+      final checkout = await runner.poolGetConnection(
+        poolId,
+        options: checkoutOptions,
+      );
+      final conn = checkout.getOrNull()!;
+      expect(state.connectionOptions[conn.id], same(checkoutOptions));
     });
 
     test('should_emit_PoolResize_when_poolSetSize_succeeds', () async {

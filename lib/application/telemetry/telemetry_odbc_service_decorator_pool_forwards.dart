@@ -1,5 +1,6 @@
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_base.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:result_dart/result_dart.dart';
@@ -10,11 +11,20 @@ mixin TelemetryOdbcServicePoolForwards on TelemetryOdbcServiceDecoratorBase {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) =>
-      pool.poolCreate(connectionString, maxSize, options: options);
+      pool.poolCreate(
+        connectionString,
+        maxSize,
+        options: options,
+        connectionOptions: connectionOptions,
+      );
 
-  Future<Result<Connection>> poolGetConnection(int poolId) =>
-      pool.poolGetConnection(poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) =>
+      pool.poolGetConnection(poolId, options: options);
 
   Future<Result<void>> poolReleaseConnection(String connectionId) =>
       pool.poolReleaseConnection(connectionId);

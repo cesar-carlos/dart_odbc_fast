@@ -276,7 +276,7 @@ class OdbcQueryPreparedRunner {
       )) {
         return Failure<Unit, OdbcError>(
           UnsupportedFeatureError(
-            message: message,
+            message: '$message. $odbcCancelStatementPreferQueryTimeoutHint',
             sqlState: sqlState,
             nativeCode: nativeCode,
           ),

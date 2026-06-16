@@ -11,6 +11,7 @@ import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_query_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_repository_types.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
+import 'package:odbc_fast/infrastructure/repositories/runners/query_timeout_helpers.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/stream_columnar_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/stream_error_mapper.dart';
 import 'package:result_dart/result_dart.dart';
@@ -84,27 +85,13 @@ class StreamQueryRunner {
 
     final source = createSource();
 
-    if (queryTimeout != null && queryTimeout != Duration.zero) {
-      await for (final item in source.timeout(
-        queryTimeout,
-        onTimeout: (sink) {
-          sink
-            ..add(
-              const Failure<QueryResult, OdbcError>(
-                QueryError(message: odbcQueryTimedOutMessage),
-              ),
-            )
-            ..close();
-        },
-      )) {
-        yield item;
-      }
-      return;
-    }
-
-    await for (final item in source) {
-      yield item;
-    }
+    yield* streamWithQueryTimeout(
+      source: source,
+      queryTimeout: queryTimeout,
+      onTimeoutItem: const Failure<QueryResult, OdbcError>(
+        QueryError(message: odbcQueryTimedOutMessage),
+      ),
+    );
   }
 
   Stream<Result<QueryResult>> streamQueryNamed(

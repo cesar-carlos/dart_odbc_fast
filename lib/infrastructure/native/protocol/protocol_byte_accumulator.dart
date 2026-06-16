@@ -29,9 +29,18 @@ class ProtocolByteAccumulator {
 
   Uint8List take(int count) {
     _checkRange(count);
-    final bytes = Uint8List.fromList(
-      Uint8List.sublistView(_data, 0, count),
-    );
+    final Uint8List bytes;
+    if (count == _length) {
+      if (count == _data.length) {
+        bytes = _data;
+        _data = Uint8List(_defaultInitialCapacity);
+      } else {
+        bytes = Uint8List.fromList(Uint8List.sublistView(_data, 0, count));
+      }
+      _length = 0;
+      return bytes;
+    }
+    bytes = Uint8List.fromList(Uint8List.sublistView(_data, 0, count));
     _dropLeading(count);
     return bytes;
   }
@@ -50,10 +59,7 @@ class ProtocolByteAccumulator {
       _length = 0;
       return;
     }
-    final tail = Uint8List.fromList(
-      Uint8List.sublistView(_data, count, _length),
-    );
-    _data.setRange(0, remaining, tail);
+    _data.setRange(0, remaining, _data, count);
     _length = remaining;
   }
 
@@ -68,7 +74,7 @@ class ProtocolByteAccumulator {
     }
     final grown = Uint8List(newCap);
     if (_length > 0) {
-      grown.setRange(0, _length, Uint8List.sublistView(_data, 0, _length));
+      grown.setRange(0, _length, _data, 0);
     }
     _data = grown;
   }

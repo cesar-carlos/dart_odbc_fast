@@ -2,6 +2,7 @@ import 'package:odbc_fast/application/services/i_odbc_service.dart';
 import 'package:odbc_fast/application/services/i_pool_service.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_operations.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:result_dart/result_dart.dart';
@@ -27,6 +28,7 @@ class TelemetryOdbcPoolDecorator implements IPoolService {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) =>
       _ops.inOperation(
         'ODBC.poolCreate',
@@ -34,13 +36,18 @@ class TelemetryOdbcPoolDecorator implements IPoolService {
           connectionString,
           maxSize,
           options: options,
+          connectionOptions: connectionOptions,
         ),
       );
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId) => _ops.inOperation(
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) =>
+      _ops.inOperation(
         'ODBC.poolGetConnection',
-        () => _pools.poolGetConnection(poolId),
+        () => _pools.poolGetConnection(poolId, options: options),
       );
 
   @override

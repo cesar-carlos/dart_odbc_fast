@@ -226,6 +226,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   void dispose() {
     _connection.disposeNative();
     _state.clearAll();
+    final controller = _eventsController;
+    if (controller != null && !controller.isClosed) {
+      controller.close();
+    }
+    _eventsController = null;
   }
 
   DartSideMetrics dartSideMetrics() => _connection.dartSideMetrics();
@@ -456,16 +461,25 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) =>
-      _pool.poolCreate(connectionString, maxSize, options: options);
+      _pool.poolCreate(
+        connectionString,
+        maxSize,
+        options: options,
+        connectionOptions: connectionOptions,
+      );
 
   @override
   Future<Result<Unit>> poolSetSize(int poolId, int newMaxSize) =>
       _pool.poolSetSize(poolId, newMaxSize);
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId) =>
-      _pool.poolGetConnection(poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) =>
+      _pool.poolGetConnection(poolId, options: options);
 
   @override
   Future<Result<Unit>> poolReleaseConnection(String connectionId) =>

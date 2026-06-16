@@ -31,7 +31,7 @@ void main() {
       expect(result, equals([1, 2, 3, 4, 5, 6]));
     });
 
-    test('falls back to transient allocation for reentrant calls', () {
+    test('uses scratch pool slots for reentrant calls', () {
       Uint8List? innerResult;
 
       final outerResult = callWithBuffer(

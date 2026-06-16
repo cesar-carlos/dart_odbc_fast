@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:odbc_fast/application/services/i_odbc_service.dart';
 import 'package:odbc_fast/application/services/odbc_admin_service.dart';
 import 'package:odbc_fast/application/services/odbc_pool_service.dart';
@@ -357,12 +359,21 @@ class OdbcService implements IOdbcService {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   }) =>
-      _pool.poolCreate(connectionString, maxSize, options: options);
+      _pool.poolCreate(
+        connectionString,
+        maxSize,
+        options: options,
+        connectionOptions: connectionOptions,
+      );
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId) =>
-      _pool.poolGetConnection(poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  }) =>
+      _pool.poolGetConnection(poolId, options: options);
 
   @override
   Future<Result<void>> poolReleaseConnection(String connectionId) =>
@@ -548,5 +559,8 @@ class OdbcService implements IOdbcService {
       _query.executeQuery(sql, connectionId: connectionId);
 
   @override
-  void dispose() => _repository.dispose();
+  void dispose() {
+    unawaited(closeEvents());
+    _repository.dispose();
+  }
 }

@@ -1,3 +1,4 @@
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/application/services/i_admin_service.dart';
 import 'package:odbc_fast/application/services/i_pool_service.dart';
 import 'package:odbc_fast/application/services/i_query_service.dart';
@@ -22,6 +23,7 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Interface for ODBC service operations.
@@ -214,6 +216,16 @@ abstract class IOdbcService
     int stmtId,
   );
 
+  /// Requests cancellation of an in-flight prepared statement.
+  ///
+  /// {@template odbc_fast.cancel_statement_experimental}
+  /// **Experimental:** native statement cancellation is not fully implemented
+  /// in the Rust engine. The call may return [UnsupportedFeatureError] on many
+  /// drivers. For reliable query interruption, prefer
+  /// [ConnectionOptions.queryTimeout], which maps to the driver's native
+  /// `SQL_ATTR_QUERY_TIMEOUT` where supported.
+  /// {@endtemplate}
+  @experimental
   Future<Result<void>> cancelStatement(
     String connectionId,
     int stmtId,
@@ -315,10 +327,14 @@ abstract class IOdbcService
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   });
 
   @override
-  Future<Result<Connection>> poolGetConnection(int poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  });
 
   @override
   Future<Result<void>> poolReleaseConnection(String connectionId);

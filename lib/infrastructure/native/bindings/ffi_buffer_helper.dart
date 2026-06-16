@@ -10,6 +10,12 @@ const int initialBufferSize = 64 * 1024;
 /// Maximum buffer size for FFI buffer allocations (16 MB).
 const int maxBufferSize = 16 * 1024 * 1024;
 
+/// Reusable FFI scratch slots per isolate.
+///
+/// Sized for high-throughput async worker presets (up to 6 workers) plus
+/// headroom for reentrant [callWithBuffer] on the same isolate.
+const int ffiScratchPoolSlotCount = 8;
+
 /// Minimum successful FFI payload size before returning a zero-copy view.
 ///
 /// Smaller payloads keep the `Uint8List.fromList` copy because the
@@ -169,7 +175,7 @@ Uint8List? callWithBuffer(
       allowZeroCopy: true,
     );
   }
-  final scratch = _sharedScratch.tryAcquire();
+  final scratch = _sharedScratchPool.tryAcquire();
   if (scratch == null) {
     return _callWithTransientBuffer(
       fn,
@@ -267,7 +273,25 @@ Uint8List _materializeFfiBytes(
   }
 }
 
-final _ReusableFfiScratch _sharedScratch = _ReusableFfiScratch();
+final _ReusableFfiScratchPool _sharedScratchPool =
+    _ReusableFfiScratchPool(ffiScratchPoolSlotCount);
+
+final class _ReusableFfiScratchPool {
+  _ReusableFfiScratchPool(int slotCount)
+      : _slots = List.generate(slotCount, (_) => _ReusableFfiScratch());
+
+  final List<_ReusableFfiScratch> _slots;
+
+  _ReusableFfiScratch? tryAcquire() {
+    for (final slot in _slots) {
+      final acquired = slot.tryAcquire();
+      if (acquired != null) {
+        return acquired;
+      }
+    }
+    return null;
+  }
+}
 
 final class _ReusableFfiScratch {
   ffi.Pointer<ffi.Uint8> _buffer = ffi.nullptr;

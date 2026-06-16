@@ -29,5 +29,19 @@ void main() {
       expect(acc.take(4), equals([4, 5, 6, 7]));
       expect(acc.length, equals(0));
     });
+
+    test('should_transfer_buffer_when_draining_full_capacity', () {
+      final acc = ProtocolByteAccumulator(initialCapacity: 4)
+        ..add(Uint8List.fromList([1, 2, 3, 4]));
+
+      final taken = acc.take(4);
+      expect(taken, equals([1, 2, 3, 4]));
+      expect(taken.offsetInBytes, equals(0));
+      expect(taken.length, equals(4));
+      expect(acc.length, equals(0));
+
+      acc.add(Uint8List.fromList([5, 6]));
+      expect(acc.take(2), equals([5, 6]));
+    });
   });
 }

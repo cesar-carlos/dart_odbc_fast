@@ -4,6 +4,8 @@ import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
+    show ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -46,56 +48,109 @@ class OdbcQuerySyncRunner {
 
     Future<Result<QueryResult>> run() async {
       try {
-        // Single-chunk fast path: when the entire result arrives in one chunk
-        // (the common case for buffer-mode queries), reuse chunk.rows directly
-        // and skip the addAll copy. Only allocate a growable accumulator when a
-        // second chunk arrives.
-        List<List<dynamic>>? firstRows;
-        List<List<dynamic>>? multiRows;
-        final columns = <String>[];
-
-        await for (final chunk in streamNativeQueryWithFallback(
+        final stream = streamNativeQueryWithFallback(
           nativeId,
           sql,
           maxBufferBytes: opts?.maxResultBufferBytes,
-        )) {
-          if (columns.isEmpty && chunk.columnCount > 0) {
-            columns.addAll(chunk.columnNames);
-          }
-          if (firstRows == null) {
-            firstRows = chunk.rows;
-          } else {
-            (multiRows ??= List.of(firstRows)).addAll(chunk.rows);
-          }
-        }
-
-        final rows = multiRows ?? firstRows ?? const <List<dynamic>>[];
-        return Success(
-          QueryResult(columns: columns, rows: rows, rowCount: rows.length),
         );
+        final queryTimeout = opts?.queryTimeout;
+        if (queryTimeout != null && queryTimeout != Duration.zero) {
+          return _collectBufferedStreamWithTimeout(
+            stream: stream,
+            queryTimeout: queryTimeout,
+          );
+        }
+        return _collectBufferedStream(stream);
       } on Exception catch (e) {
         return streamingFailureFromException(e);
       }
     }
 
-    final queryTimeout = opts?.queryTimeout;
-    Future<Result<QueryResult>> runWithTimeout() {
-      if (queryTimeout != null && queryTimeout != Duration.zero) {
-        return run().timeout(
-          queryTimeout,
-          onTimeout: () => const Failure<QueryResult, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
-          ),
-        );
-      }
-      return run();
-    }
-
     return connection.withReconnect(
       connectionId,
-      runWithTimeout,
+      run,
       sqlForSlowQueryDetection: sql,
     );
+  }
+
+  Future<Result<QueryResult>> _collectBufferedStream(
+    Stream<ParsedRowBuffer> stream,
+  ) async {
+    List<List<dynamic>>? firstRows;
+    List<List<dynamic>>? multiRows;
+    final columns = <String>[];
+
+    await for (final chunk in stream) {
+      if (columns.isEmpty && chunk.columnCount > 0) {
+        columns.addAll(chunk.columnNames);
+      }
+      if (firstRows == null) {
+        firstRows = chunk.rows;
+      } else {
+        (multiRows ??= List.of(firstRows)).addAll(chunk.rows);
+      }
+    }
+
+    final rows = multiRows ?? firstRows ?? const <List<dynamic>>[];
+    return Success(
+      QueryResult(columns: columns, rows: rows, rowCount: rows.length),
+    );
+  }
+
+  Future<Result<QueryResult>> _collectBufferedStreamWithTimeout({
+    required Stream<ParsedRowBuffer> stream,
+    required Duration queryTimeout,
+  }) async {
+    final completer = Completer<Result<QueryResult>>();
+    StreamSubscription<ParsedRowBuffer>? subscription;
+    Timer? timer;
+    List<List<dynamic>>? firstRows;
+    List<List<dynamic>>? multiRows;
+    final columns = <String>[];
+
+    void finish(Result<QueryResult> result) {
+      timer?.cancel();
+      if (!completer.isCompleted) {
+        completer.complete(result);
+      }
+    }
+
+    subscription = stream.listen(
+      (chunk) {
+        if (columns.isEmpty && chunk.columnCount > 0) {
+          columns.addAll(chunk.columnNames);
+        }
+        if (firstRows == null) {
+          firstRows = chunk.rows;
+        } else {
+          (multiRows ??= List.of(firstRows!)).addAll(chunk.rows);
+        }
+      },
+      onError: (Object error) async {
+        await subscription?.cancel();
+        finish(await streamingFailureFromException(error as Exception));
+      },
+      onDone: () {
+        final rows = multiRows ?? firstRows ?? const <List<dynamic>>[];
+        finish(
+          Success(
+            QueryResult(columns: columns, rows: rows, rowCount: rows.length),
+          ),
+        );
+      },
+      cancelOnError: true,
+    );
+
+    timer = Timer(queryTimeout, () {
+      subscription?.cancel();
+      finish(
+        const Failure<QueryResult, OdbcError>(
+          QueryError(message: odbcQueryTimedOutMessage),
+        ),
+      );
+    });
+
+    return completer.future;
   }
 
   Future<Result<QueryResult>> executeQueryParamValues(

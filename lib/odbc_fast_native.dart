@@ -2,17 +2,10 @@
 /// infrastructure surfaces.
 ///
 /// Most consumers should depend on `package:odbc_fast/odbc_fast.dart` only.
-/// Import this library when you need direct access to [NativeOdbcConnection],
-/// [AsyncNativeOdbcConnection], [OdbcRepositoryImpl], OpenTelemetry FFI
-/// bindings, or [OdbcPoolFactory].
+/// Import this library when you need direct access to `NativeOdbcConnection`,
+/// `AsyncNativeOdbcConnection`, `OdbcRepositoryImpl`, OpenTelemetry FFI
+/// bindings, or `OdbcPoolFactory`.
 library;
-
-import 'package:odbc_fast/odbc_fast_native.dart'
-    show
-        AsyncNativeOdbcConnection,
-        NativeOdbcConnection,
-        OdbcPoolFactory,
-        OdbcRepositoryImpl;
 
 export 'infrastructure/native/async_native_odbc_connection.dart';
 export 'infrastructure/native/bindings/odbc_native.dart';

@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/connection.dart';
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:result_dart/result_dart.dart';
@@ -9,9 +10,13 @@ abstract interface class IPoolRepository {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
+    ConnectionOptions? connectionOptions,
   });
 
-  Future<Result<Connection>> poolGetConnection(int poolId);
+  Future<Result<Connection>> poolGetConnection(
+    int poolId, {
+    ConnectionOptions? options,
+  });
 
   Future<Result<Unit>> poolReleaseConnection(String connectionId);
 

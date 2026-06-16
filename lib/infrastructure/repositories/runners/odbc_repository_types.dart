@@ -30,6 +30,10 @@ typedef OdbcErrorFactoryFn = OdbcError Function({
 /// Message used when a query times out (see `ConnectionOptions.queryTimeout`).
 const odbcQueryTimedOutMessage = 'Query timed out';
 
+/// Hint appended when native statement cancellation is unsupported.
+const odbcCancelStatementPreferQueryTimeoutHint =
+    'Use ConnectionOptions.queryTimeout for reliable query interruption';
+
 const odbcStreamProtocolErrorPrefix = 'Streaming protocol error';
 const odbcStreamInterruptedPrefix = 'Streaming interrupted';
 const odbcUnsupportedCancelSqlState = '0A000';

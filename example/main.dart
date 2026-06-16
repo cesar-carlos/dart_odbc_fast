@@ -153,5 +153,6 @@ void main() async {
       (_) => AppLogger.info('Disconnected'),
       (e) => AppLogger.warning('Disconnect error: $e'),
     );
+    locator.shutdown();
   }
 }
