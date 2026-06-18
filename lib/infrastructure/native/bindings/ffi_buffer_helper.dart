@@ -261,7 +261,12 @@ Uint8List _materializeFfiBytes(
     final view = buf.asTypedList(length);
     final owner = _ZeroCopyFfiOwner();
     _zeroCopyOwners[view] = owner;
-    _zeroCopyFinalizer!.attach(owner, buf.cast(), detach: owner);
+    _zeroCopyFinalizer!.attach(
+      owner,
+      buf.cast(),
+      detach: owner,
+      externalSize: length,
+    );
     return view;
   }
   try {

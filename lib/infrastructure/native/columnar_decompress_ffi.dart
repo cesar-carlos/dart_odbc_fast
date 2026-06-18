@@ -9,6 +9,7 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show zeroCopyResultThresholdBytes;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
@@ -50,8 +51,13 @@ final Map<int, (int len, int cap)> _pendingDecompressRelease = {};
 var _tried = false;
 
 final class _DecompressZeroCopyOwner implements ffi.Finalizable {
-  const _DecompressZeroCopyOwner();
+  _DecompressZeroCopyOwner(this.pointerAddress);
+
+  final int pointerAddress;
 }
+
+final Expando<ffi.Finalizable> _decompressZeroCopyOwners =
+    Expando<ffi.Finalizable>();
 
 /// True if `odbc_columnar_decompress` / _free` resolved after [loadOdbcLibrary].
 bool get isColumnarNativeDecompressAvailable {
@@ -97,10 +103,21 @@ Uint8List? columnarDecompressWithNative(
     final len = oLen.value;
     final cap = oCap.value;
     if (len >= zeroCopyResultThresholdBytes && _decompressFinalizer != null) {
-      _pendingDecompressRelease[ptr.address] = (len, cap);
       final view = ptr.asTypedList(len);
-      const owner = _DecompressZeroCopyOwner();
-      _decompressFinalizer!.attach(owner, ptr.cast(), detach: owner);
+      final owner = _DecompressZeroCopyOwner(ptr.address);
+      try {
+        _decompressZeroCopyOwners[view] = owner;
+        _decompressFinalizer!.attach(
+          owner,
+          ptr.cast(),
+          detach: owner,
+          externalSize: len,
+        );
+      } on Object {
+        freeFn(ptr, len, cap);
+        rethrow;
+      }
+      _pendingDecompressRelease[ptr.address] = (len, cap);
       return view;
     }
     final out = Uint8List.fromList(ptr.asTypedList(len));
@@ -158,4 +175,22 @@ void resetColumnarDecompressForTest() {
   _decompFree = null;
   _decompressFinalizer = null;
   _pendingDecompressRelease.clear();
+}
+
+/// True when [view] is a zero-copy native decompress buffer (tests only).
+@visibleForTesting
+bool isColumnarDecompressZeroCopyViewForTest(Uint8List view) =>
+    _decompressZeroCopyOwners[view] != null;
+
+/// Detaches the zero-copy finalizer and frees native memory (tests only).
+@visibleForTesting
+void releaseColumnarDecompressZeroCopyViewForTest(Uint8List view) {
+  final owner = _decompressZeroCopyOwners[view];
+  if (owner is! _DecompressZeroCopyOwner || _decompressFinalizer == null) {
+    return;
+  }
+  _decompressFinalizer!.detach(owner);
+  _columnarDecompressNativeFree(
+    ffi.Pointer<ffi.Void>.fromAddress(owner.pointerAddress),
+  );
 }

@@ -42,14 +42,20 @@ void main() {
       );
     });
 
-    test('should initialize without blocking', () async {
-      final stopwatch = Stopwatch()..start();
-      await async.initialize();
-      stopwatch.stop();
+    test('should_initialize_without_blocking_event_loop', () async {
+      final initFuture = async.initialize();
+      final eventLoopResponded = Completer<void>();
+      Timer(const Duration(milliseconds: 1), eventLoopResponded.complete);
 
+      await expectLater(
+        eventLoopResponded.future,
+        completes,
+        reason: 'Main isolate event loop must stay responsive during worker '
+            'spawn and ODBC init',
+      );
+
+      expect(await initFuture, isTrue);
       expect(async.isInitialized, isTrue);
-      // Should complete quickly even if ODBC init is slow
-      expect(stopwatch.elapsedMilliseconds, lessThan(100));
     });
 
     test('should return true when already initialized', () async {

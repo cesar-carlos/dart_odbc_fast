@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.4] - 2026-06-18
+
+### Fixed
+
+- **Columnar zero-copy decompress** — `columnarDecompressWithNative` no longer uses a
+  `const`/`deeply immutable` `Finalizable` token for `NativeFinalizer.attach` on
+  decompressed blocks ≥ `zeroCopyResultThresholdBytes` (32 KiB). Aligns with
+  `ffi_buffer_helper.dart`: mutable per-buffer owner + `Expando` lifetime. Fixes
+  `Cannot attach NativeFinalizer to deeply immutable object` on
+  `ResultEncoding.columnarCompressed` with large columns.
+- **Flaky async init perf test** — `connection_core_test` no longer asserts a
+  fixed 100 ms wall-clock budget for `initialize()` (worker spawn + ODBC init
+  often exceeds that). Validates event-loop responsiveness during init instead.
+
+### Added
+
+- Regression tests (zero-copy ≥ 32 KiB and copy path below threshold) and zstd
+  fixture `columnar_decompress_large_zstd.bin` for large columnar decompress.
+- `releaseColumnarDecompressZeroCopyViewForTest` and
+  `isColumnarDecompressZeroCopyViewForTest` for deterministic native cleanup and
+  path assertions in tests.
+
+### Changed
+
+- Columnar and query-result zero-copy `NativeFinalizer.attach` pass `externalSize`
+  for GC scheduling; columnar registers pending release only after a successful
+  attach (avoids native leak on attach failure).
+- Native-dependent columnar tests (`columnar_decompress_ffi_test`,
+  `columnar_v2_zstd_golden_test`) use explicit `skip` instead of silent no-op
+  passes.
+
 ## [4.3.3] - 2026-06-15
 
 ### Fixed

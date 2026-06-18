@@ -10,10 +10,16 @@ import 'package:test/test.dart';
 /// `UPDATE_GOLDEN=1` with that test). The fixture row count is chosen by the
 /// Rust test to exceed the compression threshold and force the zstd path.
 void main() {
+  resetColumnarDecompressForTest();
+  final skipNative = isColumnarNativeDecompressAvailable
+      ? null
+      : 'odbc_columnar_decompress symbols not loaded (Rust golden test covers '
+          'encoding)';
+
   test(
-    'columnar v2 zstd golden parses when native decompress FFI is available',
+    'should_parse_columnar_v2_zstd_golden_when_native_decompress_available',
+    skip: skipNative,
     () {
-      resetColumnarDecompressForTest();
       final projectRoot = _findProjectRoot();
       if (projectRoot == null) {
         fail(
@@ -31,11 +37,6 @@ void main() {
       );
       expect(golden.existsSync(), isTrue, reason: golden.path);
       final data = golden.readAsBytesSync();
-
-      if (!isColumnarNativeDecompressAvailable) {
-        // Linux CI / no local DLL: golden still checked by the Rust *sync* test.
-        return;
-      }
 
       const expectedRowCount = 214;
       final parsed = BinaryProtocolParser.parse(Uint8List.fromList(data));
