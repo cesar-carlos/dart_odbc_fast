@@ -2,7 +2,7 @@
 //! async-request management and parameter-buffer helpers.
 
 use crate::async_bridge;
-use crate::engine::{execute_query_with_cached_connection_params, execute_query_with_param_buffer};
+use crate::engine::ResultEncoding;
 pub(crate) use crate::error::{OdbcError, Result};
 use std::collections::HashMap;
 use std::os::raw::{c_int, c_uint};
@@ -274,16 +274,18 @@ pub(crate) fn try_cached_legacy_params(
     sql: &str,
     params_slice: &[u8],
 ) -> Result<Vec<u8>> {
-    use crate::protocol::{deserialize_param_buffer, has_null_param, ParamList};
+    cached.try_execute_param_buffer_with_encoding(sql, params_slice, ResultEncoding::RowMajor)
+}
 
-    match deserialize_param_buffer(params_slice) {
-        Ok(ParamList::Legacy(params)) if !has_null_param(&params) => {
-            execute_query_with_cached_connection_params(cached, sql, &params)
-        }
-        // DRT1, null-aware, or parse error — defer to the existing
-        // dispatcher which knows how to handle every plan variant.
-        _ => execute_query_with_param_buffer(cached.connection(), sql, params_slice),
-    }
+/// Cached counterpart of [`try_cached_legacy_params`] that honours the
+/// requested wire encoding while reusing prepared handles when eligible.
+pub(crate) fn try_cached_params_with_encoding(
+    cached: &mut crate::handles::CachedConnection,
+    sql: &str,
+    params_slice: &[u8],
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>> {
+    cached.try_execute_param_buffer_with_encoding(sql, params_slice, encoding)
 }
 
 /// Build a cache key of the form `"<conn_id>:<table>"` in a single

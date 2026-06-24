@@ -1,8 +1,8 @@
 use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnBlock, ColumnData, CompressionType, RowBufferV2};
-use crate::protocol::compression;
 use crate::protocol::converter::row_buffer_to_columnar;
 use crate::protocol::row_buffer::RowBuffer;
+use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION_V2: u16 = 2;
@@ -68,75 +68,99 @@ impl ColumnarEncoder {
             return Ok(());
         }
 
-        let mut raw_data = Vec::with_capacity(raw_payload_size);
-        Self::encode_column_payload(&mut raw_data, col_block)?;
+        let compress_attempt_start = output.len();
+        output.push(1);
+        output.push(CompressionType::Zstd as u8);
+        let payload_len_pos = output.len();
+        output.extend_from_slice(&0u32.to_le_bytes());
+        let compressed_data_start = output.len();
 
-        match compression::compress(&raw_data, CompressionType::Zstd) {
-            Ok(compressed) if compressed.len() < raw_data.len() => {
-                output.push(1);
-                output.push(CompressionType::Zstd as u8);
-                output.extend_from_slice(
-                    &checked_u32(compressed.len(), "column payload length")?.to_le_bytes(),
-                );
-                output.extend_from_slice(&compressed);
+        let compression_result = (|| -> std::io::Result<()> {
+            let mut encoder = zstd::Encoder::new(&mut *output, 3)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            Self::encode_column_payload(&mut encoder, col_block)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            encoder
+                .finish()
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            Ok(())
+        })();
+
+        match compression_result {
+            Ok(()) => {
+                let compressed_len = output.len() - compressed_data_start;
+                if compressed_len < raw_payload_size {
+                    let len_bytes =
+                        checked_u32(compressed_len, "column payload length")?.to_le_bytes();
+                    output[payload_len_pos..payload_len_pos + 4].copy_from_slice(&len_bytes);
+                    return Ok(());
+                }
+                output.truncate(compress_attempt_start);
             }
-            _ => {
-                output.push(0);
-                output.extend_from_slice(
-                    &checked_u32(raw_data.len(), "column payload length")?.to_le_bytes(),
-                );
-                output.extend_from_slice(&raw_data);
+            Err(_) => {
+                output.truncate(compress_attempt_start);
             }
         }
+
+        output.push(0);
+        output.extend_from_slice(
+            &checked_u32(raw_payload_size, "column payload length")?.to_le_bytes(),
+        );
+        Self::encode_column_payload(output, col_block)?;
 
         Ok(())
     }
 
-    fn encode_column_payload(output: &mut Vec<u8>, col_block: &ColumnBlock) -> Result<()> {
+    fn encode_column_payload<W: Write>(output: &mut W, col_block: &ColumnBlock) -> Result<()> {
         match &col_block.data {
             ColumnData::Varchar(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        output.push(0);
-                        output.extend_from_slice(
-                            &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
-                        );
-                        output.extend_from_slice(bytes);
+                        output.write_all(&[0]).map_err(io_to_odbc)?;
+                        output
+                            .write_all(
+                                &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
+                            )
+                            .map_err(io_to_odbc)?;
+                        output.write_all(bytes).map_err(io_to_odbc)?;
                     } else {
-                        output.push(1);
+                        output.write_all(&[1]).map_err(io_to_odbc)?;
                     }
                 }
             }
             ColumnData::Integer(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        output.push(0);
-                        output.extend_from_slice(&value.to_le_bytes());
+                        output.write_all(&[0]).map_err(io_to_odbc)?;
+                        output.write_all(&value.to_le_bytes()).map_err(io_to_odbc)?;
                     } else {
-                        output.push(1);
+                        output.write_all(&[1]).map_err(io_to_odbc)?;
                     }
                 }
             }
             ColumnData::BigInt(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        output.push(0);
-                        output.extend_from_slice(&value.to_le_bytes());
+                        output.write_all(&[0]).map_err(io_to_odbc)?;
+                        output.write_all(&value.to_le_bytes()).map_err(io_to_odbc)?;
                     } else {
-                        output.push(1);
+                        output.write_all(&[1]).map_err(io_to_odbc)?;
                     }
                 }
             }
             ColumnData::Binary(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        output.push(0);
-                        output.extend_from_slice(
-                            &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
-                        );
-                        output.extend_from_slice(bytes);
+                        output.write_all(&[0]).map_err(io_to_odbc)?;
+                        output
+                            .write_all(
+                                &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
+                            )
+                            .map_err(io_to_odbc)?;
+                        output.write_all(bytes).map_err(io_to_odbc)?;
                     } else {
-                        output.push(1);
+                        output.write_all(&[1]).map_err(io_to_odbc)?;
                     }
                 }
             }
@@ -202,6 +226,10 @@ impl ColumnarEncoder {
         let columnar = row_buffer_to_columnar(buffer)?;
         Self::encode(&columnar, true)
     }
+}
+
+fn io_to_odbc(err: std::io::Error) -> OdbcError {
+    OdbcError::InternalError(format!("columnar encode write failed: {err}"))
 }
 
 fn checked_u16(value: usize, field: &'static str) -> Result<u16> {
@@ -640,6 +668,25 @@ mod tests {
     }
 
     #[test]
+    fn compressed_output_identical_for_same_input() {
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(100);
+        let large_data: Vec<u8> = (0..2048).map(|i| (i % 256) as u8).collect();
+        buffer.add_column(
+            ColumnMetadata {
+                name: "payload".to_string(),
+                odbc_type: OdbcType::Varchar,
+            },
+            ColumnData::Varchar(vec![Some(large_data.clone()); 100]),
+        );
+
+        let encoded1 = ColumnarEncoder::encode(&buffer, true).expect("encode 1");
+        let encoded2 = ColumnarEncoder::encode(&buffer, true).expect("encode 2");
+        assert_eq!(encoded1, encoded2);
+        assert_eq!(encoded1[14], 1, "global compression flag should be set");
+    }
+
+    #[test]
     fn encode_for_bulk_empty_row_buffer() {
         let rb = crate::protocol::row_buffer::RowBuffer::new();
         let out = ColumnarEncoder::encode_for_bulk(rb).expect("empty bulk encode");
@@ -651,7 +698,7 @@ mod tests {
     fn encode_for_bulk_single_integer_column() {
         let mut rb = crate::protocol::row_buffer::RowBuffer::new();
         rb.add_column("n".to_string(), OdbcType::Integer);
-        rb.add_row(vec![Some(42i32.to_le_bytes().to_vec())]);
+        rb.add_row_vecs(vec![Some(42i32.to_le_bytes().to_vec())]);
         let out = ColumnarEncoder::encode_for_bulk(rb).expect("bulk");
         assert!(out.len() > 19);
         let b = 42i32.to_le_bytes();

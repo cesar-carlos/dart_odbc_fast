@@ -1,5 +1,5 @@
 use crate::error::{OdbcError, Result};
-use crate::protocol::OdbcType;
+use crate::protocol::{cell_bytes_from_slice, CellBytes, OdbcType};
 use odbc_api::{CursorRow, Nullable};
 
 #[derive(Default)]
@@ -18,7 +18,7 @@ impl CellReader {
         row: &mut CursorRow<'_>,
         column_number: u16,
         odbc_type: OdbcType,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<CellBytes>> {
         match odbc_type {
             OdbcType::Binary => self.read_binary(row, column_number),
             OdbcType::Integer => self.read_i32_as_le_bytes(row, column_number),
@@ -58,7 +58,7 @@ impl CellReader {
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<CellBytes>> {
         self.read_wide_text(row, column_number)
             .map(|value| value.map(wide_text_to_utf8_bytes))
     }
@@ -71,7 +71,7 @@ impl CellReader {
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<CellBytes>> {
         self.binary_buf.clear();
         let has_value = row
             .get_binary(column_number, &mut self.binary_buf)
@@ -80,7 +80,7 @@ impl CellReader {
         if has_value {
             // Tightly-sized copy so each cell only owns its own bytes; the
             // shared `binary_buf` keeps its capacity for the next cell.
-            Ok(Some(self.binary_buf.as_slice().to_vec()))
+            Ok(Some(self.binary_buf.as_slice().into()))
         } else {
             Ok(None)
         }
@@ -100,13 +100,13 @@ impl CellReader {
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<CellBytes>> {
         let mut target: Nullable<i32> = Nullable::null();
         row.get_data(column_number, &mut target)
             .map_err(OdbcError::from)?;
         match target.into_opt() {
             None => Ok(None),
-            Some(value) => Ok(Some(value.to_le_bytes().to_vec())),
+            Some(value) => Ok(Some(cell_bytes_from_slice(&value.to_le_bytes()))),
         }
     }
 
@@ -116,13 +116,13 @@ impl CellReader {
         &mut self,
         row: &mut CursorRow<'_>,
         column_number: u16,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Option<CellBytes>> {
         let mut target: Nullable<i64> = Nullable::null();
         row.get_data(column_number, &mut target)
             .map_err(OdbcError::from)?;
         match target.into_opt() {
             None => Ok(None),
-            Some(value) => Ok(Some(value.to_le_bytes().to_vec())),
+            Some(value) => Ok(Some(cell_bytes_from_slice(&value.to_le_bytes()))),
         }
     }
 
@@ -148,16 +148,16 @@ pub fn read_cell_bytes(
     row: &mut CursorRow<'_>,
     column_number: u16,
     odbc_type: OdbcType,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<CellBytes>> {
     CellReader::new().read_cell_bytes(row, column_number, odbc_type)
 }
 
-fn wide_text_to_utf8_bytes(wide_buf: &[u16]) -> Vec<u8> {
+fn wide_text_to_utf8_bytes(wide_buf: &[u16]) -> CellBytes {
     // `from_utf16_lossy` replaces any unpaired surrogate with U+FFFD.
     // SQL Server / SQL_C_WCHAR never emit those in practice, but if a
     // misbehaving driver did we'd rather see the replacement character
     // than panic or truncate.
-    String::from_utf16_lossy(wide_buf).into_bytes()
+    String::from_utf16_lossy(wide_buf).into_bytes().into()
 }
 
 #[cfg(test)]
@@ -170,19 +170,19 @@ mod tests {
 
     #[test]
     fn wide_text_to_utf8_bytes_ascii() {
-        assert_eq!(wide_text_to_utf8_bytes(&[0x48, 0x69]), b"Hi");
+        assert_eq!(wide_text_to_utf8_bytes(&[0x48, 0x69]).as_slice(), b"Hi");
     }
 
     #[test]
     fn wide_text_to_utf8_bytes_cjk_round_trips_utf8() {
         let wide: Vec<u16> = "你好".encode_utf16().collect();
-        assert_eq!(wide_text_to_utf8_bytes(&wide), "你好".as_bytes());
+        assert_eq!(wide_text_to_utf8_bytes(&wide).as_slice(), "你好".as_bytes());
     }
 
     #[test]
     fn wide_text_to_utf8_bytes_unpaired_surrogate_becomes_replacement_char() {
         let out = wide_text_to_utf8_bytes(&[0xD800]);
-        assert_eq!(out, "\u{FFFD}".as_bytes());
+        assert_eq!(out.as_slice(), "\u{FFFD}".as_bytes());
     }
 
     #[test]

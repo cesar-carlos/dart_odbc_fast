@@ -68,6 +68,7 @@ lru = "0.12"
 zeroize = { version = "1.7", features = ["zeroize_derive"] }
 lazy_static = "1.5"
 libc = "0.2"
+smallvec = "1.13"
 zstd = "0.13"
 lz4 = "1.24"
 ureq = { version = "2.9", optional = true }

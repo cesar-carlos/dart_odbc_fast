@@ -42,4 +42,4 @@ pub use param_value::{
     param_values_to_strings, serialize_params, ParamValue,
 };
 pub use row_buffer::RowBuffer;
-pub use types::OdbcType;
+pub use types::{cell_bytes_from_slice, CellBytes, OdbcType};

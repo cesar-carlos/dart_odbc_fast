@@ -22,7 +22,7 @@ fn test_decode_empty_buffer() {
 fn test_decode_single_column_single_row() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("value".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(vec![5, 0, 0, 0])]); // 5 as i32 little-endian
+    buffer.add_row_vecs(vec![Some(vec![5, 0, 0, 0])]); // 5 as i32 little-endian
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
     let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
@@ -38,7 +38,7 @@ fn test_decode_single_column_single_row() {
 fn test_decode_null_value() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("nullable".to_string(), OdbcType::Varchar);
-    buffer.add_row(vec![None]);
+    buffer.add_row_vecs(vec![None]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
     let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
@@ -65,8 +65,8 @@ fn test_decode_multiple_rows() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
 
-    buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
-    buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![1, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![2, 0, 0, 0])]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
     let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");
@@ -101,8 +101,8 @@ fn test_decode_roundtrip() {
     let mut original = RowBuffer::new();
     original.add_column("num".to_string(), OdbcType::Integer);
     original.add_column("text".to_string(), OdbcType::Varchar);
-    original.add_row(vec![Some(vec![42, 0, 0, 0]), Some(b"hello".to_vec())]);
-    original.add_row(vec![None, Some(b"world".to_vec())]);
+    original.add_row_vecs(vec![Some(vec![42, 0, 0, 0]), Some(b"hello".to_vec())]);
+    original.add_row_vecs(vec![None, Some(b"world".to_vec())]);
 
     let encoded = RowBufferEncoder::encode(&original).unwrap();
     let decoded = BinaryProtocolDecoder::parse(&encoded).expect("Should decode");

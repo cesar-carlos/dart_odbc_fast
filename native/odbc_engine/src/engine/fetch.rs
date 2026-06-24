@@ -38,6 +38,8 @@ pub(crate) fn fetch_cursor_into_row_buffer<C>(
     #[cfg_attr(not(feature = "block-cursor-fetch"), allow(unused_mut))] mut cursor: C,
     column_types: &[OdbcType],
     row_buffer: &mut RowBuffer,
+    batch_size: usize,
+    buffer_descs: Option<Vec<odbc_api::buffers::BufferDesc>>,
 ) -> Result<C>
 where
     C: Cursor,
@@ -50,17 +52,24 @@ where
         fn _assert_metadata<T: ResultSetMetadata>() {}
         _assert_metadata::<C>();
 
-        if let Some(descs) = block_fetch::plan_buffer_descs(&mut cursor, column_types)? {
-            return block_fetch::fetch_rows_into(
-                cursor,
-                column_types,
-                descs,
-                block_fetch::configured_batch_size(),
-                row_buffer,
-            );
-        }
+        let descs = match buffer_descs {
+            Some(descs) => descs,
+            None => {
+                if let Some(descs) = block_fetch::plan_buffer_descs(&mut cursor, column_types)? {
+                    descs
+                } else {
+                    return legacy_fetch_loop(cursor, column_types, row_buffer);
+                }
+            }
+        };
+        block_fetch::fetch_rows_into(cursor, column_types, descs, batch_size.max(1), row_buffer)
     }
-    legacy_fetch_loop(cursor, column_types, row_buffer)
+
+    #[cfg(not(feature = "block-cursor-fetch"))]
+    {
+        let _ = (batch_size, buffer_descs);
+        legacy_fetch_loop(cursor, column_types, row_buffer)
+    }
 }
 
 fn legacy_fetch_loop<C>(

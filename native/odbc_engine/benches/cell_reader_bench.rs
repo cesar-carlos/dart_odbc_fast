@@ -22,7 +22,7 @@ fn build_int_buffer(rows: usize) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("id".to_string(), OdbcType::Integer);
     for i in 0..rows {
-        buf.add_row(vec![Some((i as i32).to_le_bytes().to_vec())]);
+        buf.add_row_vecs(vec![Some((i as i32).to_le_bytes().to_vec())]);
     }
     buf
 }
@@ -31,7 +31,7 @@ fn build_bigint_buffer(rows: usize) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("big_id".to_string(), OdbcType::BigInt);
     for i in 0..rows {
-        buf.add_row(vec![Some((i as i64 * 1_000_003).to_le_bytes().to_vec())]);
+        buf.add_row_vecs(vec![Some((i as i64 * 1_000_003).to_le_bytes().to_vec())]);
     }
     buf
 }
@@ -40,7 +40,7 @@ fn build_varchar_buffer(rows: usize, value: &[u8]) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("name".to_string(), OdbcType::Varchar);
     for _ in 0..rows {
-        buf.add_row(vec![Some(value.to_vec())]);
+        buf.add_row_vecs(vec![Some(value.to_vec())]);
     }
     buf
 }
@@ -49,7 +49,7 @@ fn build_binary_buffer(rows: usize, payload: &[u8]) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("payload".to_string(), OdbcType::Binary);
     for _ in 0..rows {
-        buf.add_row(vec![Some(payload.to_vec())]);
+        buf.add_row_vecs(vec![Some(payload.to_vec())]);
     }
     buf
 }
@@ -121,7 +121,7 @@ fn build_date_buffer(rows: usize) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("event_date".to_string(), OdbcType::Date);
     for _ in 0..rows {
-        buf.add_row(vec![Some(b"2026-05-27".to_vec())]);
+        buf.add_row_vecs(vec![Some(b"2026-05-27".to_vec())]);
     }
     buf
 }
@@ -130,7 +130,7 @@ fn build_timestamp_buffer(rows: usize) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("event_ts".to_string(), OdbcType::Timestamp);
     for _ in 0..rows {
-        buf.add_row(vec![Some(b"2026-05-27 12:34:56.789000".to_vec())]);
+        buf.add_row_vecs(vec![Some(b"2026-05-27 12:34:56.789000".to_vec())]);
     }
     buf
 }

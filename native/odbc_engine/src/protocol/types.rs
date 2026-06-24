@@ -1,3 +1,17 @@
+use smallvec::SmallVec;
+
+/// Row-major cell payload with inline storage for primitives (≤8 bytes) and
+/// heap spill for longer text/binary values.
+pub type CellBytes = SmallVec<[u8; 8]>;
+
+/// Build a [`CellBytes`] from any byte slice (inline when ≤8 bytes).
+#[inline]
+pub fn cell_bytes_from_slice(bytes: &[u8]) -> CellBytes {
+    let mut cell = CellBytes::new();
+    cell.extend_from_slice(bytes);
+    cell
+}
+
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OdbcType {

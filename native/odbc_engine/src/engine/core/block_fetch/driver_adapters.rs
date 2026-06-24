@@ -1,8 +1,62 @@
 use super::MAX_INLINE_VAR_LEN_BYTES;
 use crate::error::{OdbcError, Result};
-use crate::protocol::OdbcType;
+use crate::plugins::DriverPlugin;
+use crate::protocol::{row_buffer::RowBuffer, OdbcType};
 use odbc_api::buffers::BufferDesc;
 use odbc_api::{DataType, ResultSetMetadata};
+
+/// Describe every result column and plan block-fetch buffer descriptors in
+/// one loop (one `col_data_type` call per column).
+pub(crate) fn describe_and_plan_columns<C>(
+    cursor: &mut C,
+    row_buffer: &mut RowBuffer,
+    plugin: Option<&dyn DriverPlugin>,
+) -> Result<(Vec<OdbcType>, Option<Vec<BufferDesc>>)>
+where
+    C: ResultSetMetadata,
+{
+    let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+    let cols_u16: u16 = cols_i16
+        .try_into()
+        .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+    let cols_usize: usize = cols_u16.into();
+
+    let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
+    let mut data_types: Vec<DataType> = Vec::with_capacity(cols_usize);
+
+    for col_idx in 1..=cols_u16 {
+        let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+        let data_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+        let sql_type_code = OdbcType::sql_type_code_from_data_type(&data_type);
+        let odbc_type = match plugin {
+            Some(p) => p.map_type(sql_type_code),
+            None => OdbcType::from_odbc_sql_type(sql_type_code),
+        };
+        row_buffer.add_column(col_name.to_string(), odbc_type);
+        column_types.push(odbc_type);
+        data_types.push(data_type);
+    }
+
+    let buffer_descs = plan_buffer_descs_from_data_types(&column_types, &data_types);
+    Ok((column_types, buffer_descs))
+}
+
+/// Plan buffer descriptors from already-inspected column metadata (no extra
+/// `col_data_type` round-trips).
+pub(crate) fn plan_buffer_descs_from_data_types(
+    column_types: &[OdbcType],
+    data_types: &[DataType],
+) -> Option<Vec<BufferDesc>> {
+    debug_assert_eq!(column_types.len(), data_types.len());
+    let mut descs = Vec::with_capacity(column_types.len());
+    for (&odbc_type, data_type) in column_types.iter().zip(data_types.iter()) {
+        match buffer_desc_for(odbc_type, data_type) {
+            Some(desc) => descs.push(desc),
+            None => return None,
+        }
+    }
+    Some(descs)
+}
 
 /// Decide whether the current cursor can be served by the block-cursor
 /// path. Returns the per-column [`BufferDesc`]s ready for
@@ -12,6 +66,9 @@ use odbc_api::{DataType, ResultSetMetadata};
 /// `column_types` must already be populated by the caller using the same
 /// `describe_columns` helper that fills `RowBuffer::columns`, so the
 /// `OdbcType → BufferDesc` mapping stays consistent with the wire format.
+///
+/// Prefer [`describe_and_plan_columns`] when describing and planning together
+/// to avoid a second `col_data_type` pass per column.
 pub fn plan_buffer_descs<C>(
     cursor: &mut C,
     column_types: &[OdbcType],
@@ -19,19 +76,14 @@ pub fn plan_buffer_descs<C>(
 where
     C: ResultSetMetadata,
 {
-    let mut descs = Vec::with_capacity(column_types.len());
-    for (idx, &odbc_type) in column_types.iter().enumerate() {
-        // ODBC column indices are 1-based; the slice is 0-based.
+    let mut data_types = Vec::with_capacity(column_types.len());
+    for (idx, _) in column_types.iter().enumerate() {
         let col_idx: u16 = (idx + 1)
             .try_into()
             .map_err(|_| OdbcError::InternalError(format!("Column index {idx} overflows u16")))?;
-        let data_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-        match buffer_desc_for(odbc_type, &data_type) {
-            Some(desc) => descs.push(desc),
-            None => return Ok(None),
-        }
+        data_types.push(cursor.col_data_type(col_idx).map_err(OdbcError::from)?);
     }
-    Ok(Some(descs))
+    Ok(plan_buffer_descs_from_data_types(column_types, &data_types))
 }
 
 pub(crate) fn buffer_desc_for(odbc_type: OdbcType, data_type: &DataType) -> Option<BufferDesc> {

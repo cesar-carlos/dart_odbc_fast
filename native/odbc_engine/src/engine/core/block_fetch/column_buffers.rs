@@ -1,5 +1,5 @@
 use crate::error::{OdbcError, Result};
-use crate::protocol::{OdbcType, RowBuffer};
+use crate::protocol::{cell_bytes_from_slice, OdbcType, RowBuffer};
 use odbc_api::buffers::AnySlice;
 
 pub(super) fn append_batch_to_row_buffer(
@@ -49,13 +49,10 @@ fn copy_nullable_i32(
             "Block fetch: column {col_idx} expected nullable i32 slice"
         ))
     })?;
-    let mut scratch = Vec::with_capacity(4);
     for (row_offset, value) in view.into_iter().enumerate() {
         if let Some(&v) = value {
-            scratch.clear();
-            scratch.extend_from_slice(&v.to_le_bytes());
             row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::replace(&mut scratch, Vec::with_capacity(4)));
+                Some(cell_bytes_from_slice(&v.to_le_bytes()));
         }
     }
     Ok(())
@@ -72,13 +69,10 @@ fn copy_nullable_i64(
             "Block fetch: column {col_idx} expected nullable i64 slice"
         ))
     })?;
-    let mut scratch = Vec::with_capacity(8);
     for (row_offset, value) in view.into_iter().enumerate() {
         if let Some(&v) = value {
-            scratch.clear();
-            scratch.extend_from_slice(&v.to_le_bytes());
             row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::replace(&mut scratch, Vec::with_capacity(8)));
+                Some(cell_bytes_from_slice(&v.to_le_bytes()));
         }
     }
     Ok(())
@@ -97,9 +91,7 @@ fn copy_binary(
     })?;
     for (row_offset, cell) in view.iter().enumerate() {
         if let Some(bytes) = cell {
-            let mut buf = Vec::with_capacity(bytes.len());
-            buf.extend_from_slice(bytes);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(buf);
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes.into());
         }
     }
     Ok(())
@@ -171,8 +163,7 @@ fn copy_nullable_date(
         if let Some(date) = cell {
             scratch.clear();
             format_date_into(&mut scratch, date);
-            row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::replace(&mut scratch, Vec::with_capacity(10)));
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
         }
     }
     Ok(())
@@ -196,8 +187,7 @@ fn copy_nullable_time(
         if let Some(time) = cell {
             scratch.clear();
             format_time_into(&mut scratch, time);
-            row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::replace(&mut scratch, Vec::with_capacity(8)));
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
         }
     }
     Ok(())
@@ -221,8 +211,7 @@ fn copy_nullable_timestamp(
         if let Some(ts) = cell {
             scratch.clear();
             format_timestamp_into(&mut scratch, ts);
-            row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::replace(&mut scratch, Vec::with_capacity(26)));
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
         }
     }
     Ok(())
@@ -248,7 +237,7 @@ fn copy_wide_text(
             scratch.clear();
             scratch.extend_from_slice(&String::from_utf16_lossy(wide.as_slice()).into_bytes());
             row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::take(&mut scratch));
+                Some(std::mem::take(&mut scratch).into());
         }
     }
     Ok(())

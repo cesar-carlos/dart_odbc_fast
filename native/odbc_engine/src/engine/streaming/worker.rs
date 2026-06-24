@@ -48,6 +48,8 @@ impl StreamingExecutor {
             cursor,
             &column_types,
             &mut row_buffer,
+            crate::engine::core::block_fetch::configured_batch_size(),
+            None,
         )?;
         // FOR JSON normalisation — buffer-mode materialises the full result
         // before encoding, so coalescing is safe here. See `engine::sqlserver_json`.
@@ -99,6 +101,8 @@ impl StreamingExecutor {
             cursor,
             &column_types,
             &mut row_buffer,
+            crate::engine::core::block_fetch::configured_batch_size(),
+            None,
         )?;
         coalesce_for_json_rows(&mut row_buffer);
 

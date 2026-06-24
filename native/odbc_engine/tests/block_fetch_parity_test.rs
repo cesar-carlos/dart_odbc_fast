@@ -25,14 +25,14 @@ fn fixture_row_buffer() -> RowBuffer {
     rb.add_column("big".to_string(), OdbcType::BigInt);
     rb.add_column("payload".to_string(), OdbcType::Binary);
 
-    rb.add_row(vec![
+    rb.add_row_vecs(vec![
         Some(1i32.to_le_bytes().to_vec()),
         Some(b"Alice".to_vec()),
         Some(100i64.to_le_bytes().to_vec()),
         Some(vec![0xAA, 0xBB, 0xCC]),
     ]);
-    rb.add_row(vec![None, Some(b"".to_vec()), None, Some(vec![])]);
-    rb.add_row(vec![
+    rb.add_row_vecs(vec![None, Some(b"".to_vec()), None, Some(vec![])]);
+    rb.add_row_vecs(vec![
         Some(42i32.to_le_bytes().to_vec()),
         None,
         Some(i64::MAX.to_le_bytes().to_vec()),
@@ -144,7 +144,7 @@ fn integer_only_parity() {
     let mut rb = RowBuffer::new();
     rb.add_column("n".to_string(), OdbcType::Integer);
     for i in 0i32..50 {
-        rb.add_row(vec![Some(i.to_le_bytes().to_vec())]);
+        rb.add_row_vecs(vec![Some(i.to_le_bytes().to_vec())]);
     }
     let via_transpose = row_buffer_to_columnar(rb).expect("transpose");
 
@@ -168,10 +168,10 @@ fn integer_only_parity() {
 fn varchar_with_nulls_parity() {
     let mut rb = RowBuffer::new();
     rb.add_column("name".to_string(), OdbcType::Varchar);
-    rb.add_row(vec![Some(b"alpha".to_vec())]);
-    rb.add_row(vec![None]);
-    rb.add_row(vec![Some(b"".to_vec())]);
-    rb.add_row(vec![Some("café".as_bytes().to_vec())]);
+    rb.add_row_vecs(vec![Some(b"alpha".to_vec())]);
+    rb.add_row_vecs(vec![None]);
+    rb.add_row_vecs(vec![Some(b"".to_vec())]);
+    rb.add_row_vecs(vec![Some("café".as_bytes().to_vec())]);
 
     let via_transpose = row_buffer_to_columnar(rb).expect("transpose");
 

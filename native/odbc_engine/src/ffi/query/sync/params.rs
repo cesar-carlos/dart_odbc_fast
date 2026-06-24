@@ -206,13 +206,11 @@ pub extern "C" fn odbc_exec_query_params_options(
                             return -1;
                         }
                     };
-                    if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
-                        execute_query_with_cached_connection(&mut conn_guard, sql_str)
-                    } else if encoding == ResultEncoding::RowMajor {
-                        try_cached_legacy_params(&mut conn_guard, sql_str, params_slice)
+                    if params_slice.is_empty() {
+                        conn_guard.execute_with_encoding(sql_str, encoding)
                     } else {
-                        execute_query_with_param_buffer_encoding(
-                            conn_guard.connection(),
+                        try_cached_params_with_encoding(
+                            &mut conn_guard,
                             sql_str,
                             params_slice,
                             encoding,
@@ -221,13 +219,13 @@ pub extern "C" fn odbc_exec_query_params_options(
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
                     Ok(mut conn_guard) => {
-                        if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
-                            execute_query_with_cached_connection(conn_guard.cached_mut(), sql_str)
-                        } else if encoding == ResultEncoding::RowMajor {
-                            try_cached_legacy_params(conn_guard.cached_mut(), sql_str, params_slice)
+                        if params_slice.is_empty() {
+                            conn_guard
+                                .cached_mut()
+                                .execute_with_encoding(sql_str, encoding)
                         } else {
-                            execute_query_with_param_buffer_encoding(
-                                conn_guard.get_connection(),
+                            try_cached_params_with_encoding(
+                                conn_guard.cached_mut(),
                                 sql_str,
                                 params_slice,
                                 encoding,

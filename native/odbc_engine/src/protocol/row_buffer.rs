@@ -1,4 +1,4 @@
-use crate::protocol::types::OdbcType;
+use crate::protocol::types::{CellBytes, OdbcType};
 
 pub struct ColumnMetadata {
     pub name: String,
@@ -16,7 +16,7 @@ impl Clone for ColumnMetadata {
 
 pub struct RowBuffer {
     pub columns: Vec<ColumnMetadata>,
-    pub rows: Vec<Vec<Option<Vec<u8>>>>,
+    pub rows: Vec<Vec<Option<CellBytes>>>,
 }
 
 impl RowBuffer {
@@ -31,8 +31,13 @@ impl RowBuffer {
         self.columns.push(ColumnMetadata { name, odbc_type });
     }
 
-    pub fn add_row(&mut self, row: Vec<Option<Vec<u8>>>) {
+    pub fn add_row(&mut self, row: Vec<Option<CellBytes>>) {
         self.rows.push(row);
+    }
+
+    /// Build a row from owned `Vec<u8>` cells (tests, benches, and legacy helpers).
+    pub fn add_row_vecs(&mut self, row: Vec<Option<Vec<u8>>>) {
+        self.add_row(row.into_iter().map(|c| c.map(CellBytes::from)).collect());
     }
 
     pub fn row_count(&self) -> usize {
@@ -84,7 +89,7 @@ mod tests {
         let mut b = RowBuffer::new();
         b.add_column("c".to_string(), OdbcType::Integer);
         assert_eq!(b.column_count(), 1);
-        b.add_row(vec![None]);
+        b.add_row_vecs(vec![None]);
         assert_eq!(b.row_count(), 1);
     }
 }

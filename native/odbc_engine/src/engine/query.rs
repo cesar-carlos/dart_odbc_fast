@@ -27,6 +27,14 @@ impl ResultEncoding {
         }
     }
 
+    pub(crate) fn use_columnar(self) -> bool {
+        matches!(self, Self::Columnar | Self::ColumnarCompressed)
+    }
+
+    pub(crate) fn use_compression(self) -> bool {
+        matches!(self, Self::ColumnarCompressed)
+    }
+
     fn pipeline(self) -> Arc<QueryPipeline> {
         match self {
             Self::RowMajor => shared_row_major_pipeline(),

@@ -11,7 +11,7 @@ use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{
     param_values_to_input_params, param_values_to_input_params_with_descriptions, try_encode_multi,
-    MultiResultItem, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+    MultiResultItem, ParamValue, RowBuffer, RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
@@ -232,7 +232,7 @@ impl ExecutionEngine {
         sql: &str,
         bound: &[BoundParam],
         timeout_sec: Option<usize>,
-        _fetch_size: Option<u32>,
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         use std::time::Instant;
 
@@ -278,6 +278,10 @@ impl ExecutionEngine {
                         cursor,
                         &column_types,
                         &mut row_buffer,
+                        crate::engine::core::execution::result_encoding::resolve_batch_size(
+                            fetch_size,
+                        ),
+                        None,
                     )?;
                     let _stmt_ref = cursor.into_stmt();
                     true
@@ -360,7 +364,7 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
         timeout_sec: Option<usize>,
-        _fetch_size: Option<u32>,
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         let plugin = self.current_plugin();
         match plan_query_param_binding(params)? {
@@ -368,14 +372,14 @@ impl ExecutionEngine {
                 let cursor = conn
                     .execute(sql, (), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor(cursor, plugin.as_deref())
+                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
             QueryParamBindingPlan::InferenceExecute => {
                 let parameters = require_inference_input_params(params)?;
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor(cursor, plugin.as_deref())
+                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
             QueryParamBindingPlan::PreparedNullAware => {
                 let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
@@ -393,14 +397,14 @@ impl ExecutionEngine {
                 let cursor = stmt
                     .execute(parameters.as_slice())
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor(cursor, plugin.as_deref())
+                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
             QueryParamBindingPlan::PreparedStandard => {
                 let parameters = param_values_to_input_params(params)?;
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor(cursor, plugin.as_deref())
+                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
         }
 
@@ -540,16 +544,6 @@ impl ExecutionEngine {
             .map(|active| active.optimize_query(sql))
             .unwrap_or_else(|| sql.to_string())
     }
-
-    pub(super) fn map_sql_type(
-        &self,
-        sql_type_code: i16,
-        plugin: Option<&dyn DriverPlugin>,
-    ) -> OdbcType {
-        plugin
-            .map(|active| active.map_type(sql_type_code))
-            .unwrap_or_else(|| OdbcType::from_odbc_sql_type(sql_type_code))
-    }
 }
 
 #[cfg(test)]
@@ -562,8 +556,10 @@ impl ExecutionEngine {
         &self,
         code: i16,
         plugin: Option<&dyn DriverPlugin>,
-    ) -> OdbcType {
-        self.map_sql_type(code, plugin)
+    ) -> crate::protocol::OdbcType {
+        plugin
+            .map(|active| active.map_type(code))
+            .unwrap_or_else(|| crate::protocol::OdbcType::from_odbc_sql_type(code))
     }
 
     pub(crate) fn test_is_oracle_plugin_active(&self) -> bool {

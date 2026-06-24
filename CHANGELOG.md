@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Columnar + prepared cache no FFI** — sync query paths (`params.rs`, `runnable.rs`)
+  routed `ResultEncoding` columnar/compressed through a raw `Connection`, bypassing the
+  per-connection statement LRU. All encodings now execute via `CachedConnection` when
+  `statement-handle-reuse` is enabled.
+
+### Performance
+
+- **Shared result encoding** — `encode_optional_cursor_with_encoding` unifies
+  `ExecutionEngine` and `CachedConnection`; columnar fast path (`fetch_columnar_into` +
+  `ColumnarEncoder`) works with prepared-handle reuse.
+- **Per-query `fetch_size`** — sync execution propagates caller batch override to block
+  fetch instead of always using `configured_batch_size()`.
+- **Prepared-cache hit** — LRU lookup with `&str` avoids `sql.to_string()` on cache hit.
+- **ODBC metadata** — `describe_and_plan_columns` uses one `col_data_type` call per
+  column (no double describe + plan pass).
+- **Row-major cells** — `CellBytes` (`SmallVec<[u8; 8]>`) keeps primitives inline without
+  per-cell `Vec` heap headers.
+- **Columnar compression** — streaming zstd in `ColumnarEncoder` writes directly to the
+  output buffer with uncompressed fallback when compression does not shrink payload.
+- **Query metrics** — fixed-bucket latency histogram (O(1) record) and `AtomicU64`
+  error counter replace O(N) sorted latency inserts and mutex contention on the hot path.
+
 ## [4.3.4] - 2026-06-18
 
 ### Fixed

@@ -26,7 +26,7 @@ fn ref_cursor_footer_roundtrip_length() {
 fn encode_delegates_to_encode_result_for_well_formed_buffer() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("n".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(1i32.to_le_bytes().to_vec())]);
 
     let via_encode = RowBufferEncoder::encode(&buffer).unwrap();
     let via_encode_result = RowBufferEncoder::encode_result(&buffer).unwrap();
@@ -251,7 +251,7 @@ fn test_encode_single_column_no_rows() {
 fn test_encode_single_row_single_column() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("value".to_string(), OdbcType::Varchar);
-    buffer.add_row(vec![Some(b"test".to_vec())]);
+    buffer.add_row_vecs(vec![Some(b"test".to_vec())]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
@@ -291,7 +291,7 @@ fn test_encode_single_row_single_column() {
 fn test_encode_null_value() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("nullable".to_string(), OdbcType::Varchar);
-    buffer.add_row(vec![None]);
+    buffer.add_row_vecs(vec![None]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
@@ -326,7 +326,7 @@ fn test_encode_multiple_columns() {
 fn test_encode_with_compression_small() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("x".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![1, 0, 0, 0])]);
     let out = RowBufferEncoder::encode_with_compression(&buffer);
     let raw = RowBufferEncoder::encode(&buffer).unwrap();
     assert_eq!(out, raw);
@@ -337,9 +337,9 @@ fn test_encode_multiple_rows() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
 
-    buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
-    buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
-    buffer.add_row(vec![Some(vec![3, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![1, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![2, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![3, 0, 0, 0])]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
@@ -354,8 +354,8 @@ fn test_encode_mixed_null_and_data() {
     buffer.add_column("col1".to_string(), OdbcType::Varchar);
     buffer.add_column("col2".to_string(), OdbcType::Varchar);
 
-    buffer.add_row(vec![Some(b"A".to_vec()), None]);
-    buffer.add_row(vec![None, Some(b"B".to_vec())]);
+    buffer.add_row_vecs(vec![Some(b"A".to_vec()), None]);
+    buffer.add_row_vecs(vec![None, Some(b"B".to_vec())]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
 
@@ -367,8 +367,8 @@ fn test_encode_mixed_null_and_data() {
 fn test_encode_to_writer_matches_encode() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
-    buffer.add_row(vec![Some(vec![2, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![1, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![2, 0, 0, 0])]);
 
     let encoded = RowBufferEncoder::encode(&buffer).unwrap();
     let mut out = Vec::new();
@@ -425,7 +425,7 @@ fn encode_to_writer_result_maps_limit_errors_to_resource_limit_reached() {
 fn encode_to_writer_result_succeeds_for_well_formed_buffer() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("col".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(vec![1, 0, 0, 0])]);
+    buffer.add_row_vecs(vec![Some(vec![1, 0, 0, 0])]);
 
     let mut sink = Vec::new();
     RowBufferEncoder::encode_to_writer_result(&buffer, &mut sink).unwrap();
@@ -475,7 +475,7 @@ fn try_encode_with_compression_shrinks_or_falls_back_to_raw() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("payload".to_string(), OdbcType::Binary);
     let cell = vec![0xABu8; 1_100_000];
-    buffer.add_row(vec![Some(cell)]);
+    buffer.add_row_vecs(vec![Some(cell)]);
 
     let raw = RowBufferEncoder::try_encode(&buffer).expect("raw encode");
     let compressed = RowBufferEncoder::try_encode_with_compression(&buffer).expect("compress");

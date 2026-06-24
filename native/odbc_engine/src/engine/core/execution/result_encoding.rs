@@ -1,5 +1,6 @@
 use super::ExecutionEngine;
 use crate::engine::cell_reader::CellReader;
+use crate::engine::query::ResultEncoding;
 use crate::engine::sqlserver_json::coalesce_for_json_rows;
 use crate::error::{OdbcError, Result};
 use crate::plugins::DriverPlugin;
@@ -7,6 +8,89 @@ use crate::protocol::{
     row_buffer_to_columnar, ColumnarEncoder, OdbcType, RowBuffer, RowBufferEncoder,
 };
 use odbc_api::{Cursor, ResultSetMetadata};
+
+/// Resolve the effective ODBC block-fetch batch size: per-query override when
+/// provided, otherwise the process-wide default from `configured_batch_size`.
+pub(crate) fn resolve_batch_size(fetch_size: Option<u32>) -> usize {
+    fetch_size
+        .map(|n| n.max(1) as usize)
+        .unwrap_or_else(crate::engine::core::block_fetch::configured_batch_size)
+}
+
+/// Shared cursor drain + encode used by [`CachedConnection`] and
+/// [`ExecutionEngine`]. When `plugin` is `None`, column types are mapped via
+/// [`OdbcType::from_odbc_sql_type`] (no driver-plugin overrides).
+pub(crate) fn encode_optional_cursor_with_encoding<C>(
+    cursor: Option<C>,
+    encoding: ResultEncoding,
+    plugin: Option<&dyn DriverPlugin>,
+    fetch_size: Option<u32>,
+) -> Result<Vec<u8>>
+where
+    C: Cursor + ResultSetMetadata,
+{
+    let use_columnar = encoding.use_columnar();
+    let use_compression = encoding.use_compression();
+    let batch_size = resolve_batch_size(fetch_size);
+
+    let mut row_buffer = RowBuffer::new();
+
+    let Some(mut cursor) = cursor else {
+        return encode_query_result_payload(row_buffer, use_columnar, use_compression);
+    };
+
+    let (column_types, buffer_descs) = crate::engine::core::block_fetch::describe_and_plan_columns(
+        &mut cursor,
+        &mut row_buffer,
+        plugin,
+    )?;
+
+    #[cfg(feature = "block-cursor-fetch")]
+    {
+        if use_columnar && !crate::engine::sqlserver_json::is_for_json_result(&row_buffer) {
+            if let Some(descs) = buffer_descs {
+                let column_metas: Vec<crate::protocol::columnar::ColumnMetadata> =
+                    std::mem::take(&mut row_buffer.columns)
+                        .into_iter()
+                        .map(|c| crate::protocol::columnar::ColumnMetadata {
+                            name: c.name,
+                            odbc_type: c.odbc_type,
+                        })
+                        .collect();
+                let (_cursor, v2) = crate::engine::core::columnar_fetch::fetch_columnar_into(
+                    cursor,
+                    column_metas,
+                    &column_types,
+                    descs,
+                    batch_size,
+                )?;
+                return ColumnarEncoder::encode(&v2, use_compression);
+            }
+        }
+    }
+
+    let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
+        cursor,
+        &column_types,
+        &mut row_buffer,
+        batch_size,
+        buffer_descs,
+    )?;
+
+    coalesce_for_json_rows(&mut row_buffer);
+
+    encode_query_result_payload(row_buffer, use_columnar, use_compression)
+}
+
+fn describe_columns_for_encode<C: ResultSetMetadata>(
+    cursor: &mut C,
+    row_buffer: &mut RowBuffer,
+    plugin: Option<&dyn DriverPlugin>,
+) -> Result<Vec<OdbcType>> {
+    let (column_types, _) =
+        crate::engine::core::block_fetch::describe_and_plan_columns(cursor, row_buffer, plugin)?;
+    Ok(column_types)
+}
 
 /// Encodes a row buffer for query / optional-cursor paths (row-major or columnar).
 pub(crate) fn encode_query_result_payload(
@@ -31,66 +115,37 @@ impl ExecutionEngine {
     where
         C: Cursor + ResultSetMetadata,
     {
-        let mut row_buffer = RowBuffer::new();
-
-        let Some(mut cursor) = cursor else {
-            // No cursor: encode an empty payload via the row-major path
-            // (preserves wire-shape for callers that distinguish "empty
-            // result set" from "no result set at all").
-            return encode_query_result_payload(
-                row_buffer,
-                self.use_columnar,
-                self.use_compression,
-            );
-        };
-
-        let column_types = self.describe_columns(&mut cursor, &mut row_buffer, plugin)?;
-
-        // Sprint 2 fast path: drain the cursor straight into a
-        // `RowBufferV2` (column-major) so we never materialise the
-        // row-major intermediate when the consumer asked for columnar
-        // bytes. Bypassed for FOR JSON queries because their post-fetch
-        // coalescing relies on the row-major shape.
-        #[cfg(feature = "block-cursor-fetch")]
-        {
-            if self.use_columnar && !crate::engine::sqlserver_json::is_for_json_result(&row_buffer)
-            {
-                if let Some(descs) =
-                    crate::engine::core::block_fetch::plan_buffer_descs(&mut cursor, &column_types)?
-                {
-                    // Move column names out of `row_buffer` (it's dropped
-                    // on return) into the columnar metadata vec, avoiding
-                    // a per-column `String::clone`.
-                    let column_metas: Vec<crate::protocol::columnar::ColumnMetadata> =
-                        std::mem::take(&mut row_buffer.columns)
-                            .into_iter()
-                            .map(|c| crate::protocol::columnar::ColumnMetadata {
-                                name: c.name,
-                                odbc_type: c.odbc_type,
-                            })
-                            .collect();
-                    let (_cursor, v2) = crate::engine::core::columnar_fetch::fetch_columnar_into(
-                        cursor,
-                        column_metas,
-                        &column_types,
-                        descs,
-                        crate::engine::core::block_fetch::configured_batch_size(),
-                    )?;
-                    return crate::protocol::ColumnarEncoder::encode(&v2, self.use_compression);
-                }
+        let encoding = if self.use_columnar {
+            if self.use_compression {
+                ResultEncoding::ColumnarCompressed
+            } else {
+                ResultEncoding::Columnar
             }
-        }
+        } else {
+            ResultEncoding::RowMajor
+        };
+        encode_optional_cursor_with_encoding(cursor, encoding, plugin, None)
+    }
 
-        let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
-            cursor,
-            &column_types,
-            &mut row_buffer,
-        )?;
-
-        // FOR JSON normalisation — see execute_query_inner above (closes #2).
-        coalesce_for_json_rows(&mut row_buffer);
-
-        encode_query_result_payload(row_buffer, self.use_columnar, self.use_compression)
+    pub(super) fn encode_optional_cursor_with_fetch_size<C>(
+        &self,
+        cursor: Option<C>,
+        plugin: Option<&dyn DriverPlugin>,
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>>
+    where
+        C: Cursor + ResultSetMetadata,
+    {
+        let encoding = if self.use_columnar {
+            if self.use_compression {
+                ResultEncoding::ColumnarCompressed
+            } else {
+                ResultEncoding::Columnar
+            }
+        } else {
+            ResultEncoding::RowMajor
+        };
+        encode_optional_cursor_with_encoding(cursor, encoding, plugin, fetch_size)
     }
 
     /// Same as [`Self::encode_cursor`], but always row-major v1 (required
@@ -169,6 +224,8 @@ impl ExecutionEngine {
             cursor,
             &column_types,
             &mut row_buffer,
+            resolve_batch_size(None),
+            None,
         )?;
 
         coalesce_for_json_rows(&mut row_buffer);
@@ -185,22 +242,6 @@ impl ExecutionEngine {
         row_buffer: &mut RowBuffer,
         plugin: Option<&dyn DriverPlugin>,
     ) -> Result<Vec<OdbcType>> {
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = self.map_sql_type(sql_type_code, plugin);
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
-
-        Ok(column_types)
+        describe_columns_for_encode(cursor, row_buffer, plugin)
     }
 }

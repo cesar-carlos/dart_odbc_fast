@@ -10,12 +10,81 @@
 //! Exposed via `odbc_get_metrics` (40 bytes) and `odbc_get_cache_metrics` (64 bytes).
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::engine::PreparedStatementCache;
 
 const MAX_LATENCY_SAMPLES: usize = 1000;
+const HISTOGRAM_BUCKET_COUNT: usize = 16;
+
+/// Fixed-bucket latency histogram (microsecond lower bounds per bucket).
+const HISTOGRAM_UPPER_MICROS: [u64; HISTOGRAM_BUCKET_COUNT] = [
+    1,
+    2,
+    5,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    100_000,
+    u64::MAX,
+];
+
+#[derive(Debug, Clone)]
+struct LatencyHistogram {
+    buckets: [u64; HISTOGRAM_BUCKET_COUNT],
+}
+
+impl Default for LatencyHistogram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LatencyHistogram {
+    fn new() -> Self {
+        Self {
+            buckets: [0; HISTOGRAM_BUCKET_COUNT],
+        }
+    }
+
+    fn record(&mut self, latency: Duration) {
+        self.buckets[Self::bucket_index(latency)] += 1;
+    }
+
+    fn bucket_index(latency: Duration) -> usize {
+        let micros = latency.as_micros().min(u64::MAX as u128) as u64;
+        HISTOGRAM_UPPER_MICROS
+            .iter()
+            .position(|&upper| micros <= upper)
+            .unwrap_or(HISTOGRAM_BUCKET_COUNT - 1)
+    }
+
+    fn percentile(&self, p: f64) -> Duration {
+        let total: u64 = self.buckets.iter().sum();
+        if total == 0 {
+            return Duration::ZERO;
+        }
+        let target = ((total as f64) * p / 100.0).ceil() as u64;
+        let mut seen = 0u64;
+        for (idx, &count) in self.buckets.iter().enumerate() {
+            seen += count;
+            if seen >= target {
+                return Duration::from_micros(HISTOGRAM_UPPER_MICROS[idx]);
+            }
+        }
+        Duration::from_micros(HISTOGRAM_UPPER_MICROS[HISTOGRAM_BUCKET_COUNT - 1])
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct QueryMetrics {
@@ -24,7 +93,7 @@ pub struct QueryMetrics {
     pub min_latency: Duration,
     pub max_latency: Duration,
     pub latency_samples: VecDeque<Duration>,
-    sorted_latency_samples: Vec<Duration>,
+    latency_histogram: LatencyHistogram,
 }
 
 impl Default for QueryMetrics {
@@ -41,7 +110,7 @@ impl QueryMetrics {
             min_latency: Duration::MAX,
             max_latency: Duration::ZERO,
             latency_samples: VecDeque::with_capacity(MAX_LATENCY_SAMPLES),
-            sorted_latency_samples: Vec::with_capacity(MAX_LATENCY_SAMPLES),
+            latency_histogram: LatencyHistogram::new(),
         }
     }
 
@@ -56,27 +125,21 @@ impl QueryMetrics {
             self.max_latency = latency;
         }
 
-        self.insert_latency_sample(latency);
-        if self.latency_samples.len() > MAX_LATENCY_SAMPLES {
-            if let Some(evicted) = self.latency_samples.pop_front() {
-                self.remove_sorted_latency_sample(evicted);
-            }
-        }
-    }
-
-    fn insert_latency_sample(&mut self, latency: Duration) {
+        self.latency_histogram.record(latency);
         self.latency_samples.push_back(latency);
-        let index = self
-            .sorted_latency_samples
-            .binary_search(&latency)
-            .unwrap_or_else(|index| index);
-        self.sorted_latency_samples.insert(index, latency);
+        if self.latency_samples.len() > MAX_LATENCY_SAMPLES {
+            self.latency_samples.pop_front();
+        }
     }
 
-    fn remove_sorted_latency_sample(&mut self, latency: Duration) {
-        if let Ok(index) = self.sorted_latency_samples.binary_search(&latency) {
-            self.sorted_latency_samples.remove(index);
+    fn percentile_from_samples(&self, p: f64) -> Duration {
+        if self.latency_samples.is_empty() {
+            return Duration::ZERO;
         }
+        let mut sorted: Vec<Duration> = self.latency_samples.iter().copied().collect();
+        sorted.sort_unstable();
+        let index = ((sorted.len() - 1) as f64 * p / 100.0) as usize;
+        sorted[index]
     }
 
     pub fn average_latency(&self) -> Duration {
@@ -87,12 +150,13 @@ impl QueryMetrics {
     }
 
     pub fn percentile(&self, p: f64) -> Duration {
-        if self.sorted_latency_samples.is_empty() {
+        if self.latency_samples.is_empty() {
             return Duration::ZERO;
         }
-
-        let index = ((self.sorted_latency_samples.len() - 1) as f64 * p / 100.0) as usize;
-        self.sorted_latency_samples[index]
+        if self.latency_samples.len() >= MAX_LATENCY_SAMPLES {
+            return self.latency_histogram.percentile(p);
+        }
+        self.percentile_from_samples(p)
     }
 
     pub fn p50(&self) -> Duration {
@@ -141,7 +205,7 @@ impl PoolMetrics {
 pub struct Metrics {
     query_metrics: Arc<Mutex<QueryMetrics>>,
     pool_metrics: Arc<Mutex<std::collections::HashMap<u32, PoolMetrics>>>,
-    error_count: Arc<Mutex<u64>>,
+    error_count: AtomicU64,
     start_time: Instant,
     prepared_cache: Arc<Mutex<Option<Arc<PreparedStatementCache>>>>,
 }
@@ -151,7 +215,7 @@ impl Metrics {
         Self {
             query_metrics: Arc::new(Mutex::new(QueryMetrics::new())),
             pool_metrics: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            error_count: Arc::new(Mutex::new(0)),
+            error_count: AtomicU64::new(0),
             start_time: Instant::now(),
             prepared_cache: Arc::new(Mutex::new(None)),
         }
@@ -170,9 +234,7 @@ impl Metrics {
     }
 
     pub fn record_error(&self) {
-        if let Ok(mut count) = self.error_count.lock() {
-            *count += 1;
-        }
+        self.error_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn update_pool_metrics(&self, pool_id: u32, metrics: PoolMetrics) {
@@ -196,7 +258,7 @@ impl Metrics {
     }
 
     pub fn get_error_count(&self) -> u64 {
-        self.error_count.lock().map(|c| *c).unwrap_or(0)
+        self.error_count.load(Ordering::Relaxed)
     }
 
     pub fn uptime(&self) -> Duration {
@@ -357,14 +419,16 @@ mod tests {
     }
 
     #[test]
-    fn test_query_metrics_percentile_uses_window() {
+    fn test_query_metrics_percentile_uses_histogram_when_window_full() {
         let mut metrics = QueryMetrics::new();
         for i in 0..1500 {
             metrics.record_query(Duration::from_millis(i));
         }
 
-        assert_eq!(metrics.percentile(0.0), Duration::from_millis(500));
-        assert_eq!(metrics.percentile(100.0), Duration::from_millis(1499));
+        let p0 = metrics.percentile(0.0);
+        let p100 = metrics.percentile(100.0);
+        assert!(p0 <= Duration::from_millis(10));
+        assert!(p100 >= Duration::from_millis(1000));
     }
 
     #[test]

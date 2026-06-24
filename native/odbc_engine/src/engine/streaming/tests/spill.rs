@@ -19,11 +19,11 @@ fn test_streaming_spill_writer_matches_row_buffer_encoder() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
     buffer.add_column("name".to_string(), OdbcType::Varchar);
-    buffer.add_row(vec![
+    buffer.add_row_vecs(vec![
         Some(1i32.to_le_bytes().to_vec()),
         Some(b"one".to_vec()),
     ]);
-    buffer.add_row(vec![Some(2i32.to_le_bytes().to_vec()), None]);
+    buffer.add_row_vecs(vec![Some(2i32.to_le_bytes().to_vec()), None]);
 
     let expected = RowBufferEncoder::encode(&buffer).unwrap();
     let mut spill = DiskSpillStream::new(1);
@@ -40,7 +40,7 @@ fn test_streaming_spill_writer_matches_row_buffer_encoder() {
 fn test_streaming_spill_threshold_file_backed_matches_encoder() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("payload".to_string(), OdbcType::Binary);
-    buffer.add_row(vec![Some(vec![42u8; 1024 * 1024 + 128])]);
+    buffer.add_row_vecs(vec![Some(vec![42u8; 1024 * 1024 + 128])]);
 
     let expected = RowBufferEncoder::encode(&buffer).unwrap();
     let mut spill = DiskSpillStream::new(1);
@@ -70,7 +70,7 @@ fn test_streaming_spill_threshold_file_backed_matches_encoder() {
 fn test_spill_memory_source_preserves_encoder_bytes_and_metadata() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(1i32.to_le_bytes().to_vec())]);
     let expected = RowBufferEncoder::encode(&buffer).unwrap();
 
     let mut spill = DiskSpillStream::new(64);

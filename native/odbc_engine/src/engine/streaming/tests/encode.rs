@@ -21,7 +21,7 @@ use std::sync::mpsc;
 fn test_encode_row_buffer_matches_row_buffer_encoder() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("n".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(7i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(7i32.to_le_bytes().to_vec())]);
     let via_helper =
         encode_row_buffer_with_encoding(&mut buffer, ResultEncoding::RowMajor).unwrap();
     let direct = RowBufferEncoder::encode(&buffer).unwrap();
@@ -45,7 +45,7 @@ fn test_encode_row_buffer_empty_schema_succeeds() {
 fn test_encode_row_buffer_with_columnar_encoding_emits_v2_magic() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("n".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(7i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(7i32.to_le_bytes().to_vec())]);
     let encoded = encode_row_buffer_with_encoding(&mut buffer, ResultEncoding::Columnar).unwrap();
     let magic = u32::from_le_bytes(encoded[0..4].try_into().unwrap());
     assert_eq!(magic, 0x4F44_4243, "columnar v2 magic ODBC");

@@ -1,12 +1,12 @@
 use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnData, ColumnMetadata, RowBufferV2};
 use crate::protocol::row_buffer::RowBuffer;
-use crate::protocol::types::OdbcType;
+use crate::protocol::types::{CellBytes, OdbcType};
 
 fn decode_integer_cell(
     col_name: &str,
     row_idx: usize,
-    cell: Option<&Vec<u8>>,
+    cell: Option<&CellBytes>,
 ) -> Result<Option<i32>> {
     match cell {
         None => Ok(None),
@@ -24,7 +24,7 @@ fn decode_integer_cell(
 fn decode_bigint_cell(
     col_name: &str,
     row_idx: usize,
-    cell: Option<&Vec<u8>>,
+    cell: Option<&CellBytes>,
 ) -> Result<Option<i64>> {
     match cell {
         None => Ok(None),
@@ -94,7 +94,7 @@ pub fn row_buffer_to_columnar(mut buffer: RowBuffer) -> Result<RowBufferV2> {
                 let mut binary_data = Vec::with_capacity(buffer.row_count());
                 for row in &mut buffer.rows {
                     if col_idx < row.len() {
-                        binary_data.push(row[col_idx].take());
+                        binary_data.push(row[col_idx].take().map(|b| b.into_vec()));
                     } else {
                         binary_data.push(None);
                     }
@@ -105,7 +105,7 @@ pub fn row_buffer_to_columnar(mut buffer: RowBuffer) -> Result<RowBufferV2> {
                 let mut varchar_data = Vec::with_capacity(buffer.row_count());
                 for row in &mut buffer.rows {
                     if col_idx < row.len() {
-                        varchar_data.push(row[col_idx].take());
+                        varchar_data.push(row[col_idx].take().map(|b| b.into_vec()));
                     } else {
                         varchar_data.push(None);
                     }
@@ -138,9 +138,9 @@ mod tests {
     fn test_row_buffer_to_columnar_integer() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
-        buffer.add_row(vec![Some(42i32.to_le_bytes().to_vec())]);
-        buffer.add_row(vec![Some(100i32.to_le_bytes().to_vec())]);
-        buffer.add_row(vec![None]);
+        buffer.add_row_vecs(vec![Some(42i32.to_le_bytes().to_vec())]);
+        buffer.add_row_vecs(vec![Some(100i32.to_le_bytes().to_vec())]);
+        buffer.add_row_vecs(vec![None]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("integer column");
         assert_eq!(v2.column_count(), 1);
@@ -163,8 +163,8 @@ mod tests {
     fn test_row_buffer_to_columnar_bigint() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("big_id".to_string(), OdbcType::BigInt);
-        buffer.add_row(vec![Some(1234567890i64.to_le_bytes().to_vec())]);
-        buffer.add_row(vec![None]);
+        buffer.add_row_vecs(vec![Some(1234567890i64.to_le_bytes().to_vec())]);
+        buffer.add_row_vecs(vec![None]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("bigint column");
         assert_eq!(v2.column_count(), 1);
@@ -184,9 +184,9 @@ mod tests {
     fn test_row_buffer_to_columnar_varchar() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("name".to_string(), OdbcType::Varchar);
-        buffer.add_row(vec![Some(b"Alice".to_vec())]);
-        buffer.add_row(vec![Some(b"Bob".to_vec())]);
-        buffer.add_row(vec![None]);
+        buffer.add_row_vecs(vec![Some(b"Alice".to_vec())]);
+        buffer.add_row_vecs(vec![Some(b"Bob".to_vec())]);
+        buffer.add_row_vecs(vec![None]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("varchar column");
         assert_eq!(v2.column_count(), 1);
@@ -207,8 +207,8 @@ mod tests {
     fn test_row_buffer_to_columnar_binary() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("payload".to_string(), OdbcType::Binary);
-        buffer.add_row(vec![Some(vec![0x01, 0x02, 0x03])]);
-        buffer.add_row(vec![None]);
+        buffer.add_row_vecs(vec![Some(vec![0x01, 0x02, 0x03])]);
+        buffer.add_row_vecs(vec![None]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("binary column");
         assert_eq!(v2.column_count(), 1);
@@ -229,11 +229,11 @@ mod tests {
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
         buffer.add_column("name".to_string(), OdbcType::Varchar);
-        buffer.add_row(vec![
+        buffer.add_row_vecs(vec![
             Some(1i32.to_le_bytes().to_vec()),
             Some(b"Alice".to_vec()),
         ]);
-        buffer.add_row(vec![
+        buffer.add_row_vecs(vec![
             Some(2i32.to_le_bytes().to_vec()),
             Some(b"Bob".to_vec()),
         ]);
@@ -249,7 +249,7 @@ mod tests {
     fn test_row_buffer_to_columnar_integer_invalid_size_returns_validation_error() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
-        buffer.add_row(vec![Some(vec![1, 2, 3])]);
+        buffer.add_row_vecs(vec![Some(vec![1, 2, 3])]);
 
         assert!(matches!(
             row_buffer_to_columnar(buffer),
@@ -261,7 +261,7 @@ mod tests {
     fn test_row_buffer_to_columnar_bigint_invalid_size_returns_validation_error() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("big_id".to_string(), OdbcType::BigInt);
-        buffer.add_row(vec![Some(vec![1, 2, 3, 4, 5])]);
+        buffer.add_row_vecs(vec![Some(vec![1, 2, 3, 4, 5])]);
 
         assert!(matches!(
             row_buffer_to_columnar(buffer),
@@ -273,7 +273,7 @@ mod tests {
     fn test_row_buffer_to_columnar_non_numeric_odbc_type_uses_varchar_storage() {
         let mut buffer = RowBuffer::new();
         buffer.add_column("d".to_string(), OdbcType::Date);
-        buffer.add_row(vec![Some(b"2024-01-01".to_vec())]);
+        buffer.add_row_vecs(vec![Some(b"2024-01-01".to_vec())]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("date as varchar storage");
         match &v2.columns[0].data {
@@ -290,11 +290,11 @@ mod tests {
         let mut buffer = RowBuffer::new();
         buffer.add_column("a".to_string(), OdbcType::Integer);
         buffer.add_column("b".to_string(), OdbcType::Integer);
-        buffer.add_row(vec![
+        buffer.add_row_vecs(vec![
             Some(1i32.to_le_bytes().to_vec()),
             Some(2i32.to_le_bytes().to_vec()),
         ]);
-        buffer.add_row(vec![Some(3i32.to_le_bytes().to_vec())]);
+        buffer.add_row_vecs(vec![Some(3i32.to_le_bytes().to_vec())]);
 
         let v2 = row_buffer_to_columnar(buffer).expect("short row");
         match (&v2.columns[0].data, &v2.columns[1].data) {

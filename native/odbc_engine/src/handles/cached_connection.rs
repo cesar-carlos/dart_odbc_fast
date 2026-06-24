@@ -13,10 +13,12 @@
 //! This approach uses a trait object to execute statements without exposing
 //! the underlying borrow lifetime.
 
+use crate::engine::core::execution::result_encoding::encode_optional_cursor_with_encoding;
+use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 #[cfg(feature = "statement-handle-reuse")]
 use lru::LruCache;
-use odbc_api::{Connection, Prepared, ResultSetMetadata};
+use odbc_api::{Connection, Prepared};
 #[cfg(feature = "statement-handle-reuse")]
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::ops::Deref;
 
 use crate::protocol::{
-    param_values_to_input_params, OdbcType, ParamValue, RowBuffer, RowBufferEncoder,
+    deserialize_param_buffer, has_null_param, param_values_to_input_params, ParamList, ParamValue,
 };
 
 #[cfg(feature = "statement-handle-reuse")]
@@ -98,15 +100,25 @@ impl CachedConnection {
 
     /// Execute a no-param query, using cached prepared statement when available.
     pub fn execute_query_no_params(&mut self, sql: &str) -> Result<Vec<u8>> {
+        self.execute_with_encoding(sql, ResultEncoding::RowMajor)
+    }
+
+    /// Execute a no-param query with an explicit wire encoding, reusing a
+    /// cached prepared handle when [`statement-handle-reuse`] is enabled.
+    pub fn execute_with_encoding(
+        &mut self,
+        sql: &str,
+        encoding: ResultEncoding,
+    ) -> Result<Vec<u8>> {
         #[cfg(feature = "statement-handle-reuse")]
         {
-            self.execute_query_with_reuse(sql)
+            self.execute_query_with_reuse(sql, encoding)
         }
 
         #[cfg(not(feature = "statement-handle-reuse"))]
         {
             let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-            execute_stmt_to_buffer(&mut stmt)
+            execute_stmt_to_buffer_with_encoding(&mut stmt, encoding)
         }
     }
 
@@ -130,25 +142,62 @@ impl CachedConnection {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
+        self.execute_with_params_and_encoding(sql, params, ResultEncoding::RowMajor)
+    }
+
+    /// Parameterised execute with explicit wire encoding and prepared-handle
+    /// reuse when eligible.
+    pub fn execute_with_params_and_encoding(
+        &mut self,
+        sql: &str,
+        params: &[ParamValue],
+        encoding: ResultEncoding,
+    ) -> Result<Vec<u8>> {
         #[cfg(feature = "statement-handle-reuse")]
         {
-            self.execute_query_with_params_reuse(sql, params)
+            self.execute_query_with_params_reuse(sql, params, encoding)
         }
 
         #[cfg(not(feature = "statement-handle-reuse"))]
         {
             let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-            execute_stmt_with_params(&mut stmt, params)
+            execute_stmt_with_params_and_encoding(&mut stmt, params, encoding)
+        }
+    }
+
+    /// Execute from a raw FFI parameter buffer when the legacy no-NULL plan
+    /// is eligible for the prepared cache; otherwise falls back to the raw
+    /// connection dispatcher.
+    pub fn try_execute_param_buffer_with_encoding(
+        &mut self,
+        sql: &str,
+        param_bytes: &[u8],
+        encoding: ResultEncoding,
+    ) -> Result<Vec<u8>> {
+        match deserialize_param_buffer(param_bytes) {
+            Ok(ParamList::Legacy(params)) if !has_null_param(&params) => {
+                if params.is_empty() {
+                    self.execute_with_encoding(sql, encoding)
+                } else {
+                    self.execute_with_params_and_encoding(sql, &params, encoding)
+                }
+            }
+            Ok(ParamList::Legacy(_)) | Ok(ParamList::Directed(_)) | Err(_) => {
+                crate::engine::execute_query_with_param_buffer_encoding(
+                    self.connection(),
+                    sql,
+                    param_bytes,
+                    encoding,
+                )
+            }
         }
     }
 
     #[cfg(feature = "statement-handle-reuse")]
-    fn execute_query_with_reuse(&mut self, sql: &str) -> Result<Vec<u8>> {
-        let sql_key = sql.to_string();
-
-        if let Some(cached) = self.stmt_cache.get_mut(&sql_key) {
+    fn execute_query_with_reuse(&mut self, sql: &str, encoding: ResultEncoding) -> Result<Vec<u8>> {
+        if let Some(cached) = self.stmt_cache.get_mut(sql) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
-            return cached.with_mut(execute_stmt_to_buffer);
+            return cached.with_mut(|stmt| execute_stmt_to_buffer_with_encoding(stmt, encoding));
         }
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
@@ -164,9 +213,9 @@ impl CachedConnection {
         // transmute that fakes `'static` is therefore confined to this
         // single line of construction inside the wrapper.
         let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
-        let result = owned.with_mut(execute_stmt_to_buffer)?;
+        let result = owned.with_mut(|stmt| execute_stmt_to_buffer_with_encoding(stmt, encoding))?;
 
-        self.stmt_cache.put(sql_key, owned);
+        self.stmt_cache.put(sql.to_string(), owned);
 
         if should_count_eviction {
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
@@ -180,15 +229,15 @@ impl CachedConnection {
         &mut self,
         sql: &str,
         params: &[ParamValue],
+        encoding: ResultEncoding,
     ) -> Result<Vec<u8>> {
-        let sql_key = sql.to_string();
-
-        if let Some(cached) = self.stmt_cache.get_mut(&sql_key) {
+        if let Some(cached) = self.stmt_cache.get_mut(sql) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             // Re-bind every execute: parameter values typically change
             // between calls even when the SQL is identical, and ODBC
             // allows re-binding on a cached prepared statement.
-            return cached.with_mut(|stmt| execute_stmt_with_params(stmt, params));
+            return cached
+                .with_mut(|stmt| execute_stmt_with_params_and_encoding(stmt, params, encoding));
         }
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
@@ -202,9 +251,10 @@ impl CachedConnection {
         // `execute_query_with_reuse` SAFETY note above — same invariant
         // (cache drops before connection, single point of unsafe).
         let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
-        let result = owned.with_mut(|stmt| execute_stmt_with_params(stmt, params))?;
+        let result =
+            owned.with_mut(|stmt| execute_stmt_with_params_and_encoding(stmt, params, encoding))?;
 
-        self.stmt_cache.put(sql_key, owned);
+        self.stmt_cache.put(sql.to_string(), owned);
 
         if should_count_eviction {
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
@@ -266,15 +316,22 @@ impl Drop for CachedConnection {
     }
 }
 
-fn execute_stmt_to_buffer<S>(stmt: &mut Prepared<S>) -> Result<Vec<u8>>
+fn execute_stmt_to_buffer_with_encoding<S>(
+    stmt: &mut Prepared<S>,
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>>
 where
     S: odbc_api::handles::AsStatementRef,
 {
     let cursor = stmt.execute(()).map_err(OdbcError::from)?;
-    encode_optional_cursor_to_buffer(cursor)
+    encode_optional_cursor_with_encoding(cursor, encoding, None, None)
 }
 
-fn execute_stmt_with_params<S>(stmt: &mut Prepared<S>, params: &[ParamValue]) -> Result<Vec<u8>>
+fn execute_stmt_with_params_and_encoding<S>(
+    stmt: &mut Prepared<S>,
+    params: &[ParamValue],
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>>
 where
     S: odbc_api::handles::AsStatementRef,
 {
@@ -282,43 +339,5 @@ where
     let cursor = stmt
         .execute(parameters.as_slice())
         .map_err(OdbcError::from)?;
-    encode_optional_cursor_to_buffer(cursor)
-}
-
-/// Shared cursor drainer used by both the no-params and params cached
-/// execution paths. Mirrors what `ExecutionEngine::encode_optional_cursor`
-/// does for the same shape, minus the plugin/FOR-JSON normalisation
-/// (which the engine layer is responsible for).
-fn encode_optional_cursor_to_buffer<C>(cursor: Option<C>) -> Result<Vec<u8>>
-where
-    C: odbc_api::Cursor + ResultSetMetadata,
-{
-    let mut row_buffer = RowBuffer::new();
-
-    if let Some(mut cursor) = cursor {
-        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
-        let cols_u16: u16 = cols_i16
-            .try_into()
-            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
-        let cols_usize: usize = cols_u16.into();
-
-        let mut column_types: Vec<OdbcType> = Vec::with_capacity(cols_usize);
-
-        for col_idx in 1..=cols_u16 {
-            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
-            let col_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
-            let sql_type_code = OdbcType::sql_type_code_from_data_type(&col_type);
-            let odbc_type = OdbcType::from_odbc_sql_type(sql_type_code);
-            row_buffer.add_column(col_name.to_string(), odbc_type);
-            column_types.push(odbc_type);
-        }
-
-        let _drained = crate::engine::fetch::fetch_cursor_into_row_buffer(
-            cursor,
-            &column_types,
-            &mut row_buffer,
-        )?;
-    }
-
-    RowBufferEncoder::encode_result(&row_buffer)
+    encode_optional_cursor_with_encoding(cursor, encoding, None, None)
 }

@@ -54,7 +54,7 @@ fn build_mixed_buffer(rows: usize, cols: usize) -> RowBuffer {
             };
             row.push(cell);
         }
-        buf.add_row(row);
+        buf.add_row_vecs(row);
     }
     buf
 }

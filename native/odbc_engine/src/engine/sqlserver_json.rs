@@ -91,7 +91,7 @@ pub fn coalesce_for_json_rows(buffer: &mut RowBuffer) {
     let total_len: usize = buffer
         .rows
         .iter()
-        .filter_map(|r| r.first().and_then(|cell| cell.as_ref()).map(Vec::len))
+        .filter_map(|r| r.first().and_then(|cell| cell.as_ref()).map(|b| b.len()))
         .sum();
 
     let mut all_null = true;
@@ -103,7 +103,11 @@ pub fn coalesce_for_json_rows(buffer: &mut RowBuffer) {
         }
     }
 
-    let merged_cell = if all_null { None } else { Some(concatenated) };
+    let merged_cell = if all_null {
+        None
+    } else {
+        Some(crate::protocol::cell_bytes_from_slice(&concatenated))
+    };
     buffer.rows = vec![vec![merged_cell]];
 
     if let Some(col) = buffer.columns.first_mut() {
@@ -120,7 +124,7 @@ mod tests {
         let mut buf = RowBuffer::new();
         buf.add_column(name.to_string(), OdbcType::NVarchar);
         for c in chunks {
-            buf.add_row(vec![c.map(|s| s.to_vec())]);
+            buf.add_row_vecs(vec![c.map(|s| s.to_vec())]);
         }
         buf
     }
@@ -222,7 +226,7 @@ mod tests {
         coalesce_for_json_rows(&mut buf);
         assert_eq!(buf.row_count(), 1);
         let cell = buf.rows[0][0].as_ref().expect("merged cell");
-        assert_eq!(cell, b"abcdef");
+        assert_eq!(cell.as_slice(), b"abcdef");
     }
 
     /// Realistic-ish stress test: SQL Server splits FOR JSON output into

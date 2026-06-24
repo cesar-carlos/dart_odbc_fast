@@ -22,7 +22,7 @@ fn make_fixture(rows: usize, cols: usize) -> RowBuffer {
             let s = format!("r{r:05}c{c:03}....................");
             row.push(Some(s.into_bytes()));
         }
-        rb.add_row(row);
+        rb.add_row_vecs(row);
     }
     rb
 }

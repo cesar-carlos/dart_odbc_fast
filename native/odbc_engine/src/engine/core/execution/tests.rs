@@ -3,6 +3,7 @@ use crate::plugins::{
     mariadb::MariaDbPlugin, postgres::PostgresPlugin, sqlserver::SqlServerPlugin, PluginRegistry,
 };
 use crate::protocol::bound_param::{BoundParam, ParamDirection};
+use crate::protocol::OdbcType;
 use crate::protocol::ParamValue;
 
 #[test]
@@ -631,7 +632,7 @@ fn should_encode_empty_row_buffer_columnar_with_compression() {
 fn should_encode_nonempty_row_buffer_row_major() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("id".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(1i32.to_le_bytes().to_vec())]);
     let bytes = encode_query_result_payload(buffer, false, false).expect("encode");
     assert!(!bytes.is_empty());
 }
@@ -732,13 +733,13 @@ fn should_map_negative_odbc_row_count_none_to_zero() {
 fn should_encode_columnar_payload_with_multiple_rows() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("n".to_string(), OdbcType::Integer);
-    buffer.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
-    buffer.add_row(vec![Some(2i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(1i32.to_le_bytes().to_vec())]);
+    buffer.add_row_vecs(vec![Some(2i32.to_le_bytes().to_vec())]);
     let bytes = {
         let mut columnar_buf = RowBuffer::new();
         columnar_buf.add_column("n".to_string(), OdbcType::Integer);
-        columnar_buf.add_row(vec![Some(1i32.to_le_bytes().to_vec())]);
-        columnar_buf.add_row(vec![Some(2i32.to_le_bytes().to_vec())]);
+        columnar_buf.add_row_vecs(vec![Some(1i32.to_le_bytes().to_vec())]);
+        columnar_buf.add_row_vecs(vec![Some(2i32.to_le_bytes().to_vec())]);
         encode_query_result_payload(columnar_buf, true, false).expect("columnar encode")
     };
     assert!(!bytes.is_empty());

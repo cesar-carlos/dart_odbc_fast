@@ -25,7 +25,7 @@ fn benchmark_encode_small_buffer(c: &mut Criterion) {
     buffer.add_column("id".to_string(), OdbcType::Integer);
     buffer.add_column("name".to_string(), OdbcType::Varchar);
     for i in 0i32..100 {
-        buffer.add_row(vec![
+        buffer.add_row_vecs(vec![
             Some(i.to_le_bytes().to_vec()),
             Some(format!("user_{}", i).into_bytes()),
         ]);
@@ -40,7 +40,7 @@ fn benchmark_encode_with_compression(c: &mut Criterion) {
     buffer.add_column("id".to_string(), OdbcType::Integer);
     buffer.add_column("name".to_string(), OdbcType::Varchar);
     for i in 0i32..1000 {
-        buffer.add_row(vec![
+        buffer.add_row_vecs(vec![
             Some(i.to_le_bytes().to_vec()),
             Some(format!("user_{}", i).into_bytes()),
         ]);

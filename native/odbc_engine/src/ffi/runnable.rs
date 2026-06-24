@@ -1,14 +1,12 @@
-use crate::engine::{
-    execute_query_with_cached_connection, execute_query_with_param_buffer_encoding, ResultEncoding,
-    SharedHandleManager,
-};
+use crate::engine::query::ResultEncoding;
+use crate::engine::SharedHandleManager;
 pub(crate) use crate::error::{OdbcError, Result};
 use crate::handles::SharedConnection;
 pub(crate) use crate::pool::SharedPooledConnection;
 use std::os::raw::c_uint;
 pub(crate) use std::time::Instant;
 
-use super::global::try_cached_legacy_params;
+use super::global::try_cached_params_with_encoding;
 
 use super::global_state::{
     set_connection_error, set_connection_structured_error, set_out_written_zero,
@@ -282,15 +280,10 @@ pub(crate) fn run_async_query(
     let result = match &mut target {
         RunnableConnection::Regular(conn_arc) => match conn_arc.lock() {
             Ok(mut conn_guard) => {
-                if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
-                    execute_query_with_cached_connection(&mut conn_guard, sql)
+                if params_slice.is_empty() {
+                    conn_guard.execute_with_encoding(sql, encoding)
                 } else {
-                    execute_query_with_param_buffer_encoding(
-                        conn_guard.connection(),
-                        sql,
-                        params_slice,
-                        encoding,
-                    )
+                    try_cached_params_with_encoding(&mut conn_guard, sql, params_slice, encoding)
                 }
             }
             Err(_) => Err(OdbcError::InternalError(
@@ -301,13 +294,11 @@ pub(crate) fn run_async_query(
             let mut conn_guard = pooled.lock().map_err(|_| {
                 OdbcError::InternalError("Failed to lock pooled connection".to_string())
             })?;
-            if encoding == ResultEncoding::RowMajor && params_slice.is_empty() {
-                execute_query_with_cached_connection(conn_guard.cached_mut(), sql)
-            } else if encoding == ResultEncoding::RowMajor && !params_slice.is_empty() {
-                try_cached_legacy_params(conn_guard.cached_mut(), sql, params_slice)
+            if params_slice.is_empty() {
+                conn_guard.cached_mut().execute_with_encoding(sql, encoding)
             } else {
-                execute_query_with_param_buffer_encoding(
-                    conn_guard.get_connection(),
+                try_cached_params_with_encoding(
+                    conn_guard.cached_mut(),
                     sql,
                     params_slice,
                     encoding,
