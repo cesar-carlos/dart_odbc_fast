@@ -111,6 +111,60 @@ fn test_ffi_transaction_workflow() {
     assert_eq!(dr, 0);
 }
 
+/// Regression: when `Arc::try_unwrap` failed because a concurrent savepoint
+/// call still held a clone, commit used to drop the registry handle — the
+/// transaction vanished ("Invalid transaction ID" on retry) and the surviving
+/// clone auto-rolled back committed-in-flight work via `Drop`. The busy
+/// transaction must stay registered so the caller can retry.
+#[test]
+#[serial(ffi_pool_txn)]
+fn should_keep_transaction_registered_when_commit_races_savepoint_clone() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+
+    odbc_init();
+    let conn_cstr = CString::new(dsn.as_str()).unwrap();
+    let conn_id = odbc_connect(conn_cstr.as_ptr());
+    assert!(conn_id > 0);
+
+    let txn_id = odbc_transaction_begin(conn_id, 1, 0);
+    assert!(txn_id > 0);
+
+    // Simulate a concurrent savepoint call holding a clone of the handle.
+    let concurrent_clone = {
+        let Some(state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        state
+            .transactions
+            .get(&txn_id)
+            .cloned()
+            .expect("transaction registered after begin")
+    };
+
+    let busy_commit = odbc_transaction_commit(txn_id);
+    assert_eq!(busy_commit, 1, "busy transaction commit should fail");
+
+    {
+        let Some(state) = try_lock_global_state() else {
+            panic!("Failed to lock global state");
+        };
+        assert!(
+            state.transactions.contains_key(&txn_id),
+            "busy transaction must stay registered for retry"
+        );
+    }
+
+    drop(concurrent_clone);
+    let retry_commit = odbc_transaction_commit(txn_id);
+    assert_eq!(retry_commit, 0, "retry after clone release should commit");
+
+    let dr = odbc_disconnect(conn_id);
+    assert_eq!(dr, 0);
+}
+
 #[test]
 #[serial(ffi_pool_txn)]
 fn test_ffi_transaction_begin_rejects_concurrent_begin_on_same_connection() {

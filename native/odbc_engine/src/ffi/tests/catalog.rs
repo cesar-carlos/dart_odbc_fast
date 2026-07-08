@@ -36,7 +36,7 @@ fn should_build_catalog_cache_key_with_stable_format() {
 }
 #[test]
 #[serial]
-fn should_return_cached_catalog_columns_without_connection_lookup() {
+fn should_reject_cached_catalog_columns_for_invalid_connection() {
     odbc_init();
     odbc_metadata_cache_enable(100, 300);
 
@@ -59,17 +59,29 @@ fn should_return_cached_catalog_columns_without_connection_lookup() {
         &mut written,
     );
 
-    assert_eq!(result, 0, "cached catalog payload should be returned");
-    assert_eq!(written as usize, payload.len());
-    assert_eq!(&buffer[..written as usize], payload);
+    assert_eq!(
+        result, -1,
+        "stale cache must not mask invalid connection lookup"
+    );
+    assert_eq!(written, 0);
 }
 #[test]
-#[serial]
+#[serial(ffi_pool_txn)]
 fn should_report_cached_catalog_columns_buffer_too_small() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+
     odbc_init();
     odbc_metadata_cache_enable(100, 300);
 
-    let conn_id = next_test_invalid_id();
+    let conn_cstr = CString::new(dsn.as_str()).unwrap();
+    let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
+    assert!(pool_id > 0, "pool create should succeed");
+    let conn_id = odbc_pool_get_connection(pool_id);
+    assert!(conn_id > 0, "pool checkout should succeed");
+
     let table = CString::new("dbo.Users").unwrap();
     let payload = br#"[{"name":"id","type":4}]"#;
     let cache_key = build_catalog_cache_key(conn_id, "dbo.Users");
@@ -90,6 +102,11 @@ fn should_report_cached_catalog_columns_buffer_too_small() {
 
     assert_eq!(result, -2, "small buffer should keep FFI contract");
     assert_eq!(written as usize, payload.len());
+
+    let release = odbc_pool_release_connection(conn_id);
+    assert_eq!(release, 0);
+    let close = odbc_pool_close(pool_id);
+    assert_eq!(close, 0);
 }
 #[test]
 fn test_ffi_catalog_tables_invalid_conn() {

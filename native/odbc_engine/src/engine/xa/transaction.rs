@@ -159,13 +159,28 @@ impl XaTransaction {
     /// the connection can be reused for other work or for
     /// `xa_prepare` on this branch.
     pub fn end(self) -> Result<PreparingXa> {
-        self.assert_state(XaState::Active, "end")?;
-        if self.is_mssql_mdtc() {
-            self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c))?;
-        } else {
-            self.run_on_conn(apply_xa_end)?;
+        self.end_preserving_active()
+            .map_err(|(error, _active)| error)
+    }
+
+    /// Like [`Self::end`] but returns the active [`XaTransaction`] handle
+    /// on failure so the FFI layer can re-register the `xa_id` for retry
+    /// instead of dropping it (which would auto-rollback via [`Drop`]).
+    pub fn end_preserving_active(self) -> std::result::Result<PreparingXa, (OdbcError, Self)> {
+        if let Err(error) = self.assert_state(XaState::Active, "end") {
+            return Err((error, self));
         }
-        self.set_state(XaState::Idle)?;
+        let driver_result = if self.is_mssql_mdtc() {
+            self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c))
+        } else {
+            self.run_on_conn(apply_xa_end)
+        };
+        if let Err(error) = driver_result {
+            return Err((error, self));
+        }
+        if let Err(error) = self.set_state(XaState::Idle) {
+            return Err((error, self));
+        }
         Ok(PreparingXa { inner: self })
     }
 
@@ -174,39 +189,53 @@ impl XaTransaction {
     /// write of the prepare log. **Only safe when no other RM has
     /// enlisted in the same global transaction.**
     #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
-    pub fn commit_one_phase(mut self) -> Result<()> {
-        self.assert_state(XaState::Active, "commit_one_phase")?;
+    pub fn commit_one_phase(self) -> Result<()> {
+        self.commit_one_phase_preserving_active()
+            .map_err(|(error, _active)| error)
+    }
+
+    /// Like [`Self::commit_one_phase`] but returns the active [`XaTransaction`]
+    /// handle on failure so the FFI layer can re-register the `xa_id` for retry.
+    #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
+    pub fn commit_one_phase_preserving_active(
+        mut self,
+    ) -> std::result::Result<(), (OdbcError, Self)> {
+        if let Err(error) = self.assert_state(XaState::Active, "commit_one_phase") {
+            return Err((error, self));
+        }
         if self.is_mssql_mdtc() {
-            // Single-RM: unenlist then commit the MSDTC unit of work.
-            self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c))?;
+            if let Err(error) = self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c)) {
+                return Err((error, self));
+            }
             #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
             {
                 if let Some(b) = self.dtc_branch.take() {
-                    b.commit()?;
+                    if let Err(error) = b.commit() {
+                        return Err((error, self));
+                    }
                 }
             }
-            self.set_state(XaState::Committed)?;
+            if let Err(error) = self.set_state(XaState::Committed) {
+                return Err((error, self));
+            }
             let _ = self.try_restore_autocommit();
             return Ok(());
         }
-        // Engine semantics: ONE_PHASE flag on `xa_commit`. The SQL-level
-        // backends emit `XA END` followed immediately by
-        // `XA COMMIT ... ONE PHASE` (MySQL/DB2) or by the
-        // PostgreSQL plain `COMMIT` (the txn was never PREPAREd).
-        self.run_on_conn(apply_xa_end)?;
+        if let Err(error) = self.run_on_conn(apply_xa_end) {
+            return Err((error, self));
+        }
         let r = self.run_on_conn(|conn, engine_id, xid| {
             apply_xa_commit(conn, engine_id, xid, /* one_phase = */ true)
         });
-        let restore_autocommit = self.try_restore_autocommit();
-        match (r, restore_autocommit) {
-            (Ok(()), _) => {
-                self.set_state(XaState::Committed)?;
+        let _ = self.try_restore_autocommit();
+        match r {
+            Ok(()) => {
+                if let Err(error) = self.set_state(XaState::Committed) {
+                    return Err((error, self));
+                }
                 Ok(())
             }
-            (Err(e), _) => {
-                self.set_state(XaState::Failed)?;
-                Err(e)
-            }
+            Err(error) => Err((error, self)),
         }
     }
 
@@ -215,8 +244,18 @@ impl XaTransaction {
     /// gone — there is no recovery path because no prepare-log entry
     /// exists.
     #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
-    pub fn rollback(mut self) -> Result<()> {
-        self.assert_state(XaState::Active, "rollback")?;
+    pub fn rollback(self) -> Result<()> {
+        self.rollback_preserving_active()
+            .map_err(|(error, _active)| error)
+    }
+
+    /// Like [`Self::rollback`] but returns the active [`XaTransaction`] handle
+    /// on failure so the FFI layer can re-register the `xa_id` for retry.
+    #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
+    pub fn rollback_preserving_active(mut self) -> std::result::Result<(), (OdbcError, Self)> {
+        if let Err(error) = self.assert_state(XaState::Active, "rollback") {
+            return Err((error, self));
+        }
         if self.is_mssql_mdtc() {
             let _ = self.run_on_conn(|c, _e, _x| mssql_mdtc_unenlist(c));
             #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
@@ -226,7 +265,9 @@ impl XaTransaction {
                 }
             }
             let _ = self.try_restore_autocommit();
-            self.set_state(XaState::RolledBack)?;
+            if let Err(error) = self.set_state(XaState::RolledBack) {
+                return Err((error, self));
+            }
             return Ok(());
         }
         let _ = self.run_on_conn(apply_xa_end);
@@ -234,13 +275,12 @@ impl XaTransaction {
         let _ = self.try_restore_autocommit();
         match r {
             Ok(()) => {
-                self.set_state(XaState::RolledBack)?;
+                if let Err(error) = self.set_state(XaState::RolledBack) {
+                    return Err((error, self));
+                }
                 Ok(())
             }
-            Err(e) => {
-                self.set_state(XaState::Failed)?;
-                Err(e)
-            }
+            Err(error) => Err((error, self)),
         }
     }
 
@@ -340,12 +380,23 @@ impl PreparingXa {
     /// **heuristically committable** — its outcome survives a process
     /// crash and can be resolved later via [`recover_prepared_xids`].
     pub fn prepare(self) -> Result<PreparedXa> {
+        self.prepare_preserving_idle()
+            .map_err(|(error, _preparing)| error)
+    }
+
+    /// Like [`Self::prepare`] but returns the idle [`PreparingXa`] handle
+    /// on failure so the FFI layer can re-register the `xa_id` for retry.
+    pub fn prepare_preserving_idle(self) -> std::result::Result<PreparedXa, (OdbcError, Self)> {
         #[allow(unused_mut)] // `dtc_branch.take()` only with `xa-dtc` on Windows
         let mut inner = self.inner;
-        inner.assert_state(XaState::Idle, "prepare")?;
+        if let Err(error) = inner.assert_state(XaState::Idle, "prepare") {
+            return Err((error, Self { inner }));
+        }
         if inner.is_mssql_mdtc() {
             // MSDTC: no SQL PREPARE — branch is already coordinated by DTC.
-            inner.set_state(XaState::Prepared)?;
+            if let Err(error) = inner.set_state(XaState::Prepared) {
+                return Err((error, Self { inner }));
+            }
             let _ = inner.try_restore_autocommit();
             let handles = inner.handles.clone();
             let conn_id = inner.conn_id;
@@ -368,7 +419,9 @@ impl PreparingXa {
         let r = inner.run_on_conn(apply_xa_prepare);
         match r {
             Ok(()) => {
-                inner.set_state(XaState::Prepared)?;
+                if let Err(error) = inner.set_state(XaState::Prepared) {
+                    return Err((error, Self { inner }));
+                }
                 let _ = inner.try_restore_autocommit();
                 Ok(PreparedXa {
                     handles: inner.handles.clone(),
@@ -380,10 +433,9 @@ impl PreparingXa {
                     dtc_branch: None,
                 })
             }
-            Err(e) => {
-                inner.set_state(XaState::Failed)?;
+            Err(error) => {
                 let _ = inner.try_restore_autocommit();
-                Err(e)
+                Err((error, Self { inner }))
             }
         }
     }
@@ -434,34 +486,61 @@ impl PreparedXa {
     /// success only when the engine confirmed the commit hit stable
     /// storage.
     pub fn commit(self) -> Result<()> {
-        self.assert_state(XaState::Prepared, "commit")?;
+        self.commit_preserving_prepared()
+            .map_err(|(error, _prepared)| error)
+    }
+
+    /// Like [`Self::commit`] but returns the prepared handle on failure so the
+    /// FFI layer can re-register the `xa_id` for retry.
+    pub fn commit_preserving_prepared(self) -> std::result::Result<(), (OdbcError, Self)> {
+        if let Err(error) = self.assert_state(XaState::Prepared, "commit") {
+            return Err((error, self));
+        }
         #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
         {
             let state = self.state.clone();
             if let Some(b) = self.dtc_branch {
                 let r = b.commit();
-                match r {
+                return match r {
                     Ok(()) => {
-                        set_xa_state(&state, XaState::Committed)?;
-                        return Ok(());
+                        if let Err(error) = set_xa_state(&state, XaState::Committed) {
+                            return Err((
+                                error,
+                                Self {
+                                    handles: self.handles,
+                                    conn_id: self.conn_id,
+                                    xid: self.xid,
+                                    engine_id: self.engine_id,
+                                    state: self.state,
+                                    dtc_branch: None,
+                                },
+                            ));
+                        }
+                        Ok(())
                     }
-                    Err(e) => {
-                        set_xa_state(&state, XaState::Failed)?;
-                        return Err(e);
-                    }
-                }
+                    Err(error) => Err((
+                        error,
+                        Self {
+                            handles: self.handles,
+                            conn_id: self.conn_id,
+                            xid: self.xid,
+                            engine_id: self.engine_id,
+                            state: self.state,
+                            dtc_branch: None,
+                        },
+                    )),
+                };
             }
         }
         let r = self.run_on_conn(|c, e, x| apply_xa_commit(c, e, x, false));
         match r {
             Ok(()) => {
-                self.set_state(XaState::Committed)?;
+                if let Err(error) = self.set_state(XaState::Committed) {
+                    return Err((error, self));
+                }
                 Ok(())
             }
-            Err(e) => {
-                self.set_state(XaState::Failed)?;
-                Err(e)
-            }
+            Err(error) => Err((error, self)),
         }
     }
 
@@ -470,34 +549,61 @@ impl PreparedXa {
     /// the prepare-log entry outlives the connection; the SQL-XA
     /// family (MySQL/MariaDB/DB2) reuses `XA ROLLBACK`.
     pub fn rollback(self) -> Result<()> {
-        self.assert_state(XaState::Prepared, "rollback")?;
+        self.rollback_preserving_prepared()
+            .map_err(|(error, _prepared)| error)
+    }
+
+    /// Like [`Self::rollback`] but returns the prepared handle on failure so
+    /// the FFI layer can re-register the `xa_id` for retry.
+    pub fn rollback_preserving_prepared(self) -> std::result::Result<(), (OdbcError, Self)> {
+        if let Err(error) = self.assert_state(XaState::Prepared, "rollback") {
+            return Err((error, self));
+        }
         #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
         {
             let state = self.state.clone();
             if let Some(b) = self.dtc_branch {
                 let r = b.abort();
-                match r {
+                return match r {
                     Ok(()) => {
-                        set_xa_state(&state, XaState::RolledBack)?;
-                        return Ok(());
+                        if let Err(error) = set_xa_state(&state, XaState::RolledBack) {
+                            return Err((
+                                error,
+                                Self {
+                                    handles: self.handles,
+                                    conn_id: self.conn_id,
+                                    xid: self.xid,
+                                    engine_id: self.engine_id,
+                                    state: self.state,
+                                    dtc_branch: None,
+                                },
+                            ));
+                        }
+                        Ok(())
                     }
-                    Err(e) => {
-                        set_xa_state(&state, XaState::Failed)?;
-                        return Err(e);
-                    }
-                }
+                    Err(error) => Err((
+                        error,
+                        Self {
+                            handles: self.handles,
+                            conn_id: self.conn_id,
+                            xid: self.xid,
+                            engine_id: self.engine_id,
+                            state: self.state,
+                            dtc_branch: None,
+                        },
+                    )),
+                };
             }
         }
         let r = self.run_on_conn(apply_xa_rollback_prepared);
         match r {
             Ok(()) => {
-                self.set_state(XaState::RolledBack)?;
+                if let Err(error) = self.set_state(XaState::RolledBack) {
+                    return Err((error, self));
+                }
                 Ok(())
             }
-            Err(e) => {
-                self.set_state(XaState::Failed)?;
-                Err(e)
-            }
+            Err(error) => Err((error, self)),
         }
     }
 

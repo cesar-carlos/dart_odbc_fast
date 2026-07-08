@@ -281,15 +281,16 @@ pub extern "C" fn odbc_get_connection_dbms_info(
                 return -1;
             }
         };
+        let mut target_guard = RunnableTargetGuard::new(conn_id, target);
         drop(state);
 
-        let info_result = detect_dbms_info_on_runnable(&target);
+        let info_result = detect_dbms_info_on_runnable(target_guard.target_mut());
 
         let Some(mut state) = try_lock_global_state() else {
             set_out_written_zero(out_written);
             return -1;
         };
-        restore_pooled_connection(&mut state, conn_id, target);
+        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
         let info = match info_result {
             Ok(value) => value,

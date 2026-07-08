@@ -126,7 +126,7 @@ pub extern "C" fn odbc_pool_release_connection(connection_id: c_uint) -> c_int {
 
 /// Health check for pool
 /// pool_id: pool ID
-/// Returns: 1 if healthy, 0 if unhealthy
+/// Returns: 1 if healthy, 0 if unhealthy, -1 on error (invalid pool or internal failure)
 #[no_mangle]
 pub extern "C" fn odbc_pool_health_check(pool_id: c_uint) -> c_int {
     crate::ffi_guard_int!({ pool_health_check(pool_id) })

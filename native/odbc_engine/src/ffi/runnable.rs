@@ -98,6 +98,57 @@ pub(crate) fn decrement_pooled_busy_counts(state: &mut GlobalState, pool_id: u32
     }
 }
 
+/// Restores pooled busy-count reservations from [`take_runnable_connection`]
+/// when an ODBC call returns without an explicit [`restore_pooled_connection`].
+pub(crate) struct RunnableTargetGuard {
+    conn_id: u32,
+    target: Option<RunnableConnection>,
+}
+
+impl RunnableTargetGuard {
+    pub(crate) fn new(conn_id: u32, target: RunnableConnection) -> Self {
+        Self {
+            conn_id,
+            target: Some(target),
+        }
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.target = None;
+    }
+
+    pub(crate) fn target_mut(&mut self) -> &mut RunnableConnection {
+        self.target
+            .as_mut()
+            .expect("RunnableTargetGuard disarmed before ODBC call")
+    }
+
+    pub(crate) fn take_target(&mut self) -> RunnableConnection {
+        let target = self
+            .target
+            .take()
+            .expect("RunnableTargetGuard target already taken");
+        self.disarm();
+        target
+    }
+}
+
+impl Drop for RunnableTargetGuard {
+    fn drop(&mut self) {
+        if let Some(target) = self.target.take() {
+            if let Some(mut state) = try_lock_global_state() {
+                restore_pooled_connection(&mut state, self.conn_id, target);
+            } else {
+                log::error!(
+                    "RunnableTargetGuard: failed to re-acquire global state to restore pooled \
+                     busy counts for conn_id {} — pool may remain marked busy until process restart",
+                    self.conn_id
+                );
+            }
+        }
+    }
+}
+
 pub(crate) enum StreamStartTarget {
     Regular {
         handles: SharedHandleManager,
@@ -196,7 +247,7 @@ where
     };
     let metrics = state::ffi_metrics();
     let start = Instant::now();
-    let mut target = match take_runnable_connection(&mut state, conn_id) {
+    let target = match take_runnable_connection(&mut state, conn_id) {
         Ok(target) => target,
         Err(e) => {
             set_connection_structured_error(&mut state, conn_id, e.to_structured());
@@ -204,9 +255,10 @@ where
             return -1;
         }
     };
+    let mut target_guard = RunnableTargetGuard::new(conn_id, target);
     drop(state);
 
-    let result = if let RunnableConnection::Regular(conn_arc) = &mut target {
+    let result = if let RunnableConnection::Regular(conn_arc) = target_guard.target_mut() {
         let conn_guard = match conn_arc.lock() {
             Ok(g) => g,
             Err(_) => {
@@ -221,14 +273,14 @@ where
         };
         run(conn_guard.connection())
     } else {
-        target.with_connection(run)
+        target_guard.target_mut().with_connection(run)
     };
 
     let Some(mut state) = try_lock_global_state() else {
         set_out_written_zero(out_written);
         return -1;
     };
-    restore_pooled_connection(&mut state, conn_id, target);
+    restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
     match result {
         Ok(data) => {
@@ -273,11 +325,12 @@ pub(crate) fn run_async_query(
     state::ffi_audit_logger().log_query(conn_id, sql);
     let metrics = state::ffi_metrics();
     let start = Instant::now();
-    let mut target = take_runnable_connection(&mut state, conn_id)?;
+    let target = take_runnable_connection(&mut state, conn_id)?;
+    let mut target_guard = RunnableTargetGuard::new(conn_id, target);
     drop(state);
 
     let params_slice = params.unwrap_or(&[]);
-    let result = match &mut target {
+    let result = match target_guard.target_mut() {
         RunnableConnection::Regular(conn_arc) => match conn_arc.lock() {
             Ok(mut conn_guard) => {
                 if params_slice.is_empty() {
@@ -312,7 +365,7 @@ pub(crate) fn run_async_query(
             "Failed to lock global state".to_string(),
         ));
     };
-    restore_pooled_connection(&mut state, conn_id, target);
+    restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
     if result.is_ok() {
         metrics.record_query(start.elapsed());

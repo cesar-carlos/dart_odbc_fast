@@ -67,19 +67,24 @@ pub extern "C" fn odbc_catalog_columns(
 
         let cache_key = build_catalog_cache_key(conn_id, table_str);
         if let Some(cached_data) = state.metadata_cache.get_payload_shared(&cache_key) {
-            return write_connection_output_buffer(
-                &mut state,
-                conn_id,
-                cached_data.as_ref(),
-                out_buffer,
-                buffer_len,
-                out_written,
-            );
+            if state::contains_connection(conn_id)
+                || state.pooled_connections.contains_key(&conn_id)
+            {
+                return write_connection_output_buffer(
+                    &mut state,
+                    conn_id,
+                    cached_data.as_ref(),
+                    out_buffer,
+                    buffer_len,
+                    out_written,
+                );
+            }
+            state.metadata_cache.remove_payload(&cache_key);
         }
 
         let metrics = state::ffi_metrics();
         let start = Instant::now();
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
+        let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
             Err(e) => {
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
@@ -87,14 +92,16 @@ pub extern "C" fn odbc_catalog_columns(
                 return -1;
             }
         };
+        let mut target_guard = RunnableTargetGuard::new(conn_id, target);
         drop(state);
 
-        let result = match &mut target {
+        let result = match target_guard.target_mut() {
             RunnableConnection::Regular(conn_arc) => {
                 let conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
                     Err(_) => {
                         let Some(mut state) = try_lock_global_state() else {
+                            set_out_written_zero(out_written);
                             return -1;
                         };
                         set_connection_error(
@@ -102,6 +109,7 @@ pub extern "C" fn odbc_catalog_columns(
                             conn_id,
                             "Failed to lock connection".to_string(),
                         );
+                        set_out_written_zero(out_written);
                         return -1;
                     }
                 };
@@ -116,9 +124,10 @@ pub extern "C" fn odbc_catalog_columns(
         };
 
         let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
             return -1;
         };
-        restore_pooled_connection(&mut state, conn_id, target);
+        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
         match result {
             Ok(data) => {

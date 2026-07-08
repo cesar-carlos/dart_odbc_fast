@@ -114,6 +114,52 @@ fn test_ffi_exec_query_null_out_buffer() {
     assert_eq!(result, -1, "Null output buffer should return -1");
 }
 
+/// Regression: `odbc_exec_query_multi` used to leave `out_written` untouched
+/// on the invalid-connection and execution-error paths, so callers reading it
+/// after `-1` observed stale values.
+#[test]
+fn should_zero_out_written_when_multi_query_connection_invalid() {
+    odbc_init();
+
+    let sql = CString::new("SELECT 1").unwrap();
+    let mut buffer = vec![0u8; 1024];
+    let mut written: c_uint = 99;
+
+    let result = odbc_exec_query_multi(
+        TEST_INVALID_ID,
+        sql.as_ptr(),
+        buffer.as_mut_ptr(),
+        buffer.len() as c_uint,
+        &mut written,
+    );
+
+    assert_eq!(result, -1, "Invalid connection ID should return -1");
+    assert_eq!(written, 0, "out_written must be zeroed on error");
+}
+
+/// Same regression contract as above for the parameterised multi entry point.
+#[test]
+fn should_zero_out_written_when_multi_params_query_connection_invalid() {
+    odbc_init();
+
+    let sql = CString::new("SELECT 1").unwrap();
+    let mut buffer = vec![0u8; 1024];
+    let mut written: c_uint = 99;
+
+    let result = odbc_exec_query_multi_params(
+        TEST_INVALID_ID,
+        sql.as_ptr(),
+        std::ptr::null(),
+        0,
+        buffer.as_mut_ptr(),
+        buffer.len() as c_uint,
+        &mut written,
+    );
+
+    assert_eq!(result, -1, "Invalid connection ID should return -1");
+    assert_eq!(written, 0, "out_written must be zeroed on error");
+}
+
 #[test]
 fn test_odbc_get_metrics_success() {
     odbc_init();

@@ -430,6 +430,20 @@ fn xa_transaction_commit_one_phase_rejects_when_state_idle() {
 }
 
 #[test]
+fn should_return_active_handle_when_commit_one_phase_preserving_fails_validation() {
+    let xa = XaTransaction::from_test_state(XaState::Idle, ENGINE_MYSQL, sample_xid());
+    let result = xa.commit_one_phase_preserving_active();
+    match result {
+        Err((OdbcError::ValidationError(msg), returned)) => {
+            assert!(msg.contains("XaTransaction::commit_one_phase"));
+            assert_eq!(returned.state(), XaState::Idle);
+        }
+        Ok(()) => panic!("expected ValidationError with handle"),
+        Err(_) => panic!("expected ValidationError with handle"),
+    }
+}
+
+#[test]
 fn xa_transaction_rollback_rejects_when_state_prepared() {
     let xa = XaTransaction::from_test_state(XaState::Prepared, ENGINE_DB2, sample_xid());
     let r = xa.rollback();

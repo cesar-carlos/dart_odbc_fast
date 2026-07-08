@@ -35,7 +35,7 @@ pub extern "C" fn odbc_exec_query(
         let metrics = state::ffi_metrics();
         let start = Instant::now();
 
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
+        let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
             Err(e) => {
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
@@ -43,9 +43,10 @@ pub extern "C" fn odbc_exec_query(
                 return -1;
             }
         };
+        let mut target_guard = RunnableTargetGuard::new(conn_id, target);
         drop(state);
 
-        let result = match &mut target {
+        let result = match target_guard.target_mut() {
             RunnableConnection::Regular(conn_arc) => {
                 let mut conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
@@ -79,7 +80,7 @@ pub extern "C" fn odbc_exec_query(
             set_out_written_zero(out_written);
             return -1;
         };
-        restore_pooled_connection(&mut state, conn_id, target);
+        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
         match result {
             Ok(data) => {

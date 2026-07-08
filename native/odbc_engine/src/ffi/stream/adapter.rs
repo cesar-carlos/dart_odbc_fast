@@ -40,6 +40,7 @@ pub(crate) fn stream_start(conn_id: u32, sql: *const c_char, chunk_size: u32) ->
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
+    state::ffi_audit_logger().log_query(conn_id, sql_str);
     let mut target = match take_runnable_connection(&mut state, conn_id) {
         Ok(target) => target,
         Err(e) => {
@@ -107,6 +108,11 @@ pub(crate) fn stream_start(conn_id: u32, sql: *const c_char, chunk_size: u32) ->
         Ok(stream_state) => {
             let stream_id = state::allocate_stream_id(conn_id);
             if stream_id == 0 {
+                set_connection_error(
+                    &mut state,
+                    conn_id,
+                    "Failed to allocate stream ID".to_string(),
+                );
                 return 0;
             }
             state::insert_stream(stream_id, conn_id, StreamKind::Buffer(stream_state));
@@ -138,6 +144,8 @@ fn start_batched_stream_common(
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
+
+    state::ffi_audit_logger().log_query(conn_id, sql_str);
 
     let reservation = match reserve_stream_start(&mut state, conn_id) {
         Ok(reservation) => reservation,
@@ -255,6 +263,8 @@ fn start_async_stream_common(
         return 0;
     };
 
+    state::ffi_audit_logger().log_query(conn_id, sql_str);
+
     let reservation = match reserve_stream_start(&mut state, conn_id) {
         Ok(reservation) => reservation,
         Err(e) => {
@@ -370,6 +380,7 @@ fn start_multi_batched_common(
     let Some(mut state) = try_lock_global_state() else {
         return 0;
     };
+    state::ffi_audit_logger().log_query(conn_id, sql_str);
     let reservation = match reserve_stream_start(&mut state, conn_id) {
         Ok(reservation) => reservation,
         Err(e) => {

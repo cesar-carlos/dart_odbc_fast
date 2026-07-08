@@ -14,6 +14,43 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::Arc;
 
+/// Clears [`GlobalState::transaction_begins_in_progress`] when a begin call
+/// returns without an explicit remove (for example global-state re-lock failure).
+struct TransactionBeginReservation {
+    conn_id: u32,
+    armed: bool,
+}
+
+impl TransactionBeginReservation {
+    fn new(conn_id: u32) -> Self {
+        Self {
+            conn_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TransactionBeginReservation {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(mut state) = try_lock_global_state() {
+                state.transaction_begins_in_progress.remove(&self.conn_id);
+            } else {
+                log::error!(
+                    "TransactionBeginReservation: failed to re-acquire global state to clear \
+                     transaction begin reservation for conn_id {} — connection may remain \
+                     blocked from new transactions until process restart",
+                    self.conn_id
+                );
+            }
+        }
+    }
+}
+
 /// Begin a new transaction.
 /// conn_id: connection ID from odbc_connect
 /// isolation_level: 0=ReadUncommitted, 1=ReadCommitted, 2=RepeatableRead, 3=Serializable
@@ -138,6 +175,7 @@ pub extern "C" fn odbc_transaction_begin_v3(
             return 0;
         }
         state.transaction_begins_in_progress.insert(conn_id);
+        let mut begin_reservation = TransactionBeginReservation::new(conn_id);
         drop(state);
 
         // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
@@ -164,22 +202,10 @@ pub extern "C" fn odbc_transaction_begin_v3(
         };
 
         let Some(mut state) = try_lock_global_state() else {
-            // Global state mutex is poisoned. We cannot remove conn_id from
-            // transaction_begins_in_progress, which means future transaction
-            // begins on this connection will be permanently blocked with
-            // "Transaction begin already in progress". This is an
-            // unrecoverable library state; log the condition so operators
-            // are aware. The Transaction value returned by begin_with_lock_timeout
-            // (if successful) will attempt a best-effort auto-rollback via its
-            // Drop impl when it goes out of scope here.
-            log::error!(
-                "odbc_transaction_begin_v3: global state is poisoned after transaction begin \
-                 for conn_id {}; the connection is permanently blocked from new transactions",
-                conn_id
-            );
             return 0;
         };
         state.transaction_begins_in_progress.remove(&conn_id);
+        begin_reservation.disarm();
         match txn_result {
             Ok(txn) => {
                 let connection_still_valid = state::contains_connection(conn_id)
@@ -250,6 +276,26 @@ pub extern "C" fn odbc_transaction_begin_v3(
     })
 }
 
+/// Re-registers a transaction whose `Arc::try_unwrap` failed because a
+/// concurrent savepoint call still holds a clone. Dropping the handle here
+/// would let the last clone trigger the `Transaction` auto-rollback `Drop`
+/// while the caller believes the transaction still exists; restoring it keeps
+/// the registry consistent and makes commit/rollback retryable.
+fn restore_busy_transaction(txn_id: c_uint, txn_conn_id: u32, txn_arc: Arc<Transaction>, op: &str) {
+    log::warn!(
+        "odbc_transaction_{op}: transaction {txn_id} is still referenced (concurrent savepoint \
+         in flight); {op} aborted and transaction kept registered for retry"
+    );
+    if let Some(mut state) = try_lock_global_state() {
+        state.transactions.insert(txn_id, txn_arc);
+        set_connection_error(
+            &mut state,
+            txn_conn_id,
+            format!("Transaction {txn_id} is busy (concurrent savepoint call); retry {op}"),
+        );
+    }
+}
+
 /// Commit a transaction.
 /// txn_id: transaction ID from odbc_transaction_begin
 /// Returns: 0 on success, non-zero on failure
@@ -263,11 +309,15 @@ pub extern "C" fn odbc_transaction_commit(txn_id: c_uint) -> c_int {
         if let Some(txn_arc) = state.transactions.remove(&txn_id) {
             let txn_conn_id = txn_arc.conn_id();
             drop(state);
-            let Ok(txn) = Arc::try_unwrap(txn_arc) else {
-                log::error!(
-                    "odbc_transaction_commit: transaction {txn_id} is still referenced; commit aborted"
-                );
-                return 1;
+            let txn = match Arc::try_unwrap(txn_arc) {
+                Ok(txn) => txn,
+                Err(txn_arc) => {
+                    // A concurrent savepoint call still holds a clone. Put the
+                    // handle back so the caller can retry instead of losing the
+                    // transaction to a Drop auto-rollback.
+                    restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "commit");
+                    return 1;
+                }
             };
             match txn.commit() {
                 Ok(_) => 0,
@@ -302,11 +352,14 @@ pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
         if let Some(txn_arc) = state.transactions.remove(&txn_id) {
             let txn_conn_id = txn_arc.conn_id();
             drop(state);
-            let Ok(txn) = Arc::try_unwrap(txn_arc) else {
-                log::error!(
-                    "odbc_transaction_rollback: transaction {txn_id} is still referenced; rollback aborted"
-                );
-                return 1;
+            let txn = match Arc::try_unwrap(txn_arc) {
+                Ok(txn) => txn,
+                Err(txn_arc) => {
+                    // See commit path: keep the transaction registered so the
+                    // caller can retry once the concurrent user releases it.
+                    restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "rollback");
+                    return 1;
+                }
             };
             match txn.rollback() {
                 Ok(_) => 0,

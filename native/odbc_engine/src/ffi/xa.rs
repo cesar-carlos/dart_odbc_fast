@@ -38,11 +38,21 @@ use std::os::raw::{c_int, c_uint};
 // retrievable through `odbc_get_structured_error_for_connection`.
 // =========================================================================
 
+/// X/Open XID component limit (`gtrid` / `bqual` are each at most 64
+/// bytes). Enforced here *before* any allocation or read so a hostile
+/// length can neither force a multi-gigabyte allocation nor a wild
+/// out-of-bounds read; `Xid::new` re-validates with precise messages.
+pub(crate) const XA_MAX_COMPONENT_LEN: c_uint = 64;
+
 /// Helper: copy a buffer-with-length pair from FFI into an owned
 /// `Vec<u8>` with explicit length validation. `null` ptr with
 /// `len == 0` is OK (empty bqual is valid). Otherwise we reject
-/// rather than dereferencing a null pointer.
+/// rather than dereferencing a null pointer. Lengths above
+/// [`XA_MAX_COMPONENT_LEN`] are rejected before any read.
 pub(crate) fn xa_read_buffer(ptr: *const u8, len: c_uint) -> Option<Vec<u8>> {
+    if len > XA_MAX_COMPONENT_LEN {
+        return None;
+    }
     if ptr.is_null() {
         if len == 0 {
             return Some(Vec::new());
@@ -66,6 +76,196 @@ fn xa_alloc_id(state: &mut GlobalState) -> Option<u32> {
         }
     }
     None
+}
+
+enum XaEndPending {
+    Preparing(PreparingXa),
+    Active(XaTransaction),
+}
+
+/// Re-inserts an XA handle when global-state re-lock fails after `xa_end`.
+struct XaEndReinsertGuard {
+    xa_id: u32,
+    pending: Option<XaEndPending>,
+}
+
+impl XaEndReinsertGuard {
+    fn new(xa_id: u32) -> Self {
+        Self {
+            xa_id,
+            pending: None,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.pending = None;
+    }
+}
+
+impl Drop for XaEndReinsertGuard {
+    fn drop(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        if let Some(mut state) = try_lock_global_state() {
+            match pending {
+                XaEndPending::Preparing(preparing) => {
+                    state.xa_preparing.insert(self.xa_id, preparing);
+                }
+                XaEndPending::Active(xa) => {
+                    state.xa_active.insert(self.xa_id, xa);
+                }
+            }
+        } else {
+            log::error!(
+                "XaEndReinsertGuard: failed to re-acquire global state for xa_id {} — \
+                 XA handle may be lost until process restart",
+                self.xa_id
+            );
+        }
+    }
+}
+
+enum XaPreparePending {
+    Prepared(PreparedXa),
+    Preparing(PreparingXa),
+}
+
+/// Re-inserts an XA handle when global-state re-lock fails after `xa_prepare`.
+struct XaPrepareReinsertGuard {
+    xa_id: u32,
+    pending: Option<XaPreparePending>,
+}
+
+impl XaPrepareReinsertGuard {
+    fn new(xa_id: u32) -> Self {
+        Self {
+            xa_id,
+            pending: None,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.pending = None;
+    }
+}
+
+impl Drop for XaPrepareReinsertGuard {
+    fn drop(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        if let Some(mut state) = try_lock_global_state() {
+            match pending {
+                XaPreparePending::Prepared(prepared) => {
+                    state.xa_prepared.insert(self.xa_id, prepared);
+                }
+                XaPreparePending::Preparing(preparing) => {
+                    state.xa_preparing.insert(self.xa_id, preparing);
+                }
+            }
+        } else {
+            log::error!(
+                "XaPrepareReinsertGuard: failed to re-acquire global state for xa_id {} — \
+                 XA handle may be lost until process restart",
+                self.xa_id
+            );
+        }
+    }
+}
+
+struct XaActiveReinsertGuard {
+    xa_id: u32,
+    xa: Option<XaTransaction>,
+}
+
+impl XaActiveReinsertGuard {
+    fn disarm(&mut self) {
+        self.xa = None;
+    }
+}
+
+impl Drop for XaActiveReinsertGuard {
+    fn drop(&mut self) {
+        if let Some(xa) = self.xa.take() {
+            if let Some(mut state) = try_lock_global_state() {
+                state.xa_active.insert(self.xa_id, xa);
+            } else {
+                log::error!(
+                    "XaActiveReinsertGuard: failed to re-acquire global state for xa_id {} — \
+                     XA handle may be lost until process restart",
+                    self.xa_id
+                );
+            }
+        }
+    }
+}
+
+struct XaPreparedReinsertGuard {
+    xa_id: u32,
+    prepared: Option<PreparedXa>,
+}
+
+impl XaPreparedReinsertGuard {
+    fn disarm(&mut self) {
+        self.prepared = None;
+    }
+}
+
+impl Drop for XaPreparedReinsertGuard {
+    fn drop(&mut self) {
+        if let Some(prepared) = self.prepared.take() {
+            if let Some(mut state) = try_lock_global_state() {
+                state.xa_prepared.insert(self.xa_id, prepared);
+            } else {
+                log::error!(
+                    "XaPreparedReinsertGuard: failed to re-acquire global state for xa_id {} — \
+                     XA handle may be lost until process restart",
+                    self.xa_id
+                );
+            }
+        }
+    }
+}
+
+fn reinsert_active_xa_on_driver_failure(
+    xa_id: u32,
+    xa: XaTransaction,
+    op: &str,
+    error: OdbcError,
+) -> c_int {
+    let mut guard = XaActiveReinsertGuard {
+        xa_id,
+        xa: Some(xa),
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let xa = guard.xa.take().expect("active xa");
+    guard.disarm();
+    state.xa_active.insert(xa_id, xa);
+    set_error(&mut state, format!("{op} failed: {error}"));
+    1
+}
+
+fn reinsert_prepared_xa_on_driver_failure(
+    xa_id: u32,
+    prepared: PreparedXa,
+    op: &str,
+    error: OdbcError,
+) -> c_int {
+    let mut guard = XaPreparedReinsertGuard {
+        xa_id,
+        prepared: Some(prepared),
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
+    };
+    let prepared = guard.prepared.take().expect("prepared xa");
+    guard.disarm();
+    state.xa_prepared.insert(xa_id, prepared);
+    set_error(&mut state, format!("{op} failed: {error}"));
+    1
 }
 
 /// Start a new XA transaction branch on `conn_id`.
@@ -98,7 +298,8 @@ pub extern "C" fn odbc_xa_start(
             set_connection_error(
                 &mut state,
                 conn_id,
-                "odbc_xa_start: gtrid_ptr is null but gtrid_len > 0".to_string(),
+                "odbc_xa_start: invalid gtrid buffer (null with non-zero length, or length > 64)"
+                    .to_string(),
             );
             return 0;
         };
@@ -106,7 +307,8 @@ pub extern "C" fn odbc_xa_start(
             set_connection_error(
                 &mut state,
                 conn_id,
-                "odbc_xa_start: bqual_ptr is null but bqual_len > 0".to_string(),
+                "odbc_xa_start: invalid bqual buffer (null with non-zero length, or length > 64)"
+                    .to_string(),
             );
             return 0;
         };
@@ -132,6 +334,11 @@ pub extern "C" fn odbc_xa_start(
         // before calling XaTransaction::start (which re-locks via the
         // SharedHandleManager).
         let Some(handles) = state::connection_handles(conn_id) else {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
             return 0;
         };
         drop(state);
@@ -151,6 +358,13 @@ pub extern "C" fn odbc_xa_start(
 
         let Some(xa_id) = xa_alloc_id(&mut state) else {
             set_connection_error(&mut state, conn_id, "Failed to allocate XA ID".to_string());
+            drop(state);
+            if let Err(e) = xa.rollback() {
+                log::warn!(
+                    "odbc_xa_start: failed to roll back active branch after XA ID allocation \
+                     failure on conn_id {conn_id}: {e}"
+                );
+            }
             return 0;
         };
         state.xa_active.insert(xa_id, xa);
@@ -176,20 +390,36 @@ pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        let result = xa.end();
+        let mut reinsert_guard = XaEndReinsertGuard::new(xa_id);
+        let driver_error = match xa.end_preserving_active() {
+            Ok(preparing) => {
+                reinsert_guard.pending = Some(XaEndPending::Preparing(preparing));
+                None
+            }
+            Err((error, xa)) => {
+                reinsert_guard.pending = Some(XaEndPending::Active(xa));
+                Some(error)
+            }
+        };
 
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-        match result {
-            Ok(preparing) => {
+        match reinsert_guard.pending.take() {
+            Some(XaEndPending::Preparing(preparing)) => {
+                reinsert_guard.disarm();
                 state.xa_preparing.insert(xa_id, preparing);
                 0
             }
-            Err(e) => {
-                set_error(&mut state, format!("xa_end failed: {}", e));
+            Some(XaEndPending::Active(xa)) => {
+                reinsert_guard.disarm();
+                state.xa_active.insert(xa_id, xa);
+                if let Some(error) = driver_error {
+                    set_error(&mut state, format!("xa_end failed: {}", error));
+                }
                 1
             }
+            None => -1,
         }
     })
 }
@@ -211,20 +441,36 @@ pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        let result = preparing.prepare();
+        let mut reinsert_guard = XaPrepareReinsertGuard::new(xa_id);
+        let driver_error = match preparing.prepare_preserving_idle() {
+            Ok(prepared) => {
+                reinsert_guard.pending = Some(XaPreparePending::Prepared(prepared));
+                None
+            }
+            Err((error, preparing)) => {
+                reinsert_guard.pending = Some(XaPreparePending::Preparing(preparing));
+                Some(error)
+            }
+        };
 
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-        match result {
-            Ok(prepared) => {
+        match reinsert_guard.pending.take() {
+            Some(XaPreparePending::Prepared(prepared)) => {
+                reinsert_guard.disarm();
                 state.xa_prepared.insert(xa_id, prepared);
                 0
             }
-            Err(e) => {
-                set_error(&mut state, format!("xa_prepare failed: {}", e));
+            Some(XaPreparePending::Preparing(preparing)) => {
+                reinsert_guard.disarm();
+                state.xa_preparing.insert(xa_id, preparing);
+                if let Some(error) = driver_error {
+                    set_error(&mut state, format!("xa_prepare failed: {}", error));
+                }
                 1
             }
+            None => -1,
         }
     })
 }
@@ -242,13 +488,10 @@ pub extern "C" fn odbc_xa_commit_prepared(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        match prepared.commit() {
+        match prepared.commit_preserving_prepared() {
             Ok(()) => 0,
-            Err(e) => {
-                if let Some(mut state) = try_lock_global_state() {
-                    set_error(&mut state, format!("xa_commit_prepared failed: {}", e));
-                }
-                1
+            Err((error, prepared)) => {
+                reinsert_prepared_xa_on_driver_failure(xa_id, prepared, "xa_commit_prepared", error)
             }
         }
     })
@@ -267,14 +510,14 @@ pub extern "C" fn odbc_xa_rollback_prepared(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        match prepared.rollback() {
+        match prepared.rollback_preserving_prepared() {
             Ok(()) => 0,
-            Err(e) => {
-                if let Some(mut state) = try_lock_global_state() {
-                    set_error(&mut state, format!("xa_rollback_prepared failed: {}", e));
-                }
-                1
-            }
+            Err((error, prepared)) => reinsert_prepared_xa_on_driver_failure(
+                xa_id,
+                prepared,
+                "xa_rollback_prepared",
+                error,
+            ),
         }
     })
 }
@@ -294,13 +537,10 @@ pub extern "C" fn odbc_xa_commit_one_phase(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        match xa.commit_one_phase() {
+        match xa.commit_one_phase_preserving_active() {
             Ok(()) => 0,
-            Err(e) => {
-                if let Some(mut state) = try_lock_global_state() {
-                    set_error(&mut state, format!("xa_commit_one_phase failed: {}", e));
-                }
-                1
+            Err((error, xa)) => {
+                reinsert_active_xa_on_driver_failure(xa_id, xa, "xa_commit_one_phase", error)
             }
         }
     })
@@ -320,13 +560,10 @@ pub extern "C" fn odbc_xa_rollback_active(xa_id: c_uint) -> c_int {
         };
         drop(state);
 
-        match xa.rollback() {
+        match xa.rollback_preserving_active() {
             Ok(()) => 0,
-            Err(e) => {
-                if let Some(mut state) = try_lock_global_state() {
-                    set_error(&mut state, format!("xa_rollback_active failed: {}", e));
-                }
-                1
+            Err((error, xa)) => {
+                reinsert_active_xa_on_driver_failure(xa_id, xa, "xa_rollback_active", error)
             }
         }
     })
@@ -528,6 +765,13 @@ pub extern "C" fn odbc_xa_resume_prepared(
         };
         let Some(xa_id) = xa_alloc_id(&mut state) else {
             set_connection_error(&mut state, conn_id, "Failed to allocate XA ID".to_string());
+            drop(state);
+            if let Err(e) = prepared.rollback() {
+                log::warn!(
+                    "odbc_xa_resume_prepared: failed to roll back resumed branch after XA ID \
+                     allocation failure on conn_id {conn_id}: {e}"
+                );
+            }
             return 0;
         };
         state.xa_prepared.insert(xa_id, prepared);

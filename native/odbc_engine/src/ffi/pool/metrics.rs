@@ -4,12 +4,13 @@ use super::super::global::*;
 use super::super::prelude::*;
 
 pub(super) fn pool_health_check(pool_id: c_uint) -> c_int {
-    let Some(state) = try_lock_global_state() else {
-        return 0;
+    let Some(mut state) = try_lock_global_state() else {
+        return -1;
     };
 
     let Some(pool) = state.pools.get(&pool_id).cloned() else {
-        return 0;
+        set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+        return -1;
     };
     drop(state);
 
@@ -36,18 +37,21 @@ pub(super) fn pool_get_state(
     let pool = match state.pools.get(&pool_id) {
         Some(p) => p,
         None => {
+            // SAFETY: `out_size` and `out_idle` are non-null (checked above).
+            unsafe {
+                *out_size = 0;
+                *out_idle = 0;
+            }
             return -1;
         }
     };
 
-    // API-level state reports configured size, not lazily opened connections.
+    let pool_state = pool.state();
     let max_size = pool.max_size();
-    let active = state
-        .pooled_connections
-        .values()
-        .filter(|entry| entry.pool_id == pool_id)
-        .count() as u32;
-    let idle = max_size.saturating_sub(active);
+
+    // `out_size` reports configured capacity; `out_idle` matches r2d2 idle count
+    // (same source as `odbc_pool_get_state_json`'s `idle_connections` field).
+    let idle = pool_state.idle;
 
     // SAFETY: `out_size` and `out_idle` are non-null (checked above); each
     // write covers a single `c_uint`-sized slot as guaranteed by the caller.

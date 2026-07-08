@@ -81,7 +81,7 @@ fn test_ffi_pool_health_check_invalid_pool_id() {
     odbc_init();
 
     let result = odbc_pool_health_check(TEST_INVALID_ID);
-    assert_eq!(result, 0, "Invalid pool ID should return 0 (unhealthy)");
+    assert_eq!(result, -1, "Invalid pool ID should return -1");
 }
 
 #[test]
@@ -104,11 +104,13 @@ fn test_ffi_pool_get_state_null_out_idle() {
 fn test_ffi_pool_get_state_invalid_pool_id() {
     odbc_init();
 
-    let mut size: c_uint = 0;
-    let mut idle: c_uint = 0;
+    let mut size: c_uint = 99;
+    let mut idle: c_uint = 99;
 
     let result = odbc_pool_get_state(TEST_INVALID_ID, &mut size, &mut idle);
     assert_eq!(result, -1, "Invalid pool ID should return -1");
+    assert_eq!(size, 0, "out_size should be zeroed on error");
+    assert_eq!(idle, 0, "out_idle should be zeroed on error");
 }
 
 #[test]

@@ -84,11 +84,13 @@ pub extern "C" fn odbc_execute(
 ) -> c_int {
     crate::ffi_guard_int!({
         if out_buffer.is_null() || out_written.is_null() {
+            set_out_written_zero(out_written);
             return -1;
         }
 
         let (conn_id, sql_str, stored_timeout_sec) = {
             let Some(state) = try_lock_global_state() else {
+                set_out_written_zero(out_written);
                 return -1;
             };
             match state.statements.get(&stmt_id) {
@@ -96,9 +98,11 @@ pub extern "C" fn odbc_execute(
                 None => {
                     drop(state);
                     let Some(mut s) = try_lock_global_state() else {
+                        set_out_written_zero(out_written);
                         return -1;
                     };
                     set_error(&mut s, format!("Invalid statement ID: {}", stmt_id));
+                    set_out_written_zero(out_written);
                     return -1;
                 }
             }
@@ -117,27 +121,31 @@ pub extern "C" fn odbc_execute(
 
         let execute_with_params = |params_slice: &[u8]| {
             let Some(mut state) = try_lock_global_state() else {
+                set_out_written_zero(out_written);
                 return -1;
             };
 
             let metrics = state::ffi_metrics();
             let start = Instant::now();
 
-            let mut target = match take_runnable_connection(&mut state, conn_id) {
+            let target = match take_runnable_connection(&mut state, conn_id) {
                 Ok(target) => target,
                 Err(e) => {
                     set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    set_out_written_zero(out_written);
                     return -1;
                 }
             };
+            let mut target_guard = RunnableTargetGuard::new(conn_id, target);
             drop(state);
 
-            let result = match &mut target {
+            let result = match target_guard.target_mut() {
                 RunnableConnection::Regular(conn_arc) => {
                     let conn_guard = match conn_arc.lock() {
                         Ok(g) => g,
                         Err(_) => {
                             let Some(mut state) = try_lock_global_state() else {
+                                set_out_written_zero(out_written);
                                 return -1;
                             };
                             set_connection_error(
@@ -145,6 +153,7 @@ pub extern "C" fn odbc_execute(
                                 conn_id,
                                 "Failed to lock connection".to_string(),
                             );
+                            set_out_written_zero(out_written);
                             return -1;
                         }
                     };
@@ -171,9 +180,10 @@ pub extern "C" fn odbc_execute(
             };
 
             let Some(mut state) = try_lock_global_state() else {
+                set_out_written_zero(out_written);
                 return -1;
             };
-            restore_pooled_connection(&mut state, conn_id, target);
+            restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
             match result {
                 Ok(data) => {
@@ -196,6 +206,7 @@ pub extern "C" fn odbc_execute(
                 Err(e) => {
                     metrics.record_error();
                     set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    set_out_written_zero(out_written);
                     -1
                 }
             }

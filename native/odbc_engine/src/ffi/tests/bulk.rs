@@ -2,6 +2,7 @@
 
 #![allow(unused_imports)]
 
+use crate::ffi::bulk::bulk_rows_inserted_for_ffi;
 use crate::ffi::bulk::row_chunk_ranges;
 #[cfg(feature = "sqlserver-bcp")]
 use crate::ffi::bulk::slice_payload_rows;
@@ -28,6 +29,17 @@ use super::support::{
     structured_error_test_lock, trigger_structured_cancel_unsupported_error,
     with_structured_error_test_isolation, TEST_INVALID_ID,
 };
+
+#[test]
+fn should_reject_bulk_row_count_above_u32_max() {
+    let overflow = (c_uint::MAX as usize) + 1;
+    let result = bulk_rows_inserted_for_ffi(overflow);
+    assert!(result.is_err(), "row counts above u32::MAX must fail");
+    assert_eq!(
+        bulk_rows_inserted_for_ffi(c_uint::MAX as usize).unwrap(),
+        c_uint::MAX
+    );
+}
 
 #[test]
 fn test_ffi_bulk_insert_null_buffer() {

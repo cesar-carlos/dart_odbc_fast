@@ -4,6 +4,49 @@ use super::super::global::*;
 use super::super::prelude::*;
 use super::alloc_id::allocate_pooled_connection_id;
 
+/// Recycles a pooled connection ID when global-state re-lock fails after checkin cleanup.
+struct PooledConnIdRecycleGuard {
+    pool_id: u32,
+    connection_id: u32,
+    armed: bool,
+}
+
+impl PooledConnIdRecycleGuard {
+    fn new(pool_id: u32, connection_id: u32) -> Self {
+        Self {
+            pool_id,
+            connection_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PooledConnIdRecycleGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(mut state) = try_lock_global_state() {
+            state
+                .pooled_free_ids
+                .entry(self.pool_id)
+                .or_default()
+                .push(self.connection_id);
+        } else {
+            log::error!(
+                "PooledConnIdRecycleGuard: failed to re-acquire global state to recycle pooled \
+                 connection id {} for pool {} — ID may leak until process restart",
+                self.connection_id,
+                self.pool_id
+            );
+        }
+    }
+}
+
 pub(super) fn checkout_pooled_connection(pool_id: c_uint) -> c_uint {
     // C3 fix: do NOT hold the global state lock while calling `r2d2::Pool::get()`,
     // which can block for the configured pool timeout (~30s). We clone the
@@ -124,6 +167,11 @@ pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
             return -1;
         }
     };
+    let pool_id = entry.pool_id;
+    let mut id_recycle_guard = PooledConnIdRecycleGuard::new(pool_id, connection_id);
+    state
+        .metadata_cache
+        .remove_payloads_with_conn_prefix(connection_id);
     let transactions = take_transactions_for_connection(&mut state, connection_id);
     state
         .statements
@@ -142,9 +190,10 @@ pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
     };
     state
         .pooled_free_ids
-        .entry(entry.pool_id)
+        .entry(pool_id)
         .or_default()
         .push(connection_id);
+    id_recycle_guard.disarm();
     0
 }
 

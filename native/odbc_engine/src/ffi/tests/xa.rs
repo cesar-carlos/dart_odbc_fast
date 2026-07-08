@@ -36,6 +36,19 @@ fn should_read_xa_buffer_as_empty_when_null_and_zero_length() {
 }
 
 #[test]
+fn should_reject_xa_read_buffer_when_length_exceeds_max_component() {
+    assert_eq!(
+        xa_read_buffer(std::ptr::null(), crate::ffi::xa::XA_MAX_COMPONENT_LEN + 1),
+        None
+    );
+    let data = [0u8; 8];
+    assert_eq!(
+        xa_read_buffer(data.as_ptr(), crate::ffi::xa::XA_MAX_COMPONENT_LEN + 1),
+        None
+    );
+}
+
+#[test]
 fn should_copy_xa_buffer_bytes_when_pointer_valid() {
     let data = [1u8, 2, 3];
     assert_eq!(

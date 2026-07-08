@@ -124,6 +124,27 @@ impl MetadataCache {
         }
     }
 
+    pub(crate) fn remove_payload(&self, key: &str) {
+        if let Ok(mut guard) = self.payloads.lock() {
+            guard.pop(key);
+        }
+    }
+
+    /// Removes cached column-list payloads keyed as `{conn_id}:table`.
+    pub(crate) fn remove_payloads_with_conn_prefix(&self, conn_id: u32) {
+        let prefix = format!("{conn_id}:");
+        if let Ok(mut guard) = self.payloads.lock() {
+            let keys: Vec<String> = guard
+                .iter()
+                .filter(|&(key, _)| key.starts_with(&prefix))
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in keys {
+                guard.pop(&key);
+            }
+        }
+    }
+
     pub fn max_size(&self) -> usize {
         self.max_size
     }
@@ -293,6 +314,23 @@ mod tests {
         let stats = c.stats();
         assert_eq!(stats.payload_entries, 0);
         assert_eq!(stats.schema_entries, 0);
+    }
+
+    #[test]
+    fn should_remove_payloads_with_conn_prefix() {
+        let c = MetadataCache::new(10, Duration::from_secs(60));
+        c.cache_payload("42:dbo.Users", &[1, 2]);
+        c.cache_payload("42:other", &[3, 4]);
+        c.cache_payload("99:dbo.Users", &[5, 6]);
+
+        c.remove_payloads_with_conn_prefix(42);
+
+        assert!(c.get_payload("42:dbo.Users").is_none());
+        assert!(c.get_payload("42:other").is_none());
+        assert_eq!(
+            c.get_payload("99:dbo.Users").expect("other conn"),
+            vec![5, 6]
+        );
     }
 
     #[test]

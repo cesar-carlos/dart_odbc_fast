@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **FFI pooled busy-count leaks** — `RunnableTargetGuard` restores pooled reservations when
+  global-state re-lock fails after ODBC work (`runnable.rs` and all pooled call sites:
+  bulk, catalog, capabilities, statement, sync query paths). Prevents pools stuck as
+  permanently busy.
+- **FFI transaction begin** — `TransactionBeginReservation` clears
+  `transaction_begins_in_progress` on every exit path (including poisoned re-lock after ODBC
+  begin).
+- **FFI transaction commit vs savepoint** — concurrent savepoint clone no longer drops the
+  transaction from the registry on `Arc::try_unwrap` failure; handle is restored for retry.
+- **FFI streams** — `remove_stream` preserves `stream_id → conn_id` during fetch checkout;
+  `reinsert_stream` drops the stream if the connection was cleaned up mid-fetch. Fixes
+  orphan streams and wrong error routing after the first fetch.
+- **FFI catalog cache** — column metadata cache hits require a live connection; stale entries
+  for recycled pooled IDs are removed on checkin (`remove_payloads_with_conn_prefix`).
+- **FFI XA** — `xa_end` / `xa_prepare` / one-phase commit / active rollback / prepared
+  commit-rollback re-insert handles on driver failure; re-lock guards avoid dropping
+  transitioned branches; `xa_read_buffer` rejects lengths above 64 bytes before allocation;
+  `xa_start` / `xa_resume_prepared` roll back on XA ID allocation failure; invalid
+  connection during `xa_start` now records a structured error instead of silent `0`.
+- **FFI out-parameters on error** — `out_written` zeroed on all error paths in
+  `odbc_execute`, `odbc_exec_query_multi*`, and `odbc_pool_get_state`; pool health check
+  returns `-1` (not `0`) for invalid pool or internal lock failure.
+- **FFI pool metrics** — `odbc_pool_get_state` `out_idle` now uses r2d2 idle count (aligned
+  with `odbc_pool_get_state_json`).
+- **FFI bulk insert** — row counts above `u32::MAX` return an error instead of truncating
+  `rows_inserted`.
 - **Columnar + prepared cache no FFI** — sync query paths (`params.rs`, `runnable.rs`)
   routed `ResultEncoding` columnar/compressed through a raw `Connection`, bypassing the
   per-connection statement LRU. All encodings now execute via `CachedConnection` when

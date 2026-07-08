@@ -8,6 +8,16 @@ use super::prelude::*;
 use rayon::prelude::*;
 use std::os::raw::{c_int, c_uint};
 
+/// Maps a bulk-insert row count to the FFI `c_uint` out-parameter without silent truncation.
+pub(crate) fn bulk_rows_inserted_for_ffi(total: usize) -> Result<c_uint> {
+    u32::try_from(total).map_err(|_| {
+        OdbcError::ValidationError(format!(
+            "bulk insert row count {total} exceeds maximum representable value ({})",
+            c_uint::MAX
+        ))
+    })
+}
+
 /// Bulk insert using array binding.
 #[no_mangle]
 pub extern "C" fn odbc_bulk_insert_array(
@@ -52,13 +62,14 @@ pub extern "C" fn odbc_bulk_insert_array(
         };
         #[cfg(feature = "sqlserver-bcp")]
         let conn_str_owned = state.connection_strings.get(&conn_id).cloned();
-        let mut target = match take_runnable_connection(&mut state, conn_id) {
+        let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
             Err(e) => {
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
                 return -1;
             }
         };
+        let mut target_guard = RunnableTargetGuard::new(conn_id, target);
         drop(state);
 
         #[cfg(feature = "sqlserver-bcp")]
@@ -66,7 +77,7 @@ pub extern "C" fn odbc_bulk_insert_array(
         #[cfg(not(feature = "sqlserver-bcp"))]
         let conn_str: Option<&str> = None;
 
-        let result = match &mut target {
+        let result = match target_guard.target_mut() {
             RunnableConnection::Regular(conn_arc) => {
                 let conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
@@ -97,16 +108,22 @@ pub extern "C" fn odbc_bulk_insert_array(
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-        restore_pooled_connection(&mut state, conn_id, target);
+        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
         match result {
-            Ok(total) => {
-                // SAFETY: `rows_inserted` is non-null (checked at function entry).
-                unsafe {
-                    *rows_inserted = total as c_uint;
+            Ok(total) => match bulk_rows_inserted_for_ffi(total) {
+                Ok(rows) => {
+                    // SAFETY: `rows_inserted` is non-null (checked at function entry).
+                    unsafe {
+                        *rows_inserted = rows;
+                    }
+                    0
                 }
-                0
-            }
+                Err(e) => {
+                    set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                    -1
+                }
+            },
             Err(e) => {
                 // For bulk insert, use conn_id to store error
                 set_connection_structured_error(&mut state, conn_id, e.to_structured());
@@ -368,13 +385,22 @@ pub extern "C" fn odbc_bulk_insert_parallel(
         };
 
         match bulk_insert_parallel_with_pool(pool.as_ref(), &payload, parallelism as usize) {
-            Ok(total) => {
-                // SAFETY: `rows_inserted` is non-null (checked at function entry).
-                unsafe {
-                    *rows_inserted = total as c_uint;
+            Ok(total) => match bulk_rows_inserted_for_ffi(total) {
+                Ok(rows) => {
+                    // SAFETY: `rows_inserted` is non-null (checked at function entry).
+                    unsafe {
+                        *rows_inserted = rows;
+                    }
+                    0
                 }
-                0
-            }
+                Err(e) => {
+                    let Some(mut state) = try_lock_global_state() else {
+                        return -1;
+                    };
+                    set_structured_error(&mut state, e.to_structured());
+                    -1
+                }
+            },
             Err(e) => {
                 let Some(mut state) = try_lock_global_state() else {
                     return -1;
