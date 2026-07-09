@@ -1,6 +1,5 @@
 //! Shared helpers for FFI unit tests.
 
-use crate::ffi::global::*;
 use crate::ffi::prelude::*;
 use crate::ffi::state;
 use crate::ffi::*;
@@ -42,18 +41,9 @@ pub(crate) fn get_last_error() -> String {
 
 pub(crate) fn trigger_structured_cancel_unsupported_error() {
     let stmt_id = next_test_invalid_id();
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state
-        .statements
-        .insert(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
-    drop(state);
+    state::insert_statement(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
     let _ = odbc_cancel(stmt_id);
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state.statements.remove(&stmt_id);
+    let _ = state::remove_statement(stmt_id);
 }
 
 pub(crate) fn structured_error_test_lock() -> &'static Mutex<()> {

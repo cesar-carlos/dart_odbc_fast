@@ -42,6 +42,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Block-fetch temporal cells** — Date/Time/Timestamp format without an intermediate
+  `String`; Time stays inline in `CellBytes` (`SmallVec<[u8; 8]>`); Date/Timestamp use a
+  pre-sized `Vec` move into the cell (no per-cell `clone`). Criterion A/B
+  (`cell_reader/temporal_format_materialise`, 10k cells): Time ~56%, Date ~29%,
+  Timestamp ~23% faster vs the legacy path.
+- **UTF-16 → UTF-8 ASCII fast-path** — shared `engine::wide_text` short-circuits
+  ASCII-only `SQL_C_WCHAR` cells (common NVARCHAR IDs/codes) without
+  `String::from_utf16_lossy`; non-ASCII keeps the lossy U+FFFD contract. Wired into
+  `cell_reader`, block-fetch, and columnar fetch. Criterion
+  (`cell_reader/wide_text_to_utf8`): ~2.3–4.9× on ASCII lengths 8–4096; CJK fallback
+  parity with legacy.
+- **Row-major encode** — in-memory `RowBufferEncoder::encode_result` writes via
+  `Vec::extend_from_slice` / `push` instead of the generic `Write` trait (spill path
+  unchanged). Criterion (`encoder/row_major_vec_vs_writer`): ~11% (1k×10) to ~44%
+  (10k×50) faster.
+- **FFI metadata cache** — process-wide cache moved to a dedicated `RwLock` outside
+  `GlobalState`; catalog hit/miss and enable/clear/stats no longer take the outer
+  mutex for cache-only work (LRU maps remain internally synchronized).
+- **FFI prepared statements** — statement map + ID allocator moved to
+  `ffi::state::statements` (`Mutex`); prepare/execute/close/cancel no longer contend
+  with pools/txn/XA on the residual `GlobalState` mutex. Disconnect and pool close
+  still clean statements via `retain_statements_not_for_connection`. Synthetic
+  `ffi_contention_bench` (with statement traffic): ~16–27% faster sharded vs
+  monolithic at 1–8 threads.
+- **FFI connection pools** — pool maps, pooled connections, busy counts, and ID
+  allocators moved to `ffi::state::pools` (`Mutex`); checkout/checkin and every
+  pooled query/stream busy-count bump no longer contend with transactions/XA on
+  the residual `GlobalState` mutex. Cross-category cleanup (checkin/close/resize)
+  still acquires `GLOBAL_STATE` first for transaction begin reservations, then
+  pools. Synthetic `ffi_contention_bench` (with pool busy traffic) updated to
+  match the sharded layout.
+- **FFI local transactions** — transaction map, begin-in-progress set, and ID
+  allocator moved to `ffi::state::transactions` (`Mutex`); begin/commit/rollback/
+  savepoint no longer contend with XA/env on the residual `GlobalState` mutex.
+  Disconnect and pool checkin/close/resize nest `transactions → pools` for
+  atomic begin-guard + cleanup.
+- **FFI XA branches** — active/preparing/prepared maps and shared XA ID allocator
+  moved to `ffi::state::xa` (`Mutex`); start/end/prepare/commit/rollback/resume
+  no longer contend with env init on the residual `GlobalState` mutex. Residual
+  `GlobalState` now holds only `env` (+ optional BCP connection strings).
 - **Shared result encoding** — `encode_optional_cursor_with_encoding` unifies
   `ExecutionEngine` and `CachedConnection`; columnar fast path (`fetch_columnar_into` +
   `ColumnarEncoder`) works with prepared-handle reuse.
@@ -56,6 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output buffer with uncompressed fallback when compression does not shrink payload.
 - **Query metrics** — fixed-bucket latency histogram (O(1) record) and `AtomicU64`
   error counter replace O(N) sorted latency inserts and mutex contention on the hot path.
+
+### Changed
+
+- Criterion benches extended for the new hot paths: temporal format A/B and wide-text
+  ASCII vs lossy in `cell_reader_bench`; `row_major_vec_vs_writer` in `encoder_bench`;
+  statement + pool busy traffic in `ffi_contention_bench`.
+- Residual `GlobalState` holds only `env` (+ optional BCP connection strings);
+  lock order docs updated (`GLOBAL_STATE` → xa → transactions → pools →
+  connections → streams → statements → …).
 
 ## [4.3.4] - 2026-06-18
 

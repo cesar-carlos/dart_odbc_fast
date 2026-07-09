@@ -18,6 +18,7 @@
 //! agree on what is bindable.
 
 use crate::engine::core::block_fetch::{format_date_into, format_time_into, format_timestamp_into};
+use crate::engine::wide_text::wide_text_to_utf8_vec;
 use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnData, ColumnMetadata, RowBufferV2};
 use crate::protocol::OdbcType;
@@ -279,8 +280,7 @@ impl ColumnAccumulator {
                 for cell in view.iter() {
                     match cell {
                         Some(wide) => {
-                            let bytes = String::from_utf16_lossy(wide.as_slice()).into_bytes();
-                            values.push(Some(bytes));
+                            values.push(Some(wide_text_to_utf8_vec(wide.as_slice())));
                         }
                         None => values.push(None),
                     }
@@ -295,9 +295,7 @@ impl ColumnAccumulator {
                 for cell in view.iter() {
                     match cell {
                         Some(bytes) => {
-                            let mut owned = Vec::with_capacity(bytes.len());
-                            owned.extend_from_slice(bytes);
-                            values.push(Some(owned));
+                            values.push(Some(bytes.to_vec()));
                         }
                         None => values.push(None),
                     }

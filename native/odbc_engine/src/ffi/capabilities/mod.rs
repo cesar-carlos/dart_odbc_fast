@@ -7,6 +7,7 @@ mod helpers;
 use super::global::*;
 use super::prelude::*;
 use crate::ffi::guard;
+use crate::ffi::state;
 use helpers::{
     detect_dbms_info_on_runnable, encode_prepared_cache_metrics, parse_columns_csv,
     parse_cstr_zero_out, parse_dml_verb, parse_session_options, parse_upsert_payload,
@@ -32,15 +33,14 @@ use std::os::raw::{c_char, c_int, c_uint};
 #[no_mangle]
 pub extern "C" fn odbc_metadata_cache_enable(max_size: c_uint, ttl_secs: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
+        let Some(mut cache) = state::metadata_cache_write() else {
             return -1;
         };
 
-        let new_cache = crate::engine::core::metadata_cache::MetadataCache::new(
+        *cache = crate::engine::core::metadata_cache::MetadataCache::new(
             max_size as usize,
             std::time::Duration::from_secs(ttl_secs as u64),
         );
-        state.metadata_cache = new_cache;
         0
     })
 }
@@ -63,13 +63,13 @@ pub extern "C" fn odbc_metadata_cache_stats(
             return -1;
         }
 
-        let Some(state) = try_lock_global_state() else {
+        let Some(cache) = state::metadata_cache_read() else {
             set_out_written_zero(out_written);
             return -1;
         };
 
-        let stats = state.metadata_cache.stats();
-        drop(state);
+        let stats = cache.stats();
+        drop(cache);
 
         let data = match serde_json::to_vec(&stats) {
             Ok(bytes) => bytes,
@@ -90,11 +90,11 @@ pub extern "C" fn odbc_metadata_cache_stats(
 #[no_mangle]
 pub extern "C" fn odbc_metadata_cache_clear() -> c_int {
     crate::ffi_guard_int!({
-        let Some(state) = try_lock_global_state() else {
+        let Some(cache) = state::metadata_cache_read() else {
             return -1;
         };
 
-        state.metadata_cache.clear();
+        cache.clear();
         0
     })
 }

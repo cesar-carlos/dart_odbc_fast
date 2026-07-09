@@ -29,8 +29,7 @@ pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: 
             return 0;
         };
 
-        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
-        {
+        if !state::contains_connection(conn_id) && !state::contains_pooled_connection(conn_id) {
             set_connection_error(
                 &mut state,
                 conn_id,
@@ -38,29 +37,25 @@ pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: 
             );
             return 0;
         }
+        // Drop the outer mutex before allocating into the dedicated
+        // statements map so prepare does not hold GLOBAL_STATE across
+        // the statement-maps lock (ordering: outer → statements).
+        drop(state);
 
         let stmt = StatementHandle::new(conn_id, sql_str, timeout_ms);
-        let stmt_id = {
-            let mut id = 0u32;
-            for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-                let candidate = state.next_stmt_id;
-                state.next_stmt_id = state.next_stmt_id.wrapping_add(1);
-                if candidate != 0 && !state.statements.contains_key(&candidate) {
-                    id = candidate;
-                    break;
-                }
-            }
-            if id == 0 {
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    "Failed to allocate statement ID".to_string(),
-                );
+        let stmt_id = state::allocate_statement_id();
+        if stmt_id == 0 {
+            let Some(mut state) = try_lock_global_state() else {
                 return 0;
-            }
-            id
-        };
-        state.statements.insert(stmt_id, stmt);
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                "Failed to allocate statement ID".to_string(),
+            );
+            return 0;
+        }
+        state::insert_statement(stmt_id, stmt);
         stmt_id
     })
 }
@@ -88,23 +83,16 @@ pub extern "C" fn odbc_execute(
             return -1;
         }
 
-        let (conn_id, sql_str, stored_timeout_sec) = {
-            let Some(state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            match state.statements.get(&stmt_id) {
-                Some(s) => (s.conn_id(), s.sql().to_string(), s.timeout_sec()),
-                None => {
-                    drop(state);
-                    let Some(mut s) = try_lock_global_state() else {
-                        set_out_written_zero(out_written);
-                        return -1;
-                    };
-                    set_error(&mut s, format!("Invalid statement ID: {}", stmt_id));
+        let (conn_id, sql_str, stored_timeout_sec) = match state::get_statement_snapshot(stmt_id) {
+            Some(snapshot) => snapshot,
+            None => {
+                let Some(mut s) = try_lock_global_state() else {
                     set_out_written_zero(out_written);
                     return -1;
-                }
+                };
+                set_error(&mut s, format!("Invalid statement ID: {}", stmt_id));
+                set_out_written_zero(out_written);
+                return -1;
             }
         };
 
@@ -245,11 +233,10 @@ pub extern "C" fn odbc_execute(
 #[no_mangle]
 pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        if state.statements.contains_key(&stmt_id) {
+        if state::contains_statement(stmt_id) {
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
             set_structured_error(
             &mut state,
             StructuredError {
@@ -264,6 +251,9 @@ pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
         );
             1
         } else {
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
             set_error(&mut state, format!("Invalid statement ID: {}", stmt_id));
             1
         }
@@ -276,13 +266,12 @@ pub extern "C" fn odbc_cancel(stmt_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_close_statement(stmt_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        if state.statements.remove(&stmt_id).is_some() {
+        if state::remove_statement(stmt_id).is_some() {
             0
         } else {
+            let Some(mut state) = try_lock_global_state() else {
+                return -1;
+            };
             set_error(&mut state, format!("Invalid statement ID: {}", stmt_id));
             1
         }
@@ -294,11 +283,7 @@ pub extern "C" fn odbc_close_statement(stmt_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_clear_all_statements() -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        state.statements.clear();
+        state::clear_all_statements();
         0
     })
 }

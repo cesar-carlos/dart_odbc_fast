@@ -2,6 +2,7 @@
 
 use crate::ffi::global::*;
 use crate::ffi::prelude::StatementHandle;
+use crate::ffi::state;
 use crate::ffi::*;
 use serial_test::serial;
 use std::ffi::CString;
@@ -50,30 +51,18 @@ fn test_ffi_close_statement_invalid() {
 fn test_ffi_clear_all_statements() {
     odbc_init();
 
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state
-        .statements
-        .insert(1001, StatementHandle::new(1, "SELECT 1".to_string(), 0));
-    state
-        .statements
-        .insert(1002, StatementHandle::new(1, "SELECT 2".to_string(), 0));
+    state::insert_statement(1001, StatementHandle::new(1, "SELECT 1".to_string(), 0));
+    state::insert_statement(1002, StatementHandle::new(1, "SELECT 2".to_string(), 0));
     assert_eq!(
-        state.statements.len(),
+        state::statement_count_for_test(),
         2,
         "Test setup should create statements"
     );
-    drop(state);
 
     let r = odbc_clear_all_statements();
     assert_eq!(r, 0, "Clear all statements should succeed");
-
-    let Some(state) = try_lock_global_state() else {
-        panic!("Failed to re-lock global state");
-    };
     assert!(
-        state.statements.is_empty(),
+        state::statements_empty_for_test(),
         "All statements should be removed"
     );
 }
@@ -97,13 +86,7 @@ fn test_ffi_cancel_supported_path_returns_structured_unsupported_feature() {
     odbc_init();
 
     let stmt_id = 1100;
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state
-        .statements
-        .insert(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
-    drop(state);
+    state::insert_statement(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
 
     let r = odbc_cancel(stmt_id);
     assert_ne!(r, 0, "Cancel should fail because feature is unsupported");
@@ -129,10 +112,7 @@ fn test_ffi_cancel_supported_path_returns_structured_unsupported_feature() {
         structured.message
     );
 
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state.statements.remove(&stmt_id);
+    let _ = state::remove_statement(stmt_id);
 }
 
 #[test]

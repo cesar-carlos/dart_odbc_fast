@@ -27,7 +27,7 @@ mod driver_adapters;
 mod fetch_loop;
 mod streaming_session;
 
-pub(crate) use column_buffers::{format_date_into, format_time_into, format_timestamp_into};
+pub use column_buffers::{format_date_into, format_time_into, format_timestamp_into};
 pub(crate) use driver_adapters::describe_and_plan_columns;
 pub use driver_adapters::plan_buffer_descs;
 pub use fetch_loop::{

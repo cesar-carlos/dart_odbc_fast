@@ -20,8 +20,7 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
             return 0;
         };
 
-        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
-        {
+        if !state::contains_connection(conn_id) && !state::contains_pooled_connection(conn_id) {
             set_connection_error(
                 &mut state,
                 conn_id,
@@ -80,8 +79,7 @@ pub extern "C" fn odbc_execute_async_params(
             return 0;
         };
 
-        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
-        {
+        if !state::contains_connection(conn_id) && !state::contains_pooled_connection(conn_id) {
             set_connection_error(
                 &mut state,
                 conn_id,
@@ -142,8 +140,7 @@ pub extern "C" fn odbc_execute_async_params_options(
             return 0;
         };
 
-        if !state::contains_connection(conn_id) && !state.pooled_connections.contains_key(&conn_id)
-        {
+        if !state::contains_connection(conn_id) && !state::contains_pooled_connection(conn_id) {
             set_connection_error(
                 &mut state,
                 conn_id,

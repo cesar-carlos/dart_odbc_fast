@@ -4,6 +4,7 @@
 
 use super::global::*;
 use super::prelude::*;
+use crate::ffi::state;
 
 use rayon::prelude::*;
 use std::os::raw::{c_int, c_uint};
@@ -372,12 +373,12 @@ pub extern "C" fn odbc_bulk_insert_parallel(
         };
 
         let pool = {
-            let Some(mut state) = try_lock_global_state() else {
-                return -1;
-            };
-            match state.pools.get(&pool_id) {
-                Some(p) => Arc::clone(p),
+            match state::get_pool(pool_id) {
+                Some(p) => p,
                 None => {
+                    let Some(mut state) = try_lock_global_state() else {
+                        return -1;
+                    };
                     set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
                     return -1;
                 }

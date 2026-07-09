@@ -11,6 +11,7 @@ pub mod sqlserver_json;
 pub mod statement;
 pub mod streaming;
 pub mod transaction;
+pub mod wide_text;
 pub mod xa;
 pub use xa as xa_transaction;
 

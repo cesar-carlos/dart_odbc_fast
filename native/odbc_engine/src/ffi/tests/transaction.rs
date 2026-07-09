@@ -133,29 +133,16 @@ fn should_keep_transaction_registered_when_commit_races_savepoint_clone() {
     assert!(txn_id > 0);
 
     // Simulate a concurrent savepoint call holding a clone of the handle.
-    let concurrent_clone = {
-        let Some(state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        state
-            .transactions
-            .get(&txn_id)
-            .cloned()
-            .expect("transaction registered after begin")
-    };
+    let concurrent_clone =
+        state::get_transaction_for_test(txn_id).expect("transaction registered after begin");
 
     let busy_commit = odbc_transaction_commit(txn_id);
     assert_eq!(busy_commit, 1, "busy transaction commit should fail");
 
-    {
-        let Some(state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        assert!(
-            state.transactions.contains_key(&txn_id),
-            "busy transaction must stay registered for retry"
-        );
-    }
+    assert!(
+        state::contains_transaction_for_test(txn_id),
+        "busy transaction must stay registered for retry"
+    );
 
     drop(concurrent_clone);
     let retry_commit = odbc_transaction_commit(txn_id);

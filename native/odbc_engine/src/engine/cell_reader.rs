@@ -1,3 +1,4 @@
+use crate::engine::wide_text::wide_text_to_utf8_bytes;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{cell_bytes_from_slice, CellBytes, OdbcType};
 use odbc_api::{CursorRow, Nullable};
@@ -44,9 +45,9 @@ impl CellReader {
     /// `get_wide_text` issues `SQLGetData(SQL_C_WCHAR)` instead, which is
     /// guaranteed by the spec to deliver UTF-16 LE — the same encoding SQL
     /// Server uses internally for `NVARCHAR`. We then transcode the UTF-16
-    /// code units to UTF-8 ourselves, with `String::from_utf16_lossy`
-    /// substituting U+FFFD for any unpaired surrogate (which the driver
-    /// should never emit, but we tolerate defensively).
+    /// code units to UTF-8 via [`crate::engine::wide_text`], which keeps the
+    /// `from_utf16_lossy` U+FFFD contract for unpaired surrogates while
+    /// short-circuiting ASCII-only cells.
     ///
     /// This means **every** text-shaped column (`VARCHAR`, `NVARCHAR`,
     /// `CHAR`, `NCHAR`, `TEXT`, `NTEXT`, `WLONGVARCHAR`, dates and numerics
@@ -150,14 +151,6 @@ pub fn read_cell_bytes(
     odbc_type: OdbcType,
 ) -> Result<Option<CellBytes>> {
     CellReader::new().read_cell_bytes(row, column_number, odbc_type)
-}
-
-fn wide_text_to_utf8_bytes(wide_buf: &[u16]) -> CellBytes {
-    // `from_utf16_lossy` replaces any unpaired surrogate with U+FFFD.
-    // SQL Server / SQL_C_WCHAR never emit those in practice, but if a
-    // misbehaving driver did we'd rather see the replacement character
-    // than panic or truncate.
-    String::from_utf16_lossy(wide_buf).into_bytes().into()
 }
 
 #[cfg(test)]

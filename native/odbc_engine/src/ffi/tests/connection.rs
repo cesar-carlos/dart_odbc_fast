@@ -216,15 +216,10 @@ fn should_reject_sync_param_ffi_when_buffer_null_and_len_nonzero() {
     assert_eq!(written, 0);
 
     let stmt_id = next_test_invalid_id();
-    {
-        let Some(mut state) = try_lock_global_state() else {
-            panic!("Failed to lock global state");
-        };
-        state.statements.insert(
-            stmt_id,
-            StatementHandle::new(conn_id, "SELECT 1".to_string(), 0),
-        );
-    }
+    state::insert_statement(
+        stmt_id,
+        StatementHandle::new(conn_id, "SELECT 1".to_string(), 0),
+    );
 
     written = 99;
     let execute_result = odbc_execute(
@@ -240,10 +235,7 @@ fn should_reject_sync_param_ffi_when_buffer_null_and_len_nonzero() {
     assert_eq!(execute_result, -1);
     assert_eq!(written, 0);
 
-    let Some(mut state) = try_lock_global_state() else {
-        panic!("Failed to lock global state");
-    };
-    state.statements.remove(&stmt_id);
+    let _ = state::remove_statement(stmt_id);
 }
 #[test]
 fn should_reject_connection_string_with_null_byte() {

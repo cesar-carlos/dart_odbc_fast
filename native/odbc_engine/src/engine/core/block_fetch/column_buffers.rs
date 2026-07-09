@@ -1,6 +1,20 @@
+use crate::engine::wide_text::wide_text_to_utf8_bytes;
 use crate::error::{OdbcError, Result};
-use crate::protocol::{cell_bytes_from_slice, OdbcType, RowBuffer};
+use crate::protocol::{cell_bytes_from_slice, CellBytes, OdbcType, RowBuffer};
 use odbc_api::buffers::AnySlice;
+use std::fmt::{self, Write as _};
+
+/// Thin `fmt::Write` adapter so temporal formatters can target any
+/// `Extend<u8>` sink (`Vec<u8>`, `CellBytes` / `SmallVec`, …) without an
+/// intermediate `String`.
+struct AppendBytes<'a, T: Extend<u8>>(&'a mut T);
+
+impl<T: Extend<u8>> fmt::Write for AppendBytes<'_, T> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.extend(s.as_bytes().iter().copied());
+        Ok(())
+    }
+}
 
 pub(super) fn append_batch_to_row_buffer(
     batch: &odbc_api::buffers::ColumnarBuffer<odbc_api::buffers::AnyBuffer>,
@@ -104,13 +118,19 @@ fn copy_binary(
 /// 4 digits; negative years are rare (BC dates) and rendered with a
 /// leading minus so the wire byte count grows by one for them — the
 /// Dart datetime parser handles either width.
-pub(crate) fn format_date_into(buf: &mut Vec<u8>, date: &odbc_api::sys::Date) {
-    use std::fmt::Write;
-    // Reserve the worst case to avoid extra growth; `write!` is
-    // infallible on `String`.
-    let mut s = String::with_capacity(10);
-    let _ = write!(s, "{:04}-{:02}-{:02}", date.year, date.month, date.day);
-    buf.extend_from_slice(s.as_bytes());
+///
+/// Writes directly into `buf` (no intermediate `String`) so the block-fetch
+/// and columnar-fetch hot paths avoid a per-cell heap allocation for the
+/// format buffer itself. Accepts any `Extend<u8>` sink (`Vec<u8>`,
+/// [`CellBytes`], …).
+pub fn format_date_into(buf: &mut impl Extend<u8>, date: &odbc_api::sys::Date) {
+    let _ = write!(
+        AppendBytes(buf),
+        "{:04}-{:02}-{:02}",
+        date.year,
+        date.month,
+        date.day
+    );
 }
 
 /// Format a [`odbc_api::sys::Time`] as `HH:MM:SS` ASCII bytes.
@@ -118,31 +138,37 @@ pub(crate) fn format_date_into(buf: &mut Vec<u8>, date: &odbc_api::sys::Date) {
 /// Matches the second-precision T-SQL `TIME(0)` and PostgreSQL `TIME`
 /// representations. Sub-second precision is exposed via `Timestamp`
 /// values (`TIME(7)` / `TIMETZ` round-trip via the WText fallback).
-pub(crate) fn format_time_into(buf: &mut Vec<u8>, time: &odbc_api::sys::Time) {
-    use std::fmt::Write;
-    let mut s = String::with_capacity(8);
-    let _ = write!(s, "{:02}:{:02}:{:02}", time.hour, time.minute, time.second);
-    buf.extend_from_slice(s.as_bytes());
+pub fn format_time_into(buf: &mut impl Extend<u8>, time: &odbc_api::sys::Time) {
+    let _ = write!(
+        AppendBytes(buf),
+        "{:02}:{:02}:{:02}",
+        time.hour,
+        time.minute,
+        time.second
+    );
 }
 
 /// Format a [`odbc_api::sys::Timestamp`] as
 /// `YYYY-MM-DD HH:MM:SS.ffffff` ASCII bytes (six-digit microsecond
 /// fraction). See the comment on `OdbcType::Timestamp` in
 /// `driver_adapters::buffer_desc_for` for the precision rationale.
-pub(crate) fn format_timestamp_into(buf: &mut Vec<u8>, ts: &odbc_api::sys::Timestamp) {
-    use std::fmt::Write;
-    let mut s = String::with_capacity(26);
+pub fn format_timestamp_into(buf: &mut impl Extend<u8>, ts: &odbc_api::sys::Timestamp) {
     // `fraction` is u32 nanoseconds (0..=999_999_999). Divide by 1_000
     // to get microseconds; the integer division truncates the 7th-9th
     // digits, which is intentional per the format choice documented on
     // `buffer_desc_for`.
     let micros = ts.fraction / 1_000;
     let _ = write!(
-        s,
+        AppendBytes(buf),
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
-        ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, micros
+        ts.year,
+        ts.month,
+        ts.day,
+        ts.hour,
+        ts.minute,
+        ts.second,
+        micros
     );
-    buf.extend_from_slice(s.as_bytes());
 }
 
 fn copy_nullable_date(
@@ -158,12 +184,14 @@ fn copy_nullable_date(
                 "Block fetch: column {col_idx} expected nullable Date slice"
             ))
         })?;
-    let mut scratch = Vec::with_capacity(10);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(date) = cell {
-            scratch.clear();
-            format_date_into(&mut scratch, date);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
+            // 10-byte ISO date spills `SmallVec<[u8; 8]>`; allocate a
+            // sized `Vec` once and move it into the cell (no `String`,
+            // no clone, no spill-copy).
+            let mut bytes = Vec::with_capacity(10);
+            format_date_into(&mut bytes, date);
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes.into());
         }
     }
     Ok(())
@@ -182,12 +210,13 @@ fn copy_nullable_time(
                 "Block fetch: column {col_idx} expected nullable Time slice"
             ))
         })?;
-    let mut scratch = Vec::with_capacity(8);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(time) = cell {
-            scratch.clear();
-            format_time_into(&mut scratch, time);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
+            // `HH:MM:SS` is exactly 8 bytes — stays fully inline in
+            // `SmallVec<[u8; 8]>` with zero heap traffic.
+            let mut bytes = CellBytes::new();
+            format_time_into(&mut bytes, time);
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes);
         }
     }
     Ok(())
@@ -206,12 +235,14 @@ fn copy_nullable_timestamp(
                 "Block fetch: column {col_idx} expected nullable Timestamp slice"
             ))
         })?;
-    let mut scratch = Vec::with_capacity(26);
     for (row_offset, cell) in view.into_iter().enumerate() {
         if let Some(ts) = cell {
-            scratch.clear();
-            format_timestamp_into(&mut scratch, ts);
-            row_buffer.rows[starting_row + row_offset][col_idx] = Some(scratch.clone().into());
+            // 26-byte timestamp always spills `SmallVec<[u8; 8]>`; prefer
+            // a pre-sized `Vec` so `CellBytes::from` reuses that heap
+            // buffer instead of allocating twice.
+            let mut bytes = Vec::with_capacity(26);
+            format_timestamp_into(&mut bytes, ts);
+            row_buffer.rows[starting_row + row_offset][col_idx] = Some(bytes.into());
         }
     }
     Ok(())
@@ -228,16 +259,11 @@ fn copy_wide_text(
             "Block fetch: column {col_idx} expected wide text view"
         ))
     })?;
-    let mut scratch = Vec::new();
     for (row_offset, cell) in view.iter().enumerate() {
         if let Some(wide) = cell {
-            // `wide` is `&U16Str`; `as_slice()` exposes the underlying
-            // `&[u16]` we feed to `String::from_utf16_lossy`. Matches the
-            // legacy `wide_text_to_utf8_bytes` behaviour exactly.
-            scratch.clear();
-            scratch.extend_from_slice(&String::from_utf16_lossy(wide.as_slice()).into_bytes());
+            // `wide` is `&U16Str`; shared ASCII fast-path + lossy fallback.
             row_buffer.rows[starting_row + row_offset][col_idx] =
-                Some(std::mem::take(&mut scratch).into());
+                Some(wide_text_to_utf8_bytes(wide.as_slice()));
         }
     }
     Ok(())
@@ -331,5 +357,20 @@ mod tests {
             },
         );
         assert_eq!(&buf, b"1999-12-31 23:59:59.000000");
+    }
+
+    #[test]
+    fn format_time_into_cell_bytes_stays_inline() {
+        let mut bytes = CellBytes::new();
+        format_time_into(
+            &mut bytes,
+            &odbc_api::sys::Time {
+                hour: 12,
+                minute: 34,
+                second: 56,
+            },
+        );
+        assert_eq!(bytes.as_slice(), b"12:34:56");
+        assert!(!bytes.spilled(), "HH:MM:SS must fit in SmallVec<[u8; 8]>");
     }
 }

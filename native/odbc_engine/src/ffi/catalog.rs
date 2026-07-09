@@ -61,26 +61,37 @@ pub extern "C" fn odbc_catalog_columns(
             Err(_) => return -1,
         };
 
+        let cache_key = build_catalog_cache_key(conn_id, table_str);
+        {
+            let Some(cache) = state::metadata_cache_read() else {
+                return -1;
+            };
+            if let Some(cached_data) = cache.get_payload_shared(&cache_key) {
+                drop(cache);
+                let Some(mut state) = try_lock_global_state() else {
+                    return -1;
+                };
+                if state::contains_connection(conn_id) || state::contains_pooled_connection(conn_id)
+                {
+                    return write_connection_output_buffer(
+                        &mut state,
+                        conn_id,
+                        cached_data.as_ref(),
+                        out_buffer,
+                        buffer_len,
+                        out_written,
+                    );
+                }
+                drop(state);
+                if let Some(cache) = state::metadata_cache_read() {
+                    cache.remove_payload(&cache_key);
+                }
+            }
+        }
+
         let Some(mut state) = try_lock_global_state() else {
             return -1;
         };
-
-        let cache_key = build_catalog_cache_key(conn_id, table_str);
-        if let Some(cached_data) = state.metadata_cache.get_payload_shared(&cache_key) {
-            if state::contains_connection(conn_id)
-                || state.pooled_connections.contains_key(&conn_id)
-            {
-                return write_connection_output_buffer(
-                    &mut state,
-                    conn_id,
-                    cached_data.as_ref(),
-                    out_buffer,
-                    buffer_len,
-                    out_written,
-                );
-            }
-            state.metadata_cache.remove_payload(&cache_key);
-        }
 
         let metrics = state::ffi_metrics();
         let start = Instant::now();
@@ -132,7 +143,9 @@ pub extern "C" fn odbc_catalog_columns(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                state.metadata_cache.cache_payload(&cache_key, &data);
+                if let Some(cache) = state::metadata_cache_read() {
+                    cache.cache_payload(&cache_key, &data);
+                }
                 let status = write_connection_output_buffer(
                     &mut state,
                     conn_id,

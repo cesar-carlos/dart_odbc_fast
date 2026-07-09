@@ -61,7 +61,13 @@ impl RowBufferEncoder {
     pub fn try_encode(buffer: &RowBuffer) -> std::result::Result<Vec<u8>, EncodeError> {
         let shape = measure_buffer(buffer)?;
         let mut output = Vec::with_capacity(shape.total_len);
-        Self::encode_to_writer_with_shape(buffer, &mut output, shape)?;
+        // Specialize for `Vec`: `extend_from_slice` / `push` avoid the
+        // `Write` trait indirection that the spill-to-disk path needs.
+        // Lengths were already validated by `measure_buffer` against an
+        // immutable borrow, so the hot loop can emit them without
+        // re-checking `try_into`.
+        Self::encode_to_vec_with_shape(buffer, &mut output, shape);
+        debug_assert_eq!(output.len(), shape.total_len);
         Ok(output)
     }
 
@@ -77,6 +83,36 @@ impl RowBufferEncoder {
     /// Like [`Self::encode_to_writer`] but maps failures to [`OdbcError::ResourceLimitReached`].
     pub fn encode_to_writer_result<W: Write>(buffer: &RowBuffer, w: &mut W) -> Result<()> {
         Self::encode_to_writer(buffer, w).map_err(Self::map_encode_error)
+    }
+
+    fn encode_to_vec_with_shape(buffer: &RowBuffer, output: &mut Vec<u8>, shape: EncodedShape) {
+        output.extend_from_slice(&MAGIC.to_le_bytes());
+        output.extend_from_slice(&VERSION.to_le_bytes());
+        output.extend_from_slice(&shape.column_count.to_le_bytes());
+        output.extend_from_slice(&shape.row_count.to_le_bytes());
+        output.extend_from_slice(&shape.payload_size.to_le_bytes());
+
+        for col in &buffer.columns {
+            output.extend_from_slice(&(col.odbc_type as u16).to_le_bytes());
+            // SAFETY of cast: `measure_buffer` already rejected names that
+            // do not fit in `u16`.
+            let name_len = col.name.len() as u16;
+            output.extend_from_slice(&name_len.to_le_bytes());
+            output.extend_from_slice(col.name.as_bytes());
+        }
+
+        for row in &buffer.rows {
+            for cell in row {
+                if let Some(data) = cell {
+                    output.push(0);
+                    let data_len = data.len() as u32;
+                    output.extend_from_slice(&data_len.to_le_bytes());
+                    output.extend_from_slice(data);
+                } else {
+                    output.push(1);
+                }
+            }
+        }
     }
 
     fn encode_to_writer_with_shape<W: Write>(

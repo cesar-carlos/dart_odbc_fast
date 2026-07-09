@@ -2,17 +2,15 @@ use std::sync::Arc;
 
 use super::super::global::*;
 use super::super::prelude::*;
+use crate::ffi::state;
 
 pub(super) fn pool_health_check(pool_id: c_uint) -> c_int {
-    let Some(mut state) = try_lock_global_state() else {
+    let Some(pool) = state::get_pool(pool_id) else {
+        if let Some(mut gs) = try_lock_global_state() {
+            set_error(&mut gs, format!("Invalid pool ID: {}", pool_id));
+        }
         return -1;
     };
-
-    let Some(pool) = state.pools.get(&pool_id).cloned() else {
-        set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
-        return -1;
-    };
-    drop(state);
 
     if pool.health_check() {
         1
@@ -30,20 +28,13 @@ pub(super) fn pool_get_state(
         return -1;
     }
 
-    let Some(state) = try_lock_global_state() else {
-        return -1;
-    };
-
-    let pool = match state.pools.get(&pool_id) {
-        Some(p) => p,
-        None => {
-            // SAFETY: `out_size` and `out_idle` are non-null (checked above).
-            unsafe {
-                *out_size = 0;
-                *out_idle = 0;
-            }
-            return -1;
+    let Some(pool) = state::get_pool(pool_id) else {
+        // SAFETY: `out_size` and `out_idle` are non-null (checked above).
+        unsafe {
+            *out_size = 0;
+            *out_idle = 0;
         }
+        return -1;
     };
 
     let pool_state = pool.state();
@@ -73,16 +64,9 @@ pub(super) fn pool_get_state_json(
         return -1;
     }
 
-    let Some(state) = try_lock_global_state() else {
+    let Some(pool) = state::get_pool(pool_id) else {
+        set_out_written_zero(out_written);
         return -1;
-    };
-
-    let pool = match state.pools.get(&pool_id) {
-        Some(p) => p,
-        None => {
-            set_out_written_zero(out_written);
-            return -1;
-        }
     };
 
     let pool_state = pool.state();
@@ -122,90 +106,130 @@ pub(super) fn pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c_int {
     }
 
     let pool = {
-        let Some(mut state) = try_lock_global_state() else {
+        // Lock order: transactions → pools.
+        let Some(result) = state::with_transaction_maps_mut(|txn_maps| {
+            let begins = txn_maps.begins_snapshot();
+            state::with_pool_maps_mut(|maps| {
+                let Some(pool) = maps.get_pool(pool_id).cloned() else {
+                    return Err("invalid");
+                };
+                if maps.has_checked_out(pool_id) {
+                    return Err("checked_out");
+                }
+                if maps.pool_busy_count(pool_id) > 0 {
+                    return Err("busy");
+                }
+                if maps.has_begin_in_progress(pool_id, &begins) {
+                    return Err("begin");
+                }
+                Ok(pool)
+            })
+            .unwrap_or(Err("gone"))
+        }) else {
             return -1;
         };
-        let pool = match state.pools.get(&pool_id) {
-            Some(p) => p,
-            None => {
-                set_error(&mut state, format!("Invalid pool ID: {}", pool_id));
+        match result {
+            Ok(pool) => pool,
+            Err("invalid") => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_error(&mut gs, format!("Invalid pool ID: {}", pool_id));
+                }
                 return -1;
             }
-        };
-        let has_checked_out = state
-            .pooled_connections
-            .values()
-            .any(|entry| entry.pool_id == pool_id);
-        if has_checked_out {
-            set_error(
-                &mut state,
-                "Cannot resize pool while connections are checked out".to_string(),
-            );
-            return -1;
+            Err("checked_out") => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_error(
+                        &mut gs,
+                        "Cannot resize pool while connections are checked out".to_string(),
+                    );
+                }
+                return -1;
+            }
+            Err("begin") => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_error(
+                        &mut gs,
+                        "Cannot resize pool while transaction begin is in progress".to_string(),
+                    );
+                }
+                return -1;
+            }
+            Err(_) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_error(
+                        &mut gs,
+                        "Cannot resize pool while connections are executing".to_string(),
+                    );
+                }
+                return -1;
+            }
         }
-        if state.pooled_busy_counts.get(&pool_id).copied().unwrap_or(0) > 0 {
-            set_error(
-                &mut state,
-                "Cannot resize pool while connections are executing".to_string(),
-            );
-            return -1;
-        }
-        if pool_has_begin_in_progress(&state, pool_id) {
-            set_error(
-                &mut state,
-                "Cannot resize pool while transaction begin is in progress".to_string(),
-            );
-            return -1;
-        }
-        Arc::clone(pool)
     };
 
     let pool = match pool.recreate_with_max_size(new_max_size) {
         Ok(pool) => pool,
         Err(e) => {
-            let Some(mut state) = try_lock_global_state() else {
-                return -1;
-            };
-            set_error(&mut state, format!("odbc_pool_set_size failed: {}", e));
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("odbc_pool_set_size failed: {}", e));
+            }
             return -1;
         }
     };
 
-    let Some(mut state) = try_lock_global_state() else {
+    // Lock order: transactions → pools.
+    let Some(result) = state::with_transaction_maps_mut(|txn_maps| {
+        let begins = txn_maps.begins_snapshot();
+        state::with_pool_maps_mut(|maps| {
+            if maps.has_checked_out(pool_id) || maps.pool_busy_count(pool_id) > 0 {
+                return Err("busy");
+            }
+            if maps.has_begin_in_progress(pool_id, &begins) {
+                return Err("begin");
+            }
+            if !maps.contains_pool(pool_id) {
+                return Err("closed");
+            }
+            maps.insert_pool(pool_id, Arc::new(pool));
+            Ok(())
+        })
+        .unwrap_or(Err("gone"))
+    }) else {
         return -1;
     };
-    if state
-        .pooled_connections
-        .values()
-        .any(|entry| entry.pool_id == pool_id)
-        || state.pooled_busy_counts.get(&pool_id).copied().unwrap_or(0) > 0
-    {
-        set_error(
-            &mut state,
-            "Cannot resize pool while connections are checked out or executing".to_string(),
-        );
-        return -1;
+    match result {
+        Ok(()) => 0,
+        Err("busy") => {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(
+                    &mut gs,
+                    "Cannot resize pool while connections are checked out or executing".to_string(),
+                );
+            }
+            -1
+        }
+        Err("begin") => {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(
+                    &mut gs,
+                    "Cannot resize pool while transaction begin is in progress".to_string(),
+                );
+            }
+            -1
+        }
+        Err(_) => {
+            // Pool was closed or invalidated between the two lock acquisitions.
+            // The newly-recreated pool object is discarded here; the resize is
+            // effectively a no-op because the pool no longer exists.
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(
+                    &mut gs,
+                    format!(
+                        "Pool {} was closed while resize was in progress; resize aborted",
+                        pool_id
+                    ),
+                );
+            }
+            -1
+        }
     }
-    if pool_has_begin_in_progress(&state, pool_id) {
-        set_error(
-            &mut state,
-            "Cannot resize pool while transaction begin is in progress".to_string(),
-        );
-        return -1;
-    }
-    if !state.pools.contains_key(&pool_id) {
-        // Pool was closed or invalidated between the two lock acquisitions.
-        // The newly-recreated pool object is discarded here; the resize is
-        // effectively a no-op because the pool no longer exists.
-        set_error(
-            &mut state,
-            format!(
-                "Pool {} was closed while resize was in progress; resize aborted",
-                pool_id
-            ),
-        );
-        return -1;
-    }
-    state.pools.insert(pool_id, Arc::new(pool));
-    0
 }

@@ -432,18 +432,16 @@ fn test_ffi_pool_release_raii_rollback_autocommit() {
     // handle. This mirrors what `Transaction::begin` does for non-pooled
     // connections; for the pool path we go straight to the wrapper.
     {
-        let mut state = get_global_state().lock().unwrap();
-        let entry = state
-            .pooled_connections
-            .get_mut(&pooled_id)
-            .expect("just-acquired pooled connection must be in state");
-        entry
-            .pooled
-            .lock()
-            .expect("lock pooled connection for test")
-            .get_connection_mut()
-            .set_autocommit(false)
-            .expect("set_autocommit(false) on pooled conn");
+        state::with_pooled_connection_mut_for_test(pooled_id, |entry| {
+            entry
+                .pooled
+                .lock()
+                .expect("lock pooled connection for test")
+                .get_connection_mut()
+                .set_autocommit(false)
+                .expect("set_autocommit(false) on pooled conn");
+        })
+        .expect("just-acquired pooled connection must be in state");
     }
 
     let pr = odbc_pool_release_connection(pooled_id);

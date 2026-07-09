@@ -71,6 +71,29 @@ fn bench_row_major_encode(c: &mut Criterion) {
     group.finish();
 }
 
+/// A/B for the in-memory encode specialization: `encode_to_writer` (generic
+/// `Write` path, still used for spill-to-disk) vs `encode_result` (direct
+/// `Vec` extend/push). Same wire bytes; the delta isolates trait indirection.
+fn bench_row_major_vec_vs_writer(c: &mut Criterion) {
+    let shapes: &[(usize, usize)] = &[(1_000, 10), (10_000, 10), (10_000, 50)];
+    let mut group = c.benchmark_group("encoder/row_major_vec_vs_writer");
+    for &(rows, cols) in shapes {
+        let buf = build_mixed_buffer(rows, cols);
+        let id = format!("{rows}x{cols}");
+        group.bench_with_input(BenchmarkId::new("via_write_trait", &id), &buf, |b, buf| {
+            b.iter(|| {
+                let mut out = Vec::new();
+                black_box(RowBufferEncoder::encode_to_writer(buf, &mut out).expect("encode"));
+                black_box(out)
+            });
+        });
+        group.bench_with_input(BenchmarkId::new("direct_vec", &id), &buf, |b, buf| {
+            b.iter(|| black_box(RowBufferEncoder::encode_result(buf).expect("encode")));
+        });
+    }
+    group.finish();
+}
+
 fn bench_columnar_via_row_major(c: &mut Criterion) {
     let mut group = c.benchmark_group("encoder/columnar_via_row_major");
     for &(rows, cols) in SHAPES {
@@ -225,6 +248,7 @@ fn bench_streaming_columnar_batch_encode(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_row_major_encode,
+    bench_row_major_vec_vs_writer,
     bench_columnar_via_row_major,
     bench_columnar_via_row_major_compressed,
     bench_row_to_columnar_conversion,

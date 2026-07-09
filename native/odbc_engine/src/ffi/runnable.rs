@@ -44,8 +44,12 @@ impl RunnableConnection {
     }
 }
 
+/// Resolve a runnable connection. Regular connections use the connections
+/// shard; pooled connections bump busy counts on the pools shard. The
+/// residual `GlobalState` parameter is unused for lookup and kept only so
+/// call sites that already hold the outer mutex keep a stable signature.
 pub(crate) fn take_runnable_connection(
-    state: &mut GlobalState,
+    _state: &mut GlobalState,
     conn_id: u32,
 ) -> Result<RunnableConnection> {
     if let Some(handles) = state::connection_handles(conn_id) {
@@ -58,43 +62,20 @@ pub(crate) fn take_runnable_connection(
         return Ok(RunnableConnection::Regular(conn_arc));
     }
 
-    if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
-        *state.pooled_busy_counts.entry(entry.pool_id).or_insert(0) += 1;
-        *state
-            .pooled_connection_busy_counts
-            .entry(conn_id)
-            .or_insert(0) += 1;
-        return Ok(RunnableConnection::Pooled {
-            pool_id: entry.pool_id,
-            pooled: entry.pooled,
-        });
+    if let Some((pool_id, pooled)) = state::reserve_pooled_runnable(conn_id) {
+        return Ok(RunnableConnection::Pooled { pool_id, pooled });
     }
 
     Err(OdbcError::InvalidHandle(conn_id))
 }
 
 pub(crate) fn restore_pooled_connection(
-    state: &mut GlobalState,
+    _state: &mut GlobalState,
     conn_id: u32,
     target: RunnableConnection,
 ) {
     if let RunnableConnection::Pooled { pool_id, .. } = target {
-        decrement_pooled_busy_counts(state, pool_id, conn_id);
-    }
-}
-
-pub(crate) fn decrement_pooled_busy_counts(state: &mut GlobalState, pool_id: u32, conn_id: u32) {
-    if let Some(count) = state.pooled_busy_counts.get_mut(&pool_id) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            state.pooled_busy_counts.remove(&pool_id);
-        }
-    }
-    if let Some(count) = state.pooled_connection_busy_counts.get_mut(&conn_id) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            state.pooled_connection_busy_counts.remove(&conn_id);
-        }
+        state::decrement_pooled_busy_counts(pool_id, conn_id);
     }
 }
 
@@ -135,16 +116,8 @@ impl RunnableTargetGuard {
 
 impl Drop for RunnableTargetGuard {
     fn drop(&mut self) {
-        if let Some(target) = self.target.take() {
-            if let Some(mut state) = try_lock_global_state() {
-                restore_pooled_connection(&mut state, self.conn_id, target);
-            } else {
-                log::error!(
-                    "RunnableTargetGuard: failed to re-acquire global state to restore pooled \
-                     busy counts for conn_id {} — pool may remain marked busy until process restart",
-                    self.conn_id
-                );
-            }
+        if let Some(RunnableConnection::Pooled { pool_id, .. }) = self.target.take() {
+            state::decrement_pooled_busy_counts(pool_id, self.conn_id);
         }
     }
 }
@@ -175,16 +148,8 @@ pub(crate) fn reserve_stream_start(
 ) -> Result<StreamReservation> {
     let target = if let Some(handles) = state::connection_handles(conn_id) {
         StreamStartTarget::Regular { handles }
-    } else if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
-        *state.pooled_busy_counts.entry(entry.pool_id).or_insert(0) += 1;
-        *state
-            .pooled_connection_busy_counts
-            .entry(conn_id)
-            .or_insert(0) += 1;
-        StreamStartTarget::Pooled {
-            pool_id: entry.pool_id,
-            pooled: entry.pooled,
-        }
+    } else if let Some((pool_id, pooled)) = state::reserve_pooled_runnable(conn_id) {
+        StreamStartTarget::Pooled { pool_id, pooled }
     } else {
         return Err(OdbcError::InvalidHandle(conn_id));
     };
@@ -192,7 +157,7 @@ pub(crate) fn reserve_stream_start(
     let stream_id = allocate_stream_id(state, conn_id);
     if stream_id == 0 {
         if let StreamStartTarget::Pooled { pool_id, .. } = &target {
-            decrement_pooled_busy_counts(state, *pool_id, conn_id);
+            state::decrement_pooled_busy_counts(*pool_id, conn_id);
         }
         return Err(OdbcError::InternalError(
             "Failed to allocate stream ID".to_string(),
@@ -207,17 +172,13 @@ pub(crate) fn pooled_stream_completion(
     pool_id: u32,
 ) -> Box<dyn FnOnce() + Send + 'static> {
     Box::new(move || {
-        if let Some(mut state) = try_lock_global_state() {
-            decrement_pooled_busy_counts(&mut state, pool_id, conn_id);
-        }
+        state::decrement_pooled_busy_counts(pool_id, conn_id);
     })
 }
 
 pub(crate) fn release_pooled_stream_reservation(conn_id: u32, target: &StreamStartTarget) {
     if let StreamStartTarget::Pooled { pool_id, .. } = target {
-        if let Some(mut state) = try_lock_global_state() {
-            decrement_pooled_busy_counts(&mut state, *pool_id, conn_id);
-        }
+        state::decrement_pooled_busy_counts(*pool_id, conn_id);
     }
 }
 

@@ -14,8 +14,8 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uint};
 use std::sync::Arc;
 
-/// Clears [`GlobalState::transaction_begins_in_progress`] when a begin call
-/// returns without an explicit remove (for example global-state re-lock failure).
+/// Clears begin-in-progress reservation when a begin call returns without an
+/// explicit remove (for example transaction-maps re-lock failure).
 struct TransactionBeginReservation {
     conn_id: u32,
     armed: bool,
@@ -37,16 +37,7 @@ impl TransactionBeginReservation {
 impl Drop for TransactionBeginReservation {
     fn drop(&mut self) {
         if self.armed {
-            if let Some(mut state) = try_lock_global_state() {
-                state.transaction_begins_in_progress.remove(&self.conn_id);
-            } else {
-                log::error!(
-                    "TransactionBeginReservation: failed to re-acquire global state to clear \
-                     transaction begin reservation for conn_id {} — connection may remain \
-                     blocked from new transactions until process restart",
-                    self.conn_id
-                );
-            }
+            state::remove_begin_in_progress(self.conn_id);
         }
     }
 }
@@ -124,14 +115,12 @@ pub extern "C" fn odbc_transaction_begin_v3(
     lock_timeout_ms: c_uint,
 ) -> c_uint {
     crate::ffi_guard_id!(c_uint, {
-        let Some(mut state) = try_lock_global_state() else {
-            return 0;
-        };
-
         let isolation = match IsolationLevel::from_u32(isolation_level) {
             Some(iso) => iso,
             None => {
-                set_error(&mut state, "Invalid isolation level".to_string());
+                if let Some(mut state) = try_lock_global_state() {
+                    set_error(&mut state, "Invalid isolation level".to_string());
+                }
                 return 0;
             }
         };
@@ -147,36 +136,54 @@ pub extern "C" fn odbc_transaction_begin_v3(
 
         let begin_source = if let Some(handles) = state::connection_handles(conn_id) {
             TransactionBeginSource::Regular(handles)
-        } else if let Some(entry) = state.pooled_connections.get(&conn_id).cloned() {
+        } else if let Some(entry) = state::get_pooled_connection(conn_id) {
             TransactionBeginSource::Pooled(entry.pooled)
         } else {
-            set_connection_error(
-                &mut state,
-                conn_id,
-                format!("Invalid connection ID: {}", conn_id),
-            );
+            if let Some(mut gs) = try_lock_global_state() {
+                set_connection_error(
+                    &mut gs,
+                    conn_id,
+                    format!("Invalid connection ID: {}", conn_id),
+                );
+            }
             return 0;
         };
 
-        if has_active_transaction_for_connection(&state, conn_id) {
-            set_connection_error(
-                &mut state,
-                conn_id,
-                "Connection already has an active transaction".to_string(),
-            );
-            return 0;
+        let reserved = state::with_transaction_maps_mut(|maps| {
+            if maps.has_active_for_connection(conn_id) {
+                return Err("active");
+            }
+            if maps.begin_in_progress(conn_id) {
+                return Err("begin");
+            }
+            maps.insert_begin_in_progress(conn_id);
+            Ok(())
+        });
+        match reserved {
+            Some(Ok(())) => {}
+            Some(Err("active")) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(
+                        &mut gs,
+                        conn_id,
+                        "Connection already has an active transaction".to_string(),
+                    );
+                }
+                return 0;
+            }
+            Some(Err(_)) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(
+                        &mut gs,
+                        conn_id,
+                        "Transaction begin already in progress for this connection".to_string(),
+                    );
+                }
+                return 0;
+            }
+            None => return 0,
         }
-        if state.transaction_begins_in_progress.contains(&conn_id) {
-            set_connection_error(
-                &mut state,
-                conn_id,
-                "Transaction begin already in progress for this connection".to_string(),
-            );
-            return 0;
-        }
-        state.transaction_begins_in_progress.insert(conn_id);
         let mut begin_reservation = TransactionBeginReservation::new(conn_id);
-        drop(state);
 
         // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
         // `DbmsInfo::detect_for_conn_id` (live SQLGetInfo) — see v3.1 fix B2.
@@ -201,75 +208,62 @@ pub extern "C" fn odbc_transaction_begin_v3(
             }
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return 0;
-        };
-        state.transaction_begins_in_progress.remove(&conn_id);
+        state::remove_begin_in_progress(conn_id);
         begin_reservation.disarm();
         match txn_result {
             Ok(txn) => {
                 let connection_still_valid = state::contains_connection(conn_id)
-                    || state.pooled_connections.contains_key(&conn_id);
+                    || state::contains_pooled_connection(conn_id);
                 if !connection_still_valid {
-                    drop(state);
                     if let Err(e) = txn.rollback() {
                         log::warn!(
                             "Failed to rollback transaction begun on invalidated connection {conn_id}: {e}"
                         );
                     }
-                    let Some(mut state) = try_lock_global_state() else {
-                        return 0;
-                    };
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        "Connection became invalid while beginning transaction".to_string(),
-                    );
-                    return 0;
-                }
-                if has_active_transaction_for_connection(&state, conn_id) {
-                    drop(state);
-                    if let Err(e) = txn.rollback() {
-                        log::warn!(
-                            "Failed to rollback duplicate transaction on conn_id {conn_id}: {e}"
+                    if let Some(mut gs) = try_lock_global_state() {
+                        set_connection_error(
+                            &mut gs,
+                            conn_id,
+                            "Connection became invalid while beginning transaction".to_string(),
                         );
                     }
-                    let Some(mut state) = try_lock_global_state() else {
-                        return 0;
-                    };
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        "Connection already has an active transaction".to_string(),
-                    );
                     return 0;
                 }
-                let mut id = 0u32;
-                for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-                    let candidate = state.next_txn_id;
-                    state.next_txn_id = state.next_txn_id.wrapping_add(1);
-                    if candidate != 0 && !state.transactions.contains_key(&candidate) {
-                        id = candidate;
-                        break;
+                match state::with_transaction_maps_mut(|maps| {
+                    if maps.has_active_for_connection(conn_id) {
+                        return Err(("active", txn));
                     }
+                    maps.allocate_and_insert(txn).map_err(|txn| ("id", txn))
+                }) {
+                    Some(Ok(id)) => id,
+                    Some(Err((reason, txn))) => {
+                        if let Err(e) = txn.rollback() {
+                            log::warn!(
+                                "Failed to rollback transaction after begin registration failure \
+                                 on conn_id {conn_id} ({reason}): {e}"
+                            );
+                        }
+                        if let Some(mut gs) = try_lock_global_state() {
+                            let msg = if reason == "active" {
+                                "Connection already has an active transaction".to_string()
+                            } else {
+                                "Failed to allocate transaction ID".to_string()
+                            };
+                            set_connection_error(&mut gs, conn_id, msg);
+                        }
+                        0
+                    }
+                    None => 0,
                 }
-                if id == 0 {
-                    set_connection_error(
-                        &mut state,
-                        conn_id,
-                        "Failed to allocate transaction ID".to_string(),
-                    );
-                    return 0;
-                }
-                state.transactions.insert(id, Arc::new(txn));
-                id
             }
             Err(e) => {
-                set_connection_error(
-                    &mut state,
-                    conn_id,
-                    format!("Failed to begin transaction: {}", e),
-                );
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(
+                        &mut gs,
+                        conn_id,
+                        format!("Failed to begin transaction: {}", e),
+                    );
+                }
                 0
             }
         }
@@ -286,10 +280,10 @@ fn restore_busy_transaction(txn_id: c_uint, txn_conn_id: u32, txn_arc: Arc<Trans
         "odbc_transaction_{op}: transaction {txn_id} is still referenced (concurrent savepoint \
          in flight); {op} aborted and transaction kept registered for retry"
     );
-    if let Some(mut state) = try_lock_global_state() {
-        state.transactions.insert(txn_id, txn_arc);
+    state::insert_transaction(txn_id, txn_arc);
+    if let Some(mut gs) = try_lock_global_state() {
         set_connection_error(
-            &mut state,
+            &mut gs,
             txn_conn_id,
             format!("Transaction {txn_id} is busy (concurrent savepoint call); retry {op}"),
         );
@@ -302,39 +296,31 @@ fn restore_busy_transaction(txn_id: c_uint, txn_conn_id: u32, txn_arc: Arc<Trans
 #[no_mangle]
 pub extern "C" fn odbc_transaction_commit(txn_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        if let Some(txn_arc) = state.transactions.remove(&txn_id) {
-            let txn_conn_id = txn_arc.conn_id();
-            drop(state);
-            let txn = match Arc::try_unwrap(txn_arc) {
-                Ok(txn) => txn,
-                Err(txn_arc) => {
-                    // A concurrent savepoint call still holds a clone. Put the
-                    // handle back so the caller can retry instead of losing the
-                    // transaction to a Drop auto-rollback.
-                    restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "commit");
-                    return 1;
-                }
-            };
-            match txn.commit() {
-                Ok(_) => 0,
-                Err(e) => {
-                    if let Some(mut state) = try_lock_global_state() {
-                        set_connection_error(
-                            &mut state,
-                            txn_conn_id,
-                            format!("Commit failed: {}", e),
-                        );
-                    }
-                    1
-                }
+        let Some(txn_arc) = state::remove_transaction(txn_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid transaction ID: {}", txn_id));
             }
-        } else {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
-            1
+            return 1;
+        };
+        let txn_conn_id = txn_arc.conn_id();
+        let txn = match Arc::try_unwrap(txn_arc) {
+            Ok(txn) => txn,
+            Err(txn_arc) => {
+                // A concurrent savepoint call still holds a clone. Put the
+                // handle back so the caller can retry instead of losing the
+                // transaction to a Drop auto-rollback.
+                restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "commit");
+                return 1;
+            }
+        };
+        match txn.commit() {
+            Ok(_) => 0,
+            Err(e) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(&mut gs, txn_conn_id, format!("Commit failed: {}", e));
+                }
+                1
+            }
         }
     })
 }
@@ -345,38 +331,30 @@ pub extern "C" fn odbc_transaction_commit(txn_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-
-        if let Some(txn_arc) = state.transactions.remove(&txn_id) {
-            let txn_conn_id = txn_arc.conn_id();
-            drop(state);
-            let txn = match Arc::try_unwrap(txn_arc) {
-                Ok(txn) => txn,
-                Err(txn_arc) => {
-                    // See commit path: keep the transaction registered so the
-                    // caller can retry once the concurrent user releases it.
-                    restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "rollback");
-                    return 1;
-                }
-            };
-            match txn.rollback() {
-                Ok(_) => 0,
-                Err(e) => {
-                    if let Some(mut state) = try_lock_global_state() {
-                        set_connection_error(
-                            &mut state,
-                            txn_conn_id,
-                            format!("Rollback failed: {}", e),
-                        );
-                    }
-                    1
-                }
+        let Some(txn_arc) = state::remove_transaction(txn_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid transaction ID: {}", txn_id));
             }
-        } else {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
-            1
+            return 1;
+        };
+        let txn_conn_id = txn_arc.conn_id();
+        let txn = match Arc::try_unwrap(txn_arc) {
+            Ok(txn) => txn,
+            Err(txn_arc) => {
+                // See commit path: keep the transaction registered so the
+                // caller can retry once the concurrent user releases it.
+                restore_busy_transaction(txn_id, txn_conn_id, txn_arc, "rollback");
+                return 1;
+            }
+        };
+        match txn.rollback() {
+            Ok(_) => 0,
+            Err(e) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(&mut gs, txn_conn_id, format!("Rollback failed: {}", e));
+                }
+                1
+            }
         }
     })
 }
@@ -388,8 +366,8 @@ pub extern "C" fn odbc_transaction_rollback(txn_id: c_uint) -> c_int {
 /// implementation used inline `format!("SAVEPOINT {}", name)` which bypassed
 /// the safety net and reintroduced SQL injection via the FFI surface.
 ///
-/// Resolves `txn_id` under the global lock, then runs the ODBC savepoint SQL
-/// without holding `GLOBAL_STATE` (ISSUE-TXN-SAVEPOINT-LOCK). Active
+/// Resolves `txn_id` under the transactions lock, then runs the ODBC savepoint
+/// SQL without holding that lock (ISSUE-TXN-SAVEPOINT-LOCK). Active
 /// transactions are stored as `Arc<Transaction>` so the handle can be cloned
 /// for the duration of the driver round-trip.
 pub(crate) fn savepoint_dispatch<F>(
@@ -411,22 +389,19 @@ where
         Ok(s) => s,
         Err(_) => return 1,
     };
-    let (conn_id, txn) = {
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(txn) = state.transactions.get(&txn_id).cloned() else {
-            set_error(&mut state, format!("Invalid transaction ID: {}", txn_id));
-            return 1;
-        };
-        (txn.conn_id(), txn)
+    let Some(txn) = state::get_transaction(txn_id) else {
+        if let Some(mut gs) = try_lock_global_state() {
+            set_error(&mut gs, format!("Invalid transaction ID: {}", txn_id));
+        }
+        return 1;
     };
+    let conn_id = txn.conn_id();
 
     match action(txn.as_ref(), name_str) {
         Ok(()) => 0,
         Err(e) => {
-            if let Some(mut state) = try_lock_global_state() {
-                set_connection_error(&mut state, conn_id, format!("Savepoint {op} failed: {}", e));
+            if let Some(mut gs) = try_lock_global_state() {
+                set_connection_error(&mut gs, conn_id, format!("Savepoint {op} failed: {}", e));
             }
             1
         }

@@ -45,8 +45,8 @@ fn should_reject_cached_catalog_columns_for_invalid_connection() {
     let payload = br#"[{"name":"id","type":4}]"#;
     let cache_key = build_catalog_cache_key(conn_id, "dbo.Users");
     {
-        let state = try_lock_global_state().expect("global state should lock");
-        state.metadata_cache.cache_payload(&cache_key, payload);
+        let cache = state::metadata_cache_read().expect("metadata cache should lock");
+        cache.cache_payload(&cache_key, payload);
     }
 
     let mut buffer = vec![0u8; payload.len()];
@@ -86,8 +86,8 @@ fn should_report_cached_catalog_columns_buffer_too_small() {
     let payload = br#"[{"name":"id","type":4}]"#;
     let cache_key = build_catalog_cache_key(conn_id, "dbo.Users");
     {
-        let state = try_lock_global_state().expect("global state should lock");
-        state.metadata_cache.cache_payload(&cache_key, payload);
+        let cache = state::metadata_cache_read().expect("metadata cache should lock");
+        cache.cache_payload(&cache_key, payload);
     }
 
     let mut buffer = vec![0u8; 4];

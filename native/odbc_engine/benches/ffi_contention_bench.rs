@@ -1,13 +1,14 @@
 //! Synthetic FFI contention bench.
 //!
-//! Simulates the lock pattern the current `ffi::mod` uses: a single
-//! `Mutex<GlobalState>` taken twice per query
-//! (`take_runnable_connection` plus `write_connection_output_buffer`)
-//! versus a hypothetical sharded layout where reads of per-id maps and
-//! writes of per-connection errors live in independent locks.
+//! Models the lock pattern used by the FFI layer:
 //!
-//! No ODBC required — we model only the synchronisation primitives so the
-//! sprint 3 implementation can measure its delta on this same bench.
+//! - **monolithic**: one `Mutex` for connections + errors + metrics +
+//!   statements + pool busy counts (historical layout).
+//! - **sharded**: dedicated locks per category — matches the production
+//!   split where connections, errors, metrics, metadata cache, streams,
+//!   statements, and pools live outside the residual `GlobalState` mutex.
+//!
+//! No ODBC required — we model only the synchronisation primitives.
 //!
 //! Run:
 //!
@@ -24,21 +25,23 @@ use std::time::Duration;
 const ITERATIONS_PER_THREAD: usize = 1_000;
 const THREAD_COUNTS: &[usize] = &[1, 2, 4, 8];
 
-/// Mirrors the production layout: every category lives inside one mutex.
+/// Mirrors the historical layout: every category lives inside one mutex.
 struct MonolithicState {
     connections: HashMap<u32, u32>,
     errors: HashMap<u32, String>,
+    statements: HashMap<u32, u32>,
+    pooled_busy: HashMap<u32, usize>,
     metrics: u64,
 }
 
-/// Mirrors the target layout after sprint 3: per-category locks; reads of
-/// the connections map can proceed while another thread is updating an
-/// unrelated category.
+/// Mirrors the current production layout after the pools split:
+/// per-category locks; pooled busy-count bumps no longer contend with
+/// statement or connection traffic.
 struct ShardedState {
     connections: RwLock<HashMap<u32, u32>>,
     errors: Mutex<HashMap<u32, String>>,
-    // metrics moves out of the mutex entirely — atomic in production; we
-    // model that with a single AtomicU64 for fidelity.
+    statements: Mutex<HashMap<u32, u32>>,
+    pools: Mutex<HashMap<u32, usize>>,
     metrics: std::sync::atomic::AtomicU64,
 }
 
@@ -49,21 +52,29 @@ fn run_monolithic(state: Arc<Mutex<MonolithicState>>, threads: usize) {
         handles.push(thread::spawn(move || {
             for i in 0..ITERATIONS_PER_THREAD {
                 let conn_id = (thread_idx as u32) * 1000 + (i as u32);
+                let stmt_id = conn_id.wrapping_add(10_000);
+                let pool_id = (thread_idx as u32) + 1;
 
-                // "take_runnable_connection": lock + read + drop.
-                {
-                    let guard = state.lock().expect("lock");
-                    let _ = black_box(guard.connections.get(&conn_id).copied());
-                }
-
-                // Simulate the per-query work outside the lock (no-op).
-                thread::yield_now();
-
-                // "write_connection_output_buffer": lock + write + drop.
+                // Mixed traffic: connection lookup + pool busy bump +
+                // statement insert + error write.
                 {
                     let mut guard = state.lock().expect("lock");
+                    let _ = black_box(guard.connections.get(&conn_id).copied());
+                    *guard.pooled_busy.entry(pool_id).or_insert(0) += 1;
+                    guard.statements.insert(stmt_id, conn_id);
                     guard.errors.insert(conn_id, format!("ok:{i}"));
                     guard.metrics = guard.metrics.wrapping_add(1);
+                }
+
+                thread::yield_now();
+
+                {
+                    let mut guard = state.lock().expect("lock");
+                    let _ = black_box(guard.statements.get(&stmt_id).copied());
+                    guard.statements.remove(&stmt_id);
+                    if let Some(count) = guard.pooled_busy.get_mut(&pool_id) {
+                        *count = count.saturating_sub(1);
+                    }
                 }
             }
         }));
@@ -82,23 +93,40 @@ fn run_sharded(state: Arc<ShardedState>, threads: usize) {
         handles.push(thread::spawn(move || {
             for i in 0..ITERATIONS_PER_THREAD {
                 let conn_id = (thread_idx as u32) * 1000 + (i as u32);
+                let stmt_id = conn_id.wrapping_add(10_000);
+                let pool_id = (thread_idx as u32) + 1;
 
-                // Read-only access to connections via RwLock.
                 {
                     let guard = state.connections.read().expect("rlock");
                     let _ = black_box(guard.get(&conn_id).copied());
                 }
-
-                thread::yield_now();
-
-                // Errors only contends with other error writers.
+                {
+                    let mut guard = state.pools.lock().expect("pool lock");
+                    *guard.entry(pool_id).or_insert(0) += 1;
+                }
+                {
+                    let mut guard = state.statements.lock().expect("stmt lock");
+                    guard.insert(stmt_id, conn_id);
+                }
                 {
                     let mut guard = state.errors.lock().expect("err lock");
                     guard.insert(conn_id, format!("ok:{i}"));
                 }
-
-                // Metrics is fully lock-free.
                 state.metrics.fetch_add(1, Ordering::Relaxed);
+
+                thread::yield_now();
+
+                {
+                    let mut guard = state.statements.lock().expect("stmt lock");
+                    let _ = black_box(guard.get(&stmt_id).copied());
+                    guard.remove(&stmt_id);
+                }
+                {
+                    let mut guard = state.pools.lock().expect("pool lock");
+                    if let Some(count) = guard.get_mut(&pool_id) {
+                        *count = count.saturating_sub(1);
+                    }
+                }
             }
         }));
     }
@@ -109,7 +137,6 @@ fn run_sharded(state: Arc<ShardedState>, threads: usize) {
 
 fn bench_monolithic_contention(c: &mut Criterion) {
     let mut group = c.benchmark_group("ffi_contention/monolithic_mutex");
-    // Keep wall-clock bounded; this bench spawns real threads.
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(20);
     for &threads in THREAD_COUNTS {
@@ -121,6 +148,8 @@ fn bench_monolithic_contention(c: &mut Criterion) {
                     let state = Arc::new(Mutex::new(MonolithicState {
                         connections: HashMap::new(),
                         errors: HashMap::new(),
+                        statements: HashMap::new(),
+                        pooled_busy: HashMap::new(),
                         metrics: 0,
                     }));
                     run_monolithic(state, threads);
@@ -144,6 +173,8 @@ fn bench_sharded_contention(c: &mut Criterion) {
                     let state = Arc::new(ShardedState {
                         connections: RwLock::new(HashMap::new()),
                         errors: Mutex::new(HashMap::new()),
+                        statements: Mutex::new(HashMap::new()),
+                        pools: Mutex::new(HashMap::new()),
                         metrics: std::sync::atomic::AtomicU64::new(0),
                     });
                     run_sharded(state, threads);

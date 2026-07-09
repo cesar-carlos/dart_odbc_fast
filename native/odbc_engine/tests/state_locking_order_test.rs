@@ -2,11 +2,16 @@
 //!
 //! Canonical order (documented in `ffi/state/mod.rs`):
 //!
-//! 1. `GLOBAL_STATE` (residual outer Mutex on `GlobalState`)
-//! 2. Connection registry (`ffi::state::connections`)
-//! 3. Stream maps (`ffi::state::streams`)
-//! 4. `ASYNC_REQUESTS` (own Mutex)
-//! 5. `connection_errors` (own RwLock)
+//! 1. `GLOBAL_STATE` (residual outer Mutex on `GlobalState`: env)
+//! 2. XA maps (`ffi::state::xa`)
+//! 3. Transaction maps (`ffi::state::transactions`)
+//! 4. Pool maps (`ffi::state::pools`)
+//! 5. Connection registry (`ffi::state::connections`)
+//! 6. Stream maps (`ffi::state::streams`)
+//! 7. Statement maps (`ffi::state::statements`)
+//! 8. `ASYNC_REQUESTS` (own Mutex)
+//! 9. `connection_errors` (own RwLock)
+//! 10. Metadata cache (`ffi::state` metadata helpers)
 //!
 //! Immutable accessors (`ffi_metrics`, `ffi_audit_logger`) never lock and
 //! may interleave at any point.

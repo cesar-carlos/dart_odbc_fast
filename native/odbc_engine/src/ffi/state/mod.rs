@@ -17,43 +17,88 @@
 //!   no longer contend on the outer `GlobalState` mutex.
 //! - `connections` moved to [`connections`] (sprint 4 follow-up) so
 //!   read-mostly connection lookups no longer require the outer mutex.
+//! - `statements` moved to [`statements`] so prepare/execute/close no
+//!   longer contend with pool/txn/XA traffic on the outer mutex.
+//! - `pools` moved to [`pools`] so checkout/checkin and pooled busy-count
+//!   bumps no longer contend with transactions/XA on the outer mutex.
+//! - `transactions` moved to [`transactions`] so begin/commit/rollback and
+//!   disconnect/pool cleanup no longer contend with XA/env on the outer mutex.
+//! - `xa_*` moved to [`xa`] so XA branch lifecycle no longer contends with
+//!   env init on the outer mutex.
 //!
-//! The remaining maps (`pools`, `transactions`, `xa_*`, `statements`)
-//! stay inside `GlobalState` for now: they need atomic transitions
-//! (e.g. removing a connection must also remove its open transactions).
+//! Residual `GlobalState` holds only `env` (and optional BCP connection
+//! strings).
 //!
 //! ## Lock ordering
 //!
 //! When more than one of the locks below is held in the same scope, the
 //! canonical order to avoid deadlock is:
 //!
-//! 1. `GLOBAL_STATE` (the residual outer mutex on `GlobalState`).
-//! 2. [`connections::connections_write`] / [`connections::connections_read`]
+//! 1. `GLOBAL_STATE` (the residual outer mutex on `GlobalState`: env).
+//! 2. [`xa`] helpers. Never acquire `GLOBAL_STATE` while holding xa.
+//! 3. [`transactions::with_transaction_maps_mut`] (or the public helpers).
+//!    Never acquire `GLOBAL_STATE` while holding transactions.
+//! 4. [`pools::with_pool_maps_mut`] (or the public helpers). Acquire
+//!    transactions *before* pools when both are needed (checkin/close/resize).
+//!    Never acquire `GLOBAL_STATE` while holding pools.
+//! 5. [`connections::connections_write`] / [`connections::connections_read`]
 //!    (dedicated `RwLock` for regular connections; write after outer when
 //!    both are needed, e.g. disconnect cleanup).
-//! 3. [`streams::try_lock_stream_maps`].
-//! 4. [`async_requests_lock`].
-//! 5. [`connection_errors_lock`] (write side first, then read side if
+//! 6. [`streams::try_lock_stream_maps`].
+//! 7. [`statements::try_lock_statement_maps`] (or the public helpers).
+//! 8. [`async_requests_lock`].
+//! 9. [`connection_errors_lock`] (write side first, then read side if
 //!    promoted; never downgrade-then-reacquire while holding (1)).
+//! 10. [`metadata_cache_lock`] (read or write). Prefer taking this *without*
+//!    the outer mutex when only the cache is needed (catalog hit path).
 //!
 //! Immutable accessors ([`ffi_metrics`], [`ffi_audit_logger`]) never lock
 //! and may be called at any point in any order.
 
 mod connections;
+mod pools;
+mod statements;
 mod streams;
+mod transactions;
+mod xa;
 
 pub use connections::contains_connection;
 pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
+#[cfg(test)]
+pub(crate) use pools::with_pooled_connection_mut_for_test;
+pub(crate) use pools::{
+    allocate_pool_id, contains_pooled_connection, decrement_pooled_busy_counts, get_pool,
+    get_pooled_connection, insert_pool, recycle_pooled_connection_id, reserve_pooled_runnable,
+    with_pool_maps_mut,
+};
+pub(crate) use statements::{
+    allocate_statement_id, clear_all_statements, contains_statement, get_statement_snapshot,
+    insert_statement, remove_statement, retain_statements_not_for_connection,
+};
+#[cfg(test)]
+pub(crate) use statements::{statement_count_for_test, statements_empty_for_test};
 pub(crate) use streams::{
     allocate_stream_id, cancel_streams_for_connection, close_stream, insert_stream,
     reinsert_stream, remove_stream, request_stream_cancel, stream_connection_id, with_stream_mut,
+};
+#[cfg(test)]
+pub(crate) use transactions::{contains_transaction_for_test, get_transaction_for_test};
+pub(crate) use transactions::{
+    get_transaction, insert_transaction, remove_begin_in_progress, remove_transaction,
+    rollback_transactions_best_effort, with_transaction_maps_mut,
+};
+pub(crate) use xa::{
+    allocate_and_insert_active, allocate_and_insert_prepared, insert_active, insert_prepared,
+    insert_preparing, remove_active, remove_prepared, remove_preparing,
 };
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
+use crate::engine::core::MetadataCache;
 use crate::error::StructuredError;
+use crate::ffi::global_state::default_metadata_cache_config;
 use crate::observability::Metrics;
 use crate::security::AuditLogger;
 
@@ -119,6 +164,49 @@ pub fn ffi_metrics() -> Arc<Metrics> {
 /// `audit_*` FFI entry points which interact through this singleton.
 pub fn ffi_audit_logger() -> Arc<AuditLogger> {
     Arc::clone(AUDIT_LOGGER.get_or_init(|| Arc::new(AuditLogger::new(false))))
+}
+
+// --- Metadata cache (own RwLock; LRU maps already mutex-protected) ----------
+
+fn metadata_cache_lock() -> &'static RwLock<MetadataCache> {
+    static CACHE: OnceLock<RwLock<MetadataCache>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let (size, ttl) = default_metadata_cache_config();
+        RwLock::new(MetadataCache::new(size, ttl))
+    })
+}
+
+/// Read-side access to the process-wide metadata cache. Catalog hot-path
+/// hits no longer need the outer `GlobalState` mutex — the cache already
+/// serialises its own schema/payload LRUs.
+pub(crate) fn metadata_cache_read() -> Option<RwLockReadGuard<'static, MetadataCache>> {
+    match metadata_cache_lock().read() {
+        Ok(guard) => Some(guard),
+        Err(poisoned) => {
+            log::error!(
+                "ffi::state::metadata_cache RwLock read poisoned: a previous writer panicked \
+                 while holding the lock; catalog cache will be unavailable until the process \
+                 restarts ({poisoned})"
+            );
+            None
+        }
+    }
+}
+
+/// Write-side access used by `odbc_metadata_cache_enable` to replace the
+/// whole cache instance (size/TTL reconfiguration).
+pub(crate) fn metadata_cache_write() -> Option<RwLockWriteGuard<'static, MetadataCache>> {
+    match metadata_cache_lock().write() {
+        Ok(guard) => Some(guard),
+        Err(poisoned) => {
+            log::error!(
+                "ffi::state::metadata_cache RwLock write poisoned: a previous writer panicked \
+                 while holding the lock; cache reconfiguration will fail until the process \
+                 restarts ({poisoned})"
+            );
+            None
+        }
+    }
 }
 
 // --- Per-connection error map (own RwLock) ----------------------------------

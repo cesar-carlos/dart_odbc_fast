@@ -63,21 +63,6 @@ pub(crate) fn xa_read_buffer(ptr: *const u8, len: c_uint) -> Option<Vec<u8>> {
     Some(unsafe { std::slice::from_raw_parts(ptr, len as usize).to_vec() })
 }
 
-fn xa_alloc_id(state: &mut GlobalState) -> Option<u32> {
-    for _ in 0..MAX_ID_ALLOC_ATTEMPTS {
-        let candidate = state.next_xa_id;
-        state.next_xa_id = state.next_xa_id.wrapping_add(1);
-        if candidate != 0
-            && !state.xa_active.contains_key(&candidate)
-            && !state.xa_preparing.contains_key(&candidate)
-            && !state.xa_prepared.contains_key(&candidate)
-        {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
 enum XaEndPending {
     Preparing(PreparingXa),
     Active(XaTransaction),
@@ -107,21 +92,13 @@ impl Drop for XaEndReinsertGuard {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        if let Some(mut state) = try_lock_global_state() {
-            match pending {
-                XaEndPending::Preparing(preparing) => {
-                    state.xa_preparing.insert(self.xa_id, preparing);
-                }
-                XaEndPending::Active(xa) => {
-                    state.xa_active.insert(self.xa_id, xa);
-                }
+        match pending {
+            XaEndPending::Preparing(preparing) => {
+                state::insert_preparing(self.xa_id, preparing);
             }
-        } else {
-            log::error!(
-                "XaEndReinsertGuard: failed to re-acquire global state for xa_id {} — \
-                 XA handle may be lost until process restart",
-                self.xa_id
-            );
+            XaEndPending::Active(xa) => {
+                state::insert_active(self.xa_id, xa);
+            }
         }
     }
 }
@@ -155,21 +132,13 @@ impl Drop for XaPrepareReinsertGuard {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        if let Some(mut state) = try_lock_global_state() {
-            match pending {
-                XaPreparePending::Prepared(prepared) => {
-                    state.xa_prepared.insert(self.xa_id, prepared);
-                }
-                XaPreparePending::Preparing(preparing) => {
-                    state.xa_preparing.insert(self.xa_id, preparing);
-                }
+        match pending {
+            XaPreparePending::Prepared(prepared) => {
+                state::insert_prepared(self.xa_id, prepared);
             }
-        } else {
-            log::error!(
-                "XaPrepareReinsertGuard: failed to re-acquire global state for xa_id {} — \
-                 XA handle may be lost until process restart",
-                self.xa_id
-            );
+            XaPreparePending::Preparing(preparing) => {
+                state::insert_preparing(self.xa_id, preparing);
+            }
         }
     }
 }
@@ -188,15 +157,7 @@ impl XaActiveReinsertGuard {
 impl Drop for XaActiveReinsertGuard {
     fn drop(&mut self) {
         if let Some(xa) = self.xa.take() {
-            if let Some(mut state) = try_lock_global_state() {
-                state.xa_active.insert(self.xa_id, xa);
-            } else {
-                log::error!(
-                    "XaActiveReinsertGuard: failed to re-acquire global state for xa_id {} — \
-                     XA handle may be lost until process restart",
-                    self.xa_id
-                );
-            }
+            state::insert_active(self.xa_id, xa);
         }
     }
 }
@@ -215,15 +176,7 @@ impl XaPreparedReinsertGuard {
 impl Drop for XaPreparedReinsertGuard {
     fn drop(&mut self) {
         if let Some(prepared) = self.prepared.take() {
-            if let Some(mut state) = try_lock_global_state() {
-                state.xa_prepared.insert(self.xa_id, prepared);
-            } else {
-                log::error!(
-                    "XaPreparedReinsertGuard: failed to re-acquire global state for xa_id {} — \
-                     XA handle may be lost until process restart",
-                    self.xa_id
-                );
-            }
+            state::insert_prepared(self.xa_id, prepared);
         }
     }
 }
@@ -243,7 +196,7 @@ fn reinsert_active_xa_on_driver_failure(
     };
     let xa = guard.xa.take().expect("active xa");
     guard.disarm();
-    state.xa_active.insert(xa_id, xa);
+    state::insert_active(xa_id, xa);
     set_error(&mut state, format!("{op} failed: {error}"));
     1
 }
@@ -263,7 +216,7 @@ fn reinsert_prepared_xa_on_driver_failure(
     };
     let prepared = guard.prepared.take().expect("prepared xa");
     guard.disarm();
-    state.xa_prepared.insert(xa_id, prepared);
+    state::insert_prepared(xa_id, prepared);
     set_error(&mut state, format!("{op} failed: {error}"));
     1
 }
@@ -356,19 +309,22 @@ pub extern "C" fn odbc_xa_start(
             }
         };
 
-        let Some(xa_id) = xa_alloc_id(&mut state) else {
-            set_connection_error(&mut state, conn_id, "Failed to allocate XA ID".to_string());
-            drop(state);
-            if let Err(e) = xa.rollback() {
-                log::warn!(
-                    "odbc_xa_start: failed to roll back active branch after XA ID allocation \
-                     failure on conn_id {conn_id}: {e}"
-                );
+        drop(state);
+        match state::allocate_and_insert_active(xa) {
+            Ok(xa_id) => xa_id,
+            Err(xa) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(&mut gs, conn_id, "Failed to allocate XA ID".to_string());
+                }
+                if let Err(e) = xa.rollback() {
+                    log::warn!(
+                        "odbc_xa_start: failed to roll back active branch after XA ID allocation \
+                         failure on conn_id {conn_id}: {e}"
+                    );
+                }
+                0
             }
-            return 0;
-        };
-        state.xa_active.insert(xa_id, xa);
-        xa_id
+        }
     })
 }
 
@@ -381,14 +337,12 @@ pub extern "C" fn odbc_xa_start(
 #[no_mangle]
 pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(xa) = state.xa_active.remove(&xa_id) else {
-            set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
+        let Some(xa) = state::remove_active(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid XA ID (Active): {}", xa_id));
+            }
             return 1;
         };
-        drop(state);
 
         let mut reinsert_guard = XaEndReinsertGuard::new(xa_id);
         let driver_error = match xa.end_preserving_active() {
@@ -402,20 +356,19 @@ pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
             }
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
         match reinsert_guard.pending.take() {
             Some(XaEndPending::Preparing(preparing)) => {
                 reinsert_guard.disarm();
-                state.xa_preparing.insert(xa_id, preparing);
+                state::insert_preparing(xa_id, preparing);
                 0
             }
             Some(XaEndPending::Active(xa)) => {
                 reinsert_guard.disarm();
-                state.xa_active.insert(xa_id, xa);
+                state::insert_active(xa_id, xa);
                 if let Some(error) = driver_error {
-                    set_error(&mut state, format!("xa_end failed: {}", error));
+                    if let Some(mut gs) = try_lock_global_state() {
+                        set_error(&mut gs, format!("xa_end failed: {}", error));
+                    }
                 }
                 1
             }
@@ -429,17 +382,15 @@ pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(preparing) = state.xa_preparing.remove(&xa_id) else {
-            set_error(
-                &mut state,
-                format!("Invalid XA ID (Idle, awaiting prepare): {}", xa_id),
-            );
+        let Some(preparing) = state::remove_preparing(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(
+                    &mut gs,
+                    format!("Invalid XA ID (Idle, awaiting prepare): {}", xa_id),
+                );
+            }
             return 1;
         };
-        drop(state);
 
         let mut reinsert_guard = XaPrepareReinsertGuard::new(xa_id);
         let driver_error = match preparing.prepare_preserving_idle() {
@@ -453,20 +404,19 @@ pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
             }
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
         match reinsert_guard.pending.take() {
             Some(XaPreparePending::Prepared(prepared)) => {
                 reinsert_guard.disarm();
-                state.xa_prepared.insert(xa_id, prepared);
+                state::insert_prepared(xa_id, prepared);
                 0
             }
             Some(XaPreparePending::Preparing(preparing)) => {
                 reinsert_guard.disarm();
-                state.xa_preparing.insert(xa_id, preparing);
+                state::insert_preparing(xa_id, preparing);
                 if let Some(error) = driver_error {
-                    set_error(&mut state, format!("xa_prepare failed: {}", error));
+                    if let Some(mut gs) = try_lock_global_state() {
+                        set_error(&mut gs, format!("xa_prepare failed: {}", error));
+                    }
                 }
                 1
             }
@@ -479,14 +429,12 @@ pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_xa_commit_prepared(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(prepared) = state.xa_prepared.remove(&xa_id) else {
-            set_error(&mut state, format!("Invalid XA ID (Prepared): {}", xa_id));
+        let Some(prepared) = state::remove_prepared(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid XA ID (Prepared): {}", xa_id));
+            }
             return 1;
         };
-        drop(state);
 
         match prepared.commit_preserving_prepared() {
             Ok(()) => 0,
@@ -501,14 +449,12 @@ pub extern "C" fn odbc_xa_commit_prepared(xa_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_xa_rollback_prepared(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(prepared) = state.xa_prepared.remove(&xa_id) else {
-            set_error(&mut state, format!("Invalid XA ID (Prepared): {}", xa_id));
+        let Some(prepared) = state::remove_prepared(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid XA ID (Prepared): {}", xa_id));
+            }
             return 1;
         };
-        drop(state);
 
         match prepared.rollback_preserving_prepared() {
             Ok(()) => 0,
@@ -528,14 +474,12 @@ pub extern "C" fn odbc_xa_rollback_prepared(xa_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_xa_commit_one_phase(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(xa) = state.xa_active.remove(&xa_id) else {
-            set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
+        let Some(xa) = state::remove_active(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid XA ID (Active): {}", xa_id));
+            }
             return 1;
         };
-        drop(state);
 
         match xa.commit_one_phase_preserving_active() {
             Ok(()) => 0,
@@ -551,14 +495,12 @@ pub extern "C" fn odbc_xa_commit_one_phase(xa_id: c_uint) -> c_int {
 #[no_mangle]
 pub extern "C" fn odbc_xa_rollback_active(xa_id: c_uint) -> c_int {
     crate::ffi_guard_int!({
-        let Some(mut state) = try_lock_global_state() else {
-            return -1;
-        };
-        let Some(xa) = state.xa_active.remove(&xa_id) else {
-            set_error(&mut state, format!("Invalid XA ID (Active): {}", xa_id));
+        let Some(xa) = state::remove_active(xa_id) else {
+            if let Some(mut gs) = try_lock_global_state() {
+                set_error(&mut gs, format!("Invalid XA ID (Active): {}", xa_id));
+            }
             return 1;
         };
-        drop(state);
 
         match xa.rollback_preserving_active() {
             Ok(()) => 0,
@@ -763,18 +705,21 @@ pub extern "C" fn odbc_xa_resume_prepared(
                 return 0;
             }
         };
-        let Some(xa_id) = xa_alloc_id(&mut state) else {
-            set_connection_error(&mut state, conn_id, "Failed to allocate XA ID".to_string());
-            drop(state);
-            if let Err(e) = prepared.rollback() {
-                log::warn!(
-                    "odbc_xa_resume_prepared: failed to roll back resumed branch after XA ID \
-                     allocation failure on conn_id {conn_id}: {e}"
-                );
+        drop(state);
+        match state::allocate_and_insert_prepared(prepared) {
+            Ok(xa_id) => xa_id,
+            Err(prepared) => {
+                if let Some(mut gs) = try_lock_global_state() {
+                    set_connection_error(&mut gs, conn_id, "Failed to allocate XA ID".to_string());
+                }
+                if let Err(e) = prepared.rollback() {
+                    log::warn!(
+                        "odbc_xa_resume_prepared: failed to roll back resumed branch after XA ID \
+                         allocation failure on conn_id {conn_id}: {e}"
+                    );
+                }
+                0
             }
-            return 0;
-        };
-        state.xa_prepared.insert(xa_id, prepared);
-        xa_id
+        }
     })
 }

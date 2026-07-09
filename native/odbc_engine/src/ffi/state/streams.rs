@@ -6,8 +6,9 @@
 //! pool traffic.
 //!
 //! Lock ordering when multiple FFI locks are held: GLOBAL_STATE, then
-//! stream maps, then async requests, then connection errors. Never
-//! acquire GLOBAL_STATE while holding the stream maps lock.
+//! transactions, then pools, then connections, then stream maps, then
+//! statements, then async requests, then connection errors. Never acquire
+//! GLOBAL_STATE while holding the stream maps lock.
 
 use super::super::global_state::{StreamKind, MAX_ID_ALLOC_ATTEMPTS};
 use std::collections::HashMap;
