@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI Benchmark workflow** — `comparative_bench` no longer panics when the Criterion
+  baseline `main` is missing from a cold/expired Actions cache. The job seeds with
+  `--save-baseline main` on first run, compares with `--baseline main` thereafter,
+  and uploads artifacts even when the bench step fails.
 - **FFI pooled busy-count leaks** — `RunnableTargetGuard` restores pooled reservations when
   global-state re-lock fails after ODBC work (`runnable.rs` and all pooled call sites:
   bulk, catalog, capabilities, statement, sync query paths). Prevents pools stuck as
