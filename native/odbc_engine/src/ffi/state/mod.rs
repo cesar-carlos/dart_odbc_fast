@@ -50,7 +50,7 @@
 //! 9. [`connection_errors_lock`] (write side first, then read side if
 //!    promoted; never downgrade-then-reacquire while holding (1)).
 //! 10. [`metadata_cache_lock`] (read or write). Prefer taking this *without*
-//!    the outer mutex when only the cache is needed (catalog hit path).
+//!     the outer mutex when only the cache is needed (catalog hit path).
 //!
 //! Immutable accessors ([`ffi_metrics`], [`ffi_audit_logger`]) never lock
 //! and may be called at any point in any order.

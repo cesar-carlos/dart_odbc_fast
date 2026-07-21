@@ -28,10 +28,13 @@
 //
 // Run: dart run example/xa_2pc_demo.dart
 //
-// Requires `EXAMPLE_DSN` (or `ODBC_TEST_DSN`) pointing at PostgreSQL,
+// Requires `ODBC_TEST_DSN` (or `ODBC_DSN`) pointing at PostgreSQL,
 // MySQL, DB2, MariaDB, Oracle, or SQL Server on a Windows `xa-dtc` build.
 // The demo gates on `supportsXa` and skips with a friendly message when the
 // loaded native library predates Sprint 4.3.
+//
+// Section 6 also shows the high-level service helper
+// `IOdbcService.runInXaTransaction` (preferred for application code).
 //
 // Required Oracle privileges (when DSN points at Oracle): the
 // connecting user needs EXECUTE on SYS.DBMS_XA (default for SYSTEM),
@@ -43,6 +46,7 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:odbc_fast/odbc_fast_native.dart';
+import 'package:result_dart/result_dart.dart';
 
 import 'common.dart';
 
@@ -51,7 +55,7 @@ void main() async {
 
   final dsn = requireExampleDsn();
   if (dsn == null) {
-    AppLogger.info('EXAMPLE_DSN not set; skipping live XA demo.');
+    AppLogger.info('ODBC_TEST_DSN not set; skipping live XA demo.');
     return;
   }
 
@@ -365,6 +369,53 @@ void main() async {
     native
       ..disconnect(connId)
       ..dispose();
-    AppLogger.info('Disconnected.');
+    AppLogger.info('Disconnected (native).');
+  }
+
+  // -----------------------------------------------------------------
+  // 6. High-level service API: IOdbcService.runInXaTransaction.
+  //
+  // Prefer this path in application code: begin/end/prepare/commit (or
+  // one-phase) and rollback-on-failure are handled by the service.
+  // -----------------------------------------------------------------
+  AppLogger.info('--- 6. Service helper: runInXaTransaction ---');
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
+  final init = await service.initialize();
+  if (init.isError()) {
+    AppLogger.warning('Service init failed: ${init.exceptionOrNull()}');
+    locator.shutdown();
+    return;
+  }
+
+  final connResult = await service.connect(dsn);
+  final conn = connResult.getOrNull();
+  if (conn == null) {
+    AppLogger.warning(
+      'Service connect failed: ${connResult.exceptionOrNull()}',
+    );
+    locator.shutdown();
+    return;
+  }
+
+  try {
+    final xid = Xid.fromStrings(
+      gtrid: 'demo-svc-${DateTime.now().microsecondsSinceEpoch}',
+      bqual: 'branch-svc',
+    );
+    final onePhase = await service.runInXaTransaction<String>(
+      conn.id,
+      xid,
+      (xa) async => const Success('ok-via-service'),
+      onePhase: true,
+    );
+    onePhase.fold(
+      (value) => AppLogger.info('  runInXaTransaction(onePhase) → $value'),
+      (error) => AppLogger.warning('  runInXaTransaction failed: $error'),
+    );
+  } finally {
+    await service.disconnect(conn.id);
+    locator.shutdown();
+    AppLogger.info('Disconnected (service).');
   }
 }

@@ -6,214 +6,71 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 3.10.x
+## What's New in 4.3.x
 
-Current package version: **3.10.1**. The 3.10 line is a backward-compatible
-minor series: additive public APIs only, with a deprecation window opening for
-legacy `List<dynamic>` parameter APIs removed in 4.0 — use typed `ParamValue`
-overloads. Wire format and exported ABI are unchanged.
+Current package version: **4.3.4**. The 4.3 line keeps the public Dart
+surface additive while the Rust FFI layer continues to harden concurrency
+and encoding hot paths. Full history: [CHANGELOG.md](CHANGELOG.md).
+Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md).
 
-- **Sub-interfaces of `IOdbcService`** — `IQueryService`,
-  `ITransactionService`, `IPoolService`, `IAdminService`. The aggregate
-  `IOdbcService` `implements` each one so existing consumers keep
-  working; new code can depend on the narrow seam it actually needs
-  (Interface Segregation). Each sub-interface also ships an
-  `…For(Connection conn, …)` extension so call sites no longer thread
-  `conn.id` around. See
-  [`example/sub_interfaces_migration_demo.dart`](example/sub_interfaces_migration_demo.dart).
-- **Event bus** — `IAdminService.events` returns a broadcast
-  `Stream<OdbcEvent>` (sealed: `ConnectionLost`, `WorkerRecovered`,
-  `AutoReconnectAttempted`, `PoolResize`, `SlowQueryDetected`). The
-  `SlowQueryDetected` emission point is wired into the 5 hot
-  `executeQuery*` paths and is gated by
-  `ConnectionOptions.slowQueryThreshold` (defaults to
-  `queryTimeout * 0.8`).
-- **Service-level columnar surface** —
-  `IQueryService.executeQueryColumnar` and `streamQueryColumnar` return
-  `TypedColumnarResult` (column-major, with `Int32List` / `Int64List` /
-  `Float64List` for numeric columns). Backed by the same wire payload as
-  row-major; opt-in helper `toTypedColumnar(QueryResult)` is exported
-  too.
-- **`QueryResult.columnsMetadata`** — typed `List<ColumnMetadata>?`
-  surface populated by the parser; legacy callers see `null`.
-  `ColumnMetadata` moved to `lib/domain/entities/` and is re-exported
-  via the public barrel; the `OdbcType` typed view stays in
-  infrastructure as a `ColumnMetadataTypedView` extension so `col.type`
-  keeps working.
-- **`IAdminService.getWorkerPoolStats()`** — infallible bridge that
-  returns `null` in sync mode instead of `Failure(UnsupportedFeatureError)`.
-  Replaces the removed `getAsyncWorkerPoolStats()` API from 3.x.
-- **Opt-in performance helpers** — `BinaryProtocolParser.parse(lazyStrings:
-  true)` yields `LazyString` for text cells (decoding on demand;
-  `==` against `String` literals still works); `SqlPointerCache` keeps a
-  256-entry LRU of `Pointer<Utf8>` per SQL string for hot loops.
-- **Pool & transaction hardening (from 3.9.0, now part of 3.10.0)** —
-  `poolGetConnection` registers ownership in dedicated `_poolCheckouts`
-  / `_connectionPoolId` maps; `poolReleaseConnection` and `poolClose`
-  sweep prepared statements and Dart-side caches for the released IDs;
-  transaction and savepoint methods validate `connectionId` + `txnId`
-  before any FFI call and route async error reads to the correct worker
-  isolate. Full audit in the [CHANGELOG](CHANGELOG.md).
-- **Native engine performance follow-ups** — `block-cursor-fetch` and
-  `statement-handle-reuse` are now ON by default in the bundled Rust
-  engine. Highlights: `BlockCursor` + `ColumnarAnyBuffer` row-major fast
-  path (batch size tunable via `ODBC_FAST_BLOCK_FETCH_BATCH`, default
-  `256`); direct column-major fetch path skipping the row-major
-  intermediate when the result is not FOR JSON; `GlobalState`
-  decomposed into sharded sub-locks (`ffi/state`); `OwnedPreparedStatement`
-  RAII guard around the per-connection prepared cache (single point of
-  `mem::transmute`, with a size-invariant tripwire test);
-  release/bench profiles set `lto = "fat"`, `codegen-units = 1`,
-  `opt-level = 3`. Transparent to Dart consumers.
-- **`QueryResultAccess` extension** — low-risk typed helpers on
-  `QueryResult` (`columnIndex`, `cell`, `cellAs`, `rowAsMap`, `rowsAsMaps`,
-  `columnValues`, `scalar`) without changing underlying `List<dynamic>`
-  row storage. Exported from `package:odbc_fast/odbc_fast.dart`.
-- **`IOdbcRepository` extensions** — columnar (`executeQueryColumnarParamValues`,
-  `streamQueryColumnar`), connection-scoped `…For(Connection)` overloads,
-  typed-parameter bridges (`executeQueryParamValuesFromObjects`,
-  `executePreparedParamValuesFromObjects`, `executeQueryMultiParamValuesFromObjects`
-  and matching `…For` variants), and `runInTransaction` — mirror the
-  `IOdbcService` sub-interface ergonomics for repository consumers.
-  See `lib/application/repositories/odbc_repository_extensions.dart`.
+### Highlights
 
-### 3.10.1 patch highlights
+- **Dual public barrels** — `package:odbc_fast/odbc_fast.dart` for apps
+  (`ServiceLocator`, `IOdbcService` / sub-interfaces, domain types);
+  `package:odbc_fast/odbc_fast_native.dart` for FFI demos and
+  `OdbcRepositoryImpl` / pool factory wiring. See
+  [Package entrypoints](#package-entrypoints) and
+  [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
+- **Segregated repositories + telemetry ISP** —
+  `ServiceLocator.queryRepository` / `poolRepository` / … and
+  `TelemetryOdbcDecorators.query|pool|transaction|admin` for narrow seams.
+- **Transaction helpers** — `runInTransaction<T>` and
+  `runInXaTransaction<T>` on `IOdbcService` (throw-safe commit/rollback or
+  XA 2PC / one-phase). Prefer these over manual `txnId` / XA chaining.
+  Demos: [`run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart),
+  [`xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
+- **Sub-interfaces & event bus** — `IQueryService` / `ITransactionService` /
+  `IPoolService` / `IAdminService` with `…For(Connection)` overloads;
+  `IAdminService.events` (`OdbcEvent`, including live `SlowQueryDetected`
+  when `ConnectionOptions.slowQueryThreshold` is set).
+- **Columnar & multi-result** — `executeQueryColumnarParamValues` /
+  `streamQueryColumnar`, `ResultEncoding.columnar` /
+  `columnarCompressed`, `executeQueryMultiFull` /
+  `executeQueryMultiParamValues`, `streamQueryMulti`. Row-major remains
+  the default encoding.
+- **Directed params & Oracle REF CURSOR** — DRT1 /
+  `executeQueryDirectedParams`, `QueryResult.outputParamValues` /
+  `additionalResults` / `refCursorResults`. Contracts in
+  [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md).
+- **Usage profiles** — `OdbcUsageProfile.balanced` /
+  `balancedServer` / `highThroughput` via `ServiceLocator` with
+  `recommendedConnectionOptions` / `recommendedResultEncoding`.
+  Demo: [`quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
+- **FFI performance (native)** — default `block-cursor-fetch` and
+  `statement-handle-reuse`; sharded `ffi::state::*` maps; residual
+  `GlobalState` is `env` (+ optional BCP strings). Details:
+  [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md).
 
-- CI repair (loom models isolated; Dart steps moved back to the `test` job).
-- Expanded Dart/Rust unit coverage on paths previously integration-only.
-- README/example alignment with the 3.10 public surface.
+### XA / 2PC engines
 
-### Previously in 3.8.1
+| Engine | Status |
+| ------ | ------ |
+| PostgreSQL | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` |
+| MySQL / MariaDB | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
+| DB2 | ✅ same SQL grammar as MySQL |
+| Oracle | ✅ `SYS.DBMS_XA` + `DBA_PENDING_TRANSACTIONS` |
+| SQL Server (MSDTC) | ✅ Windows + `--features xa-dtc` (advanced Reenlist still open — PENDING §2.1) |
+| SQLite / Snowflake | ❌ `UnsupportedFeature` |
 
-- **Usage profiles (`OdbcUsageProfile`)** — `ServiceLocator.initialize()` keeps
-  the existing sync default for compatibility, and now offers opt-in presets
-  such as **`balanced`**, **`balancedServer`**, and **`highThroughput`**. It also
-  exposes **`ResolvedOdbcUsageProfile`** for the effective config after
-  overrides.
-  See [Quick Start](#quick-start-high-level-service) and
-  [`example/quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
+XA lifecycle helpers are on the sync/native service path today
+(`ServiceLocator.syncService` / `runInXaTransaction`). See
+[`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
 
-Highlights of the current **3.10.x** line (`3.10.1` today). See the
-[CHANGELOG](CHANGELOG.md) for the complete list and
-[`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md)
-for the remaining backlog.
+### Docs index
 
-### Sprint 4 — transaction control
-
-- **`TransactionAccessMode.readOnly`** (Sprint 4.1) — emits
-  `SET TRANSACTION READ ONLY` on PostgreSQL / MySQL / MariaDB / DB2 /
-  Oracle; silent no-op on engines without a native hint (SQL Server,
-  SQLite, Snowflake). Lets the engine skip locking and pick a
-  snapshot read path where applicable.
-
-- **Per-transaction `LockTimeout`** (Sprint 4.2) — `Duration` cap on
-  how long any statement inside the transaction waits for a lock.
-  Engine-aware emission: SQL Server `SET LOCK_TIMEOUT <ms>`,
-  PostgreSQL `SET LOCAL lock_timeout`, MySQL/MariaDB
-  `SET SESSION innodb_lock_wait_timeout` (sub-second values round
-  UP to 1s so the bound is never silently relaxed).
-
-- **`IOdbcService.runInTransaction<T>`** (Sprint 4.4) — captures the
-  full begin → action → commit/rollback dance behind one call:
-
-  ```dart
-  final result = await service.runInTransaction<int>(
-    connId,
-    (txnId) async {
-      // Any work here participates in the transaction.
-      return const Success(42);
-    },
-    isolationLevel: IsolationLevel.repeatableRead,
-    accessMode: TransactionAccessMode.readOnly,
-    lockTimeout: const Duration(seconds: 2),
-  );
-  ```
-
-  Action `Failure` rolls back, action throws are caught + converted
-  to `QueryError` (the throw never escapes), commit failure surfaces
-  as the unit-of-work failure, rollback failures during cleanup are
-  swallowed so they never overwrite the original cause. See
-  [`example/run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart).
-
-- **`TransactionHandle.runWithBegin<T>`** (low-level wrapper) - the
-  helper now returns only after commit succeeds. If commit fails it
-  throws `StateError`, so the success path can no longer mask a
-  failed unit of work.
-
-- **X/Open XA / 2PC** (Sprint 4.3 / 4.3c) — strongly-typed `Xid`
-  value class + `XaTransactionHandle` state machine
-  (Active → Idle → Prepared → Committed/RolledBack). Engine matrix:
-
-  | Engine                | Status                                      |
-  | --------------------- | ------------------------------------------- |
-  | PostgreSQL            | ✅ `BEGIN` + `PREPARE TRANSACTION` + `pg_prepared_xacts` |
-  | MySQL / MariaDB       | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
-  | DB2                   | ✅ same SQL grammar as MySQL                 |
-  | **Oracle**            | ✅ **`SYS.DBMS_XA` PL/SQL** + `DBA_PENDING_TRANSACTIONS` (v3.4.1); needs `EXECUTE` on `DBMS_XA` + `FORCE [ANY] TRANSACTION` |
-  | SQL Server (MSDTC)    | ✅ Windows + `--features xa-dtc` (DTC enlist + XA branch); Linux/CI still unsupported — see `doc/Features/PENDING_IMPLEMENTATIONS.md` section 2.1 |
-  | SQLite / Snowflake    | ❌ no 2PC support — `UnsupportedFeature`     |
-
-1RM optimisation (`commit_one_phase`) skips the prepare-log write
-when this RM is the sole participant. Crash-recovery via
-`xaRecover` + `xaResumePrepared` (works across reconnects on every
-✅ engine, including Oracle). See
-[`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart) for the
-full lifecycle (full 2PC, 1RM, crash-recovery, plus an
-Oracle-specific section that runs DML inside the branch so the
-prepare actually writes a log entry — without DML Oracle returns
-`XA_RDONLY` and silently auto-completes the branch).
-
-Current Dart limitation: XA/2PC is available through the sync/native backend
-(`NativeOdbcConnection`, `OdbcService(useAsync: false)`). The async worker
-backend does not expose `XaTransactionHandle` lifecycle methods yet.
-
-### `SqlDataType` extras (30 total)
-
-Cross-engine: `smallInt`, `bigInt`, `tinyInt`, `bit`, `text`, `xml`,
-`json` (with optional `validate:true` round-trip), `uuid` (canonical
-folding + bare-hex/`{...}` wrapping), `money` (4-fractional-digit
-SQL Server convention), `interval` (`Duration` → portable
-`'<n> seconds'` form).
-
-Engine-specific: PostgreSQL `range` / `cidr` / `tsvector`, SQL Server
-`hierarchyId` / `geography` / `geometry`, Oracle `raw` / `bfile`, and
-portable interval helpers including `intervalYearToMonth`. See
-  [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) for the full
-  30-kind matrix with validation and wire-encoding details.
-
-### Directed parameters, `OUT1`, `MULT`, and columnar v2
-
-- **DRT1** request buffer + **`IOdbcService.executeQueryDirectedParams`**
-  for mixed `IN` / `OUT` / `INOUT` (see
-  [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) §3.1 and the canonical
-  shape-by-direction matrix in §3.1.2). Results can carry
-  **`QueryResult.outputParamValues`** when the engine appends an `OUT1`
-  footer. When `SQLMoreResults` yields additional items, the engine emits a
-  **`MULT`** envelope followed by `OUT1`; the first result set still maps to
-  `QueryResult.columns` / `rows` / `rowCount`, and the tail items surface in
-  **`QueryResult.additionalResults`** (`DirectedResultItem` /
-  `DirectedRowCountItem`). Legacy `executeQueryParams` / v0 param wire is
-  unchanged.
-- **Oracle `REF CURSOR` path:** `ParamValueRefCursorOut` uses the Oracle
-  plugin path (`strip ?` + `SQLMoreResults`) and materializes cursor result
-  sets into **`QueryResult.refCursorResults`** via the `RC1\0` trailer.
-- **Columnar v2 results:** the engine can emit a v2 columnar payload; the
-  Dart `BinaryProtocolParser` decodes both **uncompressed** and
-  **compressed** column blocks (zstd / LZ4) through the native
-  `odbc_columnar_decompress` FFI path. [columnar sketch](doc/notes/columnar_protocol_sketch.md)
-  remains the long-form spec. Public query APIs keep row-major v1 as the
-  default; use `ResultEncoding.columnar` or `ResultEncoding.columnarCompressed`
-  on parameterized query paths only after validating the workload.
-
-  Example: [`example/output_param_directions_demo.dart`](example/output_param_directions_demo.dart).
-
-- **Performance guardrails:** live table-scan tests under `test/my_test` are
-  skipped unless `RUN_LIVE_TESTS=1`, bounded by default (`MY_TEST_ROW_LIMIT`,
-  default `5000`), and require `MY_TEST_FULL_TABLE_SCAN=1` for full scans. Use
-  `dart run tool/test_slow_report.dart --top 20 --threshold-ms 500` to list the
-  slowest Dart tests, and
-  [`example/streaming_performance_benchmark.dart`](example/streaming_performance_benchmark.dart)
-  to compare `streamQuery` vs `streamQueryBatched` on the same workload.
+Start at [`doc/README.md`](doc/README.md) for architecture, API surface,
+capabilities, testing, and performance. Examples:
+[`example/README.md`](example/README.md).
 
 ## Why Rust + FFI
 
@@ -227,60 +84,56 @@ portable interval helpers including `intervalYearToMonth`. See
 - Sync and async database access (async via worker isolate)
 - Prepared statements and named parameters (`@name`, `:name`)
 - Multi-result queries (`executeQueryMulti`, `executeQueryMultiFull`,
-  `executeQueryMultiParams`, streaming `streamQueryMulti`)
+  `executeQueryMultiParamValues`, streaming `streamQueryMulti`)
 - Streaming queries (`streamQueryBatched`, `streamQuery`, `streamQueryNamed`)
-- **Sub-interfaces of `IOdbcService`** (v3.10): `IQueryService`,
+- **Sub-interfaces of `IOdbcService`**: `IQueryService`,
   `ITransactionService`, `IPoolService`, `IAdminService` — depend on the
   narrow seam your code actually uses (Interface Segregation). Each ships
   `...For(Connection conn, ...)` overloads so call sites no longer thread
   `connection.id` around
-- **Event bus** (v3.10): `IAdminService.events` returns a broadcast
+- **Event bus**: `IAdminService.events` returns a broadcast
   `Stream<OdbcEvent>` with sealed variants (`ConnectionLost`,
   `WorkerRecovered`, `AutoReconnectAttempted`, `PoolResize`,
   `SlowQueryDetected`) for log/metric/observability pipelines
-- **Typed columnar results** (v3.10): `executeQueryColumnar` /
+- **Typed columnar results**: `executeQueryColumnarParamValues` /
   `streamQueryColumnar` return `TypedColumnarResult` with
   `Int32List` / `Int64List` / `Float64List` per numeric column (zero boxing)
-- **`QueryResultAccess`** (v3.10): typed row/column navigation on
+- **`QueryResultAccess`**: typed row/column navigation on
   `QueryResult` without changing row storage (`cell`, `scalar`, `rowsAsMaps`, …)
-- **`IOdbcRepository` extensions** (v3.10): columnar execute/stream,
+- **Repository extensions**: columnar execute/stream,
   `…For(Connection)` overloads, `…FromObjects` typed-parameter bridges, and
   `runInTransaction` — same ergonomics as the service sub-interfaces
-- **Transaction helpers** (Sprint 4.4 / v3.4.2): `runInTransaction<T>` and
+- **Transaction helpers**: `runInTransaction<T>` and
   `runInXaTransaction<T>` orchestrate begin → action → commit/rollback
   (or end → prepare → commit_prepared for XA) with throw-safe cleanup
-- Connection pooling with **configurable eviction/timeouts** (v3.0
-  `PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`)
+- Connection pooling with **configurable eviction/timeouts**
+  (`PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`)
 - Transactions and savepoints (SQL-92 / SQL Server dialects); per-transaction
   `IsolationLevel`, `TransactionAccessMode.readOnly`, `LockTimeout`
-- **X/Open XA / 2PC** (Sprint 4.3): typed `Xid` + `XaTransactionHandle`
+- **X/Open XA / 2PC**: typed `Xid` + `XaTransactionHandle`
   state machine across PostgreSQL, MySQL/MariaDB, DB2, Oracle
   (`SYS.DBMS_XA`), and SQL Server (`--features xa-dtc` on Windows)
 - Bulk insert payload builder and parallel bulk insert via pool
 - Connection string validation, driver capabilities, and runtime version APIs
-- **Live DBMS introspection** via `SQLGetInfo` (v2.1+): typed `DbmsInfo` with
+- **Live DBMS introspection** via `SQLGetInfo`: typed `DbmsInfo` with
   canonical engine id, identifier limits, current catalog
-- **Driver-specific SQL builders** (v3.0): UPSERT, RETURNING/OUTPUT, and
+- **Driver-specific SQL builders**: UPSERT, RETURNING/OUTPUT, and
   per-engine session initialization through `OdbcDriverFeatures`
 - **9 supported engines** with dedicated plugins: SQL Server, PostgreSQL,
-  MySQL, **MariaDB** (v3.0), Oracle, Sybase, **SQLite** (v3.0),
-  **IBM Db2** (v3.0), **Snowflake** (v3.0)
-- **Per-driver catalog dispatch** (v3.0): `catalogTables`/`catalogColumns`
-  etc. now use `ALL_TABLES`/`sysobjects`/`sqlite_master`/`SYSCAT.*`
-  automatically when targeting Oracle/Sybase/SQLite/Db2 (no more
-  `INFORMATION_SCHEMA` failures on those engines)
+  MySQL, MariaDB, Oracle, Sybase, SQLite, IBM Db2, Snowflake
+- **Per-driver catalog dispatch**: `catalogTables`/`catalogColumns`
+  etc. use dialect-specific catalogs for Oracle/Sybase/SQLite/Db2
 - Audit API and metadata cache controls
 - Async query/stream lifecycle controls (`executeAsyncStart/asyncPoll/...`)
 - **Structured errors** with 12+ typed Dart classes: `ConnectionError`,
   `QueryError`, `ValidationError`, `UnsupportedFeatureError`,
-  `EnvironmentNotInitializedError`, plus v3.0: `NoMoreResultsError`,
+  `EnvironmentNotInitializedError`, `NoMoreResultsError`,
   `MalformedPayloadError`, `RollbackFailedError`,
   `ResourceLimitReachedError`, `CancelledError`, `WorkerCrashedError`,
   `BulkPartialFailureError` (with structured fields)
 - Runtime metrics and telemetry hooks (in-memory + OpenTelemetry OTLP)
-- **Opt-in performance helpers** (v3.10): `LazyString` (defer text decode
-  until `.value` is read) and `SqlPointerCache` (256-entry LRU of
-  `Pointer<Utf8>` per SQL string for hot loops)
+- **Opt-in performance helpers**: `LazyString` (defer text decode
+  until `.value` is read); native SQL pointer LRU for hot prepare paths
 
 ## Type Mapping
 
@@ -293,9 +146,10 @@ portable interval helpers including `intervalYearToMonth`. See
   - `DateTime` → UTC ISO8601 string
     - year must be in `[1, 9999]` (otherwise `ArgumentError`)
 
-**Implemented result types** (Database → Dart) — **v3.0** typed enum
-[`OdbcType`](lib/infrastructure/native/protocol/odbc_type.dart) with
-**19 variants** matching the Rust wire protocol 1:1:
+**Implemented result types** (Database → Dart) — wire `OdbcType` enum
+(protocol discriminants) with **19 variants** matching the Rust wire
+protocol 1:1. Access via `ColumnMetadata` / typed views on parsed results
+(see [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md)):
 
 | Discriminant | Variant            | Dart return type             |
 |--------------|--------------------|------------------------------|
@@ -319,9 +173,9 @@ portable interval helpers including `intervalYearToMonth`. See
 | 18           | `money`            | `String`                     |
 | 19           | `interval`         | `String`                     |
 
-Use `OdbcType.fromDiscriminant(int)` or `ColumnMetadata.type` to access
-the typed variant. Unknown discriminants degrade to `OdbcType.varchar`
-for forward compatibility.
+Use `ColumnMetadata` / the typed column view on parsed results to access
+the discriminant. Unknown discriminants degrade to varchar for forward
+compatibility.
 
 **Planned (not yet implemented)**:
 - Full `SqlDataType` × direction certification matrix beyond the current
@@ -372,15 +226,22 @@ final builder = BulkInsertBuilder()
 ```
 
 ```dart
-// Canonical double mapping rejects NaN/Infinity.
-paramValuesFromObjects([double.nan]); // throws ArgumentError
-paramValuesFromObjects([double.infinity]); // throws ArgumentError
+// Canonical double mapping rejects NaN/Infinity (via FromObjects bridge).
+await service.executeQueryParamValuesFromObjects(
+  connId,
+  'SELECT ? AS x',
+  [double.nan], // throws ArgumentError before FFI
+);
 ```
 
 ```dart
 // DateTime year must be in [1, 9999].
 final outOfRangeDate = DateTime.utc(9999, 12, 31).add(const Duration(days: 2));
-paramValuesFromObjects([outOfRangeDate]); // throws ArgumentError
+await service.executeQueryParamValuesFromObjects(
+  connId,
+  'SELECT ? AS d',
+  [outOfRangeDate], // throws ArgumentError
+);
 ```
 
 ## API coverage (implemented)
@@ -401,25 +262,29 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 `connection.id` around.
 
 - Query execution: `executeQueryParamValues` (`List<ParamValue>` — preferred),
-  `executeQuery`, `executeQueryParams` (deprecated untyped),
+  `executeQueryParamValuesFromObjects` (bridge), `executeQuery`,
   `executeQueryNamed`, `executeQueryDirectedParams` (DRT1 `IN`/`OUT`/`INOUT`),
-  `executeQueryColumnar` (returns `TypedColumnarResult`)
-- Prepared lifecycle: `prepare`, `prepareNamed`, `executePrepared`,
-  `executePreparedNamed`, `cancelStatement`, `closeStatement`,
+  `executeQueryColumnarParamValues` / `executeQueryColumnarFromObjects`
+  (returns `TypedColumnarResult`)
+- Prepared lifecycle: `prepare`, `prepareNamed`,
+  `executePreparedParamValues` / `executePreparedParamValuesFromObjects`,
+  `executePreparedNamed`, `cancelStatement` (experimental), `closeStatement`,
   `clearAllStatements`
 - Incremental streaming: `streamQuery`, `streamQueryNamed`,
   `streamQueryColumnar`, `streamQueryMulti` (per-item multi-result stream)
-- Multi-result: `executeQueryMulti`, `executeQueryMultiParams`,
-  `executeQueryMultiFull`
+- Multi-result: `executeQueryMulti`, `executeQueryMultiFull`,
+  `executeQueryMultiParamValues` / `executeQueryMultiParamValuesFromObjects`
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`,
   `catalogPrimaryKeys`, `catalogForeignKeys`, `catalogIndexes`
 - Transactions: `beginTransaction`, `commitTransaction`,
   `rollbackTransaction`, `runInTransaction<T>` (begin → action →
   commit/rollback helper with throw-safe cleanup)
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
-- X/Open XA / 2PC: `xaStart`, `xaRecover`, `xaResumePrepared`,
-  `runInXaTransaction<T>` (orchestrates end → prepare → commit_prepared
-  or 1RM `commit_one_phase`)
+- X/Open XA / 2PC: `runInXaTransaction<T>` on the aggregate service
+  (orchestrates start → action → end/prepare/commit or 1RM `onePhase`).
+  Low-level `xaStart` / `xaRecover` / `xaResumePrepared` live on the
+  repository / native `XaTransactionHandle` path — see
+  [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
 - Pooling: `poolCreate` (with `PoolOptions`), `poolGetConnection`,
   `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`,
   `poolGetStateDetailed`, `poolSetSize`, `poolClose`
@@ -446,32 +311,27 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 
 ### Statement cancellation status
 
-- `cancelStatement` is exposed in low-level and high-level APIs.
-- Current runtime contract returns unsupported feature for statement cancellation
-  (SQLSTATE `0A000`) because active background cancellation is not yet wired
-  end-to-end.
+- `cancelStatement` is **experimental** (`@experimental` on `IOdbcService`).
+- Current runtime contract often returns `UnsupportedFeatureError` /
+  SQLSTATE `0A000` because native cancellation is not fully wired end-to-end.
 - `asyncCancel` is best-effort for Rust async requests; it cannot guarantee an
   immediate interrupt when an ODBC driver is already blocked in a native call.
-- `streamCancel` is effective between stream batches/iterations and is followed
+- `cancelStream` is effective between stream batches/iterations and is followed
   by stream close during async cleanup.
-- Use query timeout as workaround (`ConnectionOptions.queryTimeout`,
-  prepare/statement timeout options).
+- Prefer query timeout (`ConnectionOptions.queryTimeout`, prepare/statement
+  timeout options) for reliable interruption.
 
 ### Parameterized execution
 
-- **Typed parameters (preferred):** use `executeQueryParamValues` /
+- **Typed parameters (preferred):** `executeQueryParamValues` /
   `executePreparedParamValues` with `List<ParamValue>` (sealed hierarchy in
-  `lib/domain/entities/param_value.dart`). Helpers `paramValuesFromObjects`
-  (`lib/domain/helpers/param_value_conversion.dart`) and `ParamValue.*`
-  constructors build wire-safe values. Repository consumers can also use
-  `executeQueryParamValuesFromObjects` / `…FromObjectsFor` extension methods
-  on `IOdbcRepository`. Directed `OUT` / `INOUT` bindings use
-  `executeQueryDirectedParams` with `List<DirectedParam>`.
-- **Typed parameters (4.0+):** use `executeQueryParamValues` /
-  `executePreparedParamValues` with `List<ParamValue>`, or the `…FromObjects`
-  extension bridges on `IOdbcService` / `IOdbcRepository`. Legacy
-  `List<dynamic>` service/repository overloads were removed in 4.0.0 — see
-  [CHANGELOG](CHANGELOG.md) migration table.
+  `lib/domain/entities/param_value.dart`). Use
+  `executeQueryParamValuesFromObjects` / `…FromObjects` bridges on
+  `IQueryService` / `IOdbcRepository` when you still have plain Dart values.
+  Directed `OUT` / `INOUT` bindings use `executeQueryDirectedParams` with
+  `List<DirectedParam>`.
+- Legacy untyped `List<dynamic>` service/repository overloads were removed in
+  **4.0.0** — see [CHANGELOG](CHANGELOG.md) migration table.
 - Positional and prepared execution support a dynamic number of parameters,
   subject to the package protocol safety cap and the underlying driver/database.
 - Named placeholders preserve occurrence order. Repeating `@id` or `:id` in the
@@ -492,22 +352,21 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
 - Telemetry services/entities: `ITelemetryService`, `SimpleTelemetryService`, `ITelemetryRepository`, `Trace`, `Span`, `Metric`, `TelemetryEvent`
 - Telemetry infrastructure: `OpenTelemetryFFI`, `TelemetryRepositoryImpl`, `TelemetryBuffer`
 
-### v2.1 — Live DBMS introspection
+### Live DBMS introspection
 
-- `OdbcDriverCapabilities.getDbmsInfoForConnection(connId)` returns a typed
-  [`DbmsInfo`](lib/infrastructure/native/driver_capabilities.dart) with
-  the server-reported product name, canonical engine id, identifier
-  length limits, and current catalog. More accurate than parsing the
-  connection string (works for DSN-only, distinguishes MariaDB/MySQL,
-  ASE/ASA, etc).
+- Preferred: `IOdbcService.getConnectionDbmsInfo(connectionId)` returns typed
+  `DbmsInfo` (product name, canonical engine id, identifier limits, catalog).
+  Demo: [`example/dbms_info_demo.dart`](example/dbms_info_demo.dart).
+- Low-level: `OdbcDriverCapabilities.getDbmsInfoForConnection(connId)` via
+  `odbc_fast_native.dart` when you already hold a native connection id.
 - `DatabaseEngineIds` and `DatabaseType.fromEngineId(id)` for stable
   switch/case across releases.
 
-### v3.0 — Driver-specific capability builders
+### Driver-specific capability builders
 
 [`OdbcDriverFeatures`](lib/infrastructure/native/driver_capabilities_v3.dart)
-exposes three pure SQL builders that resolve the dialect from the
-connection string:
+(native barrel) exposes three pure SQL builders that resolve the dialect from
+the connection string:
 
 - `buildUpsertSql(...)` — generates dialect UPSERT (`ON CONFLICT`,
   `ON DUPLICATE KEY UPDATE`, `MERGE`, depending on engine).
@@ -517,11 +376,11 @@ connection string:
   statements per engine (`SET application_name`, `ALTER SESSION SET
   NLS_*`, `PRAGMA foreign_keys=ON`, ...).
 
-### v3.0 — Pool eviction/timeout options
+### Pool eviction/timeout options
 
 [`PoolOptions`](lib/domain/entities/pool_options.dart) +
 [`OdbcPoolFactory`](lib/infrastructure/native/pool_options.dart)
-expose the new FFI `odbc_pool_create_with_options`:
+(native barrel) expose `odbc_pool_create_with_options`:
 
 ```dart
 final factory = OdbcPoolFactory(native);
@@ -557,7 +416,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^3.10.1
+  odbc_fast: ^4.3.4
 ```
 
 Then:
@@ -891,14 +750,14 @@ dart run example/main.dart
 dart run example/service_api_coverage_demo.dart
 dart run example/advanced_entities_demo.dart
 dart run example/simple_demo.dart
-dart run example/quick_start_balanced_demo.dart        # NEW v3.8 (OdbcUsageProfile)
-dart run example/sub_interfaces_migration_demo.dart    # NEW v3.10 (IQueryService et al)
+dart run example/quick_start_balanced_demo.dart        # OdbcUsageProfile.balanced
+dart run example/sub_interfaces_migration_demo.dart    # IQueryService et al
 dart run example/param_value_migration_demo.dart       # DSN-free ParamValue migration
 
 # Connection / pool
 dart run example/connection_string_builder_demo.dart   # 7 builders incl. MariaDB/SQLite/Db2/Snowflake
 dart run example/pool_demo.dart
-dart run example/pool_with_options_demo.dart           # NEW v3.0 (PoolOptions)
+dart run example/pool_with_options_demo.dart           # PoolOptions
 
 # Async
 dart run example/async_demo.dart
@@ -914,7 +773,7 @@ ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_wor
 
 # Queries / parameters
 dart run example/named_parameters_demo.dart
-dart run example/stream_query_named_demo.dart          # NEW v3.10 (streamQueryNamed)
+dart run example/stream_query_named_demo.dart          # streamQueryNamed
 dart run example/multi_result_demo.dart
 dart run example/multi_result_stream_demo.dart         # streamQueryMulti per-item
 dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
@@ -929,21 +788,19 @@ dart run example/bulk_insert_demo.dart                 # single-connection bulk 
 dart run example/bulk_insert_parallel_demo.dart        # parallel bulk insert (>1k rows)
 
 # Transactions / savepoints / XA
-dart run example/run_in_transaction_demo.dart          # NEW v3.4 (runInTransaction<T>)
+dart run example/run_in_transaction_demo.dart          # runInTransaction<T>
 dart run example/savepoint_demo.dart
 dart run example/transaction_helpers_demo.dart
 dart run example/xa_2pc_demo.dart                      # Sprint 4.3 (XA / 2PC across 5 engines)
 
 # Schema introspection
 dart run example/catalog_reflection_demo.dart
-dart run example/dbms_info_demo.dart                   # NEW v2.1 (live SQLGetInfo)
-
-# Driver-specific SQL builders (v3.0)
-dart run example/driver_features_demo.dart             # NEW v3.0 (UPSERT/RETURNING/SessionInit)
+dart run example/dbms_info_demo.dart                   # getConnectionDbmsInfo
+dart run example/driver_features_demo.dart             # UPSERT/RETURNING/SessionInit
 
 # Errors / observability
-dart run example/structured_errors_demo.dart           # NEW v3.0 (12+ typed error classes)
-dart run example/event_bus_demo.dart                   # NEW v3.10 (IAdminService.events)
+dart run example/structured_errors_demo.dart           # typed OdbcError classes
+dart run example/event_bus_demo.dart                   # IAdminService.events
 dart run example/audit_example.dart
 dart run example/telemetry_demo.dart
 dart run example/otel_repository_demo.dart
@@ -952,11 +809,11 @@ dart run example/otel_repository_demo.dart
 Coverage-oriented examples:
 
 - `example/service_api_coverage_demo.dart`: exercises service methods that are
-  less visible in quick-start docs (`executeQueryParams`, `prepare`,
-  `executePrepared`, `cancelStatement`, `closeStatement`, pool APIs,
-  `bulkInsert`, `getVersion`, `validateConnectionString`,
-  `getDriverCapabilities`, metadata cache controls, audit API, async
-  request/stream lifecycle).
+  less visible in quick-start docs (`executeQueryParamValuesFromObjects`,
+  `prepare`, `executePreparedParamValuesFromObjects`, `cancelStatement`,
+  `closeStatement`, pool APIs, `bulkInsert`, `getVersion`,
+  `validateConnectionString`, `getDriverCapabilities`, metadata cache,
+  audit API, async request/stream lifecycle).
 - `example/advanced_entities_demo.dart`: demonstrates exported advanced types
   and helpers (`RetryHelper`, `RetryOptions`, `PreparedStatementConfig`,
   `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).
@@ -989,8 +846,8 @@ Coverage-oriented examples:
   `example/oracle_ref_cursor_demo.dart`: DRT1 directed parameters and
   Oracle `REF CURSOR` materialization.
 - `example/run_in_transaction_demo.dart` and `example/xa_2pc_demo.dart`:
-  `runInTransaction<T>` orchestrated unit-of-work and full X/Open XA / 2PC
-  lifecycle (5 engines).
+  `runInTransaction<T>` and `runInXaTransaction` / native XA lifecycle
+  (supported engines).
 - `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
   telemetry service/buffer usage plus OTLP repository initialization.
 
@@ -1022,12 +879,12 @@ More details: [example/README.md](example/README.md)
 #### Catalog Reflection
 
 **[catalog_reflection_demo.dart](example/catalog_reflection_demo.dart)** -
-Primary keys, foreign keys, and indexes
+Primary keys, foreign keys, and indexes via `ServiceLocator`
 
+- ✅ `catalogTables` (pick a sample table) / optional `ODBC_EXAMPLE_TABLE`
 - ✅ `catalogPrimaryKeys`
 - ✅ `catalogForeignKeys`
 - ✅ `catalogIndexes`
-- ✅ Simple output for migration/introspection workflows
 
 #### Low-Level API (`NativeOdbcConnection`)
 
@@ -1065,36 +922,36 @@ Primary keys, foreign keys, and indexes
 
 #### Named Parameters
 
-**[named_parameters_demo.dart](example/named_parameters_demo.dart)** - @name and :name syntax
+**[named_parameters_demo.dart](example/named_parameters_demo.dart)** - `@name` / `:name` via service API
 
-- ✅ Standard SQL named parameter syntax
-- ✅ Prepared statement reuse for performance
-- ✅ Mixed @name and :name in same example
+- ✅ `executeQueryNamed` and `prepareNamed` / `executePreparedNamed`
+- ✅ Mixed `@name` and `:name` syntax
 - ✅ Repeated placeholders reuse the same supplied value
-- ✅ Type-safe parameter binding
+- ✅ Prepared named statement reuse
 
 **Advantages**:
 
-- 🛡 SQL injection protection (type-safe binding)
+- 🛡 SQL injection protection (bound parameters)
 - ⚡ Reuse prepared statements for multiple executions
-- 📝 Clean code with named parameters
-- 🔌 Database-agnostic syntax (@name works on most DBs)
+- 📝 Clean call sites with named maps
+- 🔌 Database-agnostic placeholder syntax
 
 #### Multi-Result Queries
 
 **[multi_result_demo.dart](example/multi_result_demo.dart)** - Multiple result sets
 
-- ✅ Single query with multiple SELECT statements
-- ✅ `executeQueryMulti` + `MultiResultParser`
-- ✅ Parse multiple result sets from single payload
-- ✅ Access to each result set independently
+- ✅ Portable multi-`SELECT` batches
+- ✅ `executeQueryMultiFull` + `executeQueryMultiParamValues`
+- ✅ Ordered result sets and row-counts via `QueryResultMulti`
+- ✅ Streaming alternative: `streamQueryMulti` /
+  [`multi_result_stream_demo.dart`](example/multi_result_stream_demo.dart)
 
 **Advantages**:
 
 - 📦 Fewer round trips to database
-- ⚡ Batch multiple operations in single request
-- 🎯 Perfect for stored procedures with multiple results
-- 📊 Automatic result set parsing
+- ⚡ Batch multiple operations in a single request
+- 🎯 Fits stored procedures with multiple results
+- 📊 Stable multi-item parsing on the service layer
 
 #### Connection Pooling
 
@@ -1204,7 +1061,7 @@ UPSERT, RETURNING, and SessionInit
 - ✅ `ErrorCategory` enum (transient/fatal/validation/connectionLost)
   for retry/abort/reconnect decision making
 
-#### Transaction orchestration (Sprint 4.4 / v3.10)
+#### Transaction orchestration
 
 **[run_in_transaction_demo.dart](example/run_in_transaction_demo.dart)** -
 High-level `runInTransaction<T>` helper
@@ -1230,7 +1087,7 @@ High-level `runInTransaction<T>` helper
   doesn't return `XA_RDONLY`)
 - ✅ `XaTransactionHandle.runWithStart<T>` exception-safe helper
 
-#### Sub-interfaces + Connection-typed overloads (v3.10)
+#### Sub-interfaces + Connection-typed overloads
 
 **[sub_interfaces_migration_demo.dart](example/sub_interfaces_migration_demo.dart)** -
 ISP-friendly seams
@@ -1240,7 +1097,7 @@ ISP-friendly seams
   manual `conn.id` plumbing
 - ✅ DSN-free smoke run: works as a describe-only example
 
-#### Event bus (v3.10)
+#### Event bus
 
 **[event_bus_demo.dart](example/event_bus_demo.dart)** -
 `IAdminService.events` broadcast stream
@@ -1253,7 +1110,7 @@ ISP-friendly seams
 - ✅ Best-effort observability — no back-pressure on the runtime
   emission path
 
-#### Backpressure modes (v3.10)
+#### Backpressure modes
 
 **[backpressure_modes_demo.dart](example/backpressure_modes_demo.dart)** -
 Async-pool flow control
@@ -1264,7 +1121,7 @@ Async-pool flow control
   `backpressureTimeout`
 - ✅ `onWorkerRecovered` callback wiring after auto-recovery
 
-#### Columnar result encoding (v3.10)
+#### Columnar result encoding
 
 **[columnar_result_encoding_demo.dart](example/columnar_result_encoding_demo.dart)** -
 Opt-in `ResultEncoding` comparison
@@ -1366,17 +1223,19 @@ Optional Rust bulk benchmark tuning: `BULK_BENCH_SMALL_ROWS` and
 ```text
 dart_odbc_fast/
 ├── lib/
-│   ├── application/    # IOdbcService, capability delegates, telemetry decorators
-│   ├── domain/         # entities (ParamValue, PoolOptions), IOdbcRepository, OdbcError
-│   ├── infrastructure/ # FFI, protocol, repository runners, NativeOdbcConnection
-│   ├── core/           # ServiceLocator, logging
-│   └── odbc_fast.dart  # public barrel
+│   ├── application/         # IOdbcService, capability delegates, telemetry decorators
+│   ├── domain/              # entities (ParamValue, PoolOptions), repositories, OdbcError
+│   ├── infrastructure/      # FFI, protocol, repository runners, NativeOdbcConnection
+│   ├── core/                # ServiceLocator, logging
+│   ├── odbc_fast.dart      # primary public barrel
+│   └── odbc_fast_native.dart  # opt-in FFI / repository barrel
 ├── native/
-│   └── odbc_engine/    # Rust FFI engine (plugins, protocol, streaming, transaction)
-├── hook/               # Native assets hooks
-├── scripts/            # build, E2E runners, validation
-├── test/               # Dart suites (unit, integration, e2e, stress)
-└── doc/                # Architecture, testing, build guides
+│   └── odbc_engine/         # Rust FFI engine (plugins, protocol, streaming, transaction)
+├── hook/                    # Native assets hooks
+├── scripts/                 # build, E2E runners, validation
+├── example/                 # runnable demos (see example/README.md)
+├── test/                    # Dart suites (unit, integration, e2e, stress)
+└── doc/                     # Index: doc/README.md
 ```
 
 Layering and service wiring: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md).
@@ -1386,8 +1245,9 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 
 ### Reference (current)
 
-- [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) — Dart layer architecture (layers, public barrel, ServiceLocator, sealed `OdbcBackend`, sub-interfaces, runners, event bus). Mirror of `native/odbc_engine/ARCHITECTURE.md`.
-- [doc/API_SURFACE.md](doc/API_SURFACE.md) — complete FFI surface (92 functions), public Rust API, Dart bindings
+- [doc/README.md](doc/README.md) — documentation index (start here)
+- [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) — Dart layers, dual barrels, ServiceLocator, sealed `OdbcBackend`, sub-interfaces, runners, event bus
+- [doc/API_SURFACE.md](doc/API_SURFACE.md) — FFI surface (**100** exports), public Rust API, Dart bindings
 - [doc/CAPABILITIES_v3.md](doc/CAPABILITIES_v3.md) — driver capability traits × engine matrix
 - [doc/BUILD.md](doc/BUILD.md) — build, library resolution, scripts
 - [doc/TESTING.md](doc/TESTING.md) — test policy, CI scope, environment variables
@@ -1412,7 +1272,7 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 - [doc/notes/columnar_protocol_sketch.md](doc/notes/columnar_protocol_sketch.md) — columnar v2 wire layout
 - [doc/notes/REF_CURSOR_ORACLE_ROADMAP.md](doc/notes/REF_CURSOR_ORACLE_ROADMAP.md) — Oracle ref cursor contract
 - [doc/notes/TVP_DESIGN_GATE.md](doc/notes/TVP_DESIGN_GATE.md) - decisions required before TVP work starts
-- [doc/notes/ROADMAP_PENDENTES.md](doc/notes/ROADMAP_PENDENTES.md) — ordered epic backlog (PT)
+- [doc/notes/ROADMAP_PENDENTES.md](doc/notes/ROADMAP_PENDENTES.md) — short open-item index → PENDING
 
 ## CI/CD
 

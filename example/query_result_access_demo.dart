@@ -58,6 +58,12 @@ Future<void> main() async {
         final idIdx = qr.columnIndex('id');
         AppLogger.info('columnIndex(id)=$idIdx');
 
+        final cellId = qr.cell(0, 'id');
+        AppLogger.info('cell(0, id)=$cellId');
+
+        final row0 = qr.rowAsMap(0);
+        AppLogger.info('rowAsMap(0)=$row0');
+
         final first = qr.firstRowOrNull;
         AppLogger.info('firstRowOrNull=$first');
 

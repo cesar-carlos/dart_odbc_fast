@@ -83,7 +83,7 @@ fn bench_row_major_vec_vs_writer(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("via_write_trait", &id), &buf, |b, buf| {
             b.iter(|| {
                 let mut out = Vec::new();
-                black_box(RowBufferEncoder::encode_to_writer(buf, &mut out).expect("encode"));
+                RowBufferEncoder::encode_to_writer(buf, &mut out).expect("encode");
                 black_box(out)
             });
         });

@@ -11,9 +11,9 @@
 //
 // Run: dart run example/transaction_helpers_demo.dart
 //
-// This demo can run **without** a database when there is no `EXAMPLE_DSN` —
-// it just prints the wire codes for `SavepointDialect`. With a DSN it
-// performs a small commit / rollback / savepoint round-trip.
+// This demo can run **without** a database when there is no `ODBC_TEST_DSN`
+// (or `ODBC_DSN`) — it just prints the wire codes for `SavepointDialect`.
+// With a DSN it performs a small commit / rollback / savepoint round-trip.
 
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:odbc_fast/odbc_fast_native.dart';
@@ -31,8 +31,8 @@ void main() async {
   final dsn = requireExampleDsn();
   if (dsn == null) {
     AppLogger.info(
-      'EXAMPLE_DSN not set; skipping live transaction parts. '
-      'Set EXAMPLE_DSN to run the round-trip.',
+      'ODBC_TEST_DSN not set; skipping live transaction parts. '
+      'Set ODBC_TEST_DSN (or ODBC_DSN) to run the round-trip.',
     );
     return;
   }

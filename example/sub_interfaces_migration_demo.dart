@@ -20,12 +20,6 @@
 // require a fake of the full `IOdbcService` aggregate) is documented
 // at the type level — the friction of building that fake is exactly
 // what V2's narrower seam removes.
-//
-// `unreachable_from_main` is suppressed file-wide because V1 is kept
-// as a structural reference type for the demo's pedagogical contrast.
-// Reason: educational example demonstrating two valid wiring shapes;
-// V1's API surface is the documented "before" state, not dead code.
-// ignore_for_file: unreachable_from_main
 
 import 'package:odbc_fast/odbc_fast.dart';
 import 'package:result_dart/result_dart.dart';

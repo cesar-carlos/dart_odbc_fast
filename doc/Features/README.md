@@ -11,6 +11,7 @@ deeper type and protocol notes live under `doc/notes/`.
 
 ## See also
 
+- [`doc/README.md`](../README.md) — documentation index.
 - [`CHANGELOG.md`](../../CHANGELOG.md) - deliveries and release history.
 - [`doc/notes/TYPE_MAPPING.md`](../notes/TYPE_MAPPING.md) - type contract,
   directed parameters and columnar roadmap.

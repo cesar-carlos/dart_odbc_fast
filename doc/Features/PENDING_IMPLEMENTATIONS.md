@@ -1,15 +1,13 @@
 # Implementacoes pendentes
 
 Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
-maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `3.10.0`
+maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `4.3.4`
 (sub-interfaces `IQueryService`/`ITransactionService`/`IPoolService`/`IAdminService`,
 `IAdminService.events` + `OdbcEvent`, `executeQueryColumnar` /
 `streamQueryColumnar`, `TypedColumnarResult`, `QueryResult.columnsMetadata`,
-follow-ups de perf nativa com `block-cursor-fetch` / `statement-handle-reuse`
-default ON, sharding **parcial** do `GlobalState` (sub-locks para metricas,
-audit, erros e async requests; mapas cross-category ainda no mutex residual),
-`OwnedPreparedStatement`, env var
-`ODBC_FAST_BLOCK_FETCH_BATCH`).
+barrels `odbc_fast.dart` / `odbc_fast_native.dart`, sharding completo do
+`GlobalState` residual = `env` (+ BCP strings), `OwnedPreparedStatement`,
+env var `ODBC_FAST_BLOCK_FETCH_BATCH`).
 
 Esta lista nao repete entregas ja fechadas. Quando uma pendencia virar codigo
 ou documentacao canonica, atualizar `CHANGELOG.md`, `doc/CAPABILITIES_v3.md`,
@@ -18,7 +16,8 @@ ou documentacao canonica, atualizar `CHANGELOG.md`, `doc/CAPABILITIES_v3.md`,
 **Responsabilidade deste arquivo:** backlog de produto/infra e maturacao
 operacional. Contratos de tipo/wire vivem em `doc/notes/TYPE_MAPPING.md`;
 capabilities entregues vivem em `doc/CAPABILITIES_v3.md`; flags live canonicos
-vivem em `doc/TESTING.md`.
+vivem em `doc/TESTING.md`. Indice curto dos itens abertos tambem em
+[`notes/ROADMAP_PENDENTES.md`](../notes/ROADMAP_PENDENTES.md) (pointer only).
 
 ## 1. Entregue no repo
 
@@ -40,6 +39,9 @@ vivem em `doc/TESTING.md`.
 - **Columnar v2:** o motor emite v2 sob opt-in de `ResultEncoding.columnar` /
   `ResultEncoding.columnarCompressed`, e o Dart decodifica v2 com zstd/LZ4 via
   `odbc_columnar_decompress`.
+- **FFI `GlobalState` sharding:** mapas de conexoes/pools/transacoes/streams/
+  statements/XA em `ffi::state::*`; residual = `env` (+ BCP strings). Ver
+  [`PERFORMANCE.md`](../PERFORMANCE.md).
 
 ### 1.1 Implementado vs certificado em driver live
 
@@ -112,17 +114,6 @@ ODBC local, DSN e permissao no banco. A grafia canonica dos flags opt-in vive em
 - SQL Server `OUT`: `test/e2e/mssql_directed_out_test.dart`;
 - SQL Server `OUT + MULT`: `test/e2e/mssql_directed_out_multi_rset_test.dart`;
 - Oracle ref cursor: `native/odbc_engine/tests/e2e_oracle_ref_cursor_test.rs`.
-
-### 2.5 `GlobalState` — sharding parcial (follow-up)
-
-O hot path FFI ja saiu do mutex monolitico: metricas e audit sao singletons
-`Arc`, erros por conexao e async requests tem locks dedicados, e o slot de erro
-global legado ficou em `RwLock` proprio. O que **permanece** no `GlobalState`
-residual e a atomicidade cross-category — mapas de conexoes, pools, transacoes,
-streams e branches XA ainda compartilham o mutex externo. Splitar essas
-categorias sem duplicar cleanup (`with_disconnect_cleanup`) e follow-up
-documentado em [`doc/PERFORMANCE.md`](../PERFORMANCE.md); nao bloqueia consumo
-Dart atual.
 
 ## 3. Deferido por decisao de produto
 

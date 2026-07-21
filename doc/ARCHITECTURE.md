@@ -11,8 +11,9 @@ the wire protocol, or driver behavior — those live in the native doc.
 
 ```mermaid
 flowchart TB
-  subgraph Public["Public API barrel — lib/odbc_fast.dart"]
-    P[Curated re-exports of domain entities + IOdbcService\nplus opt-in helpers (TypedColumnarResult, OdbcEvent)]
+  subgraph Public["Public API barrels"]
+    P1[lib/odbc_fast.dart — curated domain + services]
+    P2[lib/odbc_fast_native.dart — opt-in FFI / repository impl]
   end
 
   subgraph Application["application/"]
@@ -59,10 +60,20 @@ depend on outer layers (`infrastructure`, `application`). The
 (`OdbcCatalogRunner`, `OdbcBulkRunner`) because the runners live in the
 same layer.
 
-## Public API barrel
+## Public API barrels
 
-`lib/odbc_fast.dart` is the only entry point package consumers should
-import. It re-exports:
+Package consumers have two deliberate entry points:
+
+1. **`package:odbc_fast/odbc_fast.dart`** (recommended) — curated domain
+   entities, `IOdbcService` + sub-interfaces, `ServiceLocator`, telemetry
+   decorators, and stable helpers (`TypedColumnarResult`, `OdbcEvent`,
+   `For` extensions).
+2. **`package:odbc_fast/odbc_fast_native.dart`** (opt-in) — FFI connection
+   types (`NativeOdbcConnection`, `AsyncNativeOdbcConnection`),
+   `OdbcRepositoryImpl`, pool factory, `AsyncError`, and OpenTelemetry
+   FFI. Prefer this only for demos/benchmarks or repository-level seams.
+
+`lib/odbc_fast.dart` re-exports:
 
 - **Domain entities** — `Connection`, `ConnectionOptions`, `QueryResult`
   (with optional `columnsMetadata`), `OdbcMetrics`, `PoolState`,
@@ -73,15 +84,15 @@ import. It re-exports:
   narrower sub-interfaces (`IQueryService`, `ITransactionService`,
   `IPoolService`, `IAdminService`).
 - **Concrete service + DI** — `OdbcService`, `ServiceLocator`, opt-in
-  `TelemetryOdbcServiceDecorator`.
+  `TelemetryOdbcServiceDecorator` / `TelemetryOdbcDecorators`.
 - **Opt-in helpers** — `LazyString`, `toTypedColumnar`, the `For`
   extensions for `Connection`-based call sites.
 
-Anything **not** exported here is internal — including the runners
-inside `infrastructure/repositories/runners/`, the parser internals in
-`infrastructure/native/protocol/`, and the `OdbcRepositoryImpl`
-itself. Consumers depend on `IOdbcService` (or one of the narrower
-sub-interfaces) and let DI choose the implementation.
+Application code should depend on `IOdbcService` (or a narrower
+sub-interface) via `ServiceLocator`. Reach for `odbc_fast_native.dart`
+only when you must talk to FFI types or assemble `OdbcRepositoryImpl`
+yourself. See [`example/README.md`](../example/README.md) and
+[`API_SURFACE.md`](API_SURFACE.md) §7.1.
 
 ## Service locator wiring (sync vs async stack)
 
@@ -137,6 +148,11 @@ flowchart TB
   IOdbcService --> IAdmin[IAdminService\\ninitialize, shutdown, getMetrics,\\ngetWorkerPoolStats, events]
 ```
 
+`IOdbcService` also exposes aggregate-only helpers such as
+`runInXaTransaction` (XA / 2PC ergonomics on top of `XaTransactionHandle`).
+Prefer that over manual XA chaining in application code; see
+`example/xa_2pc_demo.dart`.
+
 Consumers that only need queries should depend on `IQueryService`;
 consumers that only manage transactions should depend on
 `ITransactionService`; etc. The aggregate `IOdbcService` keeps the
@@ -147,11 +163,11 @@ The opt-in `For` extension methods (`executeQueryFor(Connection conn,
 ...)`) live next to each sub-interface and let call sites take a
 `Connection` instead of plumbing `connectionId` strings.
 
-## Repository runners (split in progress)
+## Repository runners
 
 ```mermaid
 flowchart LR
-  Repo[OdbcRepositoryImpl\\n~551 lines, façade] --> State[OdbcRepositoryState]
+  Repo[OdbcRepositoryImpl\\nfaçade] --> State[OdbcRepositoryState]
   Repo --> Conn[OdbcConnectionRunner]
   Repo --> Query[OdbcQueryRunner / OdbcQuerySyncRunner]
   Repo --> Prep[OdbcQueryPreparedRunner]
@@ -217,8 +233,8 @@ repository emits events at five points (today):
 - `AutoReconnectAttempted` — `_withReconnect` retried.
 - `WorkerRecovered` — async worker pool recovered from a crash.
 - `PoolResize` — `poolSetSize` changed pool capacity.
-- `SlowQueryDetected` — query crossed the slow-query threshold
-  (future emission point; sealed surface ready today).
+- `SlowQueryDetected` — query crossed `ConnectionOptions.slowQueryThreshold`
+  (emitted from the repository when the threshold is configured).
 
 Listeners do not back-pressure emission — they're observability
 signals. The surface is sealed so adding a new event variant is a
@@ -226,6 +242,9 @@ deliberate, additive change.
 
 ## Related documents
 
+- [`doc/ARCHITECTURE.md`](ARCHITECTURE.md)
+  — Dart layers, barrels, DI, events.
+- [`doc/README.md`](README.md) — documentation index.
 - [`native/odbc_engine/ARCHITECTURE.md`](../native/odbc_engine/ARCHITECTURE.md)
   — Rust engine (workers, FFI, protocol, drivers).
 - [`native/doc/ffi_api.md`](../native/doc/ffi_api.md) — exported FFI

@@ -12,7 +12,6 @@
 // `SELECT CAST(? AS INT)` with a directed *input* parameter (same DRT1 path).
 
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 
@@ -85,9 +84,8 @@ void main() async {
     return;
   }
 
-  final native = NativeOdbcConnection();
-  final repository = OdbcRepositoryImpl(native);
-  final service = OdbcService(repository);
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
 
   if ((await service.initialize()).isError()) {
     AppLogger.severe('initialize failed');
@@ -99,6 +97,7 @@ void main() async {
   );
   if (connect.isError()) {
     AppLogger.severe('connect: ${connect.exceptionOrNull()}');
+    locator.shutdown();
     return;
   }
   final connId = connect.getOrThrow().id;
@@ -122,5 +121,6 @@ void main() async {
     );
   } finally {
     await service.disconnect(connId);
+    locator.shutdown();
   }
 }

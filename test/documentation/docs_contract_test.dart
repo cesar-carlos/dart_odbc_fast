@@ -75,6 +75,24 @@ void main() {
       expect(ci, contains('dart test test/documentation test/example'));
     });
 
+    test('should_keep_readme_on_current_package_line', () {
+      final readme = _readRepoFile('README.md');
+      expect(readme, contains('**4.3.4**'));
+      expect(readme, contains('odbc_fast: ^4.3.4'));
+      expect(readme, contains('odbc_fast_native.dart'));
+      expect(readme, contains('doc/README.md'));
+      expect(readme, isNot(contains("What's New in 3.10.x")));
+      expect(readme, isNot(contains('odbc_fast: ^3.10.1')));
+      expect(readme, isNot(contains('92 functions')));
+      expect(readme, isNot(contains('executeQueryMultiParams,')));
+      expect(
+        readme,
+        isNot(contains('executeQueryParams` (deprecated untyped)')),
+      );
+      expect(readme, contains('executeQueryMultiParamValues'));
+      expect(readme, contains('runInXaTransaction'));
+    });
+
     test('should_ship_dart_layer_architecture_doc', () {
       // Phase 4 PR4.4: doc/ARCHITECTURE.md mirrors the native engine's
       // architecture doc but documents only the Dart side. Verify the
@@ -129,6 +147,8 @@ void main() {
         'odbc_engine v3.5.x',
         '**92** funções',
         'Atualizado para v3.10.0',
+        'maps that require atomic cross-category transitions',
+        'tracked for v3.1',
       ];
 
       for (final path in paths) {
@@ -143,10 +163,10 @@ void main() {
       }
     });
 
-    test('should_keep_api_surface_aligned_with_v4_2_abi', () {
+    test('should_keep_api_surface_aligned_with_v4_3_abi', () {
       final apiSurface = _readRepoFile('doc/API_SURFACE.md');
 
-      expect(apiSurface, contains('v4.2.0'));
+      expect(apiSurface, contains('v4.3.4'));
       expect(apiSurface, contains('ABI **1.1**'));
       expect(apiSurface, contains('odbc_release_buffer'));
       expect(apiSurface, contains('streamQueryBuffer'));
@@ -154,7 +174,23 @@ void main() {
       expect(apiSurface, contains('zeroCopyResultThresholdBytes'));
       expect(apiSurface, contains('odbc_stream_start_batched'));
       expect(apiSurface, contains('odbc_stream_start_batched_options'));
-      expect(apiSurface, contains('**97**'));
+      expect(apiSurface, contains('**100**'));
+      expect(apiSurface, contains('**32 KiB**'));
+      expect(apiSurface, isNot(contains('**64 KiB**')));
+    });
+
+    test('should_document_dual_barrels_in_architecture', () {
+      final architecture = _readRepoFile('doc/ARCHITECTURE.md');
+      expect(architecture, contains('odbc_fast_native.dart'));
+      expect(architecture, contains('runInXaTransaction'));
+      expect(
+        architecture,
+        isNot(contains('only entry point package consumers should')),
+      );
+      expect(
+        architecture,
+        isNot(contains('future emission point')),
+      );
     });
   });
 }

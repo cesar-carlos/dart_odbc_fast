@@ -1,5 +1,10 @@
 # Oracle `SYS_REFCURSOR` OUT — integração e maturação
 
+> **Contrato wire / Dart:** [`TYPE_MAPPING.md`](TYPE_MAPPING.md) §3.1.1.
+> **Backlog aberto:** [`PENDING_IMPLEMENTATIONS.md`](../Features/PENDING_IMPLEMENTATIONS.md) §2.2.
+> Este ficheiro e a nota de motor (fluxo Oracle + edge cases); nao duplicar
+> matriz de capabilities aqui.
+
 **Estado (motor, Oracle + plugin activo):** `ParamValue::RefCursorOut` no buffer DRT1
 activa o *path* `engine::core::ref_cursor_oracle` + `execute_oracle_ref_cursor_path` em
 [`execution_engine.rs`](../../native/odbc_engine/src/engine/core/execution_engine.rs):

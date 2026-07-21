@@ -75,8 +75,12 @@ Future<void> _demoExecuteQueryParams(
   );
 
   result.fold(
-    (r) => AppLogger.info('executeQueryParams rows=${r.rowCount}'),
-    (e) => AppLogger.warning('executeQueryParams failed: $e'),
+    (r) => AppLogger.info(
+      'executeQueryParamValuesFromObjects rows=${r.rowCount}',
+    ),
+    (e) => AppLogger.warning(
+      'executeQueryParamValuesFromObjects failed: $e',
+    ),
   );
 }
 
@@ -105,11 +109,13 @@ Future<void> _demoPrepareExecuteClose(
     (e) => AppLogger.warning('executePrepared failed: $e'),
   );
 
+  // Experimental: native cancel is not fully implemented end-to-end.
+  // Prefer ConnectionOptions.queryTimeout for reliable interruption.
   final cancel = await service.cancelStatement(connectionId, stmtId);
   cancel.fold(
-    (_) => AppLogger.info('cancelStatement OK'),
+    (_) => AppLogger.info('cancelStatement OK (experimental)'),
     (e) => AppLogger.info(
-      'cancelStatement not available in current runtime (expected): $e',
+      'cancelStatement experimental / unsupported (expected): $e',
     ),
   );
 

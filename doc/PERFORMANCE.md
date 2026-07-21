@@ -1,6 +1,6 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.2.0 (server profiles apply columnar wire by default
+> **Last updated for:** v4.3.4 (server profiles apply columnar wire by default
 > via `ServiceLocator` / `OdbcRepositoryImpl`, pooled checkouts reuse prepared
 > handles through `CachedConnection`; prior v4.1.0 server profile columnar
 > recommendation, CRUD columnar bulk benchmark baseline, harness `--crud` lane;
@@ -361,7 +361,7 @@ supports them.
 | `PoolAutocommitCustomizer` sets `autocommit(true)` on every checkout                          | One extra ODBC call per checkout; eliminates the worst case where a connection returned mid-transaction silently affected the next caller.                                                                                                 |
 | `recv_timeout` + structured worker-disconnect error                                           | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover.                                                                                                                                            |
 | `read_exact` in disk-spill readback                                                           | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost.                                                                                                                                               |
-| `Mutex<GlobalState>` granularity                                                              | Critical paths (pool checkout, metrics, audit, per-connection errors, async requests, legacy global error) are now off the outer mutex. The residual `GlobalState` only owns maps that require atomic cross-category transitions (connections / pools / transactions / streams / XA branches). |
+| `Mutex<GlobalState>` granularity                                                              | Critical paths (pool checkout, metrics, audit, per-connection errors, async requests, legacy global error) are off the outer mutex. Connection, pool, transaction, stream, statement, and XA maps live in dedicated `ffi::state::*` shards. Residual `GlobalState` owns only `env` (+ optional BCP connection strings). |
 | Async presets via `ServiceLocator.initialize(profile: ...)`                                   | Default profile remains `legacy` for compatibility. Opt in to `balanced` for `workerCount = 2`, `maxPendingRequests = 24`, `backpressureMode = waitForSlot`, and `backpressureTimeout = 30s`; use another `OdbcUsageProfile` when the app shape is clearer. |
 | Direct `AsyncNativeOdbcConnection(...)` defaults                                              | Constructor defaults remain `workerCount = 1`, `maxPendingRequests = null`, and `backpressureMode = failFast`. Use `ServiceLocator` presets when you want profile-guided tuning instead of raw constructor defaults.                      |
 | Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | In services with native pools, keep the pending cap near `poolSize * 2` to `poolSize * 4` so the Dart worker queue does not hide saturation.                                                                                              |
@@ -477,7 +477,11 @@ These performance-sensitive items are tracked outside the feature backlog:
 
 - **Single-result streaming (audit C7, resolved in v4.1.0)** — `streamQuery` and repository `streamQuery` now default to cursor-based batched streaming (`odbc_stream_start_batched` / `execute_streaming_batched`). Legacy buffer-mode `odbc_stream_start` / `execute_streaming` remains for `streamQueryBuffer` and spill-to-disk only; it still materialises the full result before byte-level FFI chunking.
 - **Multi-result per-cursor materialisation (resolved in v4.2)** — `odbc_stream_multi_*` encodes each cursor in fetch-sized batches (tag `0` + tag `2` continuation frames). Memory stays bounded to one batch per active cursor.
-- **Residual `GlobalState` cross-category atomicity** — `connections`, `pools`, `transactions`, `streams` and XA branches still share the residual outer mutex. `with_disconnect_cleanup` (v4.1.0) centralises disconnect map transitions so per-category locks can be split in a follow-up without duplicating cleanup logic. Tracked in `engine_perf_follow-ups_b8f0b22a.plan.md`.
+- **Residual `GlobalState`** — delivered: maps for connections, pools,
+  transactions, streams, statements, and XA branches are sharded under
+  `ffi::state::*`. Residual `GlobalState` holds only `env` (+ optional BCP
+  connection strings). Cross-category cleanup still nests locks in the
+  documented order (`GLOBAL_STATE` → xa → transactions → pools → …).
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
 
 Feature-level open work is tracked in

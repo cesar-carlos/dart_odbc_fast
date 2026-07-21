@@ -105,6 +105,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Residual `GlobalState` holds only `env` (+ optional BCP connection strings);
   lock order docs updated (`GLOBAL_STATE` → xa → transactions → pools →
   connections → streams → statements → …).
+- **Examples aligned to service API** — several demos now prefer `ServiceLocator` +
+  `IOdbcService` over manual `OdbcRepositoryImpl` / raw native wiring:
+  `multi_result_demo` (`executeQueryMultiFull` /
+  `executeQueryMultiParamValues`), `named_parameters_demo`
+  (`executeQueryNamed` / `prepareNamed`), `catalog_reflection_demo`,
+  `dbms_info_demo` (`getConnectionDbmsInfo`), `run_in_transaction_demo`,
+  `output_param_directions_demo`, and `oracle_ref_cursor_demo`.
+  `xa_2pc_demo` adds a `runInXaTransaction` section; skip messages use
+  `ODBC_TEST_DSN` / `ODBC_DSN`. `example/README.md` import matrix updated.
+- **XA preserve-on-error Err size** — `end_preserving_*` /
+  `*_preserving_*` helpers return `Box<(OdbcError, Handle)>` so Clippy
+  `result_large_err` stays clean without changing FFI behaviour.
+- **Dev dependency bumps** — `very_good_analysis` ^10.3.0; related package
+  constraint refreshes (`code_assets`, `ffi`, `hooks`, `meta`,
+  `opentelemetry`, `coverage`).
+- **Docs hygiene** — dual-barrel / `runInXaTransaction` / GlobalState sharding
+  claims aligned in `ARCHITECTURE`, `API_SURFACE` (100 exports, 32 KiB
+  zero-copy), `CAPABILITIES`, `PERFORMANCE`, and PENDING; `ROADMAP_PENDENTES`
+  collapsed to a pointer; added `doc/README.md` index; root `README.md`
+  refreshed for **4.3.4** (replacing the stale 3.10.x “What's New” block);
+  high-level API coverage names corrected (`ParamValue` /
+  `executeQueryMultiParamValues` / `runInXaTransaction`; no fake
+  service-level `xaStart` / `executeQueryParams`).
 
 ## [4.3.4] - 2026-06-18
 

@@ -1,97 +1,128 @@
+// Schema reflection via the high-level catalog service API.
+//
+// Demonstrates `catalogTables`, `catalogPrimaryKeys`, `catalogForeignKeys`,
+// and `catalogIndexes`. Dialect-specific SQL is resolved in the Rust native
+// catalog layer before results reach Dart.
+//
+// Optional: set `ODBC_EXAMPLE_TABLE` to inspect a specific table name.
+//
+// Run: dart run example/catalog_reflection_demo.dart
+
+import 'dart:io';
+
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
+import 'package:result_dart/result_dart.dart';
 
 import 'common.dart';
 
-/// Demonstrates schema reflection capabilities for primary keys, foreign keys,
-/// and indexes.
-///
-/// This example shows how to use the catalog API to query database metadata
-/// for a specific table, including its constraints and indexes.
 void main() async {
+  AppLogger.initialize();
+
   final dsn = requireExampleDsn();
   if (dsn == null) {
     return;
   }
 
-  final native = NativeOdbcConnection();
-  final repository = OdbcRepositoryImpl(native);
-  final service = OdbcService(repository);
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
+
+  final init = await service.initialize();
+  if (init.isError()) {
+    AppLogger.severe('Failed to initialize: ${init.exceptionOrNull()}');
+    return;
+  }
+
+  final connectResult = await service.connect(dsn);
+  final connection = connectResult.getOrNull();
+  if (connection == null) {
+    AppLogger.severe('Connection failed: ${connectResult.exceptionOrNull()}');
+    locator.shutdown();
+    return;
+  }
+
+  AppLogger.info('Connected: ${connection.id}');
 
   try {
-    // Initialize ODBC environment
-    final initResult = await service.initialize();
-    if (initResult.isError()) {
-      print('Failed to initialize: ${initResult.exceptionOrNull()}');
+    final tableName = await _resolveSampleTable(service, connection.id);
+    if (tableName == null) {
+      AppLogger.warning(
+        'No tables found via catalogTables; skipping PK/FK/index lookup.',
+      );
       return;
     }
 
-    // Connect to database
-    final connectResult = await service.connect(dsn);
-
-    if (connectResult.isError()) {
-      print('Connection failed: ${connectResult.exceptionOrNull()}');
-      return;
-    }
-
-    final connection = connectResult.getOrThrow();
-    print('Connected: ${connection.id}\n');
-
-    // Example table to inspect
-    const tableName = 'users';
-
-    // 1. List Primary Keys
-    print('=== Primary Keys for "$tableName" ===');
-    final pkResult = await service.catalogPrimaryKeys(connection.id, tableName);
-
-    if (pkResult.isSuccess()) {
-      final pkData = pkResult.getOrThrow();
-      print('Columns: ${pkData.columns}');
-      for (final row in pkData.rows) {
-        print('  ${row.join(" | ")}');
-      }
-      print('');
-    } else {
-      print('Error: ${pkResult.exceptionOrNull()}\n');
-    }
-
-    // 2. List Foreign Keys
-    print('=== Foreign Keys for "$tableName" ===');
-    final fkResult = await service.catalogForeignKeys(connection.id, tableName);
-
-    if (fkResult.isSuccess()) {
-      final fkData = fkResult.getOrThrow();
-      print('Columns: ${fkData.columns}');
-      for (final row in fkData.rows) {
-        print('  ${row.join(" | ")}');
-      }
-      print('');
-    } else {
-      print('Error: ${fkResult.exceptionOrNull()}\n');
-    }
-
-    // 3. List Indexes
-    print('=== Indexes for "$tableName" ===');
-    final idxResult = await service.catalogIndexes(connection.id, tableName);
-
-    if (idxResult.isSuccess()) {
-      final idxData = idxResult.getOrThrow();
-      print('Columns: ${idxData.columns}');
-      for (final row in idxData.rows) {
-        print('  ${row.join(" | ")}');
-      }
-      print('');
-    } else {
-      print('Error: ${idxResult.exceptionOrNull()}\n');
-    }
-
-    // Cleanup
-    await service.disconnect(connection.id);
-    print('Disconnected.');
-  } on Exception catch (e, stackTrace) {
-    print('Unexpected error: $e');
-    print(stackTrace);
+    AppLogger.info('Inspecting table: $tableName');
+    await _logCatalog(
+      'Primary Keys',
+      service.catalogPrimaryKeys(connection.id, tableName),
+    );
+    await _logCatalog(
+      'Foreign Keys',
+      service.catalogForeignKeys(connection.id, tableName),
+    );
+    await _logCatalog(
+      'Indexes',
+      service.catalogIndexes(connection.id, tableName),
+    );
   } finally {
-    service.dispose();
+    await service.disconnect(connection.id);
+    locator.shutdown();
+    AppLogger.info('Disconnected.');
   }
+}
+
+Future<String?> _resolveSampleTable(
+  IOdbcService service,
+  String connectionId,
+) async {
+  final preferred = Platform.environment['ODBC_EXAMPLE_TABLE'];
+  if (preferred != null && preferred.isNotEmpty) {
+    return preferred;
+  }
+
+  final tables = await service.catalogTables(connectionId: connectionId);
+  if (tables.isError()) {
+    AppLogger.warning('catalogTables unavailable: ${tables.exceptionOrNull()}');
+    return 'users';
+  }
+
+  final result = tables.getOrThrow();
+  if (result.isEmpty) {
+    return null;
+  }
+
+  // Prefer a common sample name when present; otherwise take the first row.
+  for (final row in result.rows) {
+    for (final cell in row) {
+      if (cell is String && cell.toLowerCase() == 'users') {
+        return cell;
+      }
+    }
+  }
+
+  for (final row in result.rows) {
+    for (final cell in row) {
+      if (cell is String && cell.isNotEmpty) {
+        return cell;
+      }
+    }
+  }
+  return null;
+}
+
+Future<void> _logCatalog(
+  String label,
+  Future<Result<QueryResult>> pending,
+) async {
+  AppLogger.info('=== $label ===');
+  final result = await pending;
+  result.fold(
+    (data) {
+      AppLogger.info('Columns: ${data.columns}');
+      for (final row in data.rows) {
+        AppLogger.info('  ${row.join(' | ')}');
+      }
+    },
+    (error) => AppLogger.warning('Error: $error'),
+  );
 }

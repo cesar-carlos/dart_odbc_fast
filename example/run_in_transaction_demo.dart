@@ -21,7 +21,6 @@
 // engine. Without a DSN the demo prints a friendly skip message.
 
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
 import 'package:result_dart/result_dart.dart';
 
 import 'common.dart';
@@ -38,14 +37,19 @@ void main() async {
     return;
   }
 
-  final native = NativeOdbcConnection();
-  final repository = OdbcRepositoryImpl(native);
-  final IOdbcService service = OdbcService(repository);
+  final locator = ServiceLocator()..initialize();
+  final IOdbcService service = locator.syncService;
 
-  await service.initialize();
+  final init = await service.initialize();
+  if (init.isError()) {
+    AppLogger.severe('Init failed: ${init.exceptionOrNull()}');
+    return;
+  }
+
   final connectResult = await service.connect(dsn);
   if (connectResult.isError()) {
     AppLogger.severe('Connect failed: ${connectResult.exceptionOrNull()}');
+    locator.shutdown();
     return;
   }
   final connId = connectResult.getOrThrow().id;
@@ -129,6 +133,7 @@ void main() async {
     AppLogger.info('  result: $view');
   } finally {
     await service.disconnect(connId);
+    locator.shutdown();
     AppLogger.info('Disconnected.');
   }
 }

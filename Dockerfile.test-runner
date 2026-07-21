@@ -34,22 +34,22 @@ FROM rust:${RUST_VERSION}-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        gnupg \
-        wget \
-        build-essential \
-        pkg-config \
-        unixodbc \
-        unixodbc-dev \
-        libssl-dev \
-        netcat-openbsd \
+    ca-certificates \
+    curl \
+    gnupg \
+    wget \
+    build-essential \
+    pkg-config \
+    unixodbc \
+    unixodbc-dev \
+    libssl-dev \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # -- PostgreSQL ODBC --------------------------------------------------------
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        odbc-postgresql \
+    odbc-postgresql \
     && rm -rf /var/lib/apt/lists/*
 
 # -- MariaDB / MySQL ODBC ---------------------------------------------------
@@ -60,16 +60,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # connection strings work out of the box.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        odbc-mariadb \
+    odbc-mariadb \
     && rm -rf /var/lib/apt/lists/*
 
 # -- Microsoft SQL Server ODBC Driver 18 ------------------------------------
 
 RUN curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
-        | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
     && echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
-        https://packages.microsoft.com/debian/12/prod bookworm main" \
-        > /etc/apt/sources.list.d/mssql-release.list \
+    https://packages.microsoft.com/debian/12/prod bookworm main" \
+    > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
     && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
     && rm -rf /var/lib/apt/lists/*
@@ -87,8 +87,8 @@ RUN set -eux; \
     rm /tmp/linuxx64_odbc_cli.tar.gz; \
     test -d "${IBM_DB_HOME}/lib"; \
     if [ ! -e "${IBM_DB_HOME}/lib/libdb2o.so.1" ]; then \
-        test -e "${IBM_DB_HOME}/lib/libdb2.so.1" || (ls -la "${IBM_DB_HOME}/lib"/libdb2*; exit 1); \
-        ln -s "${IBM_DB_HOME}/lib/libdb2.so.1" "${IBM_DB_HOME}/lib/libdb2o.so.1"; \
+    test -e "${IBM_DB_HOME}/lib/libdb2.so.1" || (ls -la "${IBM_DB_HOME}/lib"/libdb2*; exit 1); \
+    ln -s "${IBM_DB_HOME}/lib/libdb2.so.1" "${IBM_DB_HOME}/lib/libdb2o.so.1"; \
     fi; \
     echo "/opt/ibm/clidriver/lib" > /etc/ld.so.conf.d/ibm-clidriver.conf; \
     ldconfig
@@ -147,30 +147,30 @@ ARG INCLUDE_ORACLE
 ENV INCLUDE_ORACLE=${INCLUDE_ORACLE}
 
 RUN if [ "$INCLUDE_ORACLE" = "true" ] || [ "$INCLUDE_ORACLE" = "1" ]; then \
-        set -eux; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends unzip libaio1 || \
-            apt-get install -y --no-install-recommends unzip libaio1t64; \
-        curl -fsSL -o /tmp/ic-basiclite.zip \
-            "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-basiclite-linux.x64-23.6.0.24.10.zip"; \
-        curl -fsSL -o /tmp/ic-odbc.zip \
-            "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-odbc-linux.x64-23.6.0.24.10.zip"; \
-        mkdir -p /opt/oracle; \
-        unzip -oq /tmp/ic-basiclite.zip -d /opt/oracle; \
-        unzip -oq /tmp/ic-odbc.zip -d /opt/oracle; \
-        rm /tmp/ic-basiclite.zip /tmp/ic-odbc.zip; \
-        echo "/opt/oracle/instantclient_23_6" > /etc/ld.so.conf.d/oracle-instantclient.conf; \
-        ldconfig; \
-        { \
-            echo ""; \
-            echo "[Oracle Instant Client ODBC]"; \
-            echo "Description = Oracle Instant Client ODBC"; \
-            echo "Driver      = /opt/oracle/instantclient_23_6/libsqora.so.23.1"; \
-            echo "Setup       = /opt/oracle/instantclient_23_6/libsqorasb23.so"; \
-            echo "FileUsage   = 1"; \
-            echo "UsageCount  = 1"; \
-        } >> /etc/odbcinst.ini; \
-        rm -rf /var/lib/apt/lists/*; \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends unzip libaio1 || \
+    apt-get install -y --no-install-recommends unzip libaio1t64; \
+    curl -fsSL -o /tmp/ic-basiclite.zip \
+    "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-basiclite-linux.x64-23.6.0.24.10.zip"; \
+    curl -fsSL -o /tmp/ic-odbc.zip \
+    "https://download.oracle.com/otn_software/linux/instantclient/2360000/instantclient-odbc-linux.x64-23.6.0.24.10.zip"; \
+    mkdir -p /opt/oracle; \
+    unzip -oq /tmp/ic-basiclite.zip -d /opt/oracle; \
+    unzip -oq /tmp/ic-odbc.zip -d /opt/oracle; \
+    rm /tmp/ic-basiclite.zip /tmp/ic-odbc.zip; \
+    echo "/opt/oracle/instantclient_23_6" > /etc/ld.so.conf.d/oracle-instantclient.conf; \
+    ldconfig; \
+    { \
+    echo ""; \
+    echo "[Oracle Instant Client ODBC]"; \
+    echo "Description = Oracle Instant Client ODBC"; \
+    echo "Driver      = /opt/oracle/instantclient_23_6/libsqora.so.23.1"; \
+    echo "Setup       = /opt/oracle/instantclient_23_6/libsqorasb23.so"; \
+    echo "FileUsage   = 1"; \
+    echo "UsageCount  = 1"; \
+    } >> /etc/odbcinst.ini; \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 
 # -- Dart SDK (optional; pulled lazily for `dart` invocations) --------------

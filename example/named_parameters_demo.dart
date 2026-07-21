@@ -1,9 +1,12 @@
-// Named parameters demo: @name and :name syntax, repeated placeholders,
-// and more than five named parameters.
+// Named parameters demo via the high-level service API.
+//
+// Covers `@name` / `:name` syntax, repeated placeholders, more than five
+// named parameters, and prepared-statement reuse through
+// `executeQueryNamed` / `prepareNamed` / `executePreparedNamed`.
+//
 // Run: dart run example/named_parameters_demo.dart
 
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 
@@ -15,145 +18,111 @@ void main() async {
     return;
   }
 
-  final native = NativeOdbcConnection();
-  if (!native.initialize()) {
-    AppLogger.severe('ODBC environment initialization failed');
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
+
+  final init = await service.initialize();
+  if (init.isError()) {
+    init.fold((_) {}, (e) => AppLogger.severe('Init failed: $e'));
     return;
   }
 
-  final connId = native.connect(dsn);
-  if (connId == 0) {
-    AppLogger.severe('Connection failed: ${native.getError()}');
+  final connResult = await service.connect(dsn);
+  final conn = connResult.getOrNull();
+  if (conn == null) {
+    connResult.fold((_) {}, (e) => AppLogger.severe('Connect failed: $e'));
+    locator.shutdown();
     return;
   }
 
   try {
-    await _createExampleTable(native, connId);
-    await _runInsertWithAtSyntax(native, connId);
-    await _runInsertWithColonSyntax(native, connId);
-    await _runRepeatedPlaceholderQuery(native, connId);
-    await _runMoreThanFiveNamedParamsQuery(native, connId);
-    await _runPreparedReuse(native, connId);
-    await _printAllRows(native, connId);
+    await _runAtSyntax(service, conn.id);
+    await _runColonSyntax(service, conn.id);
+    await _runRepeatedPlaceholderQuery(service, conn.id);
+    await _runMoreThanFiveNamedParamsQuery(service, conn.id);
+    await _runPreparedReuse(service, conn.id);
   } finally {
-    native.disconnect(connId);
+    await service.disconnect(conn.id);
+    locator.shutdown();
     AppLogger.info('Disconnected');
   }
 }
 
-Future<void> _runInsertWithAtSyntax(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  const sql = '''
-    INSERT INTO named_params_example (name, age, active)
-    VALUES (@name, @age, @active)
-  ''';
-
-  final stmt = native.prepareStatementNamed(connId, sql);
-  if (stmt == null) {
-    AppLogger.severe('Prepare (@) failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final result = stmt.executeNamed(
-      namedParams: <String, Object?>{
-        'name': 'Alice',
-        'age': 30,
-        'active': true,
-      },
-    );
-    if (result == null) {
-      AppLogger.severe('Execute (@) failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('Inserted row with @name syntax');
-  } finally {
-    stmt.close();
-  }
+Future<void> _runAtSyntax(IOdbcService service, String connectionId) async {
+  final result = await service.executeQueryNamed(
+    connectionId,
+    'SELECT @name AS name, @age AS age, @active AS active',
+    <String, Object?>{
+      'name': 'Alice',
+      'age': 30,
+      'active': true,
+    },
+  );
+  result.fold(
+    (rows) => AppLogger.info(
+      'At-syntax OK: rows=${rows.rowCount} data=${rows.rows}',
+    ),
+    (error) => AppLogger.warning('At-syntax unavailable: $error'),
+  );
 }
 
-Future<void> _runInsertWithColonSyntax(
-  NativeOdbcConnection native,
-  int connId,
+Future<void> _runColonSyntax(
+  IOdbcService service,
+  String connectionId,
 ) async {
-  const sql = '''
-    INSERT INTO named_params_example (name, age, active)
-    VALUES (:name, :age, :active)
-  ''';
-
-  final stmt = native.prepareStatementNamed(connId, sql);
-  if (stmt == null) {
-    AppLogger.severe('Prepare (:) failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final result = stmt.executeNamed(
-      namedParams: <String, Object?>{
-        'name': 'Bob',
-        'age': 25,
-        'active': false,
-      },
-    );
-    if (result == null) {
-      AppLogger.severe('Execute (:) failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('Inserted row with :name syntax');
-  } finally {
-    stmt.close();
-  }
+  final result = await service.executeQueryNamed(
+    connectionId,
+    'SELECT :name AS name, :age AS age, :active AS active',
+    <String, Object?>{
+      'name': 'Bob',
+      'age': 25,
+      'active': false,
+    },
+  );
+  result.fold(
+    (rows) => AppLogger.info(
+      'Colon-syntax OK: rows=${rows.rowCount} data=${rows.rows}',
+    ),
+    (error) => AppLogger.warning('Colon-syntax unavailable: $error'),
+  );
 }
 
 Future<void> _runRepeatedPlaceholderQuery(
-  NativeOdbcConnection native,
-  int connId,
+  IOdbcService service,
+  String connectionId,
 ) async {
-  const sql = '''
+  final result = await service.executeQueryNamed(
+    connectionId,
+    '''
     SELECT
       @id AS first_id,
       @id AS second_id,
       :label AS first_label,
       :label AS second_label
-  ''';
-
-  final stmt = native.prepareStatementNamed(connId, sql);
-  if (stmt == null) {
-    AppLogger.severe(
-      'Prepare (repeated placeholders) failed: ${native.getError()}',
-    );
-    return;
-  }
-
-  try {
-    final result = stmt.executeNamed(
-      namedParams: <String, Object?>{
-        'id': 77,
-        'label': 'shared-value',
-      },
-    );
-    if (result == null) {
-      AppLogger.severe(
-        'Execute (repeated placeholders) failed: ${native.getError()}',
-      );
-      return;
-    }
-
-    final parsed = BinaryProtocolParser.parse(result);
-    final row = parsed.rows.isNotEmpty ? parsed.rows.first : const <Object?>[];
-    AppLogger.info('Repeated placeholders OK: $row');
-  } finally {
-    stmt.close();
-  }
+    ''',
+    <String, Object?>{
+      'id': 77,
+      'label': 'shared-value',
+    },
+  );
+  result.fold(
+    (rows) {
+      final row = rows.rows.isNotEmpty ? rows.rows.first : const <Object?>[];
+      AppLogger.info('Repeated placeholders OK: $row');
+    },
+    (error) => AppLogger.warning(
+      'Repeated placeholders unavailable: $error',
+    ),
+  );
 }
 
 Future<void> _runMoreThanFiveNamedParamsQuery(
-  NativeOdbcConnection native,
-  int connId,
+  IOdbcService service,
+  String connectionId,
 ) async {
-  const sql = '''
+  final result = await service.executeQueryNamed(
+    connectionId,
+    '''
     SELECT
       :a AS a,
       :b AS b,
@@ -161,49 +130,41 @@ Future<void> _runMoreThanFiveNamedParamsQuery(
       :d AS d,
       :e AS e,
       :f AS f
-  ''';
-
-  final stmt = native.prepareStatementNamed(connId, sql);
-  if (stmt == null) {
-    AppLogger.severe('Prepare (>5 named params) failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final result = stmt.executeNamed(
-      namedParams: <String, Object?>{
-        'a': 1,
-        'b': 2,
-        'c': 3,
-        'd': 4,
-        'e': 5,
-        'f': 6,
-      },
-    );
-    if (result == null) {
-      AppLogger.severe(
-        'Execute (>5 named params) failed: ${native.getError()}',
-      );
-      return;
-    }
-
-    final parsed = BinaryProtocolParser.parse(result);
-    final row = parsed.rows.isNotEmpty ? parsed.rows.first : const <Object?>[];
-    AppLogger.info('More than five named params OK: $row');
-  } finally {
-    stmt.close();
-  }
+    ''',
+    <String, Object?>{
+      'a': 1,
+      'b': 2,
+      'c': 3,
+      'd': 4,
+      'e': 5,
+      'f': 6,
+    },
+  );
+  result.fold(
+    (rows) {
+      final row = rows.rows.isNotEmpty ? rows.rows.first : const <Object?>[];
+      AppLogger.info('More than five named params OK: $row');
+    },
+    (error) => AppLogger.warning(
+      'More than five named params unavailable: $error',
+    ),
+  );
 }
 
-Future<void> _runPreparedReuse(NativeOdbcConnection native, int connId) async {
-  const sql = '''
-    INSERT INTO named_params_example (name, age, active)
-    VALUES (@name, @age, @active)
-  ''';
-
-  final stmt = native.prepareStatementNamed(connId, sql);
-  if (stmt == null) {
-    AppLogger.severe('Prepare (reuse) failed: ${native.getError()}');
+Future<void> _runPreparedReuse(
+  IOdbcService service,
+  String connectionId,
+) async {
+  final prepared = await service.prepareNamed(
+    connectionId,
+    'SELECT @name AS name, @age AS age, @active AS active',
+  );
+  final stmtId = prepared.getOrNull();
+  if (stmtId == null) {
+    prepared.fold(
+      (_) {},
+      (error) => AppLogger.warning('prepareNamed unavailable: $error'),
+    );
     return;
   }
 
@@ -215,80 +176,23 @@ Future<void> _runPreparedReuse(NativeOdbcConnection native, int connId) async {
 
   try {
     for (final params in rows) {
-      final result = stmt.executeNamed(namedParams: params);
-      if (result == null) {
-        AppLogger.severe('Execute (reuse) failed: ${native.getError()}');
+      final result = await service.executePreparedNamed(
+        connectionId,
+        stmtId,
+        params,
+        null,
+      );
+      if (result.isError()) {
+        AppLogger.warning(
+          'executePreparedNamed failed: ${result.exceptionOrNull()}',
+        );
         return;
       }
     }
     AppLogger.info(
-      'Inserted ${rows.length} rows with reused prepared statement',
+      'Reused prepared named statement for ${rows.length} executions',
     );
   } finally {
-    stmt.close();
-  }
-}
-
-Future<void> _createExampleTable(
-  NativeOdbcConnection native,
-  int connId,
-) async {
-  const sql = '''
-    IF OBJECT_ID('named_params_example', 'U') IS NOT NULL
-      DROP TABLE named_params_example;
-
-    CREATE TABLE named_params_example (
-      id INT IDENTITY(1,1) PRIMARY KEY,
-      name NVARCHAR(100) NOT NULL,
-      age INT NOT NULL,
-      active BIT NOT NULL
-    )
-  ''';
-
-  final stmt = native.prepare(connId, sql);
-  if (stmt == 0) {
-    AppLogger.severe('Create table prepare failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-    if (result == null) {
-      AppLogger.severe('Create table failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('Table ready: named_params_example');
-  } finally {
-    native.closeStatement(stmt);
-  }
-}
-
-Future<void> _printAllRows(NativeOdbcConnection native, int connId) async {
-  const select = '''
-    SELECT name, age, active
-    FROM named_params_example
-    ORDER BY id
-  ''';
-
-  final stmt = native.prepare(connId, select);
-  if (stmt == 0) {
-    AppLogger.warning('Select prepare failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final result = native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-    if (result == null) {
-      AppLogger.warning('Select failed: ${native.getError()}');
-      return;
-    }
-
-    final parsed = BinaryProtocolParser.parse(result);
-    AppLogger.info('Final rows: ${parsed.rowCount}');
-    for (final row in parsed.rows) {
-      AppLogger.fine('Row: $row');
-    }
-  } finally {
-    native.closeStatement(stmt);
+    await service.closeStatement(connectionId, stmtId);
   }
 }

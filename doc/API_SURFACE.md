@@ -1,4 +1,4 @@
-# Superfície de API exposta — `odbc_engine` v4.2.0
+# Superfície de API exposta — `odbc_engine` / `odbc_fast` v4.3.4
 
 Documento que cataloga **tudo** o que o crate Rust expõe, em três camadas:
 
@@ -15,7 +15,7 @@ Documento que cataloga **tudo** o que o crate Rust expõe, em três camadas:
 
 ## 1. FFI — Superfície C ABI
 
-**97 símbolos exportados** em `odbc_exports.def`:
+**100 símbolos exportados** em `odbc_exports.def`:
 - **91** funções `odbc_*` (engine ODBC)
 - **6** funções `otel_*` (telemetria; bindings Dart em `opentelemetry_ffi.dart`)
 
@@ -243,7 +243,7 @@ Bindings Dart: `columnar_decompress_ffi.dart` (fora de `OdbcBindings`).
 |---|---|
 | `odbc_release_buffer(ptr, len)` | Libera buffers alocados com o `malloc` do host. Exportado para simetria ABI; Dart usa `malloc.nativeFree` via `NativeFinalizer` em `ffi_buffer_helper.dart`. |
 
-Zero-copy em Dart: payloads ≥ **64 KiB** (`zeroCopyResultThresholdBytes`) quando
+Zero-copy em Dart: payloads ≥ **32 KiB** (`zeroCopyResultThresholdBytes`) quando
 o símbolo resolve.
 
 ### 1.21 Telemetria OpenTelemetry (6)
@@ -460,20 +460,20 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 | Capacidade Rust FFI | Helper Dart típico |
 |---|---|
-| `odbc_connect*` / `odbc_disconnect` | `OdbcConnection` |
-| `odbc_pool_*` | `OdbcConnectionPool` |
-| `odbc_transaction_*` / `odbc_savepoint_*` | `OdbcTransaction`, `Savepoint`, `TransactionHandle` |
-| `odbc_xa_*` | `XaTransactionHandle` |
-| `odbc_exec_query*` / `odbc_exec_query_multi*` | `query()`, `queryMulti()`, `executeQueryDirectedParams()` |
-| `odbc_execute_async`, `odbc_async_*` | `Future<Result>` |
-| `odbc_stream_*` | `streamQuery()` (batched default), `streamQueryBuffer()` (legado), `streamQueryMulti()` |
+| `odbc_connect*` / `odbc_disconnect` | `NativeOdbcConnection` / `IOdbcService.connect` |
+| `odbc_pool_*` | `IPoolService` / `OdbcPoolFactory` (native barrel) |
+| `odbc_transaction_*` / `odbc_savepoint_*` | `ITransactionService` / `TransactionHandle` |
+| `odbc_xa_*` | `XaTransactionHandle` / `IOdbcService.runInXaTransaction` |
+| `odbc_exec_query*` / `odbc_exec_query_multi*` | `executeQuery*` / `executeQueryMultiFull` / `executeQueryMultiParamValues` / `executeQueryDirectedParams` |
+| `odbc_execute_async`, `odbc_async_*` | `Future<Result>` / async lifecycle APIs |
+| `odbc_stream_*` | `streamQuery` (batched default), `streamQueryBuffer` (legado), `streamQueryMulti` |
 | `streamQueryColumnar` (Dart) | `streamQuery` + `toTypedColumnar`; wire columnar → `executeQueryColumnarParamValues` |
 | `recommendedResultEncoding` | `ServiceLocator` / `ResolvedOdbcUsageProfile` (server presets → columnar) |
-| `zeroCopyResultThresholdBytes` | `ffi_buffer_helper.dart` — 64 KiB quando `odbc_release_buffer` resolve |
-| `odbc_bulk_insert_*` | `bulkInsert()`, `bulkInsertParallel()` |
-| `odbc_catalog_*` | `Catalog` API |
+| `zeroCopyResultThresholdBytes` | `ffi_buffer_helper.dart` — **32 KiB** quando `odbc_release_buffer` resolve |
+| `odbc_bulk_insert_*` | `bulkInsert` / `bulkInsertParallel` |
+| `odbc_catalog_*` | `catalogTables` / `catalogColumns` / … |
 | `odbc_build_upsert_sql` / `odbc_append_returning_sql` / `odbc_get_session_init_sql` | `OdbcDriverFeatures` |
-| `otel_*` | OpenTelemetry export bridge |
+| `otel_*` | OpenTelemetry export bridge (`odbc_fast_native.dart`) |
 | `odbc_columnar_decompress*` | `columnarDecompressWithNative()` |
 
 ---
@@ -493,7 +493,7 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 
 | Categoria | Quantidade |
 |---|---|
-| FFI exportados (`odbc_exports.def`) | **97** |
+| FFI exportados (`odbc_exports.def`) | **100** |
 | — `odbc_*` | 91 |
 | — `otel_*` | 6 |
 | Módulos públicos | 9 (`engine`, `error`, `ffi`, `observability`, `plugins`, `pool`, `protocol`, `security`, `versioning`) |
@@ -535,7 +535,7 @@ ainda não expostos (ver matriz em [`example/README.md`](../example/README.md)).
 
 | Área | Arquivo(s) |
 |---|---|
-| 27 kinds `SqlDataType` + `intervalYearToMonth` / `geometry` | `lib/infrastructure/native/protocol/param_value.dart` |
+| **30** kinds `SqlDataType` (+ interval / geometry / …) | `lib/domain/types/sql_data_type.dart` |
 | `ParamDirection` | `lib/domain/types/param_direction.dart` |
 | `DirectedParam` / `serializeDirectedParams` (DRT1) | `lib/infrastructure/native/protocol/directed_param.dart` |
 | Flags columnar v2 (detecção de cabeçalho) | `lib/infrastructure/native/protocol/columnar_v2_flags.dart` |
@@ -545,9 +545,10 @@ ainda não expostos (ver matriz em [`example/README.md`](../example/README.md)).
 
 ---
 
-*Atualizado para **odbc_fast v4.2.0** (ABI **1.1**, `odbc_release_buffer`,
+*Atualizado para **odbc_fast v4.3.4** (ABI **1.1**, `odbc_release_buffer`,
 `odbc_stream_start_batched_options`, streaming batched default,
-`streamQueryBuffer`, `recommendedResultEncoding`, zero-copy 32 KiB). Para cada
+`streamQueryBuffer`, `recommendedResultEncoding`, zero-copy **32 KiB**,
+**100** exports em `odbc_exports.def`). Para cada
 funcionalidade com "fix" há um teste de regressão correspondente em
 `native/odbc_engine/tests/regression/` e
 `test/infrastructure/native/bindings/ffi_exports_contract_test.dart`.*

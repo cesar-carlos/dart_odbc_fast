@@ -1,17 +1,17 @@
-// Live DBMS introspection via SQLGetInfo (v2.1).
-// Run: dart run example/dbms_info_demo.dart
+// Live DBMS introspection via the high-level service API.
 //
-// Connects to the configured `ODBC_TEST_DSN`, then asks the live driver
-// who it is via `odbc_get_connection_dbms_info`. More accurate than
-// parsing the connection string: works for DSN-only strings and
-// distinguishes MariaDB from MySQL, ASE from ASA, etc.
+// Connects with `ServiceLocator`, then calls `getConnectionDbmsInfo`
+// (`SQLGetInfo` under the hood). More accurate than parsing the connection
+// string: works for DSN-only strings and distinguishes MariaDB from MySQL,
+// ASE from ASA, etc.
+//
+// Run: dart run example/dbms_info_demo.dart
 
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
 
 import 'common.dart';
 
-void main() {
+void main() async {
   AppLogger.initialize();
 
   final dsn = requireExampleDsn();
@@ -19,30 +19,30 @@ void main() {
     return;
   }
 
-  final native = OdbcNative();
-  if (!native.init()) {
-    AppLogger.severe('odbc_init failed');
+  final locator = ServiceLocator()..initialize();
+  final service = locator.syncService;
+
+  final init = await service.initialize();
+  if (init.isError()) {
+    AppLogger.severe('initialize failed: ${init.exceptionOrNull()}');
     return;
   }
 
-  final caps = OdbcDriverCapabilities(native);
-  if (!caps.supportsApi) {
-    AppLogger.warning('Native lib does not expose v2.1+ DBMS introspection');
-    native.dispose();
-    return;
-  }
-
-  final connId = native.connect(dsn);
-  if (connId == 0) {
-    AppLogger.severe('connect failed: ${native.getError()}');
-    native.dispose();
+  final connResult = await service.connect(dsn);
+  final conn = connResult.getOrNull();
+  if (conn == null) {
+    AppLogger.severe('connect failed: ${connResult.exceptionOrNull()}');
+    locator.shutdown();
     return;
   }
 
   try {
-    final info = caps.getDbmsInfoForConnection(connId);
+    final infoResult = await service.getConnectionDbmsInfo(conn.id);
+    final info = infoResult.getOrNull();
     if (info == null) {
-      AppLogger.warning('No DBMS info available');
+      AppLogger.warning(
+        'getConnectionDbmsInfo unavailable: ${infoResult.exceptionOrNull()}',
+      );
       return;
     }
 
@@ -57,15 +57,15 @@ void main() {
     AppLogger.info('currentCatalog      : "${info.currentCatalog}"');
 
     AppLogger.info('--- Embedded driver capabilities -----------------');
-    final c = info.capabilities;
-    AppLogger.info('driverName    : ${c.driverName}');
-    AppLogger.info('driverVersion : ${c.driverVersion}');
-    AppLogger.info('engineId      : ${c.engineId}');
-    AppLogger.info('databaseType  : ${c.databaseType}');
-    AppLogger.info('maxArraySize  : ${c.maxRowArraySize}');
-    AppLogger.info('supports prep : ${c.supportsPreparedStatements}');
-    AppLogger.info('supports batch: ${c.supportsBatchOperations}');
-    AppLogger.info('supports strm : ${c.supportsStreaming}');
+    final caps = info.capabilities;
+    AppLogger.info('driverName    : ${caps.driverName}');
+    AppLogger.info('driverVersion : ${caps.driverVersion}');
+    AppLogger.info('engineId      : ${caps.engineId}');
+    AppLogger.info('databaseType  : ${caps.databaseType}');
+    AppLogger.info('maxArraySize  : ${caps.maxRowArraySize}');
+    AppLogger.info('supports prep : ${caps.supportsPreparedStatements}');
+    AppLogger.info('supports batch: ${caps.supportsBatchOperations}');
+    AppLogger.info('supports strm : ${caps.supportsStreaming}');
 
     AppLogger.info('--- Switch on canonical engine id ----------------');
     switch (info.databaseType) {
@@ -97,8 +97,7 @@ void main() {
         AppLogger.info('Engine without dedicated v3.0 plugin.');
     }
   } finally {
-    native
-      ..disconnect(connId)
-      ..dispose();
+    await service.disconnect(conn.id);
+    locator.shutdown();
   }
 }

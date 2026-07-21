@@ -17,7 +17,7 @@ exists.
 | ---- | ------- | -------------- |
 | High-level service API (recommended) | `ServiceLocator` + `OdbcUsageProfile` | [`quick_start_balanced_demo.dart`](quick_start_balanced_demo.dart) (async balanced) or [`main.dart`](main.dart) (sync legacy) |
 | Raw FFI / worker pool / native pool | `odbc_fast_native.dart` types | [`simple_demo.dart`](simple_demo.dart) or [`async_demo.dart`](async_demo.dart) |
-| Manual `OdbcService(OdbcRepositoryImpl(...))` wiring | Rare; prefer `ServiceLocator` | Only when demonstrating repository-level seams (e.g. [`catalog_reflection_demo.dart`](catalog_reflection_demo.dart)) |
+| Manual `OdbcService(OdbcRepositoryImpl(...))` wiring | Rare; prefer `ServiceLocator` | Prefer repository getters on `ServiceLocator` (`queryRepository`, …) when demonstrating repository-level seams |
 
 ## Import matrix
 
@@ -40,14 +40,20 @@ exists.
 [`event_bus_demo.dart`](event_bus_demo.dart),
 [`stream_query_named_demo.dart`](stream_query_named_demo.dart),
 [`savepoint_demo.dart`](savepoint_demo.dart),
-[`multi_result_stream_demo.dart`](multi_result_stream_demo.dart).
+[`multi_result_stream_demo.dart`](multi_result_stream_demo.dart),
+[`multi_result_demo.dart`](multi_result_demo.dart),
+[`named_parameters_demo.dart`](named_parameters_demo.dart),
+[`catalog_reflection_demo.dart`](catalog_reflection_demo.dart),
+[`dbms_info_demo.dart`](dbms_info_demo.dart),
+[`run_in_transaction_demo.dart`](run_in_transaction_demo.dart),
+[`output_param_directions_demo.dart`](output_param_directions_demo.dart),
+[`oracle_ref_cursor_demo.dart`](oracle_ref_cursor_demo.dart).
 
 **Add `odbc_fast_native.dart`** when using native connection types or
 `OdbcRepositoryImpl` / `OdbcPoolFactory` directly — see
 [`simple_demo.dart`](simple_demo.dart), [`async_demo.dart`](async_demo.dart),
 [`streaming_demo.dart`](streaming_demo.dart), [`pool_with_options_demo.dart`](pool_with_options_demo.dart),
-[`driver_features_demo.dart`](driver_features_demo.dart),
-[`multi_result_demo.dart`](multi_result_demo.dart), and the performance/native demos
+[`driver_features_demo.dart`](driver_features_demo.dart), and the performance/native demos
 listed below.
 
 ## Removed examples
@@ -159,10 +165,10 @@ accumulation with small chunks, and streaming multi-result decoding.
 
 ### Queries / parameters
 
-- [named_parameters_demo.dart](named_parameters_demo.dart): named params with `@name` and `:name`, including repeated placeholders, `>5` named params, and prepared statement reuse.
+- [named_parameters_demo.dart](named_parameters_demo.dart): service-level named params with `@name` and `:name` via `executeQueryNamed` / `prepareNamed` / `executePreparedNamed`, including repeated placeholders, `>5` named params, and prepared statement reuse.
 - **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — same single-chunk delivery as `executeQueryNamed`, but exposed as `Stream<Result<QueryResult>>` for uniform call sites and a typed failure stream item for missing named params.
 - **[param_value_migration_demo.dart](param_value_migration_demo.dart)**: DSN-free side-by-side `executeQueryParamValuesFromObjects` (bridge) vs explicit `executeQueryParamValues` (`List<ParamValue>`).
-- [multi_result_demo.dart](multi_result_demo.dart): multi-result payload parsing with `executeQueryMulti` and parameterized `executeQueryMultiParams`.
+- [multi_result_demo.dart](multi_result_demo.dart): service-level multi-result via `executeQueryMultiFull` and parameterized `executeQueryMultiParamValues` (portable SELECT batches).
 - [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result consumption item-by-item with `streamQueryMulti`.
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.
 - [oracle_ref_cursor_demo.dart](oracle_ref_cursor_demo.dart): opt-in Oracle `ParamValueRefCursorOut` call that surfaces cursor row sets through `QueryResult.refCursorResults`.
@@ -178,15 +184,15 @@ accumulation with small chunks, and streaming multi-result decoding.
 
 ### Transactions / savepoints
 
-- [run_in_transaction_demo.dart](run_in_transaction_demo.dart): high-level `runInTransaction<T>` helper covering success, failure, throw-to-rollback, and transaction options.
+- [run_in_transaction_demo.dart](run_in_transaction_demo.dart): `ServiceLocator` + `runInTransaction<T>` covering success, failure, throw-to-rollback, and transaction options.
 - [savepoint_demo.dart](savepoint_demo.dart): transactions with savepoint, rollback to savepoint, and commit. Uses the high-level `OdbcService` API.
 - **[transaction_helpers_demo.dart](transaction_helpers_demo.dart)** *(v3.1)*: fluent helpers `TransactionHandle.runWithBegin` (commit-on-success / rollback-on-throw) and `TransactionHandle.withSavepoint(name, action)` for partial-rollback inside a longer transaction. `runWithBegin` now throws on commit failure instead of returning a false success path. Also prints the `SavepointDialect` wire codes and explains the new `auto` default.
-- **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA, in v3.4.2 with the `runWithStart` helper)*: full X/Open XA / 2PC lifecycle via `XaTransactionHandle` + `Xid`. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`), a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch — and a final section showing the exception-safe helper `XaTransactionHandle.runWithStart<T>` (mirror of `TransactionHandle.runWithBegin` for local transactions: drives end → prepare → commit_prepared on success, or the appropriate rollback path on any throw, without manual chaining). Works against PostgreSQL, MySQL/MariaDB, DB2, **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL), and SQL Server on Windows builds with `--features xa-dtc`; advanced MSDTC `Reenlist` / RM recovery remains operational follow-up work.
+- **[xa_2pc_demo.dart](xa_2pc_demo.dart)** *(Sprint 4.3 / 4.3c — extended in v3.4.1 with Oracle DBMS_XA, in v3.4.2 with the `runWithStart` helper)*: full X/Open XA / 2PC lifecycle via native `XaTransactionHandle` + `Xid`, plus the high-level `IOdbcService.runInXaTransaction` helper. Covers Phase 1 + Phase 2 commit, the `commit_one_phase` 1RM optimisation, crash-recovery (`xaRecover` + `xaResumePrepared`), a bonus DML-inside-branch section that runs an INSERT inside the XA branch — required on Oracle so `xa_prepare` doesn't return `XA_RDONLY` and silently auto-complete the branch — `XaTransactionHandle.runWithStart<T>`, and the service-level `runInXaTransaction` one-phase path. Works against PostgreSQL, MySQL/MariaDB, DB2, **Oracle 10g+** (via `SYS.DBMS_XA` PL/SQL), and SQL Server on Windows builds with `--features xa-dtc`; advanced MSDTC `Reenlist` / RM recovery remains operational follow-up work.
 
 ### Schema introspection
 
-- [catalog_reflection_demo.dart](catalog_reflection_demo.dart): schema reflection for primary keys, foreign keys, and indexes (now uses dialect-specific SQL via `CatalogProvider` for Oracle/Sybase/SQLite/Db2).
-- **[dbms_info_demo.dart](dbms_info_demo.dart)** *(v2.1)*: live DBMS introspection via `SQLGetInfo` — distinguishes MariaDB/MySQL, ASE/ASA, reports identifier limits and current catalog.
+- [catalog_reflection_demo.dart](catalog_reflection_demo.dart): schema reflection via `catalogTables` / `catalogPrimaryKeys` / `catalogForeignKeys` / `catalogIndexes` (optional `ODBC_EXAMPLE_TABLE`; dialect-specific SQL is resolved in the Rust native catalog layer).
+- **[dbms_info_demo.dart](dbms_info_demo.dart)** *(v2.1)*: live DBMS introspection via `IOdbcService.getConnectionDbmsInfo` — distinguishes MariaDB/MySQL, ASE/ASA, reports identifier limits and current catalog.
 
 ### Driver-specific SQL builders (v3.0)
 

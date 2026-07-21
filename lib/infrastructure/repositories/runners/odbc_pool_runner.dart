@@ -51,13 +51,15 @@ class OdbcPoolRunner {
         );
       }
     }
-    return ffi.runIntFfi(
+    return ffi
+        .runIntFfi(
       sync: (n) => n.poolCreate(connectionString, maxSize, options: options),
       async: (a) => a.poolCreate(connectionString, maxSize, options: options),
       isSuccess: (id) => id != 0,
       errorFactory: odbcConnectionErrorFactory,
       fallbackMessage: 'Failed to create pool',
-    ).then((result) {
+    )
+        .then((result) {
       if (result.isSuccess()) {
         state.poolConnectionOptions[result.getOrNull()!] = connectionOptions;
       }

@@ -105,41 +105,30 @@ For detailed usage and all available scripts, see [scripts/README.md](../scripts
 dart test
 ```
 
-Useful suites:
+CI and opt-in scopes, live/stress/perf flags, and coverage policy:
+**[`TESTING.md`](TESTING.md)** (canonical). Short local suites:
 
 ```bash
 dart test test/domain/
 dart test test/infrastructure/native/
-dart test test/integration/
+dart test test/documentation test/example
 ```
-
-CI scope (`.github/workflows/ci.yml`):
-
-1. Runs quality gate (`cargo fmt`, `cargo clippy --workspace --all-targets`, Rust build, and `dart analyze`)
-2. Runs only unit test scope (`test/application`, `test/domain`, `test/infrastructure`, and `test/helpers/database_detection_test.dart`)
-3. Does not run `test/integration`, `test/e2e`, `test/stress`, or `test/my_test`
-
-Note: part of integration coverage depends on a real DSN (`ODBC_TEST_DSN`).
-
-To include the 10 normally-skipped tests (slow, stress, native-assets):
-
-```bash
-RUN_SKIPPED_TESTS=1 dart test
-```
-
-In PowerShell: `$env:RUN_SKIPPED_TESTS='1'; dart test`. Accepted values: `1`, `true`, `yes`.
 
 ## Related Documentation
 
+- Documentation index: [README.md](README.md)
+- Dart architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 - FFI surface and public API: [API_SURFACE.md](API_SURFACE.md)
 - Driver capabilities and engine matrix: [CAPABILITIES_v3.md](CAPABILITIES_v3.md)
 - Test policy, CI scope, coverage: [TESTING.md](TESTING.md)
+- Performance defaults and open work: [PERFORMANCE.md](PERFORMANCE.md)
 - Docker E2E stack: [development/docker-test-stack.md](development/docker-test-stack.md)
 - Release/tag/workflow issues: [RELEASE_AUTOMATION.md](version/RELEASE_AUTOMATION.md)
 - Versioning policy: [VERSIONING_STRATEGY.md](version/VERSIONING_STRATEGY.md)
 - Quick version bump decisions: [VERSIONING_QUICK_REFERENCE.md](version/VERSIONING_QUICK_REFERENCE.md)
 - Changelog entry template: [CHANGELOG_TEMPLATE.md](version/CHANGELOG_TEMPLATE.md)
 - Data type mapping contract: [TYPE_MAPPING.md](notes/TYPE_MAPPING.md)
+- Pending / deferred work: [Features/PENDING_IMPLEMENTATIONS.md](Features/PENDING_IMPLEMENTATIONS.md)
 
 ## Validation and error guidance
 

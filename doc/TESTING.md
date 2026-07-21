@@ -1,10 +1,9 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v3.10.x (`3.10.1` — sub-interfaces, event bus,
-> columnar service surface, `QueryResultAccess`, `IOdbcRepository`
-> extensions, pool/transaction hardening, native engine perf follow-ups
-> with `block-cursor-fetch` and `statement-handle-reuse` default ON,
-> `loom` opt-in via `RUSTFLAGS="--cfg loom"`).
+> **Last updated for:** v4.3.x (`4.3.4` — dual barrels, segregated repositories,
+> event bus, columnar service surface, FFI `GlobalState` sharding, CI unit +
+> docs/example smoke scopes). Canonical opt-in flags and suite ownership live
+> below; build/prereq details live in [`BUILD.md`](BUILD.md).
 
 This document describes the test strategy, how to run each scope, and CI boundaries. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
 

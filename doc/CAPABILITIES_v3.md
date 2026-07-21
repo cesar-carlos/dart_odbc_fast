@@ -1,6 +1,6 @@
 # Driver Capabilities Matrix
 
-> **Last updated for:** v3.10.0 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
+> **Last updated for:** v4.3.4 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
 
 **Owns:** delivered engine capability claims, plugin trait coverage and the
 capability x engine matrix. Wire/type details belong in
@@ -37,9 +37,9 @@ or directly through the per-plugin module.
 | `CatalogProvider`    | sys.\* DMVs                             | INFORMATION_SCHEMA                     | INFORMATION_SCHEMA          | INFORMATION_SCHEMA  | ALL_TABLES/USER_TABLES                           | sysobjects                    | sqlite*master + pragma*\*                     | SYSCAT.\*             | INFORMATION_SCHEMA            |
 | `SessionInitializer` | ARITHABORT/CONCAT_NULL_YIELDS_NULL      | application_name/TIME ZONE/search_path | NAMES utf8mb4/time_zone/USE | NAMES/time_zone/USE | NLS_DATE_FORMAT/NLS_TIMESTAMP_FORMAT/NLS_NUMERIC | QUOTED_IDENTIFIER/CHAINED OFF | foreign_keys/journal_mode/synchronous PRAGMAs | SET CURRENT SCHEMA    | TIMEZONE/USE SCHEMA/QUERY_TAG |
 
-BCP via `sqlncli11.dll`/`msodbcsql17/18.dll` (Windows-only feature `sqlserver-bcp`, gated by env `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1`). Currently supports `I32` and `I64` types; extending to Text/Binary/Timestamp/Decimal is tracked for v3.1.
+BCP via `sqlncli11.dll`/`msodbcsql17/18.dll` (Windows-only feature `sqlserver-bcp`, gated by env `ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1`). Supports `I32`, `I64`, and `Text` (`SQLCHARACTER`). Binary/Timestamp/Decimal and streaming BCP remain open work — see [`PERFORMANCE.md`](PERFORMANCE.md) § SQL Server native BCP.
 
-- Native streaming paths (`COPY FROM STDIN BINARY`, `LOAD DATA LOCAL INFILE`, Snowflake `PUT/COPY INTO`) are tracked for v3.1. v3.0 uses optimised array-binding INSERT under `BulkLoader`.
+- Native streaming paths (`COPY FROM STDIN BINARY`, `LOAD DATA LOCAL INFILE`, Snowflake `PUT/COPY INTO`) remain open work. Current `BulkLoader` uses optimised array-binding INSERT — see [`PERFORMANCE.md`](PERFORMANCE.md) and PENDING.
 
 ## Transaction control matrix (released in v3.4.0)
 
@@ -50,7 +50,8 @@ BCP via `sqlncli11.dll`/`msodbcsql17/18.dll` (Windows-only feature `sqlserver-bc
 | `TransactionAccessMode.readOnly` (Sprint 4.1) | no-op¶                                                                                | `SET TRANSACTION READ ONLY`                    | `SET TRANSACTION READ ONLY`                      | `SET TRANSACTION READ ONLY` | `SET TRANSACTION READ ONLY`     | no-op¶                       | no-op¶                        |
 | `LockTimeout` (Sprint 4.2)                    | `SET LOCK_TIMEOUT <ms>`                                                               | `SET LOCAL lock_timeout = '<ms>ms'`            | `SET SESSION innodb_lock_wait_timeout = <s>`#    | (per-statement only)        | `SET CURRENT LOCK TIMEOUT <s>`# | `PRAGMA busy_timeout = <ms>` | (statement timeout, not lock) |
 | `runInTransaction<T>` (Sprint 4.4)            | universal — pure Service-layer wrapper around the matrix above; works on every engine | —                                              | —                                                | —                           | —                               | —                            | —                             |
-| **XA / 2PC** (Sprint 4.3)                     | ✅ MSDTC + XA branch (Windows, `--features xa-dtc`)\*\*                               | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` | ⚠️ scaffolding††            | ✅ same SQL grammar as MySQL    | ❌ no 2PC                    | ❌ no 2PC                     |
+| `runInXaTransaction<T>`                       | universal helper on `IOdbcService` (2PC or `onePhase`); engine support follows the XA row below | — | — | — | — | — | — |
+| **XA / 2PC** (Sprint 4.3)                     | ✅ MSDTC + XA branch (Windows, `--features xa-dtc`)\*\*                               | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` | ✅ `SYS.DBMS_XA`††          | ✅ same SQL grammar as MySQL    | ❌ no 2PC                    | ❌ no 2PC                     |
 
 † Oracle: only `READ COMMITTED` and `SERIALIZABLE` are valid per
 `SET TRANSACTION ISOLATION LEVEL`; the other two levels are rejected
@@ -71,8 +72,9 @@ SQL Server XA uses MSDTC enlistment via Windows COM (`ITransaction`\*
   on **Windows** only; there is no Linux/MSDTC path. Optional **hardening**
   (recovery edge cases, paid Windows CI, `IResourceManager::Reenlist` tuning)
   remains in [PENDING_IMPLEMENTATIONS.md section 2.1](Features/PENDING_IMPLEMENTATIONS.md).
-  †† Optional OCI XA _shim_ (`--features xa-oci`) is **not** the production
-  path (Oracle uses `DBMS_XA`); the deferred OCI work is summarised in
+  †† Oracle **product** XA uses `SYS.DBMS_XA` (PL/SQL). The optional OCI XA
+  _shim_ (`--features xa-oci`) is **not** the production path; deferred OCI
+  work is summarised in
   [PENDING_IMPLEMENTATIONS.md section 3.1](Features/PENDING_IMPLEMENTATIONS.md).
 
 ## OdbcType variants (v3.0 additions)

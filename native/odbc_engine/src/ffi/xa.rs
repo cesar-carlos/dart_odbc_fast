@@ -350,7 +350,8 @@ pub extern "C" fn odbc_xa_end(xa_id: c_uint) -> c_int {
                 reinsert_guard.pending = Some(XaEndPending::Preparing(preparing));
                 None
             }
-            Err((error, xa)) => {
+            Err(boxed) => {
+                let (error, xa) = *boxed;
                 reinsert_guard.pending = Some(XaEndPending::Active(xa));
                 Some(error)
             }
@@ -398,7 +399,8 @@ pub extern "C" fn odbc_xa_prepare(xa_id: c_uint) -> c_int {
                 reinsert_guard.pending = Some(XaPreparePending::Prepared(prepared));
                 None
             }
-            Err((error, preparing)) => {
+            Err(boxed) => {
+                let (error, preparing) = *boxed;
                 reinsert_guard.pending = Some(XaPreparePending::Preparing(preparing));
                 Some(error)
             }
@@ -438,7 +440,8 @@ pub extern "C" fn odbc_xa_commit_prepared(xa_id: c_uint) -> c_int {
 
         match prepared.commit_preserving_prepared() {
             Ok(()) => 0,
-            Err((error, prepared)) => {
+            Err(boxed) => {
+                let (error, prepared) = *boxed;
                 reinsert_prepared_xa_on_driver_failure(xa_id, prepared, "xa_commit_prepared", error)
             }
         }
@@ -458,12 +461,15 @@ pub extern "C" fn odbc_xa_rollback_prepared(xa_id: c_uint) -> c_int {
 
         match prepared.rollback_preserving_prepared() {
             Ok(()) => 0,
-            Err((error, prepared)) => reinsert_prepared_xa_on_driver_failure(
-                xa_id,
-                prepared,
-                "xa_rollback_prepared",
-                error,
-            ),
+            Err(boxed) => {
+                let (error, prepared) = *boxed;
+                reinsert_prepared_xa_on_driver_failure(
+                    xa_id,
+                    prepared,
+                    "xa_rollback_prepared",
+                    error,
+                )
+            }
         }
     })
 }
@@ -483,7 +489,8 @@ pub extern "C" fn odbc_xa_commit_one_phase(xa_id: c_uint) -> c_int {
 
         match xa.commit_one_phase_preserving_active() {
             Ok(()) => 0,
-            Err((error, xa)) => {
+            Err(boxed) => {
+                let (error, xa) = *boxed;
                 reinsert_active_xa_on_driver_failure(xa_id, xa, "xa_commit_one_phase", error)
             }
         }
@@ -504,7 +511,8 @@ pub extern "C" fn odbc_xa_rollback_active(xa_id: c_uint) -> c_int {
 
         match xa.rollback_preserving_active() {
             Ok(()) => 0,
-            Err((error, xa)) => {
+            Err(boxed) => {
+                let (error, xa) = *boxed;
                 reinsert_active_xa_on_driver_failure(xa_id, xa, "xa_rollback_active", error)
             }
         }
