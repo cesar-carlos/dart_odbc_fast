@@ -277,6 +277,10 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         _leastLoadedWorker();
   }
 
+  _WorkerChannel _workerForXa(int xaId) {
+    return _workerByIndex(_xaWorkerById[xaId]) ?? _leastLoadedWorker();
+  }
+
   _WorkerChannel _workerForStream(int streamId) {
     return _workerByIndex(_streamWorkerById[streamId]) ?? _leastLoadedWorker();
   }
@@ -358,6 +362,9 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       ExecuteQueryMultiRequest(:final connectionId) ||
       ExecuteQueryMultiParamsRequest(:final connectionId) ||
       BeginTransactionRequest(:final connectionId) ||
+      XaStartRequest(:final connectionId) ||
+      XaRecoverRequest(:final connectionId) ||
+      XaResumePreparedRequest(:final connectionId) ||
       PrepareRequest(:final connectionId) ||
       CatalogTablesRequest(:final connectionId) ||
       CatalogColumnsRequest(:final connectionId) ||
@@ -380,6 +387,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       SavepointRollbackRequest(:final txnId) ||
       SavepointReleaseRequest(:final txnId) =>
         _workerForTransaction(txnId),
+      XaIdRequest(:final xaId) => _workerForXa(xaId),
       StreamStartRequest(:final connectionId) ||
       StreamStartBatchedRequest(:final connectionId) ||
       StreamStartAsyncRequest(:final connectionId) ||
@@ -449,6 +457,23 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       case (RollbackTransactionRequest(:final txnId), BoolResponse()):
         _transactionWorkerById.remove(txnId);
         _transactionConnectionById.remove(txnId);
+      case (XaStartRequest(:final connectionId), IntResponse(value: final id))
+          when id > 0:
+      case (
+            XaResumePreparedRequest(:final connectionId),
+            IntResponse(value: final id),
+          )
+          when id > 0:
+        _xaWorkerById[id] = worker.index;
+        _xaConnectionById[id] = connectionId;
+      case (XaIdRequest(:final xaId), IntResponse(value: final rc))
+          when rc == 0 &&
+              (request.type == RequestType.xaCommitPrepared ||
+                  request.type == RequestType.xaRollbackPrepared ||
+                  request.type == RequestType.xaCommitOnePhase ||
+                  request.type == RequestType.xaRollbackActive):
+        _xaWorkerById.remove(xaId);
+        _xaConnectionById.remove(xaId);
       case (StreamStartRequest(), IntResponse(value: final id)) when id > 0:
       case (StreamStartBatchedRequest(), IntResponse(value: final id))
           when id > 0:
@@ -497,6 +522,14 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       _transactionWorkerById.remove(txnId);
       _transactionConnectionById.remove(txnId);
     }
+    final xaIds = _xaConnectionById.entries
+        .where((entry) => entry.value == connectionId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final xaId in xaIds) {
+      _xaWorkerById.remove(xaId);
+      _xaConnectionById.remove(xaId);
+    }
   }
 
   void _clearWorkerAffinity(int workerIndex) {
@@ -514,6 +547,14 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
     for (final txnId in txnIdsForWorker) {
       _transactionWorkerById.remove(txnId);
       _transactionConnectionById.remove(txnId);
+    }
+    final xaIdsForWorker = _xaWorkerById.entries
+        .where((e) => e.value == workerIndex)
+        .map((e) => e.key)
+        .toList(growable: false);
+    for (final xaId in xaIdsForWorker) {
+      _xaWorkerById.remove(xaId);
+      _xaConnectionById.remove(xaId);
     }
     _streamWorkerById.removeWhere((_, value) => value == workerIndex);
     _asyncRequestWorkerById.removeWhere((_, value) => value == workerIndex);

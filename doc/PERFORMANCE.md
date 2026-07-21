@@ -268,6 +268,37 @@ Use `MY_TEST_ROW_LIMIT` to tune quick local coverage. Use
 `RUN_LIVE_TESTS=1` to enable these live tests, and
 `MY_TEST_FULL_TABLE_SCAN=1` only for deliberate full-table performance checks.
 
+### Streaming SELECT headroom (Phase 1)
+
+Full-table `streamQueryBatched` measurements in `test/my_test` historically used
+**row-major** wire and **64 KiB** FFI `chunkSize`. That combination often splits
+a 1000-row wire frame across multiple FFI fetches (extra memcpy /
+`BinaryFrameAccumulator` work) even when Dart still yields one logical batch
+per ODBC `fetchSize`.
+
+`select_timing_report_test` runs an A/B lane on the live Estacao DB:
+
+| Lane | Encoding | chunkSize | Result (full materialize + rowCount) |
+| ---- | -------- | --------- | ------------------------------------ |
+| A | row-major | 64 KiB | Best for wide `SELECT *` text schemas (~22–33k rows/s) |
+| B | columnar typed | 1 MiB | Slower when every cell is decoded to typed columns (~10–17k rows/s) |
+
+Takeaways:
+
+| Knob | Prefer when | Why |
+| ---- | ----------- | --- |
+| `chunkSize` | Large scans (often **1–4 MiB**) | Fewer FFI fetch round-trips / resize loops; seed via `streamFetch(bufferSize:)` |
+| Columnar / `streamQueryColumnar*` | Analytics pipelines that keep **typed numeric** columns or use `lazyStrings` | Avoids row `List` framing; **not** a free win for full `SELECT *` string/datetime materialization |
+| Service `balancedServer` / `highThroughput` | Server apps already on the repository path | Default recommended encoding is columnar for those profiles |
+
+Standalone `my_test` files default `chunkSize` to **1 MiB** when
+`MY_TEST_FULL_TABLE_SCAN=1` (override with `MY_TEST_CHUNK_SIZE_BYTES`).
+
+Dart `streamFetch` seeds the FFI buffer from the stream `chunkSize` so the first
+allocation matches the native copy budget (`streamCallWithBuffer(initialSize:)`).
+
+See also `example/recommended_performance_patterns_demo.dart`.
+
 ### Test categories and flags
 
 | Category     | Flag                                                 | Purpose                                                               |

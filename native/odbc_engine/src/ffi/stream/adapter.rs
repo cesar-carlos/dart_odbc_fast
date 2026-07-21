@@ -137,8 +137,54 @@ fn start_batched_stream_common(
     encoding: ResultEncoding,
     error_prefix: &str,
 ) -> u32 {
+    start_batched_stream_common_with_params(
+        conn_id,
+        sql,
+        std::ptr::null(),
+        0,
+        fetch_size,
+        chunk_size,
+        encoding,
+        error_prefix,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FFI start helper mirrors C ABI: sql, params buffer/len, fetch/chunk, encoding, error_prefix"
+)]
+fn start_batched_stream_common_with_params(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    encoding: ResultEncoding,
+    error_prefix: &str,
+) -> u32 {
     let Some(sql_str) = parse_stream_sql(sql) else {
         return 0;
+    };
+
+    let params = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
+        Ok(bytes) => match crate::protocol::input_params_from_buffer(&bytes) {
+            Ok(params) => params,
+            Err(e) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return 0;
+            }
+        },
+        Err(message) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(&mut state, conn_id, message.to_string());
+            return 0;
+        }
     };
 
     let Some(mut state) = try_lock_global_state() else {
@@ -163,22 +209,25 @@ fn start_batched_stream_common(
 
     let executor = StreamingExecutor::new(chunk_size);
     let start_result = match &reservation.target {
-        StreamStartTarget::Regular { handles } => executor.start_batched_stream(
+        StreamStartTarget::Regular { handles } => executor.start_batched_stream_with_params(
             handles.clone(),
             conn_id,
             sql_owned,
+            params,
             fetch_size,
             chunk_size,
             encoding,
         ),
-        StreamStartTarget::Pooled { pool_id, pooled } => executor.start_batched_stream_pooled(
-            Arc::clone(pooled),
-            sql_owned,
-            fetch_size,
-            chunk_size,
-            Some(pooled_stream_completion(conn_id, *pool_id)),
-            encoding,
-        ),
+        StreamStartTarget::Pooled { pool_id, pooled } => executor
+            .start_batched_stream_pooled_with_params(
+                Arc::clone(pooled),
+                sql_owned,
+                params,
+                fetch_size,
+                chunk_size,
+                Some(pooled_stream_completion(conn_id, *pool_id)),
+                encoding,
+            ),
     };
 
     match start_result {
@@ -247,6 +296,53 @@ pub(crate) fn stream_start_batched_options(
     )
 }
 
+/// Batched streaming with a parameter buffer (legacy or DRT1 Input-only).
+pub(crate) fn stream_start_batched_params(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+) -> u32 {
+    start_batched_stream_common_with_params(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        fetch_size,
+        chunk_size,
+        ResultEncoding::RowMajor,
+        "odbc_stream_start_batched_params",
+    )
+}
+
+/// Batched streaming with parameters and an explicit wire encoding.
+pub(crate) fn stream_start_batched_params_options(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    result_encoding: u32,
+) -> u32 {
+    let Some(encoding) = parse_result_encoding(conn_id, result_encoding) else {
+        return 0;
+    };
+
+    start_batched_stream_common_with_params(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        fetch_size,
+        chunk_size,
+        encoding,
+        "odbc_stream_start_batched_params_options",
+    )
+}
+
 fn start_async_stream_common(
     conn_id: u32,
     sql: *const c_char,
@@ -255,8 +351,54 @@ fn start_async_stream_common(
     encoding: ResultEncoding,
     error_prefix: &str,
 ) -> u32 {
+    start_async_stream_common_with_params(
+        conn_id,
+        sql,
+        std::ptr::null(),
+        0,
+        fetch_size,
+        chunk_size,
+        encoding,
+        error_prefix,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FFI start helper mirrors C ABI: sql, params buffer/len, fetch/chunk, encoding, error_prefix"
+)]
+fn start_async_stream_common_with_params(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    encoding: ResultEncoding,
+    error_prefix: &str,
+) -> u32 {
     let Some(sql_str) = parse_stream_sql(sql) else {
         return 0;
+    };
+
+    let params = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
+        Ok(bytes) => match crate::protocol::input_params_from_buffer(&bytes) {
+            Ok(params) => params,
+            Err(e) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+                return 0;
+            }
+        },
+        Err(message) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(&mut state, conn_id, message.to_string());
+            return 0;
+        }
     };
 
     let Some(mut state) = try_lock_global_state() else {
@@ -281,22 +423,25 @@ fn start_async_stream_common(
 
     let executor = StreamingExecutor::new(chunk_size);
     let start_result = match &reservation.target {
-        StreamStartTarget::Regular { handles } => executor.start_async_stream(
+        StreamStartTarget::Regular { handles } => executor.start_async_stream_with_params(
             handles.clone(),
             conn_id,
             sql_owned,
+            params,
             fetch_size,
             chunk_size,
             encoding,
         ),
-        StreamStartTarget::Pooled { pool_id, pooled } => executor.start_async_stream_pooled(
-            Arc::clone(pooled),
-            sql_owned,
-            fetch_size,
-            chunk_size,
-            Some(pooled_stream_completion(conn_id, *pool_id)),
-            encoding,
-        ),
+        StreamStartTarget::Pooled { pool_id, pooled } => executor
+            .start_async_stream_pooled_with_params(
+                Arc::clone(pooled),
+                sql_owned,
+                params,
+                fetch_size,
+                chunk_size,
+                Some(pooled_stream_completion(conn_id, *pool_id)),
+                encoding,
+            ),
     };
 
     match start_result {
@@ -362,6 +507,53 @@ pub(crate) fn stream_start_async_options(
         chunk_size,
         encoding,
         "odbc_stream_start_async_options",
+    )
+}
+
+/// Async batched streaming with a parameter buffer.
+pub(crate) fn stream_start_async_params(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+) -> u32 {
+    start_async_stream_common_with_params(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        fetch_size,
+        chunk_size,
+        ResultEncoding::RowMajor,
+        "odbc_stream_start_async_params",
+    )
+}
+
+/// Async batched streaming with parameters and an explicit wire encoding.
+pub(crate) fn stream_start_async_params_options(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    result_encoding: u32,
+) -> u32 {
+    let Some(encoding) = parse_result_encoding(conn_id, result_encoding) else {
+        return 0;
+    };
+
+    start_async_stream_common_with_params(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        fetch_size,
+        chunk_size,
+        encoding,
+        "odbc_stream_start_async_params_options",
     )
 }
 

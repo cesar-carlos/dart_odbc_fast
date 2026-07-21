@@ -162,4 +162,61 @@ void main() {
       },
     );
   });
+
+  group('streamCallWithBuffer', () {
+    test('should seed first allocation from initialSize', () {
+      final attemptedSizes = <int>[];
+
+      final result = streamCallWithBuffer(
+        (buf, bufLen, outWritten, hasMore) {
+          attemptedSizes.add(bufLen);
+          buf.asTypedList(4).setAll(0, [1, 2, 3, 4]);
+          outWritten.value = 4;
+          hasMore.value = 0;
+          return 0;
+        },
+        initialSize: 1024,
+        maxSize: 4096,
+      );
+
+      expect(attemptedSizes, equals([1024]));
+      expect(result, isNotNull);
+      expect(result!.data, equals([1, 2, 3, 4]));
+      expect(result.hasMore, isFalse);
+    });
+
+    test('should resize when buffer is too small then succeed', () {
+      final attemptedSizes = <int>[];
+
+      final result = streamCallWithBuffer(
+        (buf, bufLen, outWritten, hasMore) {
+          attemptedSizes.add(bufLen);
+          if (bufLen < 16) {
+            outWritten.value = 16;
+            return -2;
+          }
+          buf.asTypedList(16).fillRange(0, 16, 9);
+          outWritten.value = 16;
+          hasMore.value = 1;
+          return 0;
+        },
+        initialSize: 4,
+        maxSize: 32,
+      );
+
+      expect(attemptedSizes, equals([4, 16]));
+      expect(result, isNotNull);
+      expect(result!.data, hasLength(16));
+      expect(result.hasMore, isTrue);
+    });
+
+    test('should return null on hard failure', () {
+      final result = streamCallWithBuffer(
+        (_, __, ___, ____) => 1,
+        initialSize: 8,
+        maxSize: 8,
+      );
+      expect(result, isNull);
+    });
+  });
 }

@@ -2,7 +2,8 @@
 
 Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
 maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `4.3.4`
-(sub-interfaces `IQueryService`/`ITransactionService`/`IPoolService`/`IAdminService`,
+(sub-interfaces `IQueryService`/`ITransactionService`/`IPoolService`/`IAdminService`/
+`IDialectService`,
 `IAdminService.events` + `OdbcEvent`, `executeQueryColumnar` /
 `streamQueryColumnar`, `TypedColumnarResult`, `QueryResult.columnsMetadata`,
 barrels `odbc_fast.dart` / `odbc_fast_native.dart`, sharding completo do
@@ -42,6 +43,11 @@ vivem em `doc/TESTING.md`. Indice curto dos itens abertos tambem em
 - **FFI `GlobalState` sharding:** mapas de conexoes/pools/transacoes/streams/
   statements/XA em `ffi::state::*`; residual = `env` (+ BCP strings). Ver
   [`PERFORMANCE.md`](../PERFORMANCE.md).
+- **Async XA + recover/resume no service:** isolate protocol cobre `odbc_xa_*`;
+  `IOdbcService.xaRecover` / `xaResumePrepared` expostos.
+- **`streamQueryNamed` com params:** FFI
+  `odbc_stream_start_batched_params*` + fallback buffered em DLLs antigas.
+- **`IDialectService`:** builders UPSERT / RETURNING / session-init no aggregate.
 
 ### 1.1 Implementado vs certificado em driver live
 

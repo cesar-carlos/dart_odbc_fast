@@ -96,6 +96,25 @@ pub extern "C" fn odbc_execute(
             }
         };
 
+        let params_hash = if params_buffer.is_null() || params_len == 0 {
+            0
+        } else {
+            // SAFETY: FFI caller keeps `params_buffer` readable for this call.
+            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+            state::hash_bytes(raw)
+        };
+        let pending_key = state::PendingResultKey::Execute {
+            stmt_id,
+            params_hash,
+            timeout_override_ms,
+            fetch_size,
+        };
+        if let Some(code) =
+            state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
+        {
+            return code;
+        }
+
         let timeout_sec = if timeout_override_ms > 0 {
             Some(((timeout_override_ms as usize) / 1000).max(1))
         } else {
@@ -189,7 +208,7 @@ pub extern "C" fn odbc_execute(
                     } else {
                         metrics.record_error();
                     }
-                    status
+                    state::stash_if_buffer_too_small(status, pending_key.clone(), data)
                 }
                 Err(e) => {
                     metrics.record_error();

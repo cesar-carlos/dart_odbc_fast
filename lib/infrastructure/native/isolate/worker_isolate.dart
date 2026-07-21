@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
@@ -144,6 +145,10 @@ void _handleRequest(
       case SavepointCreateRequest():
       case SavepointRollbackRequest():
       case SavepointReleaseRequest():
+      case XaStartRequest():
+      case XaIdRequest():
+      case XaRecoverRequest():
+      case XaResumePreparedRequest():
         _workerDispatcher.dispatchTransaction(request, sendPort, conn);
 
       case StreamStartRequest():

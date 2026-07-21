@@ -102,19 +102,19 @@ void main() async {
 
     // ... your DML would run here, on this connection ...
 
-    if (!xa.end()) {
+    if (!await xa.end()) {
       AppLogger.severe('xa_end failed: ${native.getError()}');
       return;
     }
     AppLogger.info('  After xa_end → state=${xa.state}');
 
-    if (!xa.prepare()) {
+    if (!await xa.prepare()) {
       AppLogger.severe('xa_prepare failed: ${native.getError()}');
       return;
     }
     AppLogger.info('  After xa_prepare → state=${xa.state}');
 
-    if (!xa.commitPrepared()) {
+    if (!await xa.commitPrepared()) {
       AppLogger.severe('xa_commit_prepared failed: ${native.getError()}');
       return;
     }
@@ -139,7 +139,7 @@ void main() async {
       AppLogger.severe('xaStart failed: ${native.getError()}');
       return;
     }
-    if (!xa1rm.commitOnePhase()) {
+    if (!await xa1rm.commitOnePhase()) {
       AppLogger.severe('commit_one_phase failed: ${native.getError()}');
       return;
     }
@@ -166,9 +166,8 @@ void main() async {
       AppLogger.severe('xaStart (recovery prep) failed: ${native.getError()}');
       return;
     }
-    pending
-      ..end()
-      ..prepare();
+    await pending.end();
+    await pending.prepare();
     AppLogger.info('  Prepared but NOT committed: ${pending.xid}');
 
     // In a real crash-recovery scenario the process would die here.
@@ -193,7 +192,7 @@ void main() async {
       '  Resumed handle xa_id=${resumed.xaId}, state=${resumed.state}',
     );
 
-    if (!resumed.commitPrepared()) {
+    if (!await resumed.commitPrepared()) {
       AppLogger.severe(
         'commitPrepared after resume failed: ${native.getError()}',
       );
@@ -253,9 +252,8 @@ void main() async {
             AppLogger.info('  INSERT inside XA branch OK');
           }
 
-          xaDml
-            ..end()
-            ..prepare();
+          await xaDml.end();
+          await xaDml.prepare();
 
           // After PREPARE the row exists logically but is not visible
           // to other sessions. xaRecover should now list xidD.
@@ -265,7 +263,7 @@ void main() async {
             '  After prepare: branch is in DBA_PENDING_TRANSACTIONS = $present',
           );
 
-          if (!xaDml.commitPrepared()) {
+          if (!await xaDml.commitPrepared()) {
             AppLogger.severe(
               '  commitPrepared (DML) failed: ${native.getError()}',
             );

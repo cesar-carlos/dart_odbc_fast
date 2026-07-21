@@ -215,22 +215,22 @@ class _NoopXaBackend implements XaTransactionBackend {
   const _NoopXaBackend();
 
   @override
-  int xaCommitOnePhase(int xaId) => 0;
+  Future<int> xaCommitOnePhase(int xaId) async => 0;
 
   @override
-  int xaCommitPrepared(int xaId) => 0;
+  Future<int> xaCommitPrepared(int xaId) async => 0;
 
   @override
-  int xaEnd(int xaId) => 0;
+  Future<int> xaEnd(int xaId) async => 0;
 
   @override
-  int xaPrepare(int xaId) => 0;
+  Future<int> xaPrepare(int xaId) async => 0;
 
   @override
-  int xaRollbackActive(int xaId) => 0;
+  Future<int> xaRollbackActive(int xaId) async => 0;
 
   @override
-  int xaRollbackPrepared(int xaId) => 0;
+  Future<int> xaRollbackPrepared(int xaId) async => 0;
 }
 
 class _FailingFakeXa extends XaTransactionHandle {
@@ -257,7 +257,7 @@ class _FailingFakeXa extends XaTransactionHandle {
   XaState get state => _st;
 
   @override
-  bool end() {
+  Future<bool> end() async {
     if (failEnd) {
       _st = XaState.failed;
       return false;
@@ -267,7 +267,7 @@ class _FailingFakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool prepare() {
+  Future<bool> prepare() async {
     if (failPrepare) {
       _st = XaState.failedAfterPrepare;
       return false;
@@ -277,7 +277,7 @@ class _FailingFakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool commitPrepared() {
+  Future<bool> commitPrepared() async {
     if (failCommitPrepared) {
       _st = XaState.failedAfterPrepare;
       return false;
@@ -287,7 +287,7 @@ class _FailingFakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool commitOnePhase() {
+  Future<bool> commitOnePhase() async {
     if (failCommitOnePhase) {
       _st = XaState.failed;
       return false;
@@ -297,13 +297,13 @@ class _FailingFakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool rollback() {
+  Future<bool> rollback() async {
     _st = XaState.rolledBack;
     return true;
   }
 
   @override
-  bool rollbackPrepared() {
+  Future<bool> rollbackPrepared() async {
     _st = XaState.rolledBack;
     return true;
   }
@@ -329,42 +329,42 @@ class _FakeXa extends XaTransactionHandle {
   XaState get state => _st;
 
   @override
-  bool end() {
+  Future<bool> end() async {
     endCalls++;
     _st = XaState.idle;
     return true;
   }
 
   @override
-  bool prepare() {
+  Future<bool> prepare() async {
     prepareCalls++;
     _st = XaState.prepared;
     return true;
   }
 
   @override
-  bool commitPrepared() {
+  Future<bool> commitPrepared() async {
     commitPreparedCalls++;
     _st = XaState.committed;
     return true;
   }
 
   @override
-  bool commitOnePhase() {
+  Future<bool> commitOnePhase() async {
     commitOnePhaseCalls++;
     _st = XaState.committed;
     return true;
   }
 
   @override
-  bool rollback() {
+  Future<bool> rollback() async {
     rollbackCalls++;
     _st = XaState.rolledBack;
     return true;
   }
 
   @override
-  bool rollbackPrepared() {
+  Future<bool> rollbackPrepared() async {
     _st = XaState.rolledBack;
     return true;
   }

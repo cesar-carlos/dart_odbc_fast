@@ -69,9 +69,8 @@ void main() {
 
       await expectLater(
         XaTransactionHandle.runWithStart<void>(() => fake, (xa) async {
-          xa
-            ..end()
-            ..prepare();
+          await xa.end();
+          await xa.prepare();
           throw error;
         }),
         throwsA(same(error)),
@@ -244,14 +243,14 @@ void main() {
       expect(handle.state, XaState.active);
     });
 
-    test('successful operations update state and delegate branch id', () {
-      expect(handle.end(), isTrue);
+    test('successful operations update state and delegate branch id', () async {
+      expect(await handle.end(), isTrue);
       expect(handle.state, XaState.idle);
 
-      expect(handle.prepare(), isTrue);
+      expect(await handle.prepare(), isTrue);
       expect(handle.state, XaState.prepared);
 
-      expect(handle.commitPrepared(), isTrue);
+      expect(await handle.commitPrepared(), isTrue);
       expect(handle.state, XaState.committed);
 
       handle = XaTransactionHandle.withBackend(
@@ -259,7 +258,7 @@ void main() {
         xid: mkXid('rollback-prepared'),
         backend: backend,
       );
-      expect(handle.rollbackPrepared(), isTrue);
+      expect(await handle.rollbackPrepared(), isTrue);
       expect(handle.state, XaState.rolledBack);
 
       handle = XaTransactionHandle.withBackend(
@@ -267,7 +266,7 @@ void main() {
         xid: mkXid('one-phase'),
         backend: backend,
       );
-      expect(handle.commitOnePhase(), isTrue);
+      expect(await handle.commitOnePhase(), isTrue);
       expect(handle.state, XaState.committed);
 
       handle = XaTransactionHandle.withBackend(
@@ -275,7 +274,7 @@ void main() {
         xid: mkXid('rollback'),
         backend: backend,
       );
-      expect(handle.rollback(), isTrue);
+      expect(await handle.rollback(), isTrue);
       expect(handle.state, XaState.rolledBack);
 
       expect(backend.calls, [
@@ -288,10 +287,10 @@ void main() {
       ]);
     });
 
-    test('failed operations mark branch as failed', () {
+    test('failed operations mark branch as failed', () async {
       backend.result = 1;
 
-      expect(handle.end(), isFalse);
+      expect(await handle.end(), isFalse);
       expect(handle.state, XaState.failed);
 
       handle = XaTransactionHandle.withBackend(
@@ -299,7 +298,7 @@ void main() {
         xid: mkXid('prepare-fail'),
         backend: backend,
       );
-      expect(handle.prepare(), isFalse);
+      expect(await handle.prepare(), isFalse);
       expect(handle.state, XaState.failed);
 
       handle = XaTransactionHandle.withBackend(
@@ -307,7 +306,7 @@ void main() {
         xid: mkXid('commit-fail'),
         backend: backend,
       );
-      expect(handle.commitPrepared(), isFalse);
+      expect(await handle.commitPrepared(), isFalse);
       // commitPrepared failure → failedAfterPrepare (branch still Prepared
       // at the RM; cleanup must use rollbackPrepared, not rollback).
       expect(handle.state, XaState.failedAfterPrepare);
@@ -317,7 +316,7 @@ void main() {
         xid: mkXid('rollback-prepared-fail'),
         backend: backend,
       );
-      expect(handle.rollbackPrepared(), isFalse);
+      expect(await handle.rollbackPrepared(), isFalse);
       expect(handle.state, XaState.failed);
 
       handle = XaTransactionHandle.withBackend(
@@ -325,7 +324,7 @@ void main() {
         xid: mkXid('one-phase-fail'),
         backend: backend,
       );
-      expect(handle.commitOnePhase(), isFalse);
+      expect(await handle.commitOnePhase(), isFalse);
       expect(handle.state, XaState.failed);
 
       handle = XaTransactionHandle.withBackend(
@@ -333,7 +332,7 @@ void main() {
         xid: mkXid('rollback-fail'),
         backend: backend,
       );
-      expect(handle.rollback(), isFalse);
+      expect(await handle.rollback(), isFalse);
       expect(handle.state, XaState.failed);
     });
   });
@@ -370,7 +369,7 @@ class _FakeXa extends XaTransactionHandle {
   XaState get state => _fakeState;
 
   @override
-  bool end() {
+  Future<bool> end() async {
     endCalls++;
     if (failOn == _FailOn.end) {
       _fakeState = XaState.failed;
@@ -381,7 +380,7 @@ class _FakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool prepare() {
+  Future<bool> prepare() async {
     prepareCalls++;
     if (failOn == _FailOn.prepare) {
       _fakeState = XaState.failed;
@@ -392,7 +391,7 @@ class _FakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool commitPrepared() {
+  Future<bool> commitPrepared() async {
     commitPreparedCalls++;
     if (failOn == _FailOn.commitPrepared) {
       _fakeState = XaState.failed;
@@ -403,14 +402,14 @@ class _FakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool rollbackPrepared() {
+  Future<bool> rollbackPrepared() async {
     rollbackPreparedCalls++;
     _fakeState = XaState.rolledBack;
     return true;
   }
 
   @override
-  bool commitOnePhase() {
+  Future<bool> commitOnePhase() async {
     commitOnePhaseCalls++;
     if (failOn == _FailOn.commitOnePhase) {
       _fakeState = XaState.failed;
@@ -421,7 +420,7 @@ class _FakeXa extends XaTransactionHandle {
   }
 
   @override
-  bool rollback() {
+  Future<bool> rollback() async {
     rollbackCalls++;
     if (failOn == _FailOn.rollback) {
       _fakeState = XaState.failed;
@@ -437,37 +436,37 @@ class _RecordingXaBackend implements XaTransactionBackend {
   final List<String> calls = [];
 
   @override
-  int xaEnd(int xaId) {
+  Future<int> xaEnd(int xaId) async {
     calls.add('end:$xaId');
     return result;
   }
 
   @override
-  int xaPrepare(int xaId) {
+  Future<int> xaPrepare(int xaId) async {
     calls.add('prepare:$xaId');
     return result;
   }
 
   @override
-  int xaCommitPrepared(int xaId) {
+  Future<int> xaCommitPrepared(int xaId) async {
     calls.add('commitPrepared:$xaId');
     return result;
   }
 
   @override
-  int xaRollbackPrepared(int xaId) {
+  Future<int> xaRollbackPrepared(int xaId) async {
     calls.add('rollbackPrepared:$xaId');
     return result;
   }
 
   @override
-  int xaCommitOnePhase(int xaId) {
+  Future<int> xaCommitOnePhase(int xaId) async {
     calls.add('commitOnePhase:$xaId');
     return result;
   }
 
   @override
-  int xaRollbackActive(int xaId) {
+  Future<int> xaRollbackActive(int xaId) async {
     calls.add('rollbackActive:$xaId');
     return result;
   }

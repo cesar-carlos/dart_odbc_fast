@@ -353,7 +353,12 @@ WorkerResponse buildWorkerErrorResponse(WorkerRequest request, String error) {
     case ExecuteAsyncStartParamsRequest():
     case AsyncPollRequest():
     case StreamPollAsyncRequest():
+    case XaStartRequest():
+    case XaIdRequest():
+    case XaResumePreparedRequest():
       return IntResponse(id, 0);
+    case XaRecoverRequest():
+      return XaRecoverResponse(id, error: error);
     case StreamFetchRequest():
       return StreamFetchResponse(
         id,

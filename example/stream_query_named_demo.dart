@@ -1,10 +1,14 @@
 // Demo of `streamQueryNamed`: named-parameter query exposed as a Stream.
 //
-// Use case: prefer the streaming API for uniform call sites where some queries
-// could be incremental (large result sets) and others are small. With
-// `streamQueryNamed` you get the same single-chunk delivery contract as
-// `executeQueryNamed` but wrapped in a Stream<Result<QueryResult>> so consumers
-// don't have to branch between async/await and await-for.
+// Prefer the streaming API for uniform call sites where some queries could be
+// incremental (large result sets) and others are small. With a current native
+// binary, `streamQueryNamed` binds params and yields batched chunks via
+// `odbc_stream_start_batched_params*`. Older binaries without that symbol fall
+// back to a single buffered `executeQueryNamed` chunk.
+//
+// For async workers + recommended connection options, initialize with
+// `OdbcUsageProfile.balanced` (this demo) or `balancedServer` when you want
+// columnar-by-default — see example/recommended_performance_patterns_demo.dart.
 //
 // Run: dart run example/stream_query_named_demo.dart
 //
@@ -22,7 +26,8 @@ Future<void> main() async {
     return;
   }
 
-  final locator = ServiceLocator()..initialize();
+  final locator = ServiceLocator()
+    ..initialize(profile: OdbcUsageProfile.balanced);
   final service = locator.service;
 
   final init = await service.initialize();

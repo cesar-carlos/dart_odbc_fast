@@ -76,13 +76,36 @@ typedef StreamBufferCallback = int Function(
 );
 
 /// Like [callWithBuffer] for stream fetch callbacks that also return hasMore.
+///
+/// Prefer passing [initialSize] equal to the stream `chunkSize` so the first
+/// allocation matches the native copy budget and avoids a -2 resize round-trip.
+/// Streaming payloads are typically large; this path uses a transient native
+/// buffer and the same zero-copy materialization policy as [callWithBuffer]
+/// (no scratch pool — reused scratch would force an extra copy for ≥32 KiB).
 StreamBufferFetchResult? streamCallWithBuffer(
   StreamBufferCallback fn, {
   int? maxSize,
   int? initialSize,
+  bool? allowZeroCopy,
 }) {
   final limit = maxSize ?? maxBufferSize;
-  var size = initialSize ?? initialBufferSize;
+  final size = initialSize ?? initialBufferSize;
+  final zeroCopy = allowZeroCopy ?? isZeroCopyResultBufferAvailable;
+  return _streamCallWithTransientBuffer(
+    fn,
+    limit: limit,
+    initialSize: size,
+    allowZeroCopy: zeroCopy,
+  );
+}
+
+StreamBufferFetchResult? _streamCallWithTransientBuffer(
+  StreamBufferCallback fn, {
+  required int limit,
+  required int initialSize,
+  required bool allowZeroCopy,
+}) {
+  var size = initialSize <= limit ? initialSize : limit;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
     final outWritten = malloc<ffi.Uint32>()..value = 0;
@@ -100,7 +123,7 @@ StreamBufferFetchResult? streamCallWithBuffer(
                 buf,
                 n,
                 transferOwnership: true,
-                allowZeroCopy: isZeroCopyResultBufferAvailable,
+                allowZeroCopy: allowZeroCopy,
               )
             : null;
         return StreamBufferFetchResult(data: data, hasMore: more);

@@ -1,4 +1,9 @@
 // Parallel bulk insert demo for large batches (>1k rows).
+//
+// Recommended when single-connection `bulkInsert` is CPU/driver-bound: use a
+// native pool + `bulkInsertParallel` (see also
+// example/recommended_performance_patterns_demo.dart for the decision map).
+//
 // Run: dart run example/bulk_insert_parallel_demo.dart
 //
 // Requires ODBC_DSN or ODBC_TEST_DSN and a SQL Server–compatible driver for

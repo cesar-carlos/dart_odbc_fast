@@ -264,6 +264,17 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       _transaction.xaStart(connectionId, xid);
 
   @override
+  Future<Result<List<Xid>>> xaRecover(String connectionId) =>
+      _transaction.xaRecover(connectionId);
+
+  @override
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) =>
+      _transaction.xaResumePrepared(connectionId, xid);
+
+  @override
   Future<Result<Unit>> createSavepoint(
     String connectionId,
     int txnId,

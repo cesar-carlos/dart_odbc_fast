@@ -1,4 +1,13 @@
-// Main example: high-level API with OdbcService (sync mode).
+// Main example: high-level API with OdbcService (sync / legacy profile).
+//
+// This entrypoint intentionally uses `ServiceLocator()..initialize()` (legacy:
+// sync, row-major) for a small smoke tour. For recommended performance
+// defaults prefer:
+//   - dart run example/quick_start_balanced_demo.dart  (async balanced)
+//   - dart run example/recommended_performance_patterns_demo.dart
+//   - OdbcUsageProfile.balancedServer / highThroughput for server workloads
+// Large reads → streamQuery*; inserts → bulkInsert / bulkInsertParallel.
+//
 // Run: dart run example/main.dart
 
 import 'package:odbc_fast/odbc_fast.dart';

@@ -61,6 +61,15 @@ mixin TelemetryOdbcServiceTransactionForwards
         onePhase: onePhase,
       );
 
+  Future<Result<List<Xid>>> xaRecover(String connectionId) =>
+      transaction.xaRecover(connectionId);
+
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) =>
+      transaction.xaResumePrepared(connectionId, xid);
+
   Future<Result<void>> createSavepoint(
     String connectionId,
     int txnId,

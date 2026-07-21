@@ -69,6 +69,11 @@ void main() {
       expect(DmlVerb.insert.code, equals(0));
       expect(const SessionOptions().toJson(), isEmpty);
       expect(OdbcDriverFeatures, isNotNull);
+      expect(
+        IDialectService,
+        isNotNull,
+        reason: 'dialect ISP aggregated into IOdbcService',
+      );
     });
 
     test('exports parsed row buffer types for catalog/streaming consumers', () {

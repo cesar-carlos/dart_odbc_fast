@@ -744,9 +744,26 @@ Connection-string override takes precedence over environment value.
 
 All examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment variable or `.env` in project root.
 
+Start with the performance checklist when choosing APIs:
+
+```bash
+dart run example/recommended_performance_patterns_demo.dart
+```
+
+| Workload | Prefer | Example |
+| --- | --- | --- |
+| Small query | `executeQuery` / `executeQueryParamValues` | `recommended_performance_patterns_demo.dart` |
+| Large read | `streamQuery` (batched) / `streamQueryNamed` / `streamQueryColumnar` | `streaming_demo.dart`, `stream_query_named_demo.dart` |
+| Medium insert (~hundreds) | `bulkInsert` | `bulk_insert_demo.dart` |
+| Large insert (>1k) | `bulkInsertParallel` | `bulk_insert_parallel_demo.dart` |
+| App default / async | `OdbcUsageProfile.balanced` | `quick_start_balanced_demo.dart` |
+| Server / columnar | `balancedServer` / `highThroughput` | `stream_query_columnar_demo.dart`, `high_concurrency_pool_demo.dart` |
+| Prepared reuse | prepare once, execute many | `named_parameters_demo.dart` |
+
 ```bash
 # Core API
 dart run example/main.dart
+dart run example/recommended_performance_patterns_demo.dart  # workload → API checklist
 dart run example/service_api_coverage_demo.dart
 dart run example/advanced_entities_demo.dart
 dart run example/simple_demo.dart

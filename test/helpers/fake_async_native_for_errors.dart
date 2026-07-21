@@ -50,6 +50,10 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   int? lastTxnId;
   String? lastSavepointName;
 
+  int streamStartBatchedResult = 0;
+  Uint8List? lastStreamStartParamsBuffer;
+  String? lastStreamStartSql;
+
   List<StreamFetchResponse> streamFetchResponses = const [];
 
   int _nextNativeConn = 50;
@@ -148,6 +152,20 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   }
 
   @override
+  Future<int> streamStartBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
+  }) async {
+    lastStreamStartSql = sql;
+    lastStreamStartParamsBuffer = paramsBuffer;
+    return streamStartBatchedResult;
+  }
+
+  @override
   Future<StreamFetchResponse> streamFetch(int streamId) async {
     final responses = streamFetchResponses;
     if (responses.isEmpty) {
@@ -162,6 +180,9 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
 
   @override
   Future<bool> streamClose(int streamId) async => true;
+
+  @override
+  Future<bool> streamCancel(int streamId) async => true;
 
   @override
   Future<bool> commitTransaction(int txnId) async {

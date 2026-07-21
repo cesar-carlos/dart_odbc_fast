@@ -433,6 +433,21 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Future<Result<List<Xid>>> xaRecover(String connectionId) async {
+    return const Success(<Xid>[]);
+  }
+
+  @override
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) async {
+    return const Failure<XaTransactionHandle, OdbcError>(
+      ValidationError(message: 'mock: xaResumePrepared not configured'),
+    );
+  }
+
+  @override
   Future<Result<Unit>> createSavepoint(
     String connectionId,
     int txnId,

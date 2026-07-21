@@ -101,6 +101,65 @@ pub fn deserialize_param_buffer(data: &[u8]) -> Result<ParamList> {
     Ok(ParamList::Legacy(deserialize_params(data)?))
 }
 
+/// Decode a stream/execute param buffer into input-only [`ParamValue`]s.
+///
+/// Streaming binds cannot host `OUT`/`INOUT` slots; those must use the
+/// directed execute path. Legacy buffers are all-input. DRT1 buffers must
+/// contain only [`ParamDirection::Input`].
+pub fn input_params_from_buffer(data: &[u8]) -> Result<Vec<ParamValue>> {
+    match deserialize_param_buffer(data)? {
+        ParamList::Legacy(params) => Ok(params),
+        ParamList::Directed(bound) => {
+            let mut out = Vec::with_capacity(bound.len());
+            for (index, param) in bound.into_iter().enumerate() {
+                if param.direction != ParamDirection::Input {
+                    return Err(OdbcError::ValidationError(format!(
+                        "STREAM_PARAM|non_input_direction: parameter {} has direction {:?}; \
+                         streaming supports Input only (use execute with DRT1 for OUT/INOUT)",
+                        index, param.direction
+                    )));
+                }
+                out.push(param.value);
+            }
+            Ok(out)
+        }
+    }
+}
+
+#[cfg(test)]
+mod input_params_from_buffer_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_buffer_ok() {
+        let bytes = ParamValue::Integer(9).serialize();
+        let params = input_params_from_buffer(&bytes).expect("legacy");
+        assert_eq!(params, vec![ParamValue::Integer(9)]);
+    }
+
+    #[test]
+    fn drt1_input_ok() {
+        let one = ParamValue::String("x".to_string()).serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(0u8);
+        buf.extend_from_slice(&one);
+        let params = input_params_from_buffer(&buf).expect("drt1 input");
+        assert_eq!(params, vec![ParamValue::String("x".to_string())]);
+    }
+
+    #[test]
+    fn drt1_output_rejected() {
+        let one = ParamValue::Integer(1).serialize();
+        let mut buf: Vec<u8> = DRT1.to_vec();
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.push(1u8); // Output
+        buf.extend_from_slice(&one);
+        let err = input_params_from_buffer(&buf).expect_err("output");
+        assert!(err.to_string().contains("STREAM_PARAM|non_input_direction"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

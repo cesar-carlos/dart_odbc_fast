@@ -253,6 +253,27 @@ void main() {
       expect(parsed.rows[1][0], isNull);
     });
 
+    test('parseColumnarToTyped coerces UTF-8 timestamp cells to DateTime', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'created_at', type: 6),
+          (name: 'day', type: 5),
+        ],
+        rows: [
+          ['2024-06-15 14:30:00.123', '2024-06-15'],
+          [null, '2020-01-01'],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(data);
+      final ts = typed.column<TypedColumnObject<DateTime>>('created_at');
+      expect(ts.values[0], DateTime.parse('2024-06-15T14:30:00.123'));
+      expect(ts.values[1], isNull);
+      final day = typed.column<TypedColumnObject<DateTime>>('day');
+      expect(day.values[0], DateTime.parse('2024-06-15'));
+      expect(day.values[1], DateTime.parse('2020-01-01'));
+    });
+
     test('parseColumnarToTyped skips row-major intermediate for int column',
         () {
       final data = _createColumnarV2Buffer(

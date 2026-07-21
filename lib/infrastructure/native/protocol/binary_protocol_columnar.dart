@@ -467,7 +467,7 @@ TypedColumn _typedObjectColumnForKind(
         kind: kind,
         values: List<DateTime?>.generate(
           values.length,
-          (i) => values[i] as DateTime?,
+          (i) => _coerceDateTimeCell(values[i]),
           growable: false,
         ),
       ),
@@ -500,6 +500,30 @@ TypedColumnKind _typedKindForOdbcType(OdbcType odbcType) {
       TypedColumnKind.dateTime,
     _ => TypedColumnKind.string,
   };
+}
+
+/// Wire datetime cells are UTF-8 text (see [OdbcType] table); coerce to
+/// [DateTime] for [TypedColumnObject].
+DateTime? _coerceDateTimeCell(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is DateTime) {
+    return value;
+  }
+  final text = value is String ? value : value.toString();
+  final parsed = DateTime.tryParse(text);
+  if (parsed != null) {
+    return parsed;
+  }
+  // SQL Server often emits `YYYY-MM-DD HH:MM:SS` (space); ISO prefers `T`.
+  final withT = text.replaceFirst(' ', 'T');
+  if (withT != text) {
+    return DateTime.tryParse(withT);
+  }
+  throw FormatException(
+    'Columnar v2: cannot parse datetime cell "$text"',
+  );
 }
 
 void fillColumnarRowsIntoRowBuffer({

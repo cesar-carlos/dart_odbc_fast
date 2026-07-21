@@ -202,6 +202,9 @@ mixin _AsyncWorkerLifecycle
     _statementWorkerById.clear();
     _statementConnectionById.clear();
     _transactionWorkerById.clear();
+    _transactionConnectionById.clear();
+    _xaWorkerById.clear();
+    _xaConnectionById.clear();
     _streamWorkerById.clear();
     _asyncRequestWorkerById.clear();
   }

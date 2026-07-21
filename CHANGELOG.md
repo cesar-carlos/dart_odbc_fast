@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Async XA / 2PC** — isolate backend now supports the full `odbc_xa_*` lifecycle
+  (`xaStart`, end/prepare/commit/rollback, recover, resume) with `xaId` worker
+  affinity. `XaTransactionHandle` lifecycle methods return `Future<bool>`
+  (**breaking** for direct callers).
+- **Service XA recovery** — `IOdbcService.xaRecover` / `xaResumePrepared` promote
+  the native recover APIs to the repository/service surface.
+- **Parameterized streaming** — new FFI
+  `odbc_stream_start_batched_params` / `_options` and async variants; 
+  `streamQueryNamed` streams in batches when the symbol is present (buffered
+  fallback on older binaries).
+- **`IDialectService`** — UPSERT / RETURNING / session-init builders aggregated
+  into `IOdbcService` (thin wrap over `OdbcDriverFeatures`).
+
 ### Fixed
 
 - **CI Benchmark workflow** — `comparative_bench` no longer panics when the Criterion

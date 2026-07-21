@@ -259,8 +259,10 @@ fn test_ffi_execute_retry_after_buffer_too_small_does_not_reexecute_side_effect_
         &mut written,
     );
     assert_eq!(
-        second, 0,
-        "Retry must succeed by delivering pending payload without re-executing SQL",
+        second,
+        0,
+        "Retry must succeed by delivering pending payload without re-executing SQL; err={}",
+        get_last_error(),
     );
     assert!(written > 0);
 

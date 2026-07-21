@@ -21,6 +21,7 @@ class StreamStartBatchedRequest extends WorkerRequest {
     this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
     this.resultEncodingWire = 0,
+    this.paramsBuffer,
   }) : super(requestId, RequestType.streamStartBatched);
   final int connectionId;
   final String sql;
@@ -29,6 +30,9 @@ class StreamStartBatchedRequest extends WorkerRequest {
 
   /// [ResultEncoding.wireCode]; 0 = row-major (default).
   final int resultEncodingWire;
+
+  /// Serialized ParamValue / DRT1 Input buffer; null or empty = no params.
+  final Uint8List? paramsBuffer;
 }
 
 /// Start low-level async batched streaming query.

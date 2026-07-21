@@ -39,6 +39,17 @@ pub extern "C" fn odbc_exec_query_params(
         };
 
         let execute_with_params = |params_slice: &[u8]| {
+            let pending_key = state::PendingResultKey::ExecQueryParams {
+                conn_id,
+                sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                params_hash: state::hash_bytes(params_slice),
+            };
+            if let Some(code) =
+                state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
+            {
+                return code;
+            }
+
             let Some(mut state) = try_lock_global_state() else {
                 return -1;
             };
@@ -116,7 +127,7 @@ pub extern "C" fn odbc_exec_query_params(
                     } else {
                         metrics.record_error();
                     }
-                    status
+                    state::stash_if_buffer_too_small(status, pending_key, data)
                 }
                 Err(e) => {
                     metrics.record_error();
@@ -174,6 +185,17 @@ pub extern "C" fn odbc_exec_query_params_options(
         };
 
         let execute_with_params = |params_slice: &[u8]| {
+            let pending_key = state::PendingResultKey::ExecQueryParams {
+                conn_id,
+                sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                params_hash: state::hash_bytes(params_slice),
+            };
+            if let Some(code) =
+                state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
+            {
+                return code;
+            }
+
             let Some(mut state) = try_lock_global_state() else {
                 return -1;
             };
@@ -263,7 +285,7 @@ pub extern "C" fn odbc_exec_query_params_options(
                     } else {
                         metrics.record_error();
                     }
-                    status
+                    state::stash_if_buffer_too_small(status, pending_key, data)
                 }
                 Err(e) => {
                     metrics.record_error();

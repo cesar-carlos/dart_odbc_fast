@@ -1,7 +1,11 @@
 // Demonstrates opt-in result encodings for parameterized query execution.
 //
-// Row-major remains the default. Use columnar modes only after validating the
-// target workload and driver.
+// With `OdbcUsageProfile.balanced` / legacy, row-major remains the default.
+// Server presets (`balancedServer`, `highThroughput`) already recommend
+// columnar via `recommendedResultEncoding` — see
+// example/stream_query_columnar_demo.dart. Prefer columnar after validating
+// the target workload and driver; use `columnarCompressed` only when wire
+// size matters more than CPU.
 //
 // Run:
 //   dart run example/columnar_result_encoding_demo.dart

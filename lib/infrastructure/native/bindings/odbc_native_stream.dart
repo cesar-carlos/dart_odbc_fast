@@ -86,9 +86,14 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
   /// Fetches the next chunk of data from a streaming query.
   ///
   /// The [streamId] must be a valid stream identifier from [streamStart].
+  /// Pass [bufferSize] equal to the stream `chunkSize` so the FFI allocation
+  /// matches the native copy budget on the first attempt.
   ///
   /// Returns a [StreamFetchResult] with success status, data, and hasMore flag.
-  StreamFetchResult streamFetch(int streamId) {
+  StreamFetchResult streamFetch(
+    int streamId, {
+    int? bufferSize,
+  }) {
     final fetched = streamCallWithBuffer(
       (buf, bufLen, outWritten, hasMore) => _bindings.odbc_stream_fetch(
         streamId,
@@ -97,6 +102,7 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
         outWritten,
         hasMore,
       ),
+      initialSize: bufferSize,
     );
     if (fetched != null) {
       return StreamFetchResult(
@@ -145,10 +151,48 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
   }) {
     return _withSql<int>(
           sql,
           (sqlPtr) {
+            final hasParams = paramsBuffer != null && paramsBuffer.isNotEmpty;
+            if (hasParams) {
+              if (!_bindings.supportsStreamStartParams) {
+                return 0;
+              }
+              final paramsLen = paramsBuffer.length;
+              return _withParamsBuffer(
+                    paramsBuffer,
+                    (paramsPtr) {
+                      if (resultEncodingWire != 0) {
+                        final optionsId =
+                            _bindings.odbc_stream_start_batched_params_options(
+                          connectionId,
+                          sqlPtr,
+                          paramsPtr,
+                          paramsLen,
+                          fetchSize,
+                          chunkSize,
+                          resultEncodingWire,
+                        );
+                        if (optionsId != null) {
+                          return optionsId;
+                        }
+                      }
+                      return _bindings.odbc_stream_start_batched_params(
+                            connectionId,
+                            sqlPtr,
+                            paramsPtr,
+                            paramsLen,
+                            fetchSize,
+                            chunkSize,
+                          ) ??
+                          0;
+                    },
+                  ) ??
+                  0;
+            }
             if (resultEncodingWire != 0) {
               final optionsId = _bindings.odbc_stream_start_batched_options(
                 connectionId,
@@ -171,6 +215,9 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
         ) ??
         0;
   }
+
+  /// Whether batched streaming accepts a parameter buffer.
+  bool get supportsStreamStartParams => _bindings.supportsStreamStartParams;
 
   /// Whether the loaded native library exports the M8 streaming
   /// multi-result FFIs (added in v3.3.0).

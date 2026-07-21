@@ -53,6 +53,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
   }) =>
       _native.streamStartBatched(
         connectionId,
@@ -60,11 +61,15 @@ mixin _NativeStreaming on _NativeOdbcState {
         fetchSize: fetchSize,
         chunkSize: chunkSize,
         resultEncodingWire: resultEncodingWire,
+        paramsBuffer: paramsBuffer,
       );
 
   /// Fetches the next chunk for a low-level native stream.
-  bindings.StreamFetchResult streamFetch(int streamId) =>
-      _native.streamFetch(streamId);
+  bindings.StreamFetchResult streamFetch(
+    int streamId, {
+    int? bufferSize,
+  }) =>
+      _native.streamFetch(streamId, bufferSize: bufferSize);
 
   /// Requests cancellation for a low-level native stream.
   bool streamCancel(int streamId) => _native.streamCancel(streamId);
@@ -86,6 +91,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     bool lazyStrings = false,
+    Uint8List? paramsBuffer,
   }) async* {
     final streamId = _native.streamStartBatched(
       connectionId,
@@ -93,6 +99,7 @@ mixin _NativeStreaming on _NativeOdbcState {
       fetchSize: fetchSize,
       chunkSize: chunkSize,
       resultEncodingWire: resultEncoding.wireCode,
+      paramsBuffer: paramsBuffer,
     );
 
     if (streamId == 0) {
@@ -103,7 +110,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     var completed = false;
     try {
       while (true) {
-        final result = _native.streamFetch(streamId);
+        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
 
         if (!result.success) {
           throw Exception('Stream fetch failed: ${_native.getError()}');
@@ -165,7 +172,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     var completed = false;
     try {
       while (true) {
-        final result = _native.streamFetch(streamId);
+        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
 
         if (!result.success) {
           throw Exception('Stream fetch failed: ${_native.getError()}');
@@ -344,7 +351,7 @@ mixin _NativeStreaming on _NativeOdbcState {
           throw Exception('Unexpected async stream status: $status');
         }
 
-        final result = _native.streamFetch(streamId);
+        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
         if (!result.success) {
           throw Exception('Async stream fetch failed: ${_native.getError()}');
         }

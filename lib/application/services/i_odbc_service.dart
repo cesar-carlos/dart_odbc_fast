@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 import 'package:odbc_fast/application/services/i_admin_service.dart';
+import 'package:odbc_fast/application/services/i_dialect_service.dart';
 import 'package:odbc_fast/application/services/i_pool_service.dart';
 import 'package:odbc_fast/application/services/i_query_service.dart';
 import 'package:odbc_fast/application/services/i_transaction_service.dart';
@@ -31,19 +32,25 @@ import 'package:result_dart/result_dart.dart';
 /// Allows decorators and alternative implementations to be used
 /// interchangeably via dependency injection.
 ///
-/// Aggregates four narrower sub-interfaces:
+/// Aggregates five narrower sub-interfaces:
 ///
 /// - [IQueryService] — query / stream operations.
 /// - [ITransactionService] — local 2PC + XA lifecycle.
 /// - [IPoolService] — connection pool management.
 /// - [IAdminService] — initialization, metrics, capabilities.
+/// - [IDialectService] — dialect SQL builders (UPSERT / RETURNING / session).
 ///
 /// New consumers are encouraged to depend on the narrowest sub-interface
 /// they need (Interface Segregation Principle). Existing code that types
 /// against `IOdbcService` keeps working unchanged because every member
 /// stays declared at the aggregate level.
 abstract class IOdbcService
-    implements IQueryService, ITransactionService, IPoolService, IAdminService {
+    implements
+        IQueryService,
+        ITransactionService,
+        IPoolService,
+        IAdminService,
+        IDialectService {
   @override
   Future<Result<void>> initialize();
 
@@ -167,6 +174,15 @@ abstract class IOdbcService
     bool onePhase = false,
   });
 
+  /// List prepared XIDs on the resource manager for crash recovery.
+  Future<Result<List<Xid>>> xaRecover(String connectionId);
+
+  /// Resume a prepared XID as an [XaTransactionHandle] in prepared state.
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  );
+
   Future<Result<void>> createSavepoint(
     String connectionId,
     int txnId,
@@ -267,9 +283,9 @@ abstract class IOdbcService
 
   /// Executes a named-parameter query and returns results as a stream.
   ///
-  /// Supports `@name` and `:name` syntax. Because the parameterized execute
-  /// path does not support incremental batched streaming at the FFI level, the
-  /// result is buffered and yielded as a single [QueryResult] chunk. On
+  /// Supports `@name` and `:name` syntax. When the native library exports
+  /// `odbc_stream_start_batched_params`, results stream in batches. Older
+  /// binaries fall back to a single buffered [QueryResult] chunk. On
   /// failure, emits a single `Failure` item and closes the stream.
   @override
   Stream<Result<QueryResult>> streamQueryNamed(

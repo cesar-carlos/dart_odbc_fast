@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
@@ -41,6 +43,7 @@ class _FakeAsyncNativeForStreaming extends AsyncNativeOdbcConnection {
     bool lazyStrings = false,
     int? maxBufferBytes,
     int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
   }) {
     batchedCalls++;
     final factory = batchedStreamFactory;

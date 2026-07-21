@@ -1,15 +1,19 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:odbc_fast/domain/entities/xid.dart';
 
 /// Native XA operations used by [XaTransactionHandle].
+///
+/// Sync backends may complete with [Future.value]; async isolate backends
+/// return real futures that hop to the worker owning the XA branch.
 abstract interface class XaTransactionBackend {
-  int xaEnd(int xaId);
-  int xaPrepare(int xaId);
-  int xaCommitPrepared(int xaId);
-  int xaRollbackPrepared(int xaId);
-  int xaCommitOnePhase(int xaId);
-  int xaRollbackActive(int xaId);
+  Future<int> xaEnd(int xaId);
+  Future<int> xaPrepare(int xaId);
+  Future<int> xaCommitPrepared(int xaId);
+  Future<int> xaRollbackPrepared(int xaId);
+  Future<int> xaCommitOnePhase(int xaId);
+  Future<int> xaRollbackActive(int xaId);
 }
 
 /// Lifecycle states of an XA transaction branch — mirror of
@@ -43,8 +47,8 @@ class XaTransactionHandle {
 
   XaState get state => _state;
 
-  bool end() {
-    final rc = _backend.xaEnd(xaId);
+  Future<bool> end() async {
+    final rc = await _backend.xaEnd(xaId);
     if (rc == 0) {
       _state = XaState.idle;
       return true;
@@ -53,8 +57,8 @@ class XaTransactionHandle {
     return false;
   }
 
-  bool prepare() {
-    final rc = _backend.xaPrepare(xaId);
+  Future<bool> prepare() async {
+    final rc = await _backend.xaPrepare(xaId);
     if (rc == 0) {
       _state = XaState.prepared;
       return true;
@@ -63,8 +67,8 @@ class XaTransactionHandle {
     return false;
   }
 
-  bool commitPrepared() {
-    final rc = _backend.xaCommitPrepared(xaId);
+  Future<bool> commitPrepared() async {
+    final rc = await _backend.xaCommitPrepared(xaId);
     if (rc == 0) {
       _state = XaState.committed;
       return true;
@@ -73,8 +77,8 @@ class XaTransactionHandle {
     return false;
   }
 
-  bool rollbackPrepared() {
-    final rc = _backend.xaRollbackPrepared(xaId);
+  Future<bool> rollbackPrepared() async {
+    final rc = await _backend.xaRollbackPrepared(xaId);
     if (rc == 0) {
       _state = XaState.rolledBack;
       return true;
@@ -83,8 +87,8 @@ class XaTransactionHandle {
     return false;
   }
 
-  bool commitOnePhase() {
-    final rc = _backend.xaCommitOnePhase(xaId);
+  Future<bool> commitOnePhase() async {
+    final rc = await _backend.xaCommitOnePhase(xaId);
     if (rc == 0) {
       _state = XaState.committed;
       return true;
@@ -93,8 +97,8 @@ class XaTransactionHandle {
     return false;
   }
 
-  bool rollback() {
-    final rc = _backend.xaRollbackActive(xaId);
+  Future<bool> rollback() async {
+    final rc = await _backend.xaRollbackActive(xaId);
     if (rc == 0) {
       _state = XaState.rolledBack;
       return true;
@@ -116,18 +120,18 @@ class XaTransactionHandle {
     }
     try {
       final result = await action(xa);
-      if (!xa.end()) {
+      if (!await xa.end()) {
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_end failed on xid=${xa.xid}',
         );
       }
-      if (!xa.prepare()) {
+      if (!await xa.prepare()) {
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_prepare failed '
           'on xid=${xa.xid}',
         );
       }
-      if (!xa.commitPrepared()) {
+      if (!await xa.commitPrepared()) {
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_commit_prepared failed '
           'on xid=${xa.xid}',
@@ -137,13 +141,13 @@ class XaTransactionHandle {
     } on Object {
       try {
         if (xa.state == XaState.active) {
-          xa.end();
+          await xa.end();
         }
         if (xa.state == XaState.prepared ||
             xa.state == XaState.failedAfterPrepare) {
-          xa.rollbackPrepared();
+          await xa.rollbackPrepared();
         } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
-          xa.rollback();
+          await xa.rollback();
         }
       } on Object catch (cleanupError, cleanupSt) {
         developer.log(
@@ -171,7 +175,7 @@ class XaTransactionHandle {
     }
     try {
       final result = await action(xa);
-      if (!xa.commitOnePhase()) {
+      if (!await xa.commitOnePhase()) {
         throw StateError(
           'XaTransactionHandle.runWithStartOnePhase: xa_commit_one_phase '
           'failed on xid=${xa.xid}',
@@ -181,10 +185,10 @@ class XaTransactionHandle {
     } on Object {
       try {
         if (xa.state == XaState.active) {
-          xa.end();
+          await xa.end();
         }
         if (xa.state == XaState.idle || xa.state == XaState.failed) {
-          xa.rollback();
+          await xa.rollback();
         }
       } on Object catch (cleanupError, cleanupSt) {
         developer.log(

@@ -192,6 +192,7 @@ mixin _AsyncWorkerStats on _AsyncOdbcState, _AsyncWorkerDispatch {
       _statementWorkerById.length +
       _statementConnectionById.length +
       _transactionWorkerById.length +
+      _xaWorkerById.length +
       _streamWorkerById.length +
       _asyncRequestWorkerById.length;
 

@@ -2,6 +2,9 @@
 //
 // Uses column-oriented `BulkInsertBuilder.addColumnInt32` +
 // `addColumnText` and the high-level `IOdbcService.bulkInsert` API.
+// Prefer this over row-by-row INSERT for medium batches. For larger payloads
+// (>~1k rows) scale out with `bulkInsertParallel` /
+// example/bulk_insert_parallel_demo.dart (often ~3× on a small pool).
 //
 // Run: dart run example/bulk_insert_demo.dart
 //

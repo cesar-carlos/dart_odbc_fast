@@ -11,6 +11,7 @@ import 'package:odbc_fast/domain/entities/async_worker_pool_stats.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
@@ -125,6 +126,8 @@ abstract class _AsyncOdbcState {
   final Map<int, int> _statementConnectionById = {};
   final Map<int, int> _transactionWorkerById = {};
   final Map<int, int> _transactionConnectionById = {};
+  final Map<int, int> _xaWorkerById = {};
+  final Map<int, int> _xaConnectionById = {};
   final Map<int, int> _streamWorkerById = {};
   final Map<int, int> _asyncRequestWorkerById = {};
   final Queue<_BackpressureWaiter> _backpressureWaiters =

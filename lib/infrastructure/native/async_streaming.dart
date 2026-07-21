@@ -24,6 +24,7 @@ mixin _AsyncStreaming
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamStartBatchedRequest(
@@ -33,10 +34,32 @@ mixin _AsyncStreaming
         fetchSize: fetchSize,
         chunkSize: chunkSize,
         resultEncodingWire: resultEncodingWire,
+        paramsBuffer: paramsBuffer,
       ),
     );
     return r.value;
   }
+
+  /// Starts a batched single-result stream (optional Input params buffer).
+  ///
+  /// Public counterpart of [_streamStartBatched] so tests and custom
+  /// [AsyncNativeOdbcConnection] subclasses can override the start path.
+  Future<int> streamStartBatched(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
+  }) =>
+      _streamStartBatched(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
+        paramsBuffer: paramsBuffer,
+      );
 
   Future<int> _streamStartAsync(
     int connectionId,
@@ -177,13 +200,15 @@ mixin _AsyncStreaming
     int? maxBufferBytes,
     int resultEncodingWire = 0,
     bool lazyStrings = false,
+    Uint8List? paramsBuffer,
   }) async* {
-    final streamId = await _streamStartBatched(
+    final streamId = await streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,
       chunkSize: chunkSize,
       resultEncodingWire: resultEncodingWire,
+      paramsBuffer: paramsBuffer,
     );
     if (streamId == 0) {
       final workerError = await _safeGetWorkerError();
@@ -198,7 +223,7 @@ mixin _AsyncStreaming
     var completed = false;
     try {
       while (true) {
-        final fetched = await _streamFetch(streamId);
+        final fetched = await streamFetch(streamId);
         if (!fetched.success) {
           final workerError = fetched.error ?? await _safeGetWorkerError();
           throw AsyncError(
@@ -240,7 +265,7 @@ mixin _AsyncStreaming
       if (!completed) {
         await streamCancel(streamId);
       }
-      await _streamClose(streamId);
+      await streamClose(streamId);
     }
   }
 
@@ -254,7 +279,7 @@ mixin _AsyncStreaming
     bool lazyStrings = false,
     ResultEncoding resultEncoding = ResultEncoding.columnar,
   }) async* {
-    final streamId = await _streamStartBatched(
+    final streamId = await streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,

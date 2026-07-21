@@ -31,10 +31,28 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
       _odbc_stream_start_batched_options_ptr = null;
     }
     try {
+      _odbc_stream_start_batched_params_ptr =
+          _dylib.lookup('odbc_stream_start_batched_params');
+      _odbc_stream_start_batched_params_options_ptr =
+          _dylib.lookup('odbc_stream_start_batched_params_options');
+    } on Object catch (_) {
+      _odbc_stream_start_batched_params_ptr = null;
+      _odbc_stream_start_batched_params_options_ptr = null;
+    }
+    try {
       _odbc_stream_start_async_options_ptr =
           _dylib.lookup('odbc_stream_start_async_options');
     } on Object catch (_) {
       _odbc_stream_start_async_options_ptr = null;
+    }
+    try {
+      _odbc_stream_start_async_params_ptr =
+          _dylib.lookup('odbc_stream_start_async_params');
+      _odbc_stream_start_async_params_options_ptr =
+          _dylib.lookup('odbc_stream_start_async_params_options');
+    } on Object catch (_) {
+      _odbc_stream_start_async_params_ptr = null;
+      _odbc_stream_start_async_params_options_ptr = null;
     }
     try {
       _odbc_stream_multi_start_batched_options_ptr =
@@ -77,8 +95,21 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
   ffi.Pointer<ffi.NativeFunction<odbc_stream_start_batched_options_func>>?
       _odbc_stream_start_batched_options_ptr;
 
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_start_batched_params_func>>?
+      _odbc_stream_start_batched_params_ptr;
+
+  ffi.Pointer<
+          ffi.NativeFunction<odbc_stream_start_batched_params_options_func>>?
+      _odbc_stream_start_batched_params_options_ptr;
+
   ffi.Pointer<ffi.NativeFunction<odbc_stream_start_async_options_func>>?
       _odbc_stream_start_async_options_ptr;
+
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_start_async_params_func>>?
+      _odbc_stream_start_async_params_ptr;
+
+  ffi.Pointer<ffi.NativeFunction<odbc_stream_start_async_params_options_func>>?
+      _odbc_stream_start_async_params_options_ptr;
 
   ffi.Pointer<ffi.NativeFunction<odbc_stream_multi_start_batched_options_func>>?
       _odbc_stream_multi_start_batched_options_ptr;
@@ -91,10 +122,18 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
   bool get supportsStreamResultEncodingOptions =>
       _odbc_stream_start_batched_options_ptr != null;
 
+  /// True when batched streaming accepts a parameter buffer.
+  bool get supportsStreamStartParams =>
+      _odbc_stream_start_batched_params_ptr != null;
+
   /// True when async batched streaming accepts explicit wire encoding
   /// (`odbc_stream_start_async_options`, v4.2+).
   bool get supportsStreamAsyncEncodingOptions =>
       _odbc_stream_start_async_options_ptr != null;
+
+  /// True when async batched streaming accepts a parameter buffer.
+  bool get supportsStreamAsyncStartParams =>
+      _odbc_stream_start_async_params_ptr != null;
 
   /// True when multi-result batched streaming accepts explicit wire encoding
   /// (`odbc_stream_multi_start_batched_options`, v4.2+).
@@ -249,6 +288,65 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
     );
   }
 
+  int? odbc_stream_start_batched_params(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int fetchSize,
+    int chunkSize,
+  ) {
+    final ptr = _odbc_stream_start_batched_params_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+          int,
+        )>()(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      fetchSize,
+      chunkSize,
+    );
+  }
+
+  int? odbc_stream_start_batched_params_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) {
+    final ptr = _odbc_stream_start_batched_params_options_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+          int,
+          int,
+        )>()(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      fetchSize,
+      chunkSize,
+      resultEncoding,
+    );
+  }
+
   int? odbc_stream_start_async_options(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -262,6 +360,65 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
         .asFunction<int Function(int, ffi.Pointer<Utf8>, int, int, int)>()(
       connId,
       sql,
+      fetchSize,
+      chunkSize,
+      resultEncoding,
+    );
+  }
+
+  int? odbc_stream_start_async_params(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int fetchSize,
+    int chunkSize,
+  ) {
+    final ptr = _odbc_stream_start_async_params_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+          int,
+        )>()(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      fetchSize,
+      chunkSize,
+    );
+  }
+
+  int? odbc_stream_start_async_params_options(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int fetchSize,
+    int chunkSize,
+    int resultEncoding,
+  ) {
+    final ptr = _odbc_stream_start_async_params_options_ptr;
+    if (ptr == null) return null;
+    return ptr.asFunction<
+        int Function(
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+          int,
+          int,
+        )>()(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
       fetchSize,
       chunkSize,
       resultEncoding,

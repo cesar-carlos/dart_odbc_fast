@@ -98,7 +98,7 @@ class OdbcTransactionService {
           await _xaSafelyAbort(xa);
           return userResult;
         }
-        if (!xa.commitOnePhase()) {
+        if (!await xa.commitOnePhase()) {
           await _xaSafelyAbort(xa);
           return Failure(
             QueryError(
@@ -125,7 +125,7 @@ class OdbcTransactionService {
         await _xaSafelyAbort(xa);
         return userResult;
       }
-      if (!xa.end()) {
+      if (!await xa.end()) {
         await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
@@ -133,7 +133,7 @@ class OdbcTransactionService {
           ),
         );
       }
-      if (!xa.prepare()) {
+      if (!await xa.prepare()) {
         await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
@@ -141,7 +141,7 @@ class OdbcTransactionService {
           ),
         );
       }
-      if (!xa.commitPrepared()) {
+      if (!await xa.commitPrepared()) {
         await _xaSafelyAbort(xa);
         return Failure(
           QueryError(
@@ -161,6 +161,15 @@ class OdbcTransactionService {
       );
     }
   }
+
+  Future<Result<List<Xid>>> xaRecover(String connectionId) =>
+      _repository.xaRecover(connectionId);
+
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) =>
+      _repository.xaResumePrepared(connectionId, xid);
 
   Future<Result<void>> createSavepoint(
     String connectionId,
@@ -186,13 +195,13 @@ class OdbcTransactionService {
   Future<void> _xaSafelyAbort(XaTransactionHandle xa) async {
     try {
       if (xa.state == XaState.active) {
-        xa.end();
+        await xa.end();
       }
       if (xa.state == XaState.prepared ||
           xa.state == XaState.failedAfterPrepare) {
-        xa.rollbackPrepared();
+        await xa.rollbackPrepared();
       } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
-        xa.rollback();
+        await xa.rollback();
       }
     } on Object catch (cleanupError, cleanupSt) {
       AppLogger.warning(

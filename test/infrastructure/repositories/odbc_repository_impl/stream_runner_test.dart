@@ -7,6 +7,7 @@ import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_dec
 import 'package:odbc_fast/infrastructure/repositories/odbc_repository_impl.dart';
 import 'package:test/test.dart';
 
+import '../../../helpers/binary_protocol_test_helper.dart';
 import '../../../helpers/fake_async_native_for_errors.dart';
 import 'helpers.dart';
 
@@ -253,6 +254,54 @@ void main() {
           ).length;
 
           expect(count, equals(1));
+        },
+      );
+
+      test(
+        'should_stream_batched_chunks_with_named_params_buffer',
+        () async {
+          final frameA = createBinaryProtocolBuffer(
+            columns: const [(name: 'n', type: 2)],
+            rows: const [
+              [1],
+            ],
+          );
+          final frameB = createBinaryProtocolBuffer(
+            columns: const [(name: 'n', type: 2)],
+            rows: const [
+              [2],
+            ],
+          );
+          native
+            ..streamStartBatchedResult = 42
+            ..streamFetchResponses = [
+              StreamFetchResponse(
+                0,
+                success: true,
+                data: frameA,
+                hasMore: true,
+              ),
+              StreamFetchResponse(
+                0,
+                success: true,
+                data: frameB,
+              ),
+            ];
+
+          final chunks = await repository.streamQueryNamed(
+            connectionId,
+            'SELECT :id FROM t WHERE x = :id',
+            {'id': 7},
+          ).toList();
+
+          expect(chunks, hasLength(2));
+          expect(chunks.every((c) => c.isSuccess()), isTrue);
+          expect(
+            native.lastStreamStartSql,
+            equals('SELECT ? FROM t WHERE x = ?'),
+          );
+          expect(native.lastStreamStartParamsBuffer, isNotNull);
+          expect(native.lastStreamStartParamsBuffer!.isNotEmpty, isTrue);
         },
       );
     });

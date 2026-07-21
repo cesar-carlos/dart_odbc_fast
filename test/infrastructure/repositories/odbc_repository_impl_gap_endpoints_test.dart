@@ -36,6 +36,9 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
   int streamMultiStartBatchedResult = 0;
   Uint8List? executeQueryMultiResult = Uint8List(0);
 
+  /// Return value for [xaStart]; `0` maps to repository QueryError.
+  int xaStartResult = 7;
+
   /// Native handles increment each call so each logical connection gets a
   /// distinct string id (`nativeId.toString()` in the repository).
   int _nextNativeConn = 41;
@@ -145,6 +148,9 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
 
   @override
   Future<bool> releaseSavepoint(int txnId, String name) async => false;
+
+  @override
+  Future<int> xaStart(int connectionId, Xid xid) async => xaStartResult;
 
   @override
   Future<Uint8List?> catalogTables(
@@ -406,10 +412,10 @@ void main() {
     });
 
     test(
-      'xaStart returns ValidationError when XA is unsupported on async backend',
+      'xaStart returns ValidationError when connection id is invalid',
       () async {
         final result = await repository.xaStart(
-          connectionId,
+          'missing-connection',
           Xid.fromStrings(gtrid: 'g'),
         );
         expect(result.isSuccess(), isFalse);
@@ -419,7 +425,29 @@ void main() {
             expect(e, isA<ValidationError>());
             expect(
               (e as ValidationError).message,
-              contains('async ODBC repository'),
+              contains('Invalid connection ID'),
+            );
+          },
+        );
+      },
+    );
+
+    test(
+      'xaStart returns QueryError when async xa_start returns zero handle',
+      () async {
+        asyncNative.xaStartResult = 0;
+        final result = await repository.xaStart(
+          connectionId,
+          Xid.fromStrings(gtrid: 'g'),
+        );
+        expect(result.isSuccess(), isFalse);
+        result.fold(
+          (_) => fail('Expected failure'),
+          (e) {
+            expect(e, isA<QueryError>());
+            expect(
+              (e as QueryError).message,
+              anyOf(contains('xa_start'), contains('native error')),
             );
           },
         );

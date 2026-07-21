@@ -71,4 +71,90 @@ mixin _AsyncTransactions on _AsyncOdbcState, _AsyncWorkerDispatch {
     );
     return r.value;
   }
+
+  /// Starts an XA branch; returns native `xa_id` or `0` on failure.
+  Future<int> xaStart(int connectionId, Xid xid) async {
+    final r = await _sendRequest<IntResponse>(
+      XaStartRequest(
+        _nextRequestId(),
+        connectionId,
+        formatId: xid.formatId,
+        gtrid: xid.gtrid,
+        bqual: xid.bqual,
+      ),
+    );
+    return r.value;
+  }
+
+  Future<int> xaEnd(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaEnd, xaId),
+    );
+    return r.value;
+  }
+
+  Future<int> xaPrepare(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaPrepare, xaId),
+    );
+    return r.value;
+  }
+
+  Future<int> xaCommitPrepared(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaCommitPrepared, xaId),
+    );
+    return r.value;
+  }
+
+  Future<int> xaRollbackPrepared(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaRollbackPrepared, xaId),
+    );
+    return r.value;
+  }
+
+  Future<int> xaCommitOnePhase(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaCommitOnePhase, xaId),
+    );
+    return r.value;
+  }
+
+  Future<int> xaRollbackActive(int xaId) async {
+    final r = await _sendRequest<IntResponse>(
+      XaIdRequest(_nextRequestId(), RequestType.xaRollbackActive, xaId),
+    );
+    return r.value;
+  }
+
+  /// Recovers prepared XIDs; returns `null` on FFI failure.
+  Future<List<Xid>?> xaRecover(int connectionId) async {
+    final r = await _sendRequest<XaRecoverResponse>(
+      XaRecoverRequest(_nextRequestId(), connectionId),
+    );
+    if (r.error != null) return null;
+    return [
+      for (final entry in r.entries)
+        Xid(
+          formatId: entry.formatId,
+          gtrid: entry.gtrid,
+          bqual: entry.bqual,
+        ),
+    ];
+  }
+
+  /// Resumes a prepared XID; returns native `xa_id` or `0` on failure.
+  Future<int> xaResumePrepared(int connectionId, Xid xid) async {
+    final r = await _sendRequest<IntResponse>(
+      XaResumePreparedRequest(
+        _nextRequestId(),
+        connectionId,
+        formatId: xid.formatId,
+        gtrid: xid.gtrid,
+        bqual: xid.bqual,
+      ),
+    );
+    return r.value;
+  }
 }

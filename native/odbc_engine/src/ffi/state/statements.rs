@@ -83,20 +83,37 @@ pub(crate) fn contains_statement(stmt_id: u32) -> bool {
 }
 
 pub(crate) fn remove_statement(stmt_id: u32) -> Option<StatementHandle> {
-    try_lock_statement_maps().and_then(|mut maps| maps.statements.remove(&stmt_id))
+    let removed = try_lock_statement_maps().and_then(|mut maps| maps.statements.remove(&stmt_id));
+    if removed.is_some() {
+        super::pending::clear_pending_for_statement(stmt_id);
+    }
+    removed
 }
 
 pub(crate) fn clear_all_statements() {
     if let Some(mut maps) = try_lock_statement_maps() {
         maps.statements.clear();
     }
+    super::pending::clear_pending_execute_entries();
 }
 
 /// Drop every prepared statement bound to `conn_id` (disconnect / pool close).
 pub(crate) fn retain_statements_not_for_connection(conn_id: u32) {
+    let mut dropped_stmt_ids = Vec::new();
     if let Some(mut maps) = try_lock_statement_maps() {
-        maps.statements.retain(|_, stmt| stmt.conn_id() != conn_id);
+        maps.statements.retain(|stmt_id, stmt| {
+            if stmt.conn_id() == conn_id {
+                dropped_stmt_ids.push(*stmt_id);
+                false
+            } else {
+                true
+            }
+        });
     }
+    for stmt_id in dropped_stmt_ids {
+        super::pending::clear_pending_for_statement(stmt_id);
+    }
+    super::pending::clear_pending_for_connection(conn_id);
 }
 
 #[cfg(test)]

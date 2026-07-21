@@ -7,6 +7,7 @@ import 'package:odbc_fast/application/telemetry/telemetry_odbc_decorators.dart'
     show TelemetryOdbcDecorators;
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_admin_forwards.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_base.dart';
+import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_dialect_forwards.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_pool_forwards.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_query_forwards.dart';
 import 'package:odbc_fast/application/telemetry/telemetry_odbc_service_decorator_transaction_forwards.dart';
@@ -46,7 +47,8 @@ class TelemetryOdbcServiceDecorator extends TelemetryOdbcServiceDecoratorBase
         TelemetryOdbcServiceAdminForwards,
         TelemetryOdbcServiceQueryForwards,
         TelemetryOdbcServiceTransactionForwards,
-        TelemetryOdbcServicePoolForwards
+        TelemetryOdbcServicePoolForwards,
+        TelemetryOdbcServiceDialectForwards
     implements IOdbcService {
   /// Creates a new decorated ODBC service.
   ///

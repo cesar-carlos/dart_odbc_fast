@@ -1,9 +1,12 @@
 // Typed columnar query demo: `executeQueryColumnarParamValues`,
 // `streamQueryColumnar`, and `TypedColumnarResult` consumption.
 //
-// Row-major `QueryResult` remains the default. Use the columnar surface when
-// numeric pipelines benefit from `Int32List` / `Int64List` / `Float64List`
-// instead of per-cell `dynamic` boxing.
+// Under `balanced` / legacy, row-major `QueryResult` remains the default.
+// For server workloads prefer `OdbcUsageProfile.balancedServer` (or
+// `highThroughput`) so columnar is the recommended encoding without per-call
+// overrides — see example/stream_query_columnar_demo.dart. Use the typed
+// columnar surface when numeric pipelines benefit from `Int32List` /
+// `Int64List` / `Float64List` instead of per-cell `dynamic` boxing.
 //
 // Run: dart run example/typed_columnar_demo.dart
 //

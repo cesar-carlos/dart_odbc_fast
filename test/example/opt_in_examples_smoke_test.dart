@@ -67,6 +67,22 @@ void main() {
     );
 
     test(
+      'should_skip_recommended_performance_patterns_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/recommended_performance_patterns_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
       'should_skip_backpressure_modes_demo_when_dsn_is_disabled',
       () async {
         final result = await _runExampleWithoutDsn(

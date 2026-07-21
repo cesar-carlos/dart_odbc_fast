@@ -48,6 +48,52 @@ pub extern "C" fn odbc_stream_start_batched_options(
     })
 }
 
+/// Start batched streaming with a parameter buffer (legacy ParamValue or DRT1 Input).
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_batched_params(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_start_batched_params(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+        )
+    })
+}
+
+/// Start batched streaming with parameters and an explicit wire encoding.
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_batched_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_start_batched_params_options(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
+    })
+}
+
 /// Start async batched stream execution.
 #[no_mangle]
 pub extern "C" fn odbc_stream_start_async(
@@ -72,6 +118,52 @@ pub extern "C" fn odbc_stream_start_async_options(
 ) -> c_uint {
     crate::ffi_guard_id!(c_uint, {
         adapter::stream_start_async_options(conn_id, sql, fetch_size, chunk_size, result_encoding)
+    })
+}
+
+/// Start async batched stream execution with a parameter buffer.
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_async_params(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_start_async_params(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+        )
+    })
+}
+
+/// Start async batched stream execution with parameters and wire encoding.
+#[no_mangle]
+pub extern "C" fn odbc_stream_start_async_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_start_async_params_options(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
     })
 }
 

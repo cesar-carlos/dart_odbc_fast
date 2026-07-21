@@ -298,9 +298,43 @@ typedef odbc_stream_start_batched_options_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Uint32,
 );
+typedef odbc_stream_start_batched_params_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_start_batched_params_options_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
 typedef odbc_stream_start_async_options_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_start_async_params_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_start_async_params_options_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,

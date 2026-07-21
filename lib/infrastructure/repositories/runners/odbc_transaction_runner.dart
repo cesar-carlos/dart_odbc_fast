@@ -125,11 +125,22 @@ class OdbcTransactionRunner {
           ValidationError(message: 'Invalid connection ID'),
         );
       }
+      final cid = state.connectionIds[connectionId]!;
       if (ffi.isAsync) {
-        return const Failure<XaTransactionHandle, OdbcError>(
-          ValidationError(
-            message:
-                'XA / 2PC is not supported on the async ODBC repository backend',
+        final asyncConn = ffi.async;
+        final xaId = await asyncConn.xaStart(cid, xid);
+        if (xaId == 0) {
+          return await ffi.convertNativeErrorToFailure<XaTransactionHandle>(
+            errorFactory: odbcQueryErrorFactory,
+            fallbackMessage: 'xa_start failed (null handle)',
+            nativeConnectionId: cid,
+          );
+        }
+        return Success(
+          createAsyncXaTransactionHandle(
+            xaId: xaId,
+            xid: xid,
+            conn: asyncConn,
           ),
         );
       }
@@ -142,7 +153,6 @@ class OdbcTransactionRunner {
           ),
         );
       }
-      final cid = state.connectionIds[connectionId]!;
       final h = native.xaStart(cid, xid);
       if (h == null) {
         final structured = native.getStructuredErrorForConnection(cid);
@@ -160,6 +170,105 @@ class OdbcTransactionRunner {
           QueryError(
             message: msg.isNotEmpty ? msg : 'xa_start failed (null handle)',
           ),
+        );
+      }
+      return Success(h);
+    } on Exception catch (e) {
+      return Failure<XaTransactionHandle, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  Future<Result<List<Xid>>> xaRecover(String connectionId) async {
+    try {
+      if (!state.connectionIds.containsKey(connectionId)) {
+        return const Failure<List<Xid>, OdbcError>(
+          ValidationError(message: 'Invalid connection ID'),
+        );
+      }
+      final cid = state.connectionIds[connectionId]!;
+      if (ffi.isAsync) {
+        final recovered = await ffi.async.xaRecover(cid);
+        if (recovered == null) {
+          return await ffi.convertNativeErrorToFailure<List<Xid>>(
+            errorFactory: odbcQueryErrorFactory,
+            fallbackMessage: 'xa_recover failed',
+            nativeConnectionId: cid,
+          );
+        }
+        return Success(recovered);
+      }
+      final native = ffi.sync;
+      if (!native.supportsXa) {
+        return const Failure<List<Xid>, OdbcError>(
+          ValidationError(
+            message: 'The loaded native library does not export the XA FFI '
+                'entry points',
+          ),
+        );
+      }
+      final recovered = native.xaRecover(cid);
+      if (recovered == null) {
+        return await ffi.convertNativeErrorToFailure<List<Xid>>(
+          errorFactory: odbcQueryErrorFactory,
+          fallbackMessage: 'xa_recover failed',
+          nativeConnectionId: cid,
+        );
+      }
+      return Success(recovered);
+    } on Exception catch (e) {
+      return Failure<List<Xid>, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+    }
+  }
+
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) async {
+    try {
+      if (!state.connectionIds.containsKey(connectionId)) {
+        return const Failure<XaTransactionHandle, OdbcError>(
+          ValidationError(message: 'Invalid connection ID'),
+        );
+      }
+      final cid = state.connectionIds[connectionId]!;
+      if (ffi.isAsync) {
+        final asyncConn = ffi.async;
+        final xaId = await asyncConn.xaResumePrepared(cid, xid);
+        if (xaId == 0) {
+          return await ffi.convertNativeErrorToFailure<XaTransactionHandle>(
+            errorFactory: odbcQueryErrorFactory,
+            fallbackMessage: 'xa_resume_prepared failed',
+            nativeConnectionId: cid,
+          );
+        }
+        return Success(
+          createAsyncXaTransactionHandle(
+            xaId: xaId,
+            xid: xid,
+            conn: asyncConn,
+            initialState: XaState.prepared,
+          ),
+        );
+      }
+      final native = ffi.sync;
+      if (!native.supportsXa) {
+        return const Failure<XaTransactionHandle, OdbcError>(
+          ValidationError(
+            message: 'The loaded native library does not export the XA FFI '
+                'entry points',
+          ),
+        );
+      }
+      final h = native.xaResumePrepared(cid, xid);
+      if (h == null) {
+        return await ffi.convertNativeErrorToFailure<XaTransactionHandle>(
+          errorFactory: odbcQueryErrorFactory,
+          fallbackMessage: 'xa_resume_prepared failed',
+          nativeConnectionId: cid,
         );
       }
       return Success(h);

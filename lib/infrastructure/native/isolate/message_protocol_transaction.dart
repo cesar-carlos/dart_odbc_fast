@@ -65,4 +65,85 @@ class SavepointReleaseRequest extends WorkerRequest {
   final String name;
 }
 
+/// Start an XA branch on [connectionId].
+class XaStartRequest extends WorkerRequest {
+  const XaStartRequest(
+    int requestId,
+    this.connectionId, {
+    required this.formatId,
+    required this.gtrid,
+    required this.bqual,
+  }) : super(requestId, RequestType.xaStart);
+
+  final int connectionId;
+  final int formatId;
+  final Uint8List gtrid;
+  final Uint8List bqual;
+}
+
+/// XA lifecycle op keyed by native [xaId].
+class XaIdRequest extends WorkerRequest {
+  XaIdRequest(super.requestId, super.type, this.xaId)
+      : assert(
+          type == RequestType.xaEnd ||
+              type == RequestType.xaPrepare ||
+              type == RequestType.xaCommitPrepared ||
+              type == RequestType.xaRollbackPrepared ||
+              type == RequestType.xaCommitOnePhase ||
+              type == RequestType.xaRollbackActive,
+          'XaIdRequest type must be an XA lifecycle op',
+        );
+
+  final int xaId;
+}
+
+/// Recover prepared XIDs for [connectionId].
+class XaRecoverRequest extends WorkerRequest {
+  const XaRecoverRequest(int requestId, this.connectionId)
+      : super(requestId, RequestType.xaRecover);
+
+  final int connectionId;
+}
+
+/// Resume a prepared XID as a live XA handle.
+class XaResumePreparedRequest extends WorkerRequest {
+  const XaResumePreparedRequest(
+    int requestId,
+    this.connectionId, {
+    required this.formatId,
+    required this.gtrid,
+    required this.bqual,
+  }) : super(requestId, RequestType.xaResumePrepared);
+
+  final int connectionId;
+  final int formatId;
+  final Uint8List gtrid;
+  final Uint8List bqual;
+}
+
+/// One recovered XID entry (isolate-sendable).
+class XaRecoverEntry {
+  const XaRecoverEntry({
+    required this.formatId,
+    required this.gtrid,
+    required this.bqual,
+  });
+
+  final int formatId;
+  final Uint8List gtrid;
+  final Uint8List bqual;
+}
+
+/// Response for [XaRecoverRequest].
+class XaRecoverResponse extends WorkerResponse {
+  const XaRecoverResponse(
+    super.requestId, {
+    this.entries = const [],
+    this.error,
+  });
+
+  final List<XaRecoverEntry> entries;
+  final String? error;
+}
+
 /// Prepare SQL statement.

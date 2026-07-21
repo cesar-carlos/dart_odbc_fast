@@ -1,4 +1,12 @@
-// Streaming demo with streamQueryBatched and streamQuery.
+// Streaming demo: prefers `streamQueryBatched`, contrasts with legacy
+// `streamQuery` (buffer-mode cursor).
+//
+// Recommendation: use batched streaming for large result sets. The high-level
+// `IOdbcService.streamQuery` path already defaults to batched. Prefer service
+// APIs (`streamQuery` / `streamQueryNamed` / `streamQueryColumnar`) unless you
+// need raw native control — see example/recommended_performance_patterns_demo.dart
+// and example/streaming_performance_benchmark.dart.
+//
 // Run: dart run example/streaming_demo.dart
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -122,7 +130,7 @@ Future<void> _runBatchedStreaming(
 
   sw.stop();
   AppLogger.info(
-    'Batched stream: chunks=$chunks '
+    'Batched stream (preferred): chunks=$chunks '
     'rows=$totalRows time=${sw.elapsedMilliseconds}ms',
   );
 }
@@ -142,5 +150,8 @@ Future<void> _runCustomChunkStreaming(
     totalRows += chunk.rowCount;
   }
 
-  AppLogger.info('Custom stream: chunks=$chunks rows=$totalRows');
+  AppLogger.info(
+    'Legacy streamQuery (buffer-mode contrast): '
+    'chunks=$chunks rows=$totalRows',
+  );
 }

@@ -95,6 +95,20 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
         ),
       );
 
+  Future<Result<List<Xid>>> xaRecover(String connectionId) => _ops.inOperation(
+        'ODBC.xaRecover',
+        () => _service.xaRecover(connectionId),
+      );
+
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) =>
+      _ops.inOperation(
+        'ODBC.xaResumePrepared',
+        () => _service.xaResumePrepared(connectionId, xid),
+      );
+
   Future<Result<void>> createSavepoint(
     String connectionId,
     int txnId,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
@@ -6,6 +7,9 @@ import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
+import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
+    show NamedParameterParser, ParameterMissingException;
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_query_runner.dart';
@@ -99,7 +103,73 @@ class StreamQueryRunner {
     String sql,
     Map<String, Object?> namedParams,
   ) async* {
-    yield await query.executeQueryNamed(connectionId, sql, namedParams);
+    final nativeId = state.connectionIds[connectionId];
+    if (nativeId == null) {
+      yield const Failure<QueryResult, OdbcError>(
+        ValidationError(message: 'Invalid connection ID'),
+      );
+      return;
+    }
+
+    late final String cleanedSql;
+    late final Uint8List paramsBuffer;
+    try {
+      final extract = NamedParameterParser.extract(sql);
+      final positional = NamedParameterParser.toPositionalParams(
+        namedParams: namedParams,
+        paramNames: extract.paramNames,
+      );
+      cleanedSql = extract.cleanedSql;
+      paramsBuffer = serializeParams(paramValuesFromObjects(positional));
+    } on ParameterMissingException catch (e) {
+      yield Failure<QueryResult, OdbcError>(
+        ValidationError(message: e.message),
+      );
+      return;
+    } on Exception catch (e) {
+      yield Failure<QueryResult, OdbcError>(
+        QueryError(message: e.toString()),
+      );
+      return;
+    }
+
+    final supportsParams =
+        ffi.isAsync || ffi.sync.native.supportsStreamStartParams;
+    if (!supportsParams) {
+      yield await query.executeQueryNamed(connectionId, sql, namedParams);
+      return;
+    }
+
+    final opts = state.optionsFor(connectionId);
+    final maxBytes = opts?.maxResultBufferBytes;
+    final queryTimeout = opts?.queryTimeout;
+    final lazyStrings = opts?.lazyStrings ?? false;
+    final encoding = state.defaultResultEncoding;
+
+    Stream<Result<QueryResult>> createSource() async* {
+      try {
+        await for (final chunk in streamNativeQueryWithFallback(
+          nativeId,
+          cleanedSql,
+          maxBufferBytes: maxBytes,
+          resultEncoding: encoding,
+          lazyStrings: lazyStrings,
+          paramsBuffer: paramsBuffer,
+        )) {
+          yield Success(parser.toQueryResult(chunk));
+        }
+      } on Exception catch (e) {
+        yield await _errors.streamingFailureFromException(e);
+      }
+    }
+
+    yield* streamWithQueryTimeout(
+      source: createSource(),
+      queryTimeout: queryTimeout,
+      onTimeoutItem: const Failure<QueryResult, OdbcError>(
+        QueryError(message: odbcQueryTimedOutMessage),
+      ),
+    );
   }
 
   Stream<ParsedRowBuffer> streamNativeQueryWithFallback(
@@ -108,6 +178,7 @@ class StreamQueryRunner {
     int? maxBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     bool lazyStrings = false,
+    Uint8List? paramsBuffer,
   }) async* {
     final batched = ffi.isAsync
         ? ffi.async.streamQueryBatched(
@@ -116,12 +187,14 @@ class StreamQueryRunner {
             maxBufferBytes: maxBufferBytes,
             resultEncodingWire: resultEncoding.wireCode,
             lazyStrings: lazyStrings,
+            paramsBuffer: paramsBuffer,
           )
         : ffi.sync.streamQueryBatched(
             nativeId,
             sql,
             resultEncoding: resultEncoding,
             lazyStrings: lazyStrings,
+            paramsBuffer: paramsBuffer,
           );
 
     await for (final chunk in batched) {

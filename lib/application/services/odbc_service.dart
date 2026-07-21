@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:odbc_fast/application/services/i_dialect_service.dart';
 import 'package:odbc_fast/application/services/i_odbc_service.dart';
 import 'package:odbc_fast/application/services/odbc_admin_service.dart';
+import 'package:odbc_fast/application/services/odbc_dialect_service.dart';
 import 'package:odbc_fast/application/services/odbc_pool_service.dart';
 import 'package:odbc_fast/application/services/odbc_query_service.dart';
 import 'package:odbc_fast/application/services/odbc_transaction_service.dart';
@@ -26,9 +28,13 @@ import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
+    hide OdbcMetrics;
+import 'package:odbc_fast/infrastructure/native/driver_capabilities_v3.dart';
 import 'package:result_dart/result_dart.dart';
 
 export 'package:odbc_fast/application/services/i_admin_service.dart';
+export 'package:odbc_fast/application/services/i_dialect_service.dart';
 export 'package:odbc_fast/application/services/i_odbc_service.dart';
 export 'package:odbc_fast/application/services/i_pool_service.dart';
 export 'package:odbc_fast/application/services/i_query_service.dart';
@@ -54,11 +60,17 @@ export 'package:odbc_fast/application/services/i_transaction_service.dart';
 /// ```
 class OdbcService implements IOdbcService {
   /// Creates a new [OdbcService] instance.
-  OdbcService(IOdbcRepository repository)
-      : _admin = OdbcAdminService(repository),
+  OdbcService(
+    IOdbcRepository repository, {
+    IDialectService? dialect,
+  })  : _admin = OdbcAdminService(repository),
         _query = OdbcQueryService(repository),
         _pool = OdbcPoolService(repository),
         _transaction = OdbcTransactionService(repository),
+        _dialect = dialect ??
+            OdbcDialectService(
+              OdbcDriverFeatures(OdbcNative()),
+            ),
         _repository = repository;
 
   final IOdbcRepository _repository;
@@ -66,6 +78,7 @@ class OdbcService implements IOdbcService {
   final OdbcQueryService _query;
   final OdbcPoolService _pool;
   final OdbcTransactionService _transaction;
+  final IDialectService _dialect;
 
   /// Closes the internal event bridge. Call from owners that explicitly
   /// dispose the service. Safe to call multiple times.
@@ -169,6 +182,17 @@ class OdbcService implements IOdbcService {
         action,
         onePhase: onePhase,
       );
+
+  @override
+  Future<Result<List<Xid>>> xaRecover(String connectionId) =>
+      _transaction.xaRecover(connectionId);
+
+  @override
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  ) =>
+      _transaction.xaResumePrepared(connectionId, xid);
 
   @override
   Future<Result<void>> createSavepoint(
@@ -557,6 +581,49 @@ class OdbcService implements IOdbcService {
     String? connectionId,
   }) =>
       _query.executeQuery(sql, connectionId: connectionId);
+
+  @override
+  bool get supportsDialectApi => _dialect.supportsDialectApi;
+
+  @override
+  String? buildUpsertSql({
+    required String connectionString,
+    required String table,
+    required List<String> columns,
+    required List<String> conflictColumns,
+    List<String>? updateColumns,
+  }) =>
+      _dialect.buildUpsertSql(
+        connectionString: connectionString,
+        table: table,
+        columns: columns,
+        conflictColumns: conflictColumns,
+        updateColumns: updateColumns,
+      );
+
+  @override
+  String? appendReturningClause({
+    required String connectionString,
+    required String sql,
+    required DmlVerb verb,
+    required List<String> columns,
+  }) =>
+      _dialect.appendReturningClause(
+        connectionString: connectionString,
+        sql: sql,
+        verb: verb,
+        columns: columns,
+      );
+
+  @override
+  List<String>? getSessionInitSql({
+    required String connectionString,
+    SessionOptions? options,
+  }) =>
+      _dialect.getSessionInitSql(
+        connectionString: connectionString,
+        options: options,
+      );
 
   @override
   void dispose() {

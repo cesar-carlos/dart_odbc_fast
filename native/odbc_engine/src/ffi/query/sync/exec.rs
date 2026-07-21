@@ -34,6 +34,15 @@ pub extern "C" fn odbc_exec_query(
 
         let metrics = state::ffi_metrics();
         let start = Instant::now();
+        let pending_key = state::PendingResultKey::ExecQuery {
+            conn_id,
+            sql_hash: state::hash_bytes(sql_str.as_bytes()),
+        };
+        if let Some(code) =
+            state::try_write_pending_result(&pending_key, out_buf, buf_len, out_written)
+        {
+            return code;
+        }
 
         let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -98,7 +107,7 @@ pub extern "C" fn odbc_exec_query(
                 } else {
                     metrics.record_error();
                 }
-                status
+                state::stash_if_buffer_too_small(status, pending_key, data)
             }
             Err(e) => {
                 metrics.record_error();

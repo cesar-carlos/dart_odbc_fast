@@ -18,7 +18,8 @@ pub mod types;
 pub mod columnar_v2;
 
 pub use bound_param::{
-    deserialize_param_buffer, is_directed_param_buffer, BoundParam, ParamDirection, ParamList,
+    deserialize_param_buffer, input_params_from_buffer, is_directed_param_buffer, BoundParam,
+    ParamDirection, ParamList,
 };
 pub use bulk_insert::{
     bulk_rows_from_vecs, parse_bulk_insert_payload, serialize_bulk_insert_payload,

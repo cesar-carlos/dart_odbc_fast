@@ -68,6 +68,15 @@ enum RequestType {
   asyncGetResult,
   asyncCancel,
   asyncFree,
+  xaStart,
+  xaEnd,
+  xaPrepare,
+  xaCommitPrepared,
+  xaRollbackPrepared,
+  xaCommitOnePhase,
+  xaRollbackActive,
+  xaRecover,
+  xaResumePrepared,
 }
 
 /// Base class for worker requests. All subclasses must be sendable.

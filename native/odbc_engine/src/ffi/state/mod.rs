@@ -56,6 +56,7 @@
 //! and may be called at any point in any order.
 
 mod connections;
+mod pending;
 mod pools;
 mod statements;
 mod streams;
@@ -64,6 +65,9 @@ mod xa;
 
 pub use connections::contains_connection;
 pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
+pub(crate) use pending::{
+    hash_bytes, stash_if_buffer_too_small, try_write_pending_result, PendingResultKey,
+};
 #[cfg(test)]
 pub(crate) use pools::with_pooled_connection_mut_for_test;
 pub(crate) use pools::{

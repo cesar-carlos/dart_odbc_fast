@@ -85,9 +85,9 @@ Contrato atual:
 Adicionados em v3.4.0 (PostgreSQL, MySQL/MariaDB, DB2) e v3.4.1 (Oracle via `DBMS_XA`).
 `xa-dtc` (v3.4.0b) cobre SQL Server / MSDTC (Windows-only).
 
-Observação de camada Dart: o backend sync/nativo expõe `XaTransactionHandle`
-no alto nível. O backend async por worker isolate ainda não oferece a
-mesma superfície de XA/2PC sem mudar a API pública.
+Observação de camada Dart: `XaTransactionHandle` é async (`Future<bool>`) nos
+backends sync e isolate. O worker isolate mantém afinidade por `xaId` (espelhando
+transações locais). `IOdbcService.xaRecover` / `xaResumePrepared` expõem recovery.
 
 | Função | Propósito |
 |---|---|
@@ -190,19 +190,24 @@ Adicionados em v3.0.0. Despacham via `PluginRegistry` — sem I/O, geradores pur
 | `odbc_close_statement(stmt_id) -> c_int` | Fecha e remove do cache. |
 | `odbc_clear_all_statements() -> c_int` | Limpa todos os statements (shutdown helper). |
 
-### 1.16 Streaming de resultados (10)
+### 1.16 Streaming de resultados (14)
 
 Streaming **single-result** no Dart (`streamQuery`, repositório e serviço) usa
 **batched** por padrão (`odbc_stream_start_batched`). `streamQueryColumnar` usa
-`odbc_stream_start_batched_options` quando disponível (v4.2+). O modo legado buffer
-(`odbc_stream_start`) permanece em `streamQueryBuffer` e spill-to-disk.
+`odbc_stream_start_batched_options` quando disponível (v4.2+). Named / positional
+params usam `odbc_stream_start_batched_params*` (Input-only; fallback buffered se
+o símbolo estiver ausente). O modo legado buffer (`odbc_stream_start`) permanece
+em `streamQueryBuffer` e spill-to-disk.
 
 | Função | Propósito |
 |---|---|
 | `odbc_stream_start(conn_id, sql, fetch_size, ...) -> stream_id` | Cursor síncrono (legado buffer-mode). |
 | `odbc_stream_start_batched(conn_id, sql, fetch_size, chunk_size, ...) -> stream_id` | Worker thread + `mpsc` (**default Dart**). |
 | `odbc_stream_start_batched_options(conn_id, sql, fetch_size, chunk_size, result_encoding, ...) -> stream_id` | Batched com `ResultEncoding` wire (row-major, columnar v2, columnar compressed). |
+| `odbc_stream_start_batched_params(conn_id, sql, params, params_len, fetch_size, chunk_size, ...) -> stream_id` | Batched com buffer de params Input (mesmo wire de `odbc_exec_query_params`). |
+| `odbc_stream_start_batched_params_options(..., result_encoding, ...) -> stream_id` | Batched + params + `ResultEncoding`. |
 | `odbc_stream_start_async(conn_id, sql, ...) -> stream_id` | Worker + status async. |
+| `odbc_stream_start_async_params` / `_params_options` | Async batched com params Input. |
 | `odbc_stream_multi_start_batched(conn_id, sql, ...) -> stream_id` | Multi-result batched (v3.3+). Cada frame é `[tag:u8][len:u32][payload]`. |
 | `odbc_stream_multi_start_async(conn_id, sql, ...) -> stream_id` | Multi-result async (v3.3+). |
 | `odbc_stream_poll_async(stream_id, &out_status) -> c_int` | Pending/Ready/Done/Cancelled/Error. |

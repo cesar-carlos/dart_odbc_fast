@@ -24,6 +24,13 @@ abstract interface class ITransactionRepository {
     Xid xid,
   );
 
+  Future<Result<List<Xid>>> xaRecover(String connectionId);
+
+  Future<Result<XaTransactionHandle>> xaResumePrepared(
+    String connectionId,
+    Xid xid,
+  );
+
   Future<Result<Unit>> createSavepoint(
     String connectionId,
     int txnId,

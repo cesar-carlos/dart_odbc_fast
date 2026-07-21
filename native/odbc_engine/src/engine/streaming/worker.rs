@@ -162,6 +162,35 @@ impl StreamingExecutor {
         conn: &Connection<'static>,
         sql: &str,
         fetch_size: usize,
+        on_batch: F,
+        cancel_requested: Option<Arc<AtomicBool>>,
+        result_encoding: ResultEncoding,
+    ) -> Result<()>
+    where
+        F: FnMut(Vec<u8>) -> Result<()>,
+    {
+        self.execute_streaming_batched_with_params(
+            conn,
+            sql,
+            &[],
+            fetch_size,
+            on_batch,
+            cancel_requested,
+            result_encoding,
+        )
+    }
+
+    /// Batched streaming with positional / DRT1-input parameters.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors execute_streaming_batched plus owned Input params for the FFI bind path"
+    )]
+    pub fn execute_streaming_batched_with_params<F>(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[crate::protocol::ParamValue],
+        fetch_size: usize,
         mut on_batch: F,
         cancel_requested: Option<Arc<AtomicBool>>,
         result_encoding: ResultEncoding,
@@ -169,9 +198,36 @@ impl StreamingExecutor {
     where
         F: FnMut(Vec<u8>) -> Result<()>,
     {
+        use crate::protocol::{
+            has_null_param, param_values_to_input_params,
+            param_values_to_input_params_with_descriptions,
+            param_values_to_input_params_with_inference,
+        };
+
         let batch_size = fetch_size.max(1);
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-        let cursor = stmt.execute(()).map_err(OdbcError::from)?;
+        let cursor = if params.is_empty() {
+            stmt.execute(()).map_err(OdbcError::from)?
+        } else if has_null_param(params) {
+            if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+                stmt.execute(parameters.as_slice())
+                    .map_err(OdbcError::from)?
+            } else {
+                let descriptions = stmt
+                    .parameter_descriptions()
+                    .map_err(OdbcError::from)?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(OdbcError::from)?;
+                let parameters =
+                    param_values_to_input_params_with_descriptions(params, &descriptions)?;
+                stmt.execute(parameters.as_slice())
+                    .map_err(OdbcError::from)?
+            }
+        } else {
+            let parameters = param_values_to_input_params(params)?;
+            stmt.execute(parameters.as_slice())
+                .map_err(OdbcError::from)?
+        };
 
         let cursor = match cursor {
             Some(c) => c,
@@ -207,6 +263,32 @@ impl StreamingExecutor {
         chunk_size: usize,
         result_encoding: ResultEncoding,
     ) -> Result<BatchedStreamingState> {
+        self.start_batched_stream_with_params(
+            handles,
+            conn_id,
+            sql,
+            Vec::new(),
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
+    }
+
+    /// Starts batched streaming with an owned parameter list (Input only).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors start_batched_stream plus owned Input params for the FFI bind path"
+    )]
+    pub fn start_batched_stream_with_params(
+        &self,
+        handles: SharedHandleManager,
+        conn_id: u32,
+        sql: String,
+        params: Vec<crate::protocol::ParamValue>,
+        fetch_size: usize,
+        chunk_size: usize,
+        result_encoding: ResultEncoding,
+    ) -> Result<BatchedStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
@@ -232,9 +314,10 @@ impl StreamingExecutor {
                 return;
             };
             let executor = StreamingExecutor::new(chunk_size);
-            match executor.execute_streaming_batched(
+            match executor.execute_streaming_batched_with_params(
                 conn_guard.connection(),
                 &sql,
+                &params,
                 fetch_size,
                 |batch| {
                     tx.send(BatchedMessage::Batch(batch))
@@ -278,6 +361,32 @@ impl StreamingExecutor {
         chunk_size: usize,
         result_encoding: ResultEncoding,
     ) -> Result<AsyncStreamingState> {
+        self.start_async_stream_with_params(
+            handles,
+            conn_id,
+            sql,
+            Vec::new(),
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
+    }
+
+    /// Async batched streaming with an owned parameter list (Input only).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors start_async_stream plus owned Input params for the FFI bind path"
+    )]
+    pub fn start_async_stream_with_params(
+        &self,
+        handles: SharedHandleManager,
+        conn_id: u32,
+        sql: String,
+        params: Vec<crate::protocol::ParamValue>,
+        fetch_size: usize,
+        chunk_size: usize,
+        result_encoding: ResultEncoding,
+    ) -> Result<AsyncStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
@@ -303,9 +412,10 @@ impl StreamingExecutor {
                 return;
             };
             let executor = StreamingExecutor::new(chunk_size);
-            match executor.execute_streaming_batched(
+            match executor.execute_streaming_batched_with_params(
                 conn_guard.connection(),
                 &sql,
+                &params,
                 fetch_size,
                 |batch| {
                     tx.send(BatchedMessage::Batch(batch))
@@ -349,6 +459,32 @@ impl StreamingExecutor {
         on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
         result_encoding: ResultEncoding,
     ) -> Result<BatchedStreamingState> {
+        self.start_batched_stream_pooled_with_params(
+            pooled,
+            sql,
+            Vec::new(),
+            fetch_size,
+            chunk_size,
+            on_complete,
+            result_encoding,
+        )
+    }
+
+    /// Pooled batched streaming with parameters.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors start_batched_stream_pooled plus owned Input params for the FFI bind path"
+    )]
+    pub fn start_batched_stream_pooled_with_params(
+        &self,
+        pooled: SharedPooledConnection,
+        sql: String,
+        params: Vec<crate::protocol::ParamValue>,
+        fetch_size: usize,
+        chunk_size: usize,
+        on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+        result_encoding: ResultEncoding,
+    ) -> Result<BatchedStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
@@ -365,9 +501,10 @@ impl StreamingExecutor {
                     return;
                 };
                 let executor = StreamingExecutor::new(chunk_size);
-                match executor.execute_streaming_batched(
+                match executor.execute_streaming_batched_with_params(
                     conn_guard.get_connection(),
                     &sql,
+                    &params,
                     fetch_size,
                     |batch| {
                         tx.send(BatchedMessage::Batch(batch))
@@ -409,6 +546,32 @@ impl StreamingExecutor {
         on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
         result_encoding: ResultEncoding,
     ) -> Result<AsyncStreamingState> {
+        self.start_async_stream_pooled_with_params(
+            pooled,
+            sql,
+            Vec::new(),
+            fetch_size,
+            chunk_size,
+            on_complete,
+            result_encoding,
+        )
+    }
+
+    /// Pooled async streaming with parameters.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors start_async_stream_pooled plus owned Input params for the FFI bind path"
+    )]
+    pub fn start_async_stream_pooled_with_params(
+        &self,
+        pooled: SharedPooledConnection,
+        sql: String,
+        params: Vec<crate::protocol::ParamValue>,
+        fetch_size: usize,
+        chunk_size: usize,
+        on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+        result_encoding: ResultEncoding,
+    ) -> Result<AsyncStreamingState> {
         let fetch_size = fetch_size.max(1);
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
@@ -425,9 +588,10 @@ impl StreamingExecutor {
                     return;
                 };
                 let executor = StreamingExecutor::new(chunk_size);
-                match executor.execute_streaming_batched(
+                match executor.execute_streaming_batched_with_params(
                     conn_guard.get_connection(),
                     &sql,
+                    &params,
                     fetch_size,
                     |batch| {
                         tx.send(BatchedMessage::Batch(batch))
