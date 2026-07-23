@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 pub(crate) struct TransactionMaps {
     transactions: HashMap<u32, Arc<Transaction>>,
+    /// Reverse index: `conn_id → txn_id` for O(1) active-txn checks.
+    active_by_conn: HashMap<u32, u32>,
     begins_in_progress: HashSet<u32>,
     next_txn_id: u32,
 }
@@ -24,6 +26,7 @@ fn transaction_maps() -> &'static Mutex<TransactionMaps> {
     MAPS.get_or_init(|| {
         Mutex::new(TransactionMaps {
             transactions: HashMap::new(),
+            active_by_conn: HashMap::new(),
             begins_in_progress: HashSet::new(),
             next_txn_id: 1,
         })
@@ -60,12 +63,20 @@ pub(crate) fn remove_begin_in_progress(conn_id: u32) {
 
 pub(crate) fn insert_transaction(txn_id: u32, txn: Arc<Transaction>) {
     if let Some(mut maps) = try_lock_transaction_maps() {
+        let conn_id = txn.conn_id();
         maps.transactions.insert(txn_id, txn);
+        maps.active_by_conn.insert(conn_id, txn_id);
     }
 }
 
 pub(crate) fn remove_transaction(txn_id: u32) -> Option<Arc<Transaction>> {
-    try_lock_transaction_maps().and_then(|mut maps| maps.transactions.remove(&txn_id))
+    try_lock_transaction_maps().and_then(|mut maps| {
+        let txn = maps.transactions.remove(&txn_id)?;
+        if maps.active_by_conn.get(&txn.conn_id()) == Some(&txn_id) {
+            maps.active_by_conn.remove(&txn.conn_id());
+        }
+        Some(txn)
+    })
 }
 
 pub(crate) fn get_transaction(txn_id: u32) -> Option<Arc<Transaction>> {
@@ -84,9 +95,7 @@ pub(crate) fn rollback_transactions_best_effort(transactions: Vec<(u32, Transact
 
 impl TransactionMaps {
     pub(crate) fn has_active_for_connection(&self, conn_id: u32) -> bool {
-        self.transactions
-            .values()
-            .any(|txn| txn.conn_id() == conn_id)
+        self.active_by_conn.contains_key(&conn_id)
     }
 
     pub(crate) fn begin_in_progress(&self, conn_id: u32) -> bool {
@@ -102,18 +111,13 @@ impl TransactionMaps {
     }
 
     pub(crate) fn take_for_connection(&mut self, conn_id: u32) -> Vec<(u32, Transaction)> {
-        let txn_ids: Vec<u32> = self
-            .transactions
-            .iter()
-            .filter_map(|(txn_id, txn)| (txn.conn_id() == conn_id).then_some(*txn_id))
-            .collect();
-        txn_ids
+        let Some(txn_id) = self.active_by_conn.remove(&conn_id) else {
+            return Vec::new();
+        };
+        self.transactions
+            .remove(&txn_id)
+            .and_then(|txn_arc| Arc::try_unwrap(txn_arc).ok().map(|txn| (txn_id, txn)))
             .into_iter()
-            .filter_map(|txn_id| {
-                self.transactions
-                    .remove(&txn_id)
-                    .and_then(|txn_arc| Arc::try_unwrap(txn_arc).ok().map(|txn| (txn_id, txn)))
-            })
             .collect()
     }
 
@@ -130,7 +134,9 @@ impl TransactionMaps {
         if id == 0 {
             return Err(txn);
         }
+        let conn_id = txn.conn_id();
         self.transactions.insert(id, Arc::new(txn));
+        self.active_by_conn.insert(conn_id, id);
         Ok(id)
     }
 }

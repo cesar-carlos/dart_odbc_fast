@@ -7,6 +7,7 @@ pub mod environment;
 pub(crate) mod fetch;
 pub mod identifier;
 pub mod query;
+pub(crate) mod session_defaults;
 pub mod sqlserver_json;
 pub mod statement;
 pub mod streaming;
@@ -26,8 +27,9 @@ pub mod xa_dtc;
 pub mod xa_oci;
 
 pub use catalog::{
-    get_type_info, list_columns, list_foreign_keys, list_indexes, list_primary_keys, list_tables,
-    parse_catalog_table_ref,
+    get_type_info, list_columns, list_columns_cached, list_foreign_keys, list_foreign_keys_cached,
+    list_indexes, list_indexes_cached, list_primary_keys, list_primary_keys_cached, list_tables,
+    list_tables_cached, parse_catalog_table_ref,
 };
 pub use connection::OdbcConnection;
 pub use core::*;

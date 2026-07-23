@@ -2,21 +2,28 @@ use crate::engine::core::{
     ENGINE_DB2, ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_SQLSERVER,
     ENGINE_UNKNOWN,
 };
-use crate::engine::dbms_info::DbmsInfo;
 use crate::error::{OdbcError, Result};
-use crate::handles::SharedHandleManager;
+use crate::handles::CachedConnection;
 
 use super::mssql::unsupported_sqlserver;
 use super::oracle::{oracle_xa_block, oracle_xid_literal, ORACLE_XAER_NOTA, ORACLE_XA_RDONLY};
 use super::xid::Xid;
 
-/// Best-effort engine detection. Falls back to `unknown` on any
-/// `SQLGetInfo` failure so the SQL emitter sees a stable id and
-/// returns a clean `UnsupportedFeature` instead of a chained error.
-pub(crate) fn detect_engine_id(handles: &SharedHandleManager, conn_id: u32) -> String {
-    DbmsInfo::detect_for_conn_id(handles, conn_id)
-        .map(|info| info.engine)
-        .unwrap_or_else(|_| ENGINE_UNKNOWN.to_string())
+/// Best-effort engine detection from a locked [`CachedConnection`].
+///
+/// Uses the per-connection `engine_id` cache (single `SQL_DBMS_NAME` on
+/// first call). Falls back to [`ENGINE_UNKNOWN`] on any `SQLGetInfo`
+/// failure so the SQL emitter returns a clean `UnsupportedFeature`.
+pub(crate) fn detect_engine_id_cached(cached: &CachedConnection) -> &'static str {
+    match cached.engine_id() {
+        Ok(id) => id,
+        Err(e) => {
+            log::warn!(
+                "XA detect_engine_id: SQLGetInfo failed ({e}); falling back to {ENGINE_UNKNOWN}"
+            );
+            ENGINE_UNKNOWN
+        }
+    }
 }
 
 pub(crate) fn apply_xa_start(

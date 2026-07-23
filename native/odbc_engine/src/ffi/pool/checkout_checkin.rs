@@ -50,6 +50,12 @@ pub(super) fn checkout_pooled_connection(pool_id: c_uint) -> c_uint {
 
     match pooled_wrapper {
         Ok(pooled_wrapper) => {
+            // Best-effort warm of engine_id before install so the first
+            // begin/XA/catalog on this pooled connection skips SQLGetInfo.
+            if let Err(e) = pooled_wrapper.cached().engine_id() {
+                log::debug!("odbc_pool_get_connection: engine_id warm failed: {e}");
+            }
+
             // Guard against the pool being closed between the checkout and
             // the state re-lock. The connection is physically valid (the
             // local `pool_arc` keeps r2d2 alive) but its pool_id may no

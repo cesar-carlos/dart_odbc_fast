@@ -232,17 +232,53 @@ impl PluginRegistry {
         })
     }
 
-    /// Resolve the plugin from a live ODBC connection by issuing
-    /// `SQLGetInfo(SQL_DBMS_NAME)`. This is the most accurate path because
-    /// it bypasses connection-string parsing entirely.
+    /// Resolve the plugin from a canonical [`ENGINE_*`](crate::engine::core) id.
+    pub fn get_for_engine_id(&self, engine_id: &str) -> Option<Arc<dyn DriverPlugin>> {
+        use crate::engine::core::{
+            ENGINE_DB2, ENGINE_MARIADB, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES,
+            ENGINE_SNOWFLAKE, ENGINE_SQLITE, ENGINE_SQLSERVER, ENGINE_SYBASE_ASA,
+            ENGINE_SYBASE_ASE,
+        };
+        let id = match engine_id {
+            ENGINE_SQLSERVER => "sqlserver",
+            ENGINE_POSTGRES => "postgres",
+            ENGINE_MYSQL => "mysql",
+            ENGINE_MARIADB => "mariadb",
+            ENGINE_ORACLE => "oracle",
+            ENGINE_SYBASE_ASE | ENGINE_SYBASE_ASA => "sybase",
+            ENGINE_SQLITE => "sqlite",
+            ENGINE_DB2 => "db2",
+            ENGINE_SNOWFLAKE => "snowflake",
+            _ => return None,
+        };
+        self.get(id).ok()
+    }
+
+    /// Resolve the plugin from a live ODBC connection via thin `SQL_DBMS_NAME`
+    /// detection. Prefer [`Self::get_for_cached_connection`] when a
+    /// [`CachedConnection`](crate::handles::CachedConnection) is available.
     pub fn get_for_live_connection(
         &self,
         conn: &Connection<'static>,
     ) -> Option<Arc<dyn DriverPlugin>> {
-        match conn.database_management_system_name() {
-            Ok(name) => self.get_for_dbms_name(&name),
+        match crate::engine::dbms_info::detect_engine_id(conn) {
+            Ok(id) => self.get_for_engine_id(id),
             Err(e) => {
                 log::warn!("PluginRegistry::get_for_live_connection: SQLGetInfo failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Resolve the plugin using [`CachedConnection::engine_id`](crate::handles::CachedConnection::engine_id).
+    pub fn get_for_cached_connection(
+        &self,
+        cached: &crate::handles::CachedConnection,
+    ) -> Option<Arc<dyn DriverPlugin>> {
+        match cached.engine_id() {
+            Ok(id) => self.get_for_engine_id(id),
+            Err(e) => {
+                log::warn!("PluginRegistry::get_for_cached_connection: engine detect failed: {e}");
                 None
             }
         }

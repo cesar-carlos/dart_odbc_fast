@@ -10,6 +10,7 @@ use crate::engine::core::{
     ENGINE_SQLITE, ENGINE_SQLSERVER,
 };
 use crate::error::{OdbcError, Result};
+use std::borrow::Cow;
 
 /// Strategy for applying `IsolationLevel` to a connection across vendors.
 #[derive(Debug, Clone, Copy)]
@@ -48,22 +49,19 @@ impl IsolationStrategy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IsolationSql {
     /// Execute this statement before `set_autocommit(false)`.
-    Execute(String),
+    Execute(Cow<'static, str>),
     /// Engine ignores per-transaction isolation; caller should log and skip.
-    Skip {
-        engine_id: String,
-        level: IsolationLevel,
-    },
+    Skip { level: IsolationLevel },
 }
 
 /// Build the isolation-level SQL (or skip marker) for `engine_id`.
 pub(crate) fn build_isolation_sql(engine_id: &str, level: IsolationLevel) -> Result<IsolationSql> {
     let strategy = IsolationStrategy::for_engine(engine_id);
     match strategy {
-        IsolationStrategy::Sql92 => Ok(IsolationSql::Execute(format!(
+        IsolationStrategy::Sql92 => Ok(IsolationSql::Execute(Cow::Owned(format!(
             "SET TRANSACTION ISOLATION LEVEL {}",
             level.to_sql_keyword()
-        ))),
+        )))),
         IsolationStrategy::SqlitePragma => {
             // SQLite only distinguishes Serializable (default) from Read
             // Uncommitted (shared-cache only). Other levels are no-ops on
@@ -72,19 +70,19 @@ pub(crate) fn build_isolation_sql(engine_id: &str, level: IsolationLevel) -> Res
                 IsolationLevel::ReadUncommitted => "PRAGMA read_uncommitted = 1",
                 _ => "PRAGMA read_uncommitted = 0",
             };
-            Ok(IsolationSql::Execute(sql.to_string()))
+            Ok(IsolationSql::Execute(Cow::Borrowed(sql)))
         }
-        IsolationStrategy::Db2SetCurrent => Ok(IsolationSql::Execute(format!(
+        IsolationStrategy::Db2SetCurrent => Ok(IsolationSql::Execute(Cow::Owned(format!(
             "SET CURRENT ISOLATION = {}",
             level.to_db2_keyword()
-        ))),
+        )))),
         IsolationStrategy::OracleRestricted => match level {
-            IsolationLevel::ReadCommitted => Ok(IsolationSql::Execute(
-                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED".to_string(),
-            )),
-            IsolationLevel::Serializable => Ok(IsolationSql::Execute(
-                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE".to_string(),
-            )),
+            IsolationLevel::ReadCommitted => Ok(IsolationSql::Execute(Cow::Borrowed(
+                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+            ))),
+            IsolationLevel::Serializable => Ok(IsolationSql::Execute(Cow::Borrowed(
+                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+            ))),
             IsolationLevel::ReadUncommitted | IsolationLevel::RepeatableRead => {
                 Err(OdbcError::ValidationError(format!(
                     "Oracle does not support isolation level {level:?}; \
@@ -92,10 +90,7 @@ pub(crate) fn build_isolation_sql(engine_id: &str, level: IsolationLevel) -> Res
                 )))
             }
         },
-        IsolationStrategy::Skip => Ok(IsolationSql::Skip {
-            engine_id: engine_id.to_string(),
-            level,
-        }),
+        IsolationStrategy::Skip => Ok(IsolationSql::Skip { level }),
     }
 }
 
@@ -105,15 +100,18 @@ pub(crate) fn build_isolation_sql(engine_id: &str, level: IsolationLevel) -> Res
 pub(crate) fn build_access_mode_sql(
     engine_id: &str,
     access_mode: TransactionAccessMode,
-) -> Option<String> {
+) -> Option<&'static str> {
     if !access_mode.is_read_only() {
         return None;
     }
 
-    match engine_id {
-        ENGINE_POSTGRES | ENGINE_MYSQL | ENGINE_MARIADB | ENGINE_DB2 | ENGINE_ORACLE => {
-            Some(format!("SET TRANSACTION {}", access_mode.to_sql_keyword()))
-        }
+    // Keep `to_sql_keyword` on the live path so the SQL-92 spelling stays
+    // the single source of truth (and Clippy does not flag it as dead).
+    match (engine_id, access_mode.to_sql_keyword()) {
+        (
+            ENGINE_POSTGRES | ENGINE_MYSQL | ENGINE_MARIADB | ENGINE_DB2 | ENGINE_ORACLE,
+            "READ ONLY",
+        ) => Some("SET TRANSACTION READ ONLY"),
         _ => None,
     }
 }
@@ -190,6 +188,10 @@ pub(crate) fn lock_timeout_is_unsupported_skip(engine_id: &str) -> bool {
         )
 }
 
+/// Returns `true` when lock-timeout overrides are session-scoped and must be
+/// reset after the transaction (or on pool checkin).
+pub(crate) use crate::engine::session_defaults::lock_timeout_is_session_scoped;
+
 impl IsolationLevel {
     /// DB2-style keyword for `SET CURRENT ISOLATION = <X>`.
     pub(crate) fn to_db2_keyword(self) -> &'static str {
@@ -210,10 +212,10 @@ pub(crate) fn apply_isolation(
 ) -> Result<()> {
     match build_isolation_sql(engine_id, level)? {
         IsolationSql::Execute(sql) => conn
-            .execute(&sql, (), None)
+            .execute(sql.as_ref(), (), None)
             .map(|_| ())
             .map_err(OdbcError::from),
-        IsolationSql::Skip { engine_id, level } => {
+        IsolationSql::Skip { level } => {
             log::debug!(
                 "apply_isolation: engine {engine_id:?} ignores per-transaction isolation; \
                  requested {level:?} silently skipped"
@@ -248,7 +250,7 @@ pub(crate) fn apply_access_mode(
 ) -> Result<()> {
     if let Some(sql) = build_access_mode_sql(engine_id, access_mode) {
         return conn
-            .execute(&sql, (), None)
+            .execute(sql, (), None)
             .map(|_| ())
             .map_err(OdbcError::from);
     }
@@ -272,20 +274,23 @@ pub(crate) fn apply_access_mode(
 /// untouched and no `SET` is emitted. This keeps the connection's
 /// session log clean for callers that don't need the override and
 /// avoids paying for it in the hot path.
+///
+/// Returns `true` when a SET/PRAGMA was executed (caller may need to
+/// mark session-scoped overrides dirty for later reset).
 pub(crate) fn apply_lock_timeout(
     conn: &mut odbc_api::Connection<'static>,
     engine_id: &str,
     lock_timeout: LockTimeout,
-) -> Result<()> {
+) -> Result<bool> {
     if let Some(sql) = build_lock_timeout_sql(engine_id, lock_timeout)? {
-        return conn
-            .execute(&sql, (), None)
+        conn.execute(&sql, (), None)
             .map(|_| ())
-            .map_err(OdbcError::from);
+            .map_err(OdbcError::from)?;
+        return Ok(true);
     }
 
     if lock_timeout.is_engine_default() {
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(ms) = lock_timeout.millis() else {
@@ -312,5 +317,117 @@ pub(crate) fn apply_lock_timeout(
             );
         }
     }
-    Ok(())
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::core::{
+        ENGINE_DB2, ENGINE_MYSQL, ENGINE_ORACLE, ENGINE_POSTGRES, ENGINE_SQLITE, ENGINE_SQLSERVER,
+        ENGINE_UNKNOWN,
+    };
+    use crate::engine::session_defaults::{
+        lock_timeout_is_session_scoped, session_lock_timeout_reset_sql,
+    };
+
+    #[test]
+    fn isolation_sql_postgres_uses_sql92_set() {
+        let sql = build_isolation_sql(ENGINE_POSTGRES, IsolationLevel::ReadCommitted)
+            .expect("postgres isolation");
+        assert_eq!(
+            sql,
+            IsolationSql::Execute(Cow::Owned(
+                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn isolation_sql_sqlite_uses_pragma_without_heap_for_static() {
+        let sql = build_isolation_sql(ENGINE_SQLITE, IsolationLevel::ReadUncommitted)
+            .expect("sqlite isolation");
+        assert_eq!(
+            sql,
+            IsolationSql::Execute(Cow::Borrowed("PRAGMA read_uncommitted = 1"))
+        );
+    }
+
+    #[test]
+    fn isolation_sql_oracle_uses_static_literals() {
+        let sql = build_isolation_sql(ENGINE_ORACLE, IsolationLevel::Serializable)
+            .expect("oracle isolation");
+        assert_eq!(
+            sql,
+            IsolationSql::Execute(Cow::Borrowed(
+                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+            ))
+        );
+    }
+
+    #[test]
+    fn isolation_sql_snowflake_skips_without_engine_string_alloc() {
+        let sql = build_isolation_sql(ENGINE_SNOWFLAKE, IsolationLevel::RepeatableRead)
+            .expect("snowflake skip");
+        assert_eq!(
+            sql,
+            IsolationSql::Skip {
+                level: IsolationLevel::RepeatableRead
+            }
+        );
+    }
+
+    #[test]
+    fn isolation_sql_unknown_falls_back_to_sql92() {
+        let sql = build_isolation_sql(ENGINE_UNKNOWN, IsolationLevel::Serializable)
+            .expect("unknown → sql92");
+        assert!(matches!(sql, IsolationSql::Execute(_)));
+    }
+
+    #[test]
+    fn access_mode_read_only_is_static_for_postgres() {
+        assert_eq!(
+            build_access_mode_sql(ENGINE_POSTGRES, TransactionAccessMode::ReadOnly),
+            Some("SET TRANSACTION READ ONLY")
+        );
+        assert_eq!(
+            build_access_mode_sql(ENGINE_POSTGRES, TransactionAccessMode::ReadWrite),
+            None
+        );
+    }
+
+    #[test]
+    fn lock_timeout_postgres_uses_set_local() {
+        let sql = build_lock_timeout_sql(ENGINE_POSTGRES, LockTimeout::from_millis(1500))
+            .expect("lock timeout")
+            .expect("some sql");
+        assert_eq!(sql, "SET LOCAL lock_timeout = '1500ms'");
+    }
+
+    #[test]
+    fn session_lock_timeout_reset_sql_for_session_scoped_engines() {
+        assert_eq!(
+            session_lock_timeout_reset_sql(ENGINE_SQLSERVER),
+            Some("SET LOCK_TIMEOUT -1")
+        );
+        assert_eq!(
+            session_lock_timeout_reset_sql(ENGINE_MYSQL),
+            Some("SET SESSION innodb_lock_wait_timeout = 50")
+        );
+        assert_eq!(
+            session_lock_timeout_reset_sql(ENGINE_SQLITE),
+            Some("PRAGMA busy_timeout = 0")
+        );
+        assert_eq!(
+            session_lock_timeout_reset_sql(ENGINE_DB2),
+            Some("SET CURRENT LOCK TIMEOUT NULL")
+        );
+        assert_eq!(
+            session_lock_timeout_reset_sql(ENGINE_POSTGRES),
+            None,
+            "postgres SET LOCAL needs no session reset"
+        );
+        assert!(lock_timeout_is_session_scoped(ENGINE_MYSQL));
+        assert!(!lock_timeout_is_session_scoped(ENGINE_POSTGRES));
+    }
 }

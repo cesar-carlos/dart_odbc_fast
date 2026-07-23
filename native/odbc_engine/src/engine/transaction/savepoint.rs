@@ -7,11 +7,12 @@ use super::Transaction;
 /// Savepoint SQL dialect.
 ///
 /// `Auto` (NEW in v3.1) is the recommended default: the dialect is resolved
-/// from the connection's live DBMS via `SQLGetInfo` at `Transaction::begin`.
+/// from the connection's live DBMS via `SQLGetInfo` at `Transaction::begin`
+/// (cached per connection after the first call).
 /// SQL Server resolves to `SqlServer`; everything else to `Sql92`.
 ///
-/// `Sql92` and `SqlServer` remain available for callers that already know the
-/// engine and want to skip the round-trip.
+/// `Sql92` and `SqlServer` pin savepoint SQL syntax. Isolation, access mode,
+/// and lock-timeout still use the live engine id from the connection cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SavepointDialect {
     /// Resolve at runtime via `SQLGetInfo(SQL_DBMS_NAME)` on the connection.

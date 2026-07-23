@@ -29,8 +29,8 @@ pub extern "C" fn odbc_catalog_tables(
         let cat_ref = cat_opt.as_deref();
         let sch_ref = sch_opt.as_deref();
 
-        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
-            list_tables(conn, cat_ref, sch_ref)
+        run_buffered_cached_call(conn_id, out_buffer, buffer_len, out_written, |cached| {
+            list_tables_cached(cached, cat_ref, sch_ref)
         })
     })
 }
@@ -106,33 +106,9 @@ pub extern "C" fn odbc_catalog_columns(
         let mut target_guard = RunnableTargetGuard::new(conn_id, target);
         drop(state);
 
-        let result = match target_guard.target_mut() {
-            RunnableConnection::Regular(conn_arc) => {
-                let conn_guard = match conn_arc.lock() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
-                            set_out_written_zero(out_written);
-                            return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
-                        set_out_written_zero(out_written);
-                        return -1;
-                    }
-                };
-                list_columns(conn_guard.connection(), table_str)
-            }
-            RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => list_columns(conn_guard.get_connection(), table_str),
-                Err(_) => Err(OdbcError::InternalError(
-                    "Failed to lock pooled connection".to_string(),
-                )),
-            },
-        };
+        let result = target_guard
+            .target_mut()
+            .with_cached(|cached| list_columns_cached(cached, table_str));
 
         let Some(mut state) = try_lock_global_state() else {
             set_out_written_zero(out_written);
@@ -222,8 +198,8 @@ pub extern "C" fn odbc_catalog_primary_keys(
             }
         };
 
-        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
-            list_primary_keys(conn, table_str)
+        run_buffered_cached_call(conn_id, out_buffer, buffer_len, out_written, |cached| {
+            list_primary_keys_cached(cached, table_str)
         })
     })
 }
@@ -261,8 +237,8 @@ pub extern "C" fn odbc_catalog_foreign_keys(
             }
         };
 
-        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
-            list_foreign_keys(conn, table_str)
+        run_buffered_cached_call(conn_id, out_buffer, buffer_len, out_written, |cached| {
+            list_foreign_keys_cached(cached, table_str)
         })
     })
 }
@@ -300,8 +276,8 @@ pub extern "C" fn odbc_catalog_indexes(
             }
         };
 
-        run_buffered_connection_call(conn_id, out_buffer, buffer_len, out_written, |conn| {
-            list_indexes(conn, table_str)
+        run_buffered_cached_call(conn_id, out_buffer, buffer_len, out_written, |cached| {
+            list_indexes_cached(cached, table_str)
         })
     })
 }

@@ -44,6 +44,18 @@ pub struct DbmsInfo {
     pub capabilities: DriverCapabilities,
 }
 
+/// Resolve only the canonical engine id from `SQL_DBMS_NAME`.
+///
+/// Prefer this over [`DbmsInfo::detect`] on hot paths (transaction begin)
+/// that do not need identifier-length limits or the current catalog —
+/// those require extra `SQLGetInfo` round-trips.
+pub fn detect_engine_id(conn: &Connection<'static>) -> Result<&'static str> {
+    let dbms_name = conn
+        .database_management_system_name()
+        .map_err(OdbcError::from)?;
+    Ok(DriverCapabilities::canonical_engine_id(&dbms_name))
+}
+
 impl DbmsInfo {
     /// Query the live connection and assemble a [`DbmsInfo`] snapshot.
     /// All `max_*_name_len` calls are best-effort: if the driver fails, the
@@ -110,6 +122,26 @@ mod tests {
             current_catalog: "main".to_string(),
             capabilities: caps,
         }
+    }
+
+    #[test]
+    fn canonical_engine_id_matches_from_driver_name() {
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("Microsoft SQL Server"),
+            ENGINE_SQLSERVER
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("PostgreSQL"),
+            ENGINE_POSTGRES
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("MariaDB"),
+            ENGINE_MARIADB
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("FantasyDB"),
+            ENGINE_UNKNOWN
+        );
     }
 
     #[test]

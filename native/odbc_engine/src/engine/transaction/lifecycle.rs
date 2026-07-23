@@ -110,31 +110,50 @@ impl Transaction {
         access_mode: TransactionAccessMode,
         lock_timeout: LockTimeout,
     ) -> Result<Self> {
-        let (engine_id, resolved_dialect) =
-            connection.detect_engine_and_dialect(conn_id, savepoint_dialect);
         let state = Arc::new(Mutex::new(TransactionState::Active));
 
-        connection.with_connection_mut(conn_id, "begin transaction", |conn| {
-            // Apply isolation level using a dialect-aware strategy. Must run BEFORE
-            // `set_autocommit(false)` because some engines (notably SQL Server)
-            // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
-            apply_isolation(conn, &engine_id, isolation_level)?;
+        // Single connection lock: resolve engine (cache / SQL_DBMS_NAME) then
+        // apply isolation / access mode / lock timeout / autocommit.
+        let resolved_dialect =
+            connection.with_cached_mut(conn_id, "begin transaction", |cached| {
+                let (engine_id, resolved_dialect) =
+                    TransactionConnection::resolve_engine_and_dialect(
+                        cached,
+                        conn_id,
+                        savepoint_dialect,
+                    );
 
-            // Access mode must follow isolation. Oracle is special-cased inside
-            // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
-            // the previous isolation choice on that engine.
-            apply_access_mode(conn, &engine_id, access_mode)?;
+                let applied_lock_timeout = {
+                    let conn = cached.connection_mut();
 
-            // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
-            // (so it auto-resets on commit/rollback); other engines apply
-            // session-wide. The override is best-effort: failure here would
-            // prevent the transaction from starting, which is too coarse,
-            // so we surface the engine error verbatim and let the caller
-            // decide.
-            apply_lock_timeout(conn, &engine_id, lock_timeout)?;
+                    // Apply isolation level using a dialect-aware strategy. Must run BEFORE
+                    // `set_autocommit(false)` because some engines (notably SQL Server)
+                    // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
+                    apply_isolation(conn, engine_id, isolation_level)?;
 
-            conn.set_autocommit(false).map_err(OdbcError::from)
-        })?;
+                    // Access mode must follow isolation. Oracle is special-cased inside
+                    // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
+                    // the previous isolation choice on that engine.
+                    apply_access_mode(conn, engine_id, access_mode)?;
+
+                    // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
+                    // (so it auto-resets on commit/rollback); other engines apply
+                    // session-wide. The override is best-effort: failure here would
+                    // prevent the transaction from starting, which is too coarse,
+                    // so we surface the engine error verbatim and let the caller
+                    // decide.
+                    let applied = apply_lock_timeout(conn, engine_id, lock_timeout)?;
+
+                    conn.set_autocommit(false).map_err(OdbcError::from)?;
+                    applied
+                };
+                if applied_lock_timeout
+                    && super::dialect_sql::lock_timeout_is_session_scoped(engine_id)
+                {
+                    cached.mark_session_lock_timeout_dirty();
+                }
+                Ok(resolved_dialect)
+            })?;
 
         Ok(Self {
             connection,
@@ -160,7 +179,9 @@ impl Transaction {
 
         let (commit_result, autocommit_result) =
             self.connection
-                .with_connection_mut(self.conn_id, "commit transaction", |conn| {
+                .with_cached_mut(self.conn_id, "commit transaction", |cached| {
+                    cached.restore_session_lock_timeout_if_dirty();
+                    let conn = cached.connection_mut();
                     Ok((
                         conn.commit().map_err(OdbcError::from),
                         conn.set_autocommit(true),
@@ -205,7 +226,9 @@ impl Transaction {
 
         let (rollback_result, autocommit_result) =
             self.connection
-                .with_connection_mut(self.conn_id, "rollback transaction", |conn| {
+                .with_cached_mut(self.conn_id, "rollback transaction", |cached| {
+                    cached.restore_session_lock_timeout_if_dirty();
+                    let conn = cached.connection_mut();
                     Ok((
                         conn.rollback().map_err(OdbcError::from),
                         conn.set_autocommit(true),
@@ -380,7 +403,9 @@ impl Drop for Transaction {
         );
         if let Err(e) =
             self.connection
-                .with_connection_mut(self.conn_id, "drop transaction", |conn| {
+                .with_cached_mut(self.conn_id, "drop transaction", |cached| {
+                    cached.restore_session_lock_timeout_if_dirty();
+                    let conn = cached.connection_mut();
                     if let Err(e) = conn.rollback() {
                         log::error!(
                             "Transaction Drop: rollback failed on conn_id {}: {e}",

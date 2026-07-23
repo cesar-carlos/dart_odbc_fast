@@ -21,7 +21,8 @@ use lru::LruCache;
 use odbc_api::{Connection, Prepared};
 #[cfg(feature = "statement-handle-reuse")]
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use std::ops::Deref;
 
@@ -53,6 +54,13 @@ pub struct CachedConnection {
     #[cfg(feature = "statement-handle-reuse")]
     stmt_cache: LruCache<String, OwnedPreparedStatement>,
     conn: Connection<'static>,
+    /// Canonical [`ENGINE_*`](crate::engine::core) id, filled on first
+    /// [`Self::engine_id`] call via a single `SQL_DBMS_NAME` round-trip.
+    engine_id: OnceLock<&'static str>,
+    /// Set when a session-scoped lock-timeout override was applied
+    /// (MySQL/MariaDB/SQL Server/SQLite/DB2). Cleared after reset to
+    /// the documented engine default on txn end / pool checkin.
+    session_lock_timeout_dirty: AtomicBool,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
     #[cfg(feature = "statement-handle-reuse")]
@@ -65,6 +73,8 @@ impl CachedConnection {
     pub fn new(conn: Connection<'static>) -> Self {
         Self {
             conn,
+            engine_id: OnceLock::new(),
+            session_lock_timeout_dirty: AtomicBool::new(false),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
         }
@@ -77,9 +87,70 @@ impl CachedConnection {
         Self {
             stmt_cache: LruCache::new(cap),
             conn,
+            engine_id: OnceLock::new(),
+            session_lock_timeout_dirty: AtomicBool::new(false),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             cache_evictions: AtomicU64::new(0),
+        }
+    }
+
+    /// Canonical engine id for this connection (`ENGINE_*`).
+    ///
+    /// Lazily resolved with a single `SQLGetInfo(SQL_DBMS_NAME)` call and
+    /// cached for the lifetime of the connection. Subsequent calls are free.
+    pub fn engine_id(&self) -> Result<&'static str> {
+        if let Some(&id) = self.engine_id.get() {
+            return Ok(id);
+        }
+        let id = crate::engine::dbms_info::detect_engine_id(&self.conn)?;
+        // Concurrent first fills: OnceLock keeps the first successful value.
+        let _ = self.engine_id.set(id);
+        Ok(self.engine_id.get().copied().unwrap_or(id))
+    }
+
+    /// Test/helper: seed the engine-id cache without calling `SQLGetInfo`.
+    #[cfg(test)]
+    pub fn set_engine_id_for_test(&self, engine_id: &'static str) {
+        let _ = self.engine_id.set(engine_id);
+    }
+
+    /// Returns `true` when [`Self::engine_id`] has already been resolved.
+    #[cfg(test)]
+    pub fn has_cached_engine_id(&self) -> bool {
+        self.engine_id.get().is_some()
+    }
+
+    /// Mark that a session-scoped lock-timeout override is active.
+    pub fn mark_session_lock_timeout_dirty(&self) {
+        self.session_lock_timeout_dirty
+            .store(true, Ordering::Relaxed);
+    }
+
+    /// Best-effort restore of session lock-timeout to the engine default
+    /// when [`Self::mark_session_lock_timeout_dirty`] was set.
+    pub fn restore_session_lock_timeout_if_dirty(&mut self) {
+        if !self
+            .session_lock_timeout_dirty
+            .swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        let engine = match self.engine_id() {
+            Ok(id) => id,
+            Err(e) => {
+                log::warn!(
+                    "CachedConnection: cannot restore lock timeout; engine detect failed: {e}"
+                );
+                return;
+            }
+        };
+        let Some(sql) = crate::engine::session_defaults::session_lock_timeout_reset_sql(engine)
+        else {
+            return;
+        };
+        if let Err(e) = self.conn.execute(sql, (), None) {
+            log::warn!("CachedConnection: failed to reset session lock timeout for {engine}: {e}");
         }
     }
 
@@ -275,8 +346,10 @@ impl CachedConnection {
 
     /// Roll back any open transaction and restore autocommit without
     /// evicting cached prepared statements. Used by pool acquire/release hooks.
+    /// Also resets a session-scoped lock-timeout override when present.
     pub fn pool_session_reset(&mut self) -> Result<()> {
         let _ = self.conn.rollback();
+        self.restore_session_lock_timeout_if_dirty();
         self.conn.set_autocommit(true).map_err(OdbcError::from)
     }
 

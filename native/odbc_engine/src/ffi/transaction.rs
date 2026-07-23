@@ -185,8 +185,8 @@ pub extern "C" fn odbc_transaction_begin_v3(
         }
         let mut begin_reservation = TransactionBeginReservation::new(conn_id);
 
-        // SavepointDialect::Auto is resolved inside `begin_with_dialect` via
-        // `DbmsInfo::detect_for_conn_id` (live SQLGetInfo) — see v3.1 fix B2.
+        // SavepointDialect::Auto resolves via CachedConnection::engine_id
+        // (cached SQL_DBMS_NAME) — see v3.1 fix B2 / txn-dialect perf.
         let txn_result = match begin_source {
             TransactionBeginSource::Regular(handles) => Transaction::begin_with_lock_timeout(
                 handles,

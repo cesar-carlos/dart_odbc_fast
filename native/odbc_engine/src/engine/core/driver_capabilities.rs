@@ -61,8 +61,7 @@ impl DriverCapabilities {
     ///   (`"Microsoft SQL Server"`, `"MariaDB"`, `"Adaptive Server Anywhere"`, ...)
     /// - common ODBC-driver labels (`"PostgreSQL Unicode"`, ...)
     pub fn from_driver_name(driver_name: &str) -> Self {
-        let normalized = driver_name.trim().to_lowercase();
-        match Self::engine_from_name(&normalized) {
+        match Self::canonical_engine_id(driver_name) {
             ENGINE_SQLSERVER => Self::canonical(ENGINE_SQLSERVER, "SQL Server", 2000),
             ENGINE_POSTGRES => Self::canonical(ENGINE_POSTGRES, "PostgreSQL", 2000),
             ENGINE_MYSQL => Self::canonical(ENGINE_MYSQL, "MySQL", 1500),
@@ -93,6 +92,15 @@ impl DriverCapabilities {
             engine: engine.to_string(),
             supports_native_bcp: Self::engine_supports_native_bcp(engine),
         }
+    }
+
+    /// Resolve a driver / DBMS name to a canonical [`ENGINE_*`](&'static str).
+    ///
+    /// Accepts the same inputs as [`from_driver_name`]: canonical ids,
+    /// `SQL_DBMS_NAME` values, and common ODBC driver labels.
+    pub fn canonical_engine_id(driver_or_dbms_name: &str) -> &'static str {
+        let normalized = driver_or_dbms_name.trim().to_lowercase();
+        Self::engine_from_name(&normalized)
     }
 
     /// Map a *lowercased* substring to a canonical engine id.
@@ -166,8 +174,7 @@ impl DriverCapabilities {
     /// Use [`detect`] when you have an open connection — it is far more
     /// accurate because it queries the live driver via `SQLGetInfo`.
     pub fn detect_from_connection_string(connection_string: &str) -> Self {
-        let lower = connection_string.to_lowercase();
-        let engine = Self::engine_from_name(&lower);
+        let engine = Self::canonical_engine_id(connection_string);
         if engine == ENGINE_UNKNOWN {
             return Self::default();
         }
@@ -500,5 +507,29 @@ mod tests {
     fn should_apply_oracle_max_array_size_when_detected() {
         let caps = DriverCapabilities::from_driver_name("Oracle");
         assert_eq!(caps.max_row_array_size, 5000);
+    }
+
+    #[test]
+    fn canonical_engine_id_returns_static_engine_constants() {
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("Microsoft SQL Server"),
+            ENGINE_SQLSERVER
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("PostgreSQL"),
+            ENGINE_POSTGRES
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("SQLite"),
+            ENGINE_SQLITE
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("FantasyDB"),
+            ENGINE_UNKNOWN
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("postgres"),
+            ENGINE_POSTGRES
+        );
     }
 }

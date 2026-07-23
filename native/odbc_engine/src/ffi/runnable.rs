@@ -9,8 +9,8 @@ pub(crate) use std::time::Instant;
 use super::global::try_cached_params_with_encoding;
 
 use super::global_state::{
-    set_connection_error, set_connection_structured_error, set_out_written_zero,
-    try_lock_global_state, write_connection_output_buffer, GlobalState, StreamKind, FFI_OK,
+    set_connection_structured_error, set_out_written_zero, try_lock_global_state,
+    write_connection_output_buffer, GlobalState, StreamKind, FFI_OK,
 };
 use super::state;
 
@@ -23,22 +23,22 @@ pub(crate) enum RunnableConnection {
 }
 
 impl RunnableConnection {
-    pub(crate) fn with_connection<F, T>(&self, f: F) -> Result<T>
+    pub(crate) fn with_cached<F, T>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(&odbc_api::Connection<'static>) -> Result<T>,
+        F: FnOnce(&crate::handles::CachedConnection) -> Result<T>,
     {
         match self {
             Self::Regular(conn_arc) => {
                 let conn = conn_arc.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock connection".to_string())
                 })?;
-                f(conn.connection())
+                f(&conn)
             }
             Self::Pooled { pooled, .. } => {
                 let conn = pooled.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock pooled connection".to_string())
                 })?;
-                f(conn.get_connection())
+                f(conn.cached())
             }
         }
     }
@@ -202,6 +202,23 @@ pub(crate) fn run_buffered_connection_call<F>(
 where
     F: FnOnce(&odbc_api::Connection<'static>) -> Result<Vec<u8>>,
 {
+    run_buffered_cached_call(conn_id, out_buffer, buffer_len, out_written, |cached| {
+        run(cached.connection())
+    })
+}
+
+/// Like [`run_buffered_connection_call`] but passes [`CachedConnection`] so
+/// callers can reuse the cached `engine_id` (catalog, etc.).
+pub(crate) fn run_buffered_cached_call<F>(
+    conn_id: u32,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+    run: F,
+) -> i32
+where
+    F: FnOnce(&crate::handles::CachedConnection) -> Result<Vec<u8>>,
+{
     let Some(mut state) = try_lock_global_state() else {
         set_out_written_zero(out_written);
         return -1;
@@ -219,23 +236,7 @@ where
     let mut target_guard = RunnableTargetGuard::new(conn_id, target);
     drop(state);
 
-    let result = if let RunnableConnection::Regular(conn_arc) = target_guard.target_mut() {
-        let conn_guard = match conn_arc.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                let Some(mut state) = try_lock_global_state() else {
-                    set_out_written_zero(out_written);
-                    return -1;
-                };
-                set_connection_error(&mut state, conn_id, "Failed to lock connection".to_string());
-                set_out_written_zero(out_written);
-                return -1;
-            }
-        };
-        run(conn_guard.connection())
-    } else {
-        target_guard.target_mut().with_connection(run)
-    };
+    let result = target_guard.target_mut().with_cached(run);
 
     let Some(mut state) = try_lock_global_state() else {
         set_out_written_zero(out_written);

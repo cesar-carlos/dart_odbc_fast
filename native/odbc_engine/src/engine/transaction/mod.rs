@@ -8,10 +8,9 @@ pub(crate) use savepoint::quoting_for;
 pub(crate) use savepoint::resolve_savepoint_dialect_for_engine;
 pub use savepoint::{Savepoint, SavepointDialect};
 
-use crate::engine::core::{ENGINE_SQLSERVER, ENGINE_UNKNOWN};
-use crate::engine::dbms_info::DbmsInfo;
+use crate::engine::core::ENGINE_UNKNOWN;
 use crate::error::{OdbcError, Result};
-use crate::handles::SharedHandleManager;
+use crate::handles::{CachedConnection, SharedHandleManager};
 use crate::pool::SharedPooledConnection;
 use std::sync::{Arc, Mutex};
 
@@ -207,31 +206,16 @@ impl TransactionConnection {
     where
         F: FnOnce(&odbc_api::Connection<'static>) -> Result<T>,
     {
-        match self {
-            Self::Regular(handles) => {
-                let conn_arc = {
-                    let h = handles.lock().map_err(|_| {
-                        OdbcError::InternalError(format!("Failed to lock handles for {op}"))
-                    })?;
-                    h.get_connection(conn_id)?
-                };
-                let conn = conn_arc.lock().map_err(|_| {
-                    OdbcError::InternalError("Failed to lock connection".to_string())
-                })?;
-                f(conn.connection())
-            }
-            Self::Pooled(pooled) => {
-                let conn = pooled.lock().map_err(|_| {
-                    OdbcError::InternalError("Failed to lock pooled connection".to_string())
-                })?;
-                f(conn.get_connection())
-            }
-        }
+        self.with_cached_mut(conn_id, op, |cached| f(cached.connection()))
     }
 
-    pub(crate) fn with_connection_mut<F, T>(&self, conn_id: u32, op: &str, f: F) -> Result<T>
+    /// Lock the underlying [`CachedConnection`] once and run `f`.
+    ///
+    /// Prefer this over separate connection lock cycles when the caller
+    /// needs both engine detection and mutation (transaction begin).
+    pub(crate) fn with_cached_mut<F, T>(&self, conn_id: u32, op: &str, f: F) -> Result<T>
     where
-        F: FnOnce(&mut odbc_api::Connection<'static>) -> Result<T>,
+        F: FnOnce(&mut CachedConnection) -> Result<T>,
     {
         match self {
             Self::Regular(handles) => {
@@ -244,43 +228,40 @@ impl TransactionConnection {
                 let mut conn = conn_arc.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock connection".to_string())
                 })?;
-                f(conn.connection_mut())
+                f(&mut conn)
             }
             Self::Pooled(pooled) => {
                 let mut conn = pooled.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock pooled connection".to_string())
                 })?;
-                f(conn.get_connection_mut())
+                f(conn.cached_mut())
             }
         }
     }
 
-    pub(crate) fn detect_engine_and_dialect(
-        &self,
+    /// Resolve canonical engine id + concrete savepoint dialect from a
+    /// locked [`CachedConnection`].
+    ///
+    /// `SavepointDialect::Sql92` / `SqlServer` pin the *savepoint* SQL
+    /// dialect, but isolation / access mode / lock timeout still use the
+    /// live engine id from the connection cache (never `ENGINE_UNKNOWN`
+    /// unless `SQLGetInfo` fails).
+    pub(crate) fn resolve_engine_and_dialect(
+        cached: &CachedConnection,
         conn_id: u32,
         requested: SavepointDialect,
-    ) -> (String, SavepointDialect) {
-        match requested {
-            SavepointDialect::Sql92 => (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92),
-            SavepointDialect::SqlServer => {
-                (ENGINE_SQLSERVER.to_string(), SavepointDialect::SqlServer)
+    ) -> (&'static str, SavepointDialect) {
+        let engine_id = match cached.engine_id() {
+            Ok(id) => id,
+            Err(e) => {
+                log::warn!(
+                    "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); \
+                     falling back to {ENGINE_UNKNOWN}"
+                );
+                ENGINE_UNKNOWN
             }
-            SavepointDialect::Auto => {
-                match self.with_connection(conn_id, "detect transaction dialect", DbmsInfo::detect)
-                {
-                    Ok(info) => {
-                        let dialect = resolve_savepoint_dialect_for_engine(&info.engine);
-                        (info.engine, dialect)
-                    }
-                    Err(e) => {
-                        log::warn!(
-                        "Transaction::begin: SQLGetInfo failed for conn_id {conn_id} ({e}); falling back to Sql92"
-                    );
-                        (ENGINE_UNKNOWN.to_string(), SavepointDialect::Sql92)
-                    }
-                }
-            }
-        }
+        };
+        resolve_engine_and_dialect_from_id(engine_id, requested)
     }
 
     pub(crate) fn handles(&self) -> Option<SharedHandleManager> {
@@ -289,6 +270,20 @@ impl TransactionConnection {
             Self::Pooled(_) => None,
         }
     }
+}
+
+/// Pin savepoint dialect from `requested` while keeping the live `engine_id`
+/// for isolation / access mode / lock-timeout matrix selection.
+pub(crate) fn resolve_engine_and_dialect_from_id(
+    engine_id: &'static str,
+    requested: SavepointDialect,
+) -> (&'static str, SavepointDialect) {
+    let dialect = match requested {
+        SavepointDialect::Auto => resolve_savepoint_dialect_for_engine(engine_id),
+        SavepointDialect::Sql92 => SavepointDialect::Sql92,
+        SavepointDialect::SqlServer => SavepointDialect::SqlServer,
+    };
+    (engine_id, dialect)
 }
 
 pub struct Transaction {

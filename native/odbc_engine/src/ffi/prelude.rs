@@ -21,12 +21,13 @@ pub use crate::engine::{
     execute_query_with_cached_connection_params, execute_query_with_connection,
     execute_query_with_param_buffer, execute_query_with_param_buffer_and_timeout,
     execute_query_with_param_buffer_encoding, get_global_metrics, get_type_info, list_columns,
-    list_foreign_keys, list_indexes, list_primary_keys, list_tables, recover_prepared_xids,
-    resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
-    DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
-    OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding, SavepointDialect,
-    SharedHandleManager, StatementHandle, StreamCopyResult, StreamState, StreamingExecutor,
-    Transaction, TransactionAccessMode, XaTransaction, Xid,
+    list_columns_cached, list_foreign_keys, list_foreign_keys_cached, list_indexes,
+    list_indexes_cached, list_primary_keys, list_primary_keys_cached, list_tables,
+    list_tables_cached, recover_prepared_xids, resume_prepared, AsyncStreamStatus,
+    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
+    MetadataCache, OdbcConnection, OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding,
+    SavepointDialect, SharedHandleManager, StatementHandle, StreamCopyResult, StreamState,
+    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 pub use crate::error::{OdbcError, Result, StructuredError};
 pub use crate::pool::{ConnectionPool, SharedPooledConnection};

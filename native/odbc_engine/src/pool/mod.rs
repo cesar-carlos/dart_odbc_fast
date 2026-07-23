@@ -164,6 +164,11 @@ impl PooledConnectionWrapper {
         self.pooled.connection_mut()
     }
 
+    /// Immutable cached wrapper for engine-id / prepared reuse on pooled checkouts.
+    pub fn cached(&self) -> &CachedConnection {
+        &self.pooled
+    }
+
     /// Mutable cached wrapper for prepared-statement reuse on pooled checkouts.
     pub fn cached_mut(&mut self) -> &mut CachedConnection {
         &mut self.pooled

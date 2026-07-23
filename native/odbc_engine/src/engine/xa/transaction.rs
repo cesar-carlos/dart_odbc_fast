@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::apply::{
     apply_xa_commit, apply_xa_end, apply_xa_prepare, apply_xa_recover, apply_xa_rollback,
-    apply_xa_rollback_prepared, apply_xa_start, detect_engine_id,
+    apply_xa_rollback_prepared, apply_xa_start, detect_engine_id_cached,
 };
 use super::mssql::mssql_mdtc_unenlist;
 use super::xid::Xid;
@@ -54,7 +54,7 @@ pub struct XaTransaction {
     handles: SharedHandleManager,
     conn_id: u32,
     xid: Xid,
-    engine_id: String,
+    engine_id: &'static str,
     state: Arc<Mutex<XaState>>,
     /// Set when `engine_id` is SQL Server, built with `xa-dtc` on Windows: MSDTC branch.
     #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
@@ -76,7 +76,7 @@ pub struct PreparedXa {
     handles: SharedHandleManager,
     conn_id: u32,
     xid: Xid,
-    engine_id: String,
+    engine_id: &'static str,
     state: Arc<Mutex<XaState>>,
     #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
     dtc_branch: Option<Box<crate::engine::xa_dtc::DtcXaBranch>>,
@@ -88,8 +88,6 @@ impl XaTransaction {
     /// for engines without SQL-level XA (SQL Server, Oracle, SQLite,
     /// Snowflake — see the matrix in this module's doc).
     pub fn start(handles: SharedHandleManager, conn_id: u32, xid: Xid) -> Result<Self> {
-        let engine_id = detect_engine_id(&handles, conn_id);
-
         let conn_arc = {
             let h = handles
                 .lock()
@@ -99,6 +97,9 @@ impl XaTransaction {
         let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
+
+        // Single lock: resolve engine from cache, then autocommit + XA START.
+        let engine_id = detect_engine_id_cached(&conn);
 
         // Disable autocommit so the subsequent SQL joins the XA branch
         // instead of running in implicit single-statement transactions.
@@ -123,7 +124,7 @@ impl XaTransaction {
             }
         }
 
-        apply_xa_start(conn.connection_mut(), &engine_id, &xid)?;
+        apply_xa_start(conn.connection_mut(), engine_id, &xid)?;
 
         Ok(Self {
             handles,
@@ -315,7 +316,7 @@ impl XaTransaction {
         let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        f(conn.connection_mut(), &self.engine_id, &self.xid)
+        f(conn.connection_mut(), self.engine_id, &self.xid)
     }
 
     fn try_restore_autocommit(&self) -> Result<()> {
@@ -406,7 +407,7 @@ impl PreparingXa {
             let handles = inner.handles.clone();
             let conn_id = inner.conn_id;
             let xid = inner.xid.clone();
-            let engine_id = inner.engine_id.clone();
+            let engine_id = inner.engine_id;
             let state = inner.state.clone();
             #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
             let dtc = inner.dtc_branch.take();
@@ -432,7 +433,7 @@ impl PreparingXa {
                     handles: inner.handles.clone(),
                     conn_id: inner.conn_id,
                     xid: inner.xid.clone(),
-                    engine_id: inner.engine_id.clone(),
+                    engine_id: inner.engine_id,
                     state: inner.state.clone(),
                     #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
                     dtc_branch: None,
@@ -635,7 +636,7 @@ impl PreparedXa {
         let mut conn = conn_arc
             .lock()
             .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-        f(conn.connection_mut(), &self.engine_id, &self.xid)
+        f(conn.connection_mut(), self.engine_id, &self.xid)
     }
 }
 
@@ -644,7 +645,6 @@ impl PreparedXa {
 /// crash recovery to learn which prepared branches still need a
 /// Phase 2 decision (commit or rollback).
 pub fn recover_prepared_xids(handles: SharedHandleManager, conn_id: u32) -> Result<Vec<Xid>> {
-    let engine_id = detect_engine_id(&handles, conn_id);
     let conn_arc = {
         let h = handles
             .lock()
@@ -654,7 +654,8 @@ pub fn recover_prepared_xids(handles: SharedHandleManager, conn_id: u32) -> Resu
     let mut conn = conn_arc
         .lock()
         .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-    apply_xa_recover(conn.connection_mut(), &engine_id)
+    let engine_id = detect_engine_id_cached(&conn);
+    apply_xa_recover(conn.connection_mut(), engine_id)
 }
 
 /// Resume a previously prepared XID — rebuilds a [`PreparedXa`] handle
@@ -666,7 +667,18 @@ pub fn recover_prepared_xids(handles: SharedHandleManager, conn_id: u32) -> Resu
 /// [`PreparedXa::commit`] or [`PreparedXa::rollback`] per the
 /// Transaction Manager's recovery decision.
 pub fn resume_prepared(handles: SharedHandleManager, conn_id: u32, xid: Xid) -> Result<PreparedXa> {
-    let engine_id = detect_engine_id(&handles, conn_id);
+    // Best-effort engine detect: missing/invalid handles fall back to
+    // ENGINE_UNKNOWN (same contract as the pre-cache detect helper).
+    let engine_id = match handles.lock() {
+        Ok(h) => match h.get_connection(conn_id) {
+            Ok(conn_arc) => match conn_arc.lock() {
+                Ok(cached) => detect_engine_id_cached(&cached),
+                Err(_) => crate::engine::core::ENGINE_UNKNOWN,
+            },
+            Err(_) => crate::engine::core::ENGINE_UNKNOWN,
+        },
+        Err(_) => crate::engine::core::ENGINE_UNKNOWN,
+    };
     Ok(PreparedXa {
         handles,
         conn_id,
@@ -681,12 +693,12 @@ pub fn resume_prepared(handles: SharedHandleManager, conn_id: u32, xid: Xid) -> 
 #[cfg(test)]
 impl XaTransaction {
     /// Unit-test handle with no live connection; state guards run before ODBC.
-    pub(crate) fn from_test_state(state: XaState, engine_id: &str, xid: Xid) -> Self {
+    pub(crate) fn from_test_state(state: XaState, engine_id: &'static str, xid: Xid) -> Self {
         Self {
             handles: Arc::new(Mutex::new(crate::handles::HandleManager::new())),
             conn_id: u32::MAX,
             xid,
-            engine_id: engine_id.to_string(),
+            engine_id,
             state: Arc::new(Mutex::new(state)),
             #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
             dtc_branch: None,
@@ -703,12 +715,12 @@ impl PreparingXa {
 
 #[cfg(test)]
 impl PreparedXa {
-    pub(crate) fn from_test_state(state: XaState, engine_id: &str, xid: Xid) -> Self {
+    pub(crate) fn from_test_state(state: XaState, engine_id: &'static str, xid: Xid) -> Self {
         Self {
             handles: Arc::new(Mutex::new(crate::handles::HandleManager::new())),
             conn_id: u32::MAX,
             xid,
-            engine_id: engine_id.to_string(),
+            engine_id,
             state: Arc::new(Mutex::new(state)),
             #[cfg(all(target_os = "windows", feature = "xa-dtc"))]
             dtc_branch: None,

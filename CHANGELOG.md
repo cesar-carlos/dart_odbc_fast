@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Local transaction begin** — `CachedConnection` caches canonical `engine_id`
+  (single `SQL_DBMS_NAME`); begin uses thin detect (no max-name-len / catalog
+  `SQLGetInfo`), a single connection lock for detect + isolation/access/lock/
+  autocommit, and `SavepointDialect::Sql92` / `SqlServer` no longer force
+  `ENGINE_UNKNOWN` / hardcoded SQL Server for the isolation/lock matrix.
+- **XA start / recover / resume** — same `engine_id` cache + single-lock path;
+  XA handles store `&'static str` engine ids (no per-start `String` / full
+  `DbmsInfo` snapshot).
+- **FFI TransactionMaps** — `conn_id → txn_id` reverse index makes
+  `has_active_for_connection` / checkin cleanup O(1).
+- **Catalog / plugins / pool** — catalog FFI and plugin live lookup reuse
+  cached `engine_id`; pool checkout warms the cache best-effort.
+
+### Fixed
+
+- **Session lock-timeout leak** — MySQL/MariaDB (`SET SESSION`), SQL Server
+  (`SET LOCK_TIMEOUT`), SQLite (`PRAGMA busy_timeout`), and DB2
+  (`SET CURRENT LOCK TIMEOUT`) overrides are marked dirty and reset to the
+  documented engine default on commit/rollback/drop and pool checkin.
+  PostgreSQL `SET LOCAL` is unchanged (auto-resets with the transaction).
+  Does not restore a custom pre-txn session value — only the engine default.
+
 ### Added
 
 - **Async XA / 2PC** — isolate backend now supports the full `odbc_xa_*` lifecycle
