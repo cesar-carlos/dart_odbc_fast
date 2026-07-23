@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-07-23
+
 ### Fixed
 
 - **Multi-result stream `fetchSize`** — row-major `streamMultiStartBatched` /
@@ -123,8 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path, and an `OdbcNative` load smoke check.
 - **Async XA / 2PC** — isolate backend now supports the full `odbc_xa_*` lifecycle
   (`xaStart`, end/prepare/commit/rollback, recover, resume) with `xaId` worker
-  affinity. `XaTransactionHandle` lifecycle methods return `Future<bool>`
-  (**breaking** for direct callers).
+  affinity. `XaTransactionHandle` lifecycle methods are `Future<bool>` so sync
+  and async backends share one API (`runInXaTransaction` / `runWithStart`
+  already await; prefer those helpers over manual chaining).
 - **Service XA recovery** — `IOdbcService.xaRecover` / `xaResumePrepared` promote
   the native recover APIs to the repository/service surface.
 - **Parameterized streaming** — new FFI
@@ -4127,7 +4130,14 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.10.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.4...v4.4.0
+[4.3.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.3...v4.3.4
+[4.3.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.2...v4.3.3
+[4.3.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.1...v4.3.2
+[4.3.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.0...v4.3.1
+[4.3.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.2.0...v4.3.0
+[4.2.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.1.1...v4.2.0
 [3.10.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.8.1...v3.9.0
 [3.8.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v3.8.0...v3.8.1

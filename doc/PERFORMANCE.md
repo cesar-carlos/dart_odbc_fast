@@ -1,8 +1,9 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.3.4 (server profiles apply columnar wire by default
+> **Last updated for:** v4.4.0 (server profiles apply columnar wire by default
 > via `ServiceLocator` / `OdbcRepositoryImpl`, pooled checkouts reuse prepared
-> handles through `CachedConnection`; prior v4.1.0 server profile columnar
+> handles through `CachedConnection`; async XA + multi-stream knobs;
+> prior v4.1.0 server profile columnar
 > recommendation, CRUD columnar bulk benchmark baseline, harness `--crud` lane;
 > service surface, pool/transaction hardening, native engine perf
 > follow-ups with `block-cursor-fetch` and `statement-handle-reuse`

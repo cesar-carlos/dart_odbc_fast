@@ -6,49 +6,35 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 4.3.x
+## What's New in 4.4.x
 
-Current package version: **4.3.4**. The 4.3 line keeps the public Dart
-surface additive while the Rust FFI layer continues to harden concurrency
-and encoding hot paths. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current package version: **4.4.0**. The 4.4 line adds async XA on the
+isolate path, dialect helpers on `IOdbcService`, multi-stream tunables,
+and more FFI/stream performance work — still additive for typical
+service callers. Full history: [CHANGELOG.md](CHANGELOG.md).
 Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md).
 
 ### Highlights
 
-- **Dual public barrels** — `package:odbc_fast/odbc_fast.dart` for apps
-  (`ServiceLocator`, `IOdbcService` / sub-interfaces, domain types);
-  `package:odbc_fast/odbc_fast_native.dart` for FFI demos and
-  `OdbcRepositoryImpl` / pool factory wiring. See
-  [Package entrypoints](#package-entrypoints) and
-  [`doc/ARCHITECTURE.md`](doc/ARCHITECTURE.md).
-- **Segregated repositories + telemetry ISP** —
-  `ServiceLocator.queryRepository` / `poolRepository` / … and
-  `TelemetryOdbcDecorators.query|pool|transaction|admin` for narrow seams.
-- **Transaction helpers** — `runInTransaction<T>` and
-  `runInXaTransaction<T>` on `IOdbcService` (throw-safe commit/rollback or
-  XA 2PC / one-phase). Prefer these over manual `txnId` / XA chaining.
-  Demos: [`run_in_transaction_demo.dart`](example/run_in_transaction_demo.dart),
-  [`xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
-- **Sub-interfaces & event bus** — `IQueryService` / `ITransactionService` /
-  `IPoolService` / `IAdminService` with `…For(Connection)` overloads;
-  `IAdminService.events` (`OdbcEvent`, including live `SlowQueryDetected`
-  when `ConnectionOptions.slowQueryThreshold` is set).
-- **Columnar & multi-result** — `executeQueryColumnarParamValues` /
-  `streamQueryColumnar`, `ResultEncoding.columnar` /
-  `columnarCompressed`, `executeQueryMultiFull` /
-  `executeQueryMultiParamValues`, `streamQueryMulti`. Row-major remains
-  the default encoding.
-- **Directed params & Oracle REF CURSOR** — DRT1 /
-  `executeQueryDirectedParams`, `QueryResult.outputParamValues` /
-  `additionalResults` / `refCursorResults`. Contracts in
-  [`doc/notes/TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md).
-- **Usage profiles** — `OdbcUsageProfile.balanced` /
-  `balancedServer` / `highThroughput` via `ServiceLocator` with
-  `recommendedConnectionOptions` / `recommendedResultEncoding`.
-  Demo: [`quick_start_balanced_demo.dart`](example/quick_start_balanced_demo.dart).
-- **FFI performance (native)** — default `block-cursor-fetch` and
-  `statement-handle-reuse`; sharded `ffi::state::*` maps; residual
-  `GlobalState` is `env` (+ optional BCP strings). Details:
+- **Async XA / 2PC** — full `odbc_xa_*` lifecycle on the isolate backend
+  with `xaId` worker affinity; `IOdbcService.xaRecover` /
+  `xaResumePrepared` on the service surface. Prefer
+  `runInXaTransaction` over manual handle chaining.
+- **`IDialectService`** — UPSERT / RETURNING / session-init builders on
+  `IOdbcService` (thin wrap over `OdbcDriverFeatures`).
+- **`streamQueryMulti` knobs** — optional `fetchSize` / `chunkSize`
+  (defaults 1000 / 64 KiB); async path uses `streamPollAndFetch`.
+  Demo: [`multi_result_stream_demo.dart`](example/multi_result_stream_demo.dart).
+- **Parameterized streaming** — `streamQueryNamed` batches when the
+  native params symbols are present (buffered fallback otherwise).
+- **Capability guards** — missing native symbols for columnar encoding,
+  non-default access mode, or per-txn `lockTimeout` throw
+  `UnsupportedFeatureError` instead of silent fallback.
+- **Native Assets resolution** — prefer newer local release over cache,
+  `ODBC_FAST_PREFER_LOCAL_BUILD`, SHA-256 sidecars when published.
+- **FFI / stream performance** — MULT writer, multi-stream framing,
+  sharded `ffi::state::*`, temporal/wide-text encode fast-paths, larger
+  default result buffer seed. Details:
   [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md).
 
 ### XA / 2PC engines
@@ -62,8 +48,8 @@ Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPL
 | SQL Server (MSDTC) | ✅ Windows + `--features xa-dtc` (advanced Reenlist still open — PENDING §2.1) |
 | SQLite / Snowflake | ❌ `UnsupportedFeature` |
 
-XA lifecycle helpers are on the sync/native service path today
-(`ServiceLocator.syncService` / `runInXaTransaction`). See
+XA works on sync and async service paths (`ServiceLocator.syncService` /
+isolate backend / `runInXaTransaction`). See
 [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
 
 ### Docs index
@@ -416,7 +402,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^4.3.4
+  odbc_fast: ^4.4.0
 ```
 
 Then:

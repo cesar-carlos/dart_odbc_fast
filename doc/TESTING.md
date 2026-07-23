@@ -1,6 +1,7 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v4.3.x (`4.3.4` — dual barrels, segregated repositories,
+> **Last updated for:** v4.4.x (`4.4.0` — async XA, dialect service, multi-stream
+> knobs, dual barrels, segregated repositories,
 > event bus, columnar service surface, FFI `GlobalState` sharding, CI unit +
 > docs/example smoke scopes). Canonical opt-in flags and suite ownership live
 > below; build/prereq details live in [`BUILD.md`](BUILD.md).

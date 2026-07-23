@@ -1,7 +1,7 @@
 # Implementacoes pendentes
 
 Referencia pratica para o que ainda exige decisao de produto, ambiente live ou
-maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `4.3.4`
+maturacao. O estado abaixo esta alinhado a `pubspec.yaml` `4.4.0`
 (sub-interfaces `IQueryService`/`ITransactionService`/`IPoolService`/`IAdminService`/
 `IDialectService`,
 `IAdminService.events` + `OdbcEvent`, `executeQueryColumnar` /
