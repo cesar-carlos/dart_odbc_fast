@@ -10,6 +10,7 @@ Usage:
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +56,21 @@ def format_size(size_bytes: int) -> str:
     return f"{size_mb:.2f} MB"
 
 
+def library_candidates(root_dir: Path) -> list[Path]:
+    system = platform.system().lower()
+    if system == "windows":
+        name = "odbc_engine.dll"
+    elif system == "linux":
+        name = "libodbc_engine.so"
+    else:
+        return []
+
+    return [
+        root_dir / "native" / "target" / "release" / name,
+        root_dir / "native" / "odbc_engine" / "target" / "release" / name,
+    ]
+
+
 def main():
     root_dir = Path(__file__).parent.parent
     os.chdir(root_dir)
@@ -64,46 +80,63 @@ def main():
 
     all_passed = True
 
-    print_step("1. Checking hook/build.dart...")
+    print_step("1. Checking hook files...")
     hook_path = root_dir / "hook" / "build.dart"
-    if hook_path.exists():
-        print_success("   OK hook/build.dart found")
-    else:
-        print_error("   ERROR hook/build.dart not found")
-        all_passed = False
+    resolver_path = root_dir / "hook" / "native_library_resolver.dart"
+    for path in (hook_path, resolver_path):
+        if path.exists():
+            print_success(f"   OK {path.relative_to(root_dir)} found")
+        else:
+            print_error(f"   ERROR {path.relative_to(root_dir)} not found")
+            all_passed = False
 
     print()
-    print_step("2. Analyzing hook/build.dart...")
-    result = subprocess.run(
-        ["dart", "analyze", str(hook_path)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        print_success("   OK Analyze completed with no issues")
-    else:
-        print_error("   ERROR Issues found:")
-        print(result.stdout)
-        print(result.stderr)
+    print_step("2. Analyzing hook/...")
+    dart = shutil.which("dart") or shutil.which("dart.bat")
+    if dart is None:
+        print_error("   ERROR dart executable not found on PATH")
         all_passed = False
+    else:
+        result = subprocess.run(
+            [dart, "analyze", str(root_dir / "hook")],
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        if result.returncode == 0:
+            print_success("   OK Analyze completed with no issues")
+        else:
+            print_error("   ERROR Issues found:")
+            print(result.stdout)
+            print(result.stderr)
+            all_passed = False
 
     print()
     print_step("3. Checking Rust library...")
     system = platform.system().lower()
-    if system == "windows":
-        dll_path = root_dir / "native" / "odbc_engine" / "target" / "release" / "odbc_engine.dll"
-    elif system == "darwin":
-        dll_path = root_dir / "native" / "odbc_engine" / "target" / "release" / "libodbc_engine.dylib"
+    if system not in {"windows", "linux"}:
+        print_step(
+            f"   WARNING Unsupported platform for native assets: {system}"
+        )
+        print_info("   Supported platforms: Windows and Linux (x64)")
     else:
-        dll_path = root_dir / "native" / "odbc_engine" / "target" / "release" / "libodbc_engine.so"
-
-    if dll_path.exists():
-        size_str = format_size(dll_path.stat().st_size)
-        print_success(f"   OK Rust library found: {dll_path.relative_to(root_dir)}")
-        print_info(f"   Size: {size_str}")
-    else:
-        print_step("   WARNING Rust library not found")
-        print_info("   Build command: cd native/odbc_engine && cargo build --release")
+        found = False
+        for dll_path in library_candidates(root_dir):
+            if dll_path.exists():
+                size_str = format_size(dll_path.stat().st_size)
+                print_success(
+                    f"   OK Rust library found: {dll_path.relative_to(root_dir)}"
+                )
+                print_info(f"   Size: {size_str}")
+                found = True
+                break
+        if not found:
+            print_step("   WARNING Rust library not found")
+            print_info("   Build command: cd native && cargo build --release")
+            print_info(
+                "   Checked: native/target/release/ and "
+                "native/odbc_engine/target/release/"
+            )
 
     print()
     print_step("4. Checking pubspec.yaml...")
@@ -114,21 +147,23 @@ def main():
     else:
         pubspec_content = pubspec_path.read_text(encoding="utf-8")
 
-        if re.search(r"\bcode_assets:\s*", pubspec_content):
-            print_success("   OK code_assets dependency found")
-        else:
-            print_error("   ERROR code_assets dependency not found")
-            all_passed = False
-
-        if re.search(r"\bhooks:\s*", pubspec_content):
-            print_success("   OK hooks dependency found")
-        else:
-            print_error("   ERROR hooks dependency not found")
-            all_passed = False
+        for dep in ("code_assets:", "hooks:", "crypto:"):
+            if re.search(rf"\b{re.escape(dep)}\s*", pubspec_content):
+                print_success(f"   OK {dep.rstrip(':')} dependency found")
+            else:
+                print_error(f"   ERROR {dep.rstrip(':')} dependency not found")
+                all_passed = False
 
     print()
     print_step("5. Checking library_loader.dart...")
-    loader_path = root_dir / "lib" / "infrastructure" / "native" / "bindings" / "library_loader.dart"
+    loader_path = (
+        root_dir
+        / "lib"
+        / "infrastructure"
+        / "native"
+        / "bindings"
+        / "library_loader.dart"
+    )
     if not loader_path.exists():
         print_error("   ERROR library_loader.dart not found")
         all_passed = False
@@ -143,11 +178,17 @@ def main():
     print()
     print_step("6. Checking release workflow...")
     release_workflow = root_dir / ".github" / "workflows" / "release.yml"
-    if release_workflow.exists():
-        print_success("   OK release.yml found")
-    else:
+    if not release_workflow.exists():
         print_error("   ERROR release.yml not found")
         all_passed = False
+    else:
+        print_success("   OK release.yml found")
+        release_text = release_workflow.read_text(encoding="utf-8")
+        if "sha256sum" in release_text and ".sha256" in release_text:
+            print_success("   OK SHA-256 sidecar generation configured")
+        else:
+            print_error("   ERROR SHA-256 sidecar generation missing")
+            all_passed = False
 
     print()
     print_header("=== Validation complete ===")
@@ -157,9 +198,9 @@ def main():
         return 1
 
     print_step("Suggested next steps:")
-    print_info("1. Build Rust: cd native/odbc_engine && cargo build --release")
-    print_info("2. Validate hook path: dart analyze hook/build.dart")
-    print_info("3. Run tests: dart test")
+    print_info("1. Build Rust: cd native && cargo build --release")
+    print_info("2. Validate hook path: dart analyze hook")
+    print_info("3. Run tests: dart test test/hook")
     print_info("4. Run release flow: see doc/RELEASE_AUTOMATION.md")
 
     return 0

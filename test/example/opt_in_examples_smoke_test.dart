@@ -151,6 +151,22 @@ void main() {
     );
 
     test(
+      'should_run_native_assets_resolution_demo_without_dsn',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/native_assets_resolution_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        final out = '${result.stdout}\n${result.stderr}';
+        expect(out, contains('Native library resolution'));
+        expect(out, contains('ODBC_FAST_PREFER_LOCAL_BUILD'));
+        expect(out, contains('ODBC_FAST_SKIP_DOWNLOAD'));
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
       'should_skip_event_bus_demo_when_dsn_is_disabled',
       () async {
         final result = await _runExampleWithoutDsn(

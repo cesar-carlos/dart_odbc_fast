@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Native Assets hook** — resolution prefers a newer (or equal) local release
+  over `~/.cache/odbc_fast/<version>/`, honors `ODBC_FAST_PREFER_LOCAL_BUILD`,
+  skips GitHub download for non-x64 arches (no flat arm64 assets yet), and
+  verifies SHA-256 when a `<lib>.sha256` sidecar is published. Release workflow
+  now uploads those sidecars; `library_loader` loads local build paths before
+  Native Assets so `cargo build --release` wins without re-running the hook.
+  Unit coverage extended for loader path priority and hook download/skip/SHA
+  mismatch contracts.
+
 ### Performance
 
 - **Local transaction begin** — `CachedConnection` caches canonical `engine_id`
@@ -33,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`example/native_assets_resolution_demo.dart`** — DSN-free probe of hook /
+  `library_loader` resolution order, `ODBC_FAST_*` env vars, local/cache paths,
+  and an `OdbcNative` load smoke check.
 - **Async XA / 2PC** — isolate backend now supports the full `odbc_xa_*` lifecycle
   (`xaStart`, end/prepare/commit/rollback, recover, resume) with `xaId` worker
   affinity. `XaTransactionHandle` lifecycle methods return `Future<bool>`

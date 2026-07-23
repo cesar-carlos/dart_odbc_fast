@@ -255,6 +255,19 @@ jobs:
           test -f uploads/odbc_engine.dll
           test -f uploads/libodbc_engine.so
 
+      - name: Generate SHA-256 sidecars
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd uploads
+            sha256sum odbc_engine.dll > odbc_engine.dll.sha256
+            sha256sum libodbc_engine.so > libodbc_engine.so.sha256
+            echo "Checksums:"
+            cat odbc_engine.dll.sha256
+            cat libodbc_engine.so.sha256
+          )
+
       - name: Extract CHANGELOG section into release body
         shell: bash
         env:

@@ -71,7 +71,7 @@ jobs:
             status="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -o release.json -w "%{http_code}" "${URL}" || true)"
 
             if [[ "${status}" == "200" ]]; then
-              if python3 -c "import json,sys; data=json.load(open('release.json', encoding='utf-8')); assets={a.get('name') for a in data.get('assets', [])}; required={'odbc_engine.dll','libodbc_engine.so'}; missing=required-assets; print('Release assets are ready.' if not missing else 'Release exists but missing assets: ' + ', '.join(sorted(missing))); sys.exit(0 if not missing else 1)"; then
+              if python3 -c "import json,sys; data=json.load(open('release.json', encoding='utf-8')); assets={a.get('name') for a in data.get('assets', [])}; required={'odbc_engine.dll','libodbc_engine.so','odbc_engine.dll.sha256','libodbc_engine.so.sha256'}; missing=required-assets; print('Release assets are ready.' if not missing else 'Release exists but missing assets: ' + ', '.join(sorted(missing))); sys.exit(0 if not missing else 1)"; then
                 exit 0
               fi
             fi

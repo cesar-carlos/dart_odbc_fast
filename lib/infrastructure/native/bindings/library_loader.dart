@@ -16,14 +16,6 @@ String _libraryName() {
   throw UnsupportedError('Platform not supported: ${Platform.operatingSystem}');
 }
 
-/// Loads the ODBC engine library from the default location.
-///
-/// Uses a priority-based loading strategy:
-/// 1. Native Assets (automatic download from GitHub Releases)
-/// 2. Development local - native/target/release/ (workspace) or native/odbc_engine/target/release/ (local)
-/// 3. System library paths - PATH/LD_LIBRARY_PATH
-/// 4. Custom path - allows loading from custom path (for debugging)
-///
 /// Finds package root by walking up until a directory contains pubspec.yaml.
 String? _findPackageRoot() {
   var dir = Directory.current;
@@ -32,61 +24,70 @@ String? _findPackageRoot() {
       return dir.path;
     }
     final parent = dir.parent;
-    if (parent.path == dir.path) return null;
+    if (parent.path == dir.path) {
+      return null;
+    }
     dir = parent;
   }
 }
 
-DynamicLibrary? _tryLoadFromRoot(String root, String name, String sep) {
+String? _existingPathUnderRoot(String root, String name, String sep) {
   final workspace = '$root${sep}native${sep}target${sep}release$sep$name';
-  final fWorkspace = File(workspace);
-  if (fWorkspace.existsSync()) {
-    return DynamicLibrary.open(fWorkspace.absolute.path);
+  if (File(workspace).existsSync()) {
+    return File(workspace).absolute.path;
   }
   final local =
       '$root${sep}native${sep}odbc_engine${sep}target${sep}release$sep$name';
-  final fLocal = File(local);
-  if (fLocal.existsSync()) {
-    return DynamicLibrary.open(fLocal.absolute.path);
+  if (File(local).existsSync()) {
+    return File(local).absolute.path;
   }
   return null;
 }
 
+DynamicLibrary? _tryLoadFromRoot(String root, String name, String sep) {
+  final path = _existingPathUnderRoot(root, name, sep);
+  if (path == null) {
+    return null;
+  }
+  return DynamicLibrary.open(path);
+}
+
 /// Returns the loaded [DynamicLibrary] instance.
+///
+/// Resolution order (aligned with `hook/build.dart` / `doc/BUILD.md`):
+/// 1. Development local — `native/target/release/` (workspace) or
+///    `native/odbc_engine/target/release/` (crate-local), from cwd then package
+///    root
+/// 2. Native Assets — `package:odbc_fast/<lib>` (hook cache / download)
+/// 3. System library paths — PATH / LD_LIBRARY_PATH
 DynamicLibrary loadOdbcLibrary() {
   final name = _libraryName();
-  final cwd = Directory.current.path;
-  final sep = Platform.pathSeparator;
+  final localPath = findFirstExistingOdbcEnginePath(
+    cwd: Directory.current.path,
+    packageRoot: _findPackageRoot(),
+  );
+  if (localPath != null) {
+    return DynamicLibrary.open(localPath);
+  }
 
-  // 1. Native Assets (production) - package:odbc_fast/
+  // Native Assets (production) - package:odbc_fast/
   try {
     return DynamicLibrary.open('package:odbc_fast/$name');
   } on Object catch (_) {
     // Native Assets not available, continue to next option
   }
 
-  // 2. CWD-relative (e.g. when running from project root)
-  final fromCwd = _tryLoadFromRoot(cwd, name, sep);
-  if (fromCwd != null) return fromCwd;
-
-  // 3. Package root-relative (e.g. when dart test runs from test/subdir)
-  final root = _findPackageRoot();
-  if (root != null) {
-    final fromRoot = _tryLoadFromRoot(root, name, sep);
-    if (fromRoot != null) return fromRoot;
-  }
-
-  // 4. Sistema - PATH/LD_LIBRARY_PATH
+  // System - PATH/LD_LIBRARY_PATH
   try {
     return DynamicLibrary.open(name);
   } catch (e) {
     throw StateError(
       'ODBC engine library not found.\n\n'
       'Options:\n'
-      '1. Automatic download: Run "dart pub get" again\n'
+      '1. For development: Build Rust library first\n'
+      '   cd native && cargo build --release\n\n'
+      '2. Automatic download: Run "dart pub get" again\n'
       '   (Binary will be downloaded from GitHub Releases)\n\n'
-      '2. For development: Build Rust library first\n'
-      '   cd native/odbc_engine && cargo build --release\n\n'
       '3. Manual download: Get binary from GitHub Releases\n'
       '   https://github.com/cesar-carlos/dart_odbc_fast/releases\n\n'
       'Error: $e',
@@ -105,13 +106,11 @@ DynamicLibrary loadOdbcLibraryFromPath(String path) {
 
 /// Attempts to load the ODBC engine library from application assets.
 ///
-/// This is now handled automatically by Native Assets via the build hook.
-/// The hook downloads binaries from GitHub Releases to ~/.cache/odbc_fast/
+/// Native Assets are handled by `hook/build.dart` and resolved through
+/// [loadOdbcLibrary]. Kept for API compatibility.
 ///
 /// Returns the loaded [DynamicLibrary] if found, null otherwise.
 DynamicLibrary? loadOdbcLibraryFromAssets() {
-  // Native Assets handles this automatically via hook/build.dart
-  // This method is kept for API compatibility but is no longer used
   return null;
 }
 
@@ -122,6 +121,36 @@ String odbcEngineLibraryFileName() => _libraryName();
 /// Walks upward from [Directory.current] until `pubspec.yaml` is found.
 @visibleForTesting
 String? findOdbcPackageRoot() => _findPackageRoot();
+
+/// Workspace then crate-local release paths under [root].
+@visibleForTesting
+List<String> odbcEngineLocalReleasePaths(String root) {
+  final name = _libraryName();
+  final sep = Platform.pathSeparator;
+  return [
+    '$root${sep}native${sep}target${sep}release$sep$name',
+    '$root${sep}native${sep}odbc_engine${sep}target${sep}release$sep$name',
+  ];
+}
+
+/// First existing local release path: [cwd] before [packageRoot], workspace
+/// before crate-local. Does not consult Native Assets or PATH.
+@visibleForTesting
+String? findFirstExistingOdbcEnginePath({
+  required String cwd,
+  String? packageRoot,
+}) {
+  final name = _libraryName();
+  final sep = Platform.pathSeparator;
+  final fromCwd = _existingPathUnderRoot(cwd, name, sep);
+  if (fromCwd != null) {
+    return fromCwd;
+  }
+  if (packageRoot != null && packageRoot != cwd) {
+    return _existingPathUnderRoot(packageRoot, name, sep);
+  }
+  return null;
+}
 
 /// Tries dev release paths under [root] without falling back to system PATH.
 @visibleForTesting

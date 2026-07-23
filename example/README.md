@@ -53,8 +53,9 @@ exists.
 `OdbcRepositoryImpl` / `OdbcPoolFactory` directly — see
 [`simple_demo.dart`](simple_demo.dart), [`async_demo.dart`](async_demo.dart),
 [`streaming_demo.dart`](streaming_demo.dart), [`pool_with_options_demo.dart`](pool_with_options_demo.dart),
-[`driver_features_demo.dart`](driver_features_demo.dart), and the performance/native demos
-listed below.
+[`driver_features_demo.dart`](driver_features_demo.dart),
+[`native_assets_resolution_demo.dart`](native_assets_resolution_demo.dart),
+and the performance/native demos listed below.
 
 ## Removed examples
 
@@ -177,6 +178,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 ### Connection / pool
 
 - [connection_string_builder_demo.dart](connection_string_builder_demo.dart): fluent connection string creation for **all 7 builders** (SQL Server, PostgreSQL, MySQL, plus v3.0 MariaDB / SQLite / Db2 / Snowflake).
+- **[native_assets_resolution_demo.dart](native_assets_resolution_demo.dart)**: DSN-free probe of Native Assets / hook resolution — documents runtime vs hook order, prints `ODBC_FAST_PREFER_LOCAL_BUILD` / `ODBC_FAST_SKIP_DOWNLOAD`, checks local release + `~/.cache/odbc_fast/<version>/` paths, and loads `OdbcNative` for an engine version smoke check. See also [doc/BUILD.md](../doc/BUILD.md).
 - [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, pooled checkout -> local transaction -> release flow, state/health checks, and parallel bulk insert (column-oriented `addColumnText`).
 - [bulk_insert_demo.dart](bulk_insert_demo.dart): single-connection `bulkInsert` with ~500 rows via `addColumnInt32` + `addColumnText` through `ServiceLocator.syncService`.
 - **[pool_with_options_demo.dart](pool_with_options_demo.dart)** *(v3.0)*: typed `PoolOptions` (`idleTimeout`, `maxLifetime`, `connectionTimeout`) with `OdbcPoolFactory`, automatic legacy fallback, and resize-safe config preservation.

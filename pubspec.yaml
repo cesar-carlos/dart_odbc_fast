@@ -17,6 +17,7 @@ platforms:
 
 dependencies:
   code_assets: ^1.2.1
+  crypto: ^3.0.6
   dotenv: ^4.2.0
   ffi: ^2.2.0
   hooks: ^2.1.0

@@ -37,15 +37,41 @@ Expected output:
 
 ## Native Library Resolution Order
 
-`library_loader.dart` attempts to load in this order:
+Two layers cooperate: the **build hook** (`hook/build.dart`) chooses which
+binary to register as a Native Asset, and **`library_loader.dart`** loads it at
+runtime.
+
+### Runtime (`library_loader.dart`)
 
 1. `<cwd>/native/target/release/<lib>` (workspace target relative to working dir)
 2. `<cwd>/native/odbc_engine/target/release/<lib>` (member-local target)
-3. Same two paths repeated relative to the **package root** (found by walking up to the directory containing `pubspec.yaml`).
-4. `package:odbc_fast/<lib>` (Native Assets — production download)
+3. Same two paths repeated relative to the **package root** (found by walking up
+   to the directory containing `pubspec.yaml`)
+4. `package:odbc_fast/<lib>` (Native Assets — cache / GitHub download via hook)
 5. System PATH / LD_LIBRARY_PATH
 
-Tip: `cd native && cargo build --release` writes to `native/target/release/`, which step 1 picks up automatically — no manual copy needed.
+Tip: `cd native && cargo build --release` writes to `native/target/release/`,
+which steps 1–3 pick up automatically — no manual copy needed.
+
+### Build hook (`hook/build.dart`)
+
+1. Local release artifact when `ODBC_FAST_PREFER_LOCAL_BUILD=true`, or when it is
+   newer than (or as new as) the versioned cache entry
+2. Versioned cache: `~/.cache/odbc_fast/<version>/<os>_x64/<lib>`
+3. Local release artifact (workspace then crate-local)
+4. GitHub Release download for **x64** only (skipped when `CI=true`,
+   `PUB_ENVIRONMENT` contains `pub.dev`, or `ODBC_FAST_SKIP_DOWNLOAD=true`);
+   verifies `<lib>.sha256` when the sidecar exists
+
+Unsupported OS/arch combinations (including arm64 prebuilts) require a local
+`cargo build --release`.
+
+Env vars:
+
+| Variable | Effect |
+|----------|--------|
+| `ODBC_FAST_PREFER_LOCAL_BUILD=true` | Prefer local release over cache |
+| `ODBC_FAST_SKIP_DOWNLOAD=true` | Never download from GitHub Releases |
 
 ## Manual Copy (only when needed)
 
