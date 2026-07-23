@@ -1,7 +1,6 @@
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
-
-import 'native_library_resolver.dart';
+import 'package:odbc_fast/src/native_assets/native_library_resolver.dart';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {

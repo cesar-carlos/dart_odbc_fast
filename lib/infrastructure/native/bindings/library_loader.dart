@@ -122,7 +122,7 @@ String? odbcEngineCachedLibraryPath({
 }
 
 /// Picks between local and cached paths using the same policy as
-/// `hook/native_library_resolver.dart` `chooseLocalOrCached`.
+/// `lib/src/native_assets/native_library_resolver.dart` `chooseLocalOrCached`.
 @visibleForTesting
 String? chooseLocalOrCachedLibraryPath({
   required String? localPath,

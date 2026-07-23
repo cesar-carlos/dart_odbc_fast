@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pub publish hook layout** — move `native_library_resolver.dart` to
+  `lib/src/native_assets/` so `hook/` only contains `build.dart` (pub.dev
+  rejects extra hook files while hooks remain experimental).
 - **Multi-result stream `fetchSize`** — row-major `streamMultiStartBatched` /
   `streamMultiStartAsync` call `*_options` (wire=0) when the symbol exists so
   Dart's default `fetchSize` (1000) is honored instead of the legacy native
