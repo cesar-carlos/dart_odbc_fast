@@ -41,7 +41,12 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   int beginTransactionResult = 0;
   int bulkInsertResult = 0;
   int streamMultiStartBatchedResult = 0;
+  int? streamMultiStartAsyncResult;
   int? lastStreamMultiStartResultEncodingWire;
+  int? lastStreamMultiStartFetchSize;
+  int? lastStreamMultiStartChunkSize;
+  bool lastStreamMultiStartWasAsync = false;
+  int? lastStreamFetchBufferSize;
   Uint8List? executePreparedResult;
   Uint8List? executeQueryMultiResult;
 
@@ -55,9 +60,12 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   String? lastStreamStartSql;
 
   List<StreamFetchResponse> streamFetchResponses = const [];
+  List<int>? streamPollAsyncResponses;
+  int streamPollAndFetchCallCount = 0;
 
   int _nextNativeConn = 50;
   var _streamFetchCall = 0;
+  var _streamPollCall = 0;
 
   @override
   Future<bool> initialize() async => initializeSuccess;
@@ -148,7 +156,63 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     int resultEncodingWire = 0,
   }) async {
     lastStreamMultiStartResultEncodingWire = resultEncodingWire;
+    lastStreamMultiStartFetchSize = fetchSize;
+    lastStreamMultiStartChunkSize = chunkSize;
+    lastStreamMultiStartWasAsync = false;
     return streamMultiStartBatchedResult;
+  }
+
+  @override
+  Future<int> streamMultiStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) async {
+    lastStreamMultiStartResultEncodingWire = resultEncodingWire;
+    lastStreamMultiStartFetchSize = fetchSize;
+    lastStreamMultiStartChunkSize = chunkSize;
+    lastStreamMultiStartWasAsync = true;
+    return streamMultiStartAsyncResult ?? streamMultiStartBatchedResult;
+  }
+
+  @override
+  Future<int> streamPollAsync(int streamId) async {
+    final scripted = streamPollAsyncResponses;
+    if (scripted != null) {
+      if (_streamPollCall >= scripted.length) {
+        return 2; // Done
+      }
+      return scripted[_streamPollCall++];
+    }
+    // Auto: Ready while fetches remain, then Done.
+    if (_streamFetchCall < streamFetchResponses.length) {
+      return 1; // Ready
+    }
+    return 2; // Done
+  }
+
+  @override
+  Future<StreamPollFetchResponse> streamPollAndFetch(
+    int streamId, {
+    int? bufferSize,
+  }) async {
+    streamPollAndFetchCallCount++;
+    lastStreamFetchBufferSize = bufferSize;
+    final status = await streamPollAsync(streamId);
+    if (status != 1) {
+      return StreamPollFetchResponse(0, status: status);
+    }
+    final fetched = await streamFetch(streamId, bufferSize: bufferSize);
+    return StreamPollFetchResponse(
+      0,
+      status: status,
+      success: fetched.success,
+      data: fetched.data,
+      hasMore: fetched.hasMore,
+      error: fetched.error,
+    );
   }
 
   @override
@@ -166,7 +230,11 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   }
 
   @override
-  Future<StreamFetchResponse> streamFetch(int streamId) async {
+  Future<StreamFetchResponse> streamFetch(
+    int streamId, {
+    int? bufferSize,
+  }) async {
+    lastStreamFetchBufferSize = bufferSize;
     final responses = streamFetchResponses;
     if (responses.isEmpty) {
       return StreamFetchResponse(0, success: false, error: 'no fetch queued');

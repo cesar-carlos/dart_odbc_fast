@@ -59,6 +59,59 @@ QueryResult fromTypedColumnar(TypedColumnarResult result) {
   return QueryResult(columns: columnNames, rows: rows, rowCount: n);
 }
 
+/// Converts a row-major buffer into typed columns using wire ODBC
+/// discriminants when provided (avoids a [QueryResult] intermediate).
+TypedColumnarResult toTypedColumnarFromWire({
+  required List<String> columnNames,
+  required List<int> odbcDiscriminants,
+  required List<List<dynamic>> rows,
+}) {
+  final n = rows.length;
+  final columns = <TypedColumn>[];
+  for (var c = 0; c < columnNames.length; c++) {
+    final kind = c < odbcDiscriminants.length
+        ? _kindFromDiscriminant(odbcDiscriminants[c], rows, c)
+        : _inferKind(rows, c);
+    columns.add(_buildColumn(columnNames[c], kind, rows, c, n));
+  }
+  return TypedColumnarResult(columns: columns, rowCount: n);
+}
+
+TypedColumnKind _kindFromDiscriminant(
+  int discriminant,
+  List<List<dynamic>> rows,
+  int col,
+) {
+  // Keep in sync with OdbcType discriminants / columnar typed kinds.
+  switch (discriminant) {
+    case 2:
+      return TypedColumnKind.int32;
+    case 3:
+      return TypedColumnKind.int64;
+    case 7:
+      return TypedColumnKind.bytes;
+    case 13:
+      return TypedColumnKind.bool_;
+    case 14:
+    case 15:
+      return TypedColumnKind.float64;
+    case 4:
+    case 18:
+      return TypedColumnKind.decimal;
+    case 5:
+    case 6:
+    case 9:
+    case 10:
+    case 11:
+      return TypedColumnKind.dateTime;
+    case 1:
+    case 8:
+      return TypedColumnKind.string;
+    default:
+      return _inferKind(rows, col);
+  }
+}
+
 Object? _unwrapStringLike(Object? value) {
   if (value == null || value is String || value is LazyString) {
     return value;
@@ -144,7 +197,13 @@ TypedColumn _buildColumn(
           _setBit(bitmap, i);
           continue;
         }
-        values[i] = v as double;
+        if (v is double) {
+          values[i] = v;
+        } else if (v is num) {
+          values[i] = v.toDouble();
+        } else {
+          values[i] = double.parse(v.toString());
+        }
       }
       return TypedColumnFloat64(
         name: name,
@@ -155,7 +214,23 @@ TypedColumn _buildColumn(
       return TypedColumnObject<bool>(
         name: name,
         kind: kind,
-        values: List<bool?>.generate(n, (i) => rows[i][col] as bool?),
+        values: List<bool?>.generate(n, (i) {
+          final v = rows[i][col];
+          if (v == null) {
+            return null;
+          }
+          if (v is bool) {
+            return v;
+          }
+          final text = v.toString().trim().toLowerCase();
+          if (text == '0' || text == 'false') {
+            return false;
+          }
+          if (text == '1' || text == 'true') {
+            return true;
+          }
+          throw FormatException('Cannot coerce bool from "$v"');
+        }),
       );
     case TypedColumnKind.string:
       final hasLazy = rows.any((row) => row[col] is LazyString);

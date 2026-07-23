@@ -66,9 +66,11 @@ and the performance/native demos listed below.
 
 ## Cancellation note
 
-- Statement cancellation is currently exposed but not implemented end-to-end in
-  runtime execution.
-- Prefer timeout-based control in examples and applications.
+- `cancelStatement` is exposed but **not implemented end-to-end** in the Rust
+  engine (`odbc_cancel` returns SQLSTATE `0A000`). The service API maps that to
+  `UnsupportedFeatureError`.
+- Prefer timeout-based control via `ConnectionOptions.queryTimeout` (maps to
+  `SQL_ATTR_QUERY_TIMEOUT` where the driver supports it).
 
 ## Examples
 
@@ -135,6 +137,7 @@ The benchmark supports structured output:
 ODBC_BENCH_OUTPUT=json ODBC_BENCH_OUT_FILE=bench_baselines/async.json dart run example/async_concurrency_benchmark.dart
 ODBC_BENCH_OUTPUT=csv ODBC_BENCH_OUT_FILE=bench_baselines/async.csv dart run example/async_concurrency_benchmark.dart
 ODBC_STREAM_BENCH_OUTPUT=json ODBC_STREAM_BENCH_OUT_FILE=bench_baselines/streaming.json dart run example/streaming_performance_benchmark.dart
+ODBC_MULTI_BENCH_ROWS=1000 ODBC_MULTI_BENCH_SETS=3 ODBC_MULTI_BENCH_CHUNK=1048576 dart run example/multi_result_performance_benchmark.dart
 ```
 
 Compare a saved streaming baseline with a new run:
@@ -170,7 +173,8 @@ accumulation with small chunks, and streaming multi-result decoding.
 - **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — same single-chunk delivery as `executeQueryNamed`, but exposed as `Stream<Result<QueryResult>>` for uniform call sites and a typed failure stream item for missing named params.
 - **[param_value_migration_demo.dart](param_value_migration_demo.dart)**: DSN-free side-by-side `executeQueryParamValuesFromObjects` (bridge) vs explicit `executeQueryParamValues` (`List<ParamValue>`).
 - [multi_result_demo.dart](multi_result_demo.dart): service-level multi-result via `executeQueryMultiFull` and parameterized `executeQueryMultiParamValues` (portable SELECT batches).
-- [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result consumption item-by-item with `streamQueryMulti`.
+- [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result with `streamQueryMulti` (tag-2 fetch batches coalesced per SQL cursor; optional `fetchSize` / `chunkSize`, defaults 1000 / 64 KiB).
+- [multi_result_performance_benchmark.dart](multi_result_performance_benchmark.dart): live timing of `executeQueryMultiFull` vs `streamQueryMulti` (sync/async); tunables `ODBC_MULTI_BENCH_ROWS` / `SETS` / `ITERS` / `WARMUP` / `FETCH` / `CHUNK` (defaults to `Produto`).
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.
 - [oracle_ref_cursor_demo.dart](oracle_ref_cursor_demo.dart): opt-in Oracle `ParamValueRefCursorOut` call that surfaces cursor row sets through `QueryResult.refCursorResults`.
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.

@@ -63,6 +63,8 @@ class OdbcTransactionRunner {
         );
       }
       return Success(txnId);
+    } on OdbcError catch (e) {
+      return Failure<int, OdbcError>(e);
     } on Exception catch (e) {
       return Failure<int, OdbcError>(
         QueryError(message: e.toString()),

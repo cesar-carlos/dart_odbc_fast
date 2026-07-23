@@ -122,6 +122,10 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
   bool get supportsStreamResultEncodingOptions =>
       _odbc_stream_start_batched_options_ptr != null;
 
+  /// True when batched streaming with params accepts explicit wire encoding.
+  bool get supportsStreamStartParamsOptions =>
+      _odbc_stream_start_batched_params_options_ptr != null;
+
   /// True when batched streaming accepts a parameter buffer.
   bool get supportsStreamStartParams =>
       _odbc_stream_start_batched_params_ptr != null;
@@ -139,6 +143,10 @@ mixin _OdbcBindingsStream on _OdbcBindingsState {
   /// (`odbc_stream_multi_start_batched_options`, v4.2+).
   bool get supportsMultiResultStreamEncodingOptions =>
       _odbc_stream_multi_start_batched_options_ptr != null;
+
+  /// True when multi-result async streaming accepts explicit wire encoding.
+  bool get supportsMultiResultStreamAsyncEncodingOptions =>
+      _odbc_stream_multi_start_async_options_ptr != null;
 
   bool get supportsAsyncStreamApi =>
       _odbc_stream_start_async_ptr != null &&

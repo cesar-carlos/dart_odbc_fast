@@ -23,6 +23,11 @@ pub const MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH: u8 = 2;
 )]
 pub(crate) const DEFAULT_MULTI_STREAM_FETCH_SIZE: usize = 100;
 
+/// Bounded queue depth between the multi-stream producer thread and the
+/// consumer. Depth 2 lets the producer pre-buffer one frame while Dart/FFI
+/// copies the current one.
+const MULTI_STREAM_CHANNEL_DEPTH: usize = 2;
+
 /// Drive a prepared statement that may yield multiple result sets and call
 /// `on_item` for **every** result set or row-count, in order. Each item is
 /// wire-framed as `[tag: u8][len: u32 LE][payload]`. Used by the streaming
@@ -171,7 +176,7 @@ where
     )
 }
 
-pub(crate) fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+pub(crate) fn frame_item(tag: u8, mut payload: Vec<u8>) -> Result<Vec<u8>> {
     let payload_len: u32 = payload.len().try_into().map_err(|_| {
         OdbcError::ResourceLimitReached(format!(
             "multi-result stream item payload exceeds u32: {}",
@@ -185,7 +190,8 @@ pub(crate) fn frame_item(tag: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(capacity);
     out.push(tag);
     out.extend_from_slice(&payload_len.to_le_bytes());
-    out.extend(payload);
+    // Move payload bytes in place (same pattern as MultiResultWriter).
+    out.append(&mut payload);
     Ok(out)
 }
 
@@ -322,7 +328,7 @@ fn spawn_multi_stream_worker(
     is_async: bool,
 ) -> Result<EitherStream> {
     let chunk_size = chunk_size.max(1);
-    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(MULTI_STREAM_CHANNEL_DEPTH);
     let cancel_requested = Arc::new(AtomicBool::new(false));
 
     let conn_arc = {
@@ -397,7 +403,7 @@ fn spawn_multi_stream_worker_pooled(
     on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
 ) -> Result<EitherStream> {
     let chunk_size = chunk_size.max(1);
-    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
+    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(MULTI_STREAM_CHANNEL_DEPTH);
     let cancel_requested = Arc::new(AtomicBool::new(false));
 
     let join = std::thread::spawn({

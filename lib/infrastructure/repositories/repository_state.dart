@@ -50,6 +50,10 @@ class OdbcRepositoryState {
   /// out from that pool unless overridden in `poolGetConnection`.
   final Map<int, ConnectionOptions?> poolConnectionOptions = {};
 
+  /// Native async request id → owning domain `connectionId`.
+  /// Enables `asyncGetResult` to honor per-connection `lazyStrings`.
+  final Map<int, String> asyncRequestConnectionById = {};
+
   /// Domain `connectionId` → owning `poolId` for pooled handles.
   /// Enables O(1) pool membership check and prevents `disconnect()`
   /// being called on pool-acquired connections.
@@ -66,6 +70,7 @@ class OdbcRepositoryState {
       statementConnectionByStmtId.remove(stmtId);
       namedParamOrderByStmtId.remove(stmtId);
     }
+    asyncRequestConnectionById.removeWhere((_, id) => id == connectionId);
   }
 
   /// Wipes statement metadata across all connections. Used by the
@@ -84,6 +89,7 @@ class OdbcRepositoryState {
     connectionPoolId.clear();
     poolCheckouts.clear();
     poolConnectionOptions.clear();
+    asyncRequestConnectionById.clear();
     clearAllStatementMetadata();
   }
 

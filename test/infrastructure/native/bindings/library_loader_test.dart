@@ -214,5 +214,95 @@ void main() {
         );
       },
     );
+
+    test('preferLocalOdbcEngineBuild_reads_env', () {
+      expect(
+        preferLocalOdbcEngineBuild(
+          const {'ODBC_FAST_PREFER_LOCAL_BUILD': 'true'},
+        ),
+        isTrue,
+      );
+      expect(
+        preferLocalOdbcEngineBuild(const {'ODBC_FAST_PREFER_LOCAL_BUILD': '1'}),
+        isFalse,
+      );
+      expect(preferLocalOdbcEngineBuild(const {}), isFalse);
+    });
+
+    test('chooseLocalOrCachedLibraryPath_prefers_local_when_flag_set', () {
+      final chosen = chooseLocalOrCachedLibraryPath(
+        localPath: r'D:\local\odbc_engine.dll',
+        cachedPath: r'D:\cache\odbc_engine.dll',
+        preferLocal: true,
+        modifiedAt: (_) => DateTime.utc(2020),
+      );
+      expect(chosen, r'D:\local\odbc_engine.dll');
+    });
+
+    test('chooseLocalOrCachedLibraryPath_prefers_newer_cache', () {
+      final chosen = chooseLocalOrCachedLibraryPath(
+        localPath: r'D:\local\odbc_engine.dll',
+        cachedPath: r'D:\cache\odbc_engine.dll',
+        modifiedAt: (path) {
+          if (path.contains('cache')) {
+            return DateTime.utc(2024);
+          }
+          return DateTime.utc(2020);
+        },
+      );
+      expect(chosen, r'D:\cache\odbc_engine.dll');
+    });
+
+    test('chooseLocalOrCachedLibraryPath_prefers_local_on_tie', () {
+      final chosen = chooseLocalOrCachedLibraryPath(
+        localPath: r'D:\local\odbc_engine.dll',
+        cachedPath: r'D:\cache\odbc_engine.dll',
+        modifiedAt: (_) => DateTime.utc(2024),
+      );
+      expect(chosen, r'D:\local\odbc_engine.dll');
+    });
+
+    test(
+      'resolvePreferredOdbcEngineFilePath_uses_prefer_local_over_newer_cache',
+      () {
+        final temp = Directory.systemTemp.createTempSync('odbc_loader_pref_');
+        addTearDown(() => temp.deleteSync(recursive: true));
+        final name = odbcEngineLibraryFileName();
+
+        final local = File('${temp.path}/native/target/release/$name')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(const [0])
+          ..setLastModifiedSync(DateTime.utc(2020));
+
+        final home = Directory('${temp.path}/home')..createSync();
+        final platformDir = Platform.isWindows ? 'windows_x64' : 'linux_x64';
+        final cacheFile = File(
+          '${home.path}/.cache/odbc_fast/$platformDir/$name',
+        )
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(const [1])
+          ..setLastModifiedSync(DateTime.utc(2025));
+
+        final preferred = resolvePreferredOdbcEngineFilePath(
+          cwd: temp.path,
+          packageRoot: temp.path,
+          environment: {
+            'HOME': home.path,
+            'USERPROFILE': home.path,
+            'ODBC_FAST_PREFER_LOCAL_BUILD': 'true',
+          },
+        );
+        expect(preferred, isNotNull);
+        expect(
+          FileSystemEntity.identicalSync(preferred!, local.path),
+          isTrue,
+        );
+        // Newer cache must not win when prefer-local is set.
+        expect(
+          FileSystemEntity.identicalSync(preferred, cacheFile.path),
+          isFalse,
+        );
+      },
+    );
   });
 }

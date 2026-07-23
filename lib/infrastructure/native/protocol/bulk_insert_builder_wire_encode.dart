@@ -94,10 +94,12 @@ mixin _BulkInsertWireEncode on _BulkInsertBuilderState {
   }
 
   _BulkEncodeCache _prepareEncodeCache(BulkPayloadVersion version) {
-    final tableBytes = Uint8List.fromList(utf8.encode(_table));
-    final columnNameBytes = _columns
-        .map((spec) => Uint8List.fromList(utf8.encode(spec.name)))
-        .toList(growable: false);
+    final tableBytes = _encodeTextCellBytes(_table);
+    final columnNameBytes = List<Uint8List>.generate(
+      _columns.length,
+      (i) => _encodeTextCellBytes(_columns[i].name),
+      growable: false,
+    );
 
     var total = version == BulkPayloadVersion.v2 ? 8 : 0;
     total += 4 + tableBytes.length + 4;
@@ -156,7 +158,7 @@ mixin _BulkInsertWireEncode on _BulkInsertBuilderState {
             final v = _cellValue(colIndex, r);
             final raw = _isCellNull(colIndex, r)
                 ? Uint8List(0)
-                : Uint8List.fromList(utf8.encode(v is String ? v : '$v'));
+                : _encodeTextCellBytes(v);
             cells.add(raw);
             size += 4 + raw.length;
           }
@@ -271,10 +273,8 @@ mixin _BulkInsertWireEncode on _BulkInsertBuilderState {
           final List<int> raw;
           if (_isCellNull(colIndex, r)) {
             raw = const <int>[];
-          } else if (v is String) {
-            raw = utf8.encode(v);
           } else {
-            raw = utf8.encode('$v');
+            raw = _encodeTextCellBytes(v);
           }
           final len = raw.length.clamp(0, maxLen);
           w.writeBytesRange(raw, 0, len);
@@ -375,4 +375,25 @@ mixin _BulkInsertWireEncode on _BulkInsertBuilderState {
         ..writeBytes(raw);
     }
   }
+}
+
+Uint8List _encodeTextCellBytes(Object? value) {
+  final text = value is String ? value : '$value';
+  if (_isAsciiText(text)) {
+    final out = Uint8List(text.length);
+    for (var i = 0; i < text.length; i++) {
+      out[i] = text.codeUnitAt(i);
+    }
+    return out;
+  }
+  return Uint8List.fromList(utf8.encode(text));
+}
+
+bool _isAsciiText(String value) {
+  for (var i = 0; i < value.length; i++) {
+    if (value.codeUnitAt(i) > 0x7F) {
+      return false;
+    }
+  }
+  return true;
 }

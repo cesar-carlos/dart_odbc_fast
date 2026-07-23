@@ -105,9 +105,16 @@ class OdbcQueryService {
 
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) =>
-      _repository.streamQueryMulti(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      _repository.streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,

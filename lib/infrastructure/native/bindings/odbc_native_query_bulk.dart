@@ -15,14 +15,11 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
     Uint8List dataBuffer,
     int rowCount,
   ) {
-    final tablePtr = table.toNativeUtf8();
+    final tablePtr = _sqlCache.acquire(table);
     final colPtrs = malloc<ffi.Pointer<bindings.Utf8>>(columns.length);
-    final utf8Ptrs = <ffi.Pointer<ffi.Opaque>>[];
     try {
       for (var i = 0; i < columns.length; i++) {
-        final p = columns[i].toNativeUtf8();
-        utf8Ptrs.add(p);
-        (colPtrs + i).value = p.cast<bindings.Utf8>();
+        (colPtrs + i).value = _sqlCache.acquire(columns[i]);
       }
       final rowsInserted = malloc<ffi.Uint32>();
       try {
@@ -30,7 +27,7 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
         try {
           final code = _bindings.odbc_bulk_insert_array(
             connectionId,
-            tablePtr.cast<bindings.Utf8>(),
+            tablePtr,
             colPtrs,
             columns.length,
             dataPtr,
@@ -47,10 +44,7 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
         malloc.free(rowsInserted);
       }
     } finally {
-      utf8Ptrs.forEach(malloc.free);
-      malloc
-        ..free(colPtrs)
-        ..free(tablePtr);
+      malloc.free(colPtrs);
     }
   }
 
@@ -65,14 +59,11 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
     Uint8List dataBuffer,
     int parallelism,
   ) {
-    final tablePtr = table.toNativeUtf8();
+    final tablePtr = _sqlCache.acquire(table);
     final colPtrs = malloc<ffi.Pointer<bindings.Utf8>>(columns.length);
-    final utf8Ptrs = <ffi.Pointer<ffi.Opaque>>[];
     try {
       for (var i = 0; i < columns.length; i++) {
-        final p = columns[i].toNativeUtf8();
-        utf8Ptrs.add(p);
-        (colPtrs + i).value = p.cast<bindings.Utf8>();
+        (colPtrs + i).value = _sqlCache.acquire(columns[i]);
       }
       final rowsInserted = malloc<ffi.Uint32>();
       try {
@@ -80,7 +71,7 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
         try {
           final code = _bindings.odbc_bulk_insert_parallel(
             poolId,
-            tablePtr.cast<bindings.Utf8>(),
+            tablePtr,
             colPtrs,
             columns.length,
             dataPtr,
@@ -97,10 +88,7 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
         malloc.free(rowsInserted);
       }
     } finally {
-      utf8Ptrs.forEach(malloc.free);
-      malloc
-        ..free(colPtrs)
-        ..free(tablePtr);
+      malloc.free(colPtrs);
     }
   }
 }

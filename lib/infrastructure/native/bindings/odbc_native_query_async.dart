@@ -26,6 +26,11 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
     if (!_bindings.supportsAsyncExecuteParamsApi) {
       return null;
     }
+    _requireResultEncodingSupport(
+      resultEncoding: resultEncoding,
+      supported: _bindings.supportsAsyncExecuteParamsOptionsApi,
+      symbol: 'odbc_execute_async_params_options',
+    );
     return _withSql(
       sql,
       (sqlPtr) {
@@ -50,9 +55,6 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
               wire,
             ),
           );
-        }
-        if (resultEncoding != ResultEncoding.rowMajor) {
-          return null;
         }
         if (params == null || params.isEmpty) {
           return _bindings.odbc_execute_async_params(

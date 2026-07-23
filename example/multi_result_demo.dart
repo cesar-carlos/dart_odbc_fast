@@ -3,7 +3,9 @@
 // Uses `executeQueryMultiFull` and `executeQueryMultiParamValues`
 // (`List<ParamValue>`). For the native wire path see
 // `odbc_fast_native.dart` (`executeQueryMulti` / `executeQueryMultiParams`).
-// Streaming item-by-item is covered by `multi_result_stream_demo.dart`.
+// Streaming item-by-item is covered by `multi_result_stream_demo.dart`
+// (`streamQueryMulti` coalesces tag-2 batches so logical item counts match
+// the buffered Full path).
 //
 // Run: dart run example/multi_result_demo.dart
 

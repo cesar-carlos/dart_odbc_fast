@@ -204,9 +204,16 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) =>
-      _stream.streamQueryMulti(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      _stream.streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>

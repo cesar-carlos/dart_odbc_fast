@@ -122,6 +122,100 @@ fn encode_items(items: &[MultiResultItem], out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+/// Growing MULT v2 encoder that appends items in place (no intermediate item Vec).
+#[derive(Debug)]
+pub struct MultiResultWriter {
+    buf: Vec<u8>,
+    count: usize,
+}
+
+impl MultiResultWriter {
+    /// Starts a v2 MULT buffer with a placeholder item count.
+    pub fn new() -> Self {
+        Self::with_capacity(64)
+    }
+
+    /// Starts a v2 MULT buffer reserving `payload_hint` bytes beyond the header.
+    pub fn with_capacity(payload_hint: usize) -> Self {
+        let mut buf = Vec::with_capacity(HEADER_V2_LEN.saturating_add(payload_hint));
+        buf.extend_from_slice(&MULTI_RESULT_MAGIC.to_le_bytes());
+        buf.extend_from_slice(&MULTI_RESULT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        buf.extend_from_slice(&0u32.to_le_bytes()); // count placeholder
+        Self { buf, count: 0 }
+    }
+
+    /// Reserves space for the next result-set push plus a few similar siblings.
+    ///
+    /// Call after observing the first encoded cursor size so subsequent pushes
+    /// avoid realloc/copy cascades on small multi-result batches.
+    pub fn reserve_similar(&mut self, payload_len: usize, extra_result_sets: usize) {
+        let per_rs = MIN_ITEM_LEN.saturating_add(payload_len);
+        let per_rc = MIN_ITEM_LEN.saturating_add(8);
+        let need = per_rs
+            .saturating_mul(extra_result_sets.saturating_add(1))
+            .saturating_add(per_rc.saturating_mul(2));
+        self.buf.reserve(need);
+    }
+
+    /// Appends a result-set payload (moves bytes into the MULT buffer).
+    pub fn push_result_set(&mut self, mut payload: Vec<u8>) -> Result<()> {
+        self.ensure_item_budget()?;
+        if payload.len() > MAX_MULTI_RESULT_PAYLOAD {
+            return Err(OdbcError::ResourceLimitReached(format!(
+                "multi-result item payload {} exceeds limit {}",
+                payload.len(),
+                MAX_MULTI_RESULT_PAYLOAD
+            )));
+        }
+        let len = checked_u32_len(payload.len(), "multi-result item payload")?;
+        self.buf.reserve(MIN_ITEM_LEN.saturating_add(payload.len()));
+        self.buf.push(TAG_RESULT_SET);
+        self.buf.extend_from_slice(&len.to_le_bytes());
+        self.buf.append(&mut payload);
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Appends a row-count item.
+    pub fn push_row_count(&mut self, row_count: i64) -> Result<()> {
+        self.ensure_item_budget()?;
+        self.buf.reserve(MIN_ITEM_LEN.saturating_add(8));
+        self.buf.push(TAG_ROW_COUNT);
+        self.buf.extend_from_slice(&8u32.to_le_bytes());
+        self.buf.extend_from_slice(&row_count.to_le_bytes());
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Patches the item count and returns the finished MULT buffer.
+    pub fn finish(mut self) -> Result<Vec<u8>> {
+        let count = checked_u32_len(self.count, "multi-result item count")?;
+        self.buf[8..12].copy_from_slice(&count.to_le_bytes());
+        Ok(self.buf)
+    }
+
+    /// Number of items appended so far.
+    pub fn item_count(&self) -> usize {
+        self.count
+    }
+
+    fn ensure_item_budget(&self) -> Result<()> {
+        if self.count >= MAX_MULTI_RESULT_ITEMS {
+            return Err(OdbcError::ResourceLimitReached(format!(
+                "multi-result item count exceeds limit {MAX_MULTI_RESULT_ITEMS}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for MultiResultWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn estimate_payload_size(items: &[MultiResultItem]) -> Result<usize> {
     let mut size = 0usize;
     for item in items {
@@ -289,6 +383,41 @@ fn validate_item_count(data: &[u8], offset: usize, count: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_result_writer_round_trips_like_try_encode_multi() {
+        let mut writer = MultiResultWriter::new();
+        writer.push_result_set(vec![1, 2, 3]).unwrap();
+        writer.push_row_count(-5).unwrap();
+        writer.push_result_set(vec![9]).unwrap();
+        let via_writer = writer.finish().unwrap();
+        let via_encode = try_encode_multi(&[
+            MultiResultItem::ResultSet(vec![1, 2, 3]),
+            MultiResultItem::RowCount(-5),
+            MultiResultItem::ResultSet(vec![9]),
+        ])
+        .unwrap();
+        assert_eq!(via_writer, via_encode);
+        assert_eq!(decode_multi(&via_writer).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn multi_result_writer_with_capacity_and_reserve_similar_round_trip() {
+        let payload = vec![7u8; 128];
+        let mut writer = MultiResultWriter::with_capacity(payload.len() * 2);
+        writer.reserve_similar(payload.len(), 2);
+        writer.push_result_set(payload.clone()).unwrap();
+        writer.push_result_set(payload).unwrap();
+        writer.push_row_count(3).unwrap();
+        let via_writer = writer.finish().unwrap();
+        let via_encode = try_encode_multi(&[
+            MultiResultItem::ResultSet(vec![7u8; 128]),
+            MultiResultItem::ResultSet(vec![7u8; 128]),
+            MultiResultItem::RowCount(3),
+        ])
+        .unwrap();
+        assert_eq!(via_writer, via_encode);
+    }
 
     #[test]
     fn test_encode_decode_multi_empty() {

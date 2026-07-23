@@ -10,8 +10,8 @@ use crate::observability::{Metrics, SpanGuard, StructuredLogger, Tracer};
 use crate::plugins::{DriverPlugin, PluginRegistry};
 use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{
-    param_values_to_input_params, param_values_to_input_params_with_descriptions, try_encode_multi,
-    MultiResultItem, ParamValue, RowBuffer, RowBufferEncoder,
+    decode_multi, param_values_to_input_params, param_values_to_input_params_with_descriptions,
+    try_encode_multi, MultiResultWriter, ParamValue, RowBuffer, RowBufferEncoder,
 };
 use crate::security::AuditLogger;
 use log::Level;
@@ -316,15 +316,15 @@ impl ExecutionEngine {
             // `_parseBufferToQueryResult` detects the leading `MULT` magic and routes
             // accordingly so existing callers that only use the first result set keep
             // working without change.
-            let mut drain: Vec<MultiResultItem> = Vec::new();
-            self.drive_more_results(&mut prealloc, &mut drain)?;
+            let mut drain_writer = MultiResultWriter::new();
+            self.drive_more_results(&mut prealloc, &mut drain_writer)?;
 
             coalesce_for_json_rows(&mut row_buffer);
 
             let out_vals = odbc_params.output_footer_values();
 
-            if drain.is_empty() {
-                // Fast path: single result set â€” preserve the original wire format.
+            if drain_writer.item_count() == 0 {
+                // Fast path: single result set — preserve the original wire format.
                 let body = encode_query_result_payload(
                     row_buffer,
                     self.use_columnar,
@@ -338,6 +338,7 @@ impl ExecutionEngine {
                     self.use_columnar,
                     self.use_compression,
                 )?;
+                let drain = decode_multi(&drain_writer.finish()?)?;
                 let first_item = match initial_rc {
                     Some(rc) => bound_params_first_multi_item(false, rc, first_body),
                     None => bound_params_first_multi_item(true, 0, first_body),

@@ -132,7 +132,16 @@ void main() {
         );
       final items = decoder.feed(frame.toBytes());
       expect(items, hasLength(2));
-      expect(items.every((item) => item is MultiResultItemResultSet), isTrue);
+      expect(items[0], isA<MultiResultItemResultSet>());
+      expect(
+        (items[0] as MultiResultItemResultSet).isContinuationBatch,
+        isFalse,
+      );
+      expect(items[1], isA<MultiResultItemResultSet>());
+      expect(
+        (items[1] as MultiResultItemResultSet).isContinuationBatch,
+        isTrue,
+      );
       decoder.assertExhausted();
     });
 

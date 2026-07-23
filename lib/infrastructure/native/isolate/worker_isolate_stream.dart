@@ -60,8 +60,35 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
         final status = conn.streamPollAsync(request.streamId);
         sendPort.send(IntResponse(request.requestId, status ?? -1));
 
+      case StreamPollFetchRequest():
+        final status = conn.streamPollAsync(request.streamId) ?? -1;
+        if (status != 1) {
+          // Not ready: return status only (pending / done / error / cancelled).
+          sendPort.send(
+            StreamPollFetchResponse(request.requestId, status: status),
+          );
+          break;
+        }
+        final result = conn.streamFetch(
+          request.streamId,
+          bufferSize: request.bufferSize,
+        );
+        sendPort.send(
+          isolateStreamPollFetchResponse(
+            requestId: request.requestId,
+            status: status,
+            success: result.success,
+            data: result.data,
+            hasMore: result.hasMore,
+            error: result.success ? null : conn.getError(),
+          ),
+        );
+
       case StreamFetchRequest():
-        final result = conn.streamFetch(request.streamId);
+        final result = conn.streamFetch(
+          request.streamId,
+          bufferSize: request.bufferSize,
+        );
         sendPort.send(
           streamDataResponse(
             requestId: request.requestId,

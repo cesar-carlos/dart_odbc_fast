@@ -1,11 +1,7 @@
-import 'dart:async';
-
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
-    show ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -30,128 +26,22 @@ class OdbcQuerySyncRunner {
   final OdbcConnectionRunner connection;
   final OdbcResultParser parser;
 
+  /// Wired by the repository for streaming plumbing; not used by
+  /// [executeQuery] (one-shot `execQuery` / params path).
   late StreamNativeQueryFn streamNativeQueryWithFallback;
   late StreamingFailureFn streamingFailureFromException;
 
+  /// Executes [sql] via one-shot FFI (same path as empty-param
+  /// [executeQueryParamValues]), not batched streaming.
   Future<Result<QueryResult>> executeQuery(
     String connectionId,
     String sql,
-  ) async {
-    final nativeId = state.connectionIds[connectionId];
-    if (nativeId == null) {
-      return const Failure<QueryResult, OdbcError>(
-        ValidationError(message: 'Invalid connection ID'),
+  ) =>
+      executeQueryParamValues(
+        connectionId,
+        sql,
+        const <ParamValue>[],
       );
-    }
-
-    final opts = state.optionsFor(connectionId);
-
-    Future<Result<QueryResult>> run() async {
-      try {
-        final stream = streamNativeQueryWithFallback(
-          nativeId,
-          sql,
-          maxBufferBytes: opts?.maxResultBufferBytes,
-        );
-        final queryTimeout = opts?.queryTimeout;
-        if (queryTimeout != null && queryTimeout != Duration.zero) {
-          return _collectBufferedStreamWithTimeout(
-            stream: stream,
-            queryTimeout: queryTimeout,
-          );
-        }
-        return _collectBufferedStream(stream);
-      } on Exception catch (e) {
-        return streamingFailureFromException(e);
-      }
-    }
-
-    return connection.withReconnect(
-      connectionId,
-      run,
-      sqlForSlowQueryDetection: sql,
-    );
-  }
-
-  Future<Result<QueryResult>> _collectBufferedStream(
-    Stream<ParsedRowBuffer> stream,
-  ) async {
-    List<List<dynamic>>? firstRows;
-    List<List<dynamic>>? multiRows;
-    final columns = <String>[];
-
-    await for (final chunk in stream) {
-      if (columns.isEmpty && chunk.columnCount > 0) {
-        columns.addAll(chunk.columnNames);
-      }
-      if (firstRows == null) {
-        firstRows = chunk.rows;
-      } else {
-        (multiRows ??= List.of(firstRows)).addAll(chunk.rows);
-      }
-    }
-
-    final rows = multiRows ?? firstRows ?? const <List<dynamic>>[];
-    return Success(
-      QueryResult(columns: columns, rows: rows, rowCount: rows.length),
-    );
-  }
-
-  Future<Result<QueryResult>> _collectBufferedStreamWithTimeout({
-    required Stream<ParsedRowBuffer> stream,
-    required Duration queryTimeout,
-  }) async {
-    final completer = Completer<Result<QueryResult>>();
-    StreamSubscription<ParsedRowBuffer>? subscription;
-    Timer? timer;
-    List<List<dynamic>>? firstRows;
-    List<List<dynamic>>? multiRows;
-    final columns = <String>[];
-
-    void finish(Result<QueryResult> result) {
-      timer?.cancel();
-      if (!completer.isCompleted) {
-        completer.complete(result);
-      }
-    }
-
-    subscription = stream.listen(
-      (chunk) {
-        if (columns.isEmpty && chunk.columnCount > 0) {
-          columns.addAll(chunk.columnNames);
-        }
-        if (firstRows == null) {
-          firstRows = chunk.rows;
-        } else {
-          (multiRows ??= List.of(firstRows!)).addAll(chunk.rows);
-        }
-      },
-      onError: (Object error) async {
-        await subscription?.cancel();
-        finish(await streamingFailureFromException(error as Exception));
-      },
-      onDone: () {
-        final rows = multiRows ?? firstRows ?? const <List<dynamic>>[];
-        finish(
-          Success(
-            QueryResult(columns: columns, rows: rows, rowCount: rows.length),
-          ),
-        );
-      },
-      cancelOnError: true,
-    );
-
-    timer = Timer(queryTimeout, () {
-      subscription?.cancel();
-      finish(
-        const Failure<QueryResult, OdbcError>(
-          QueryError(message: odbcQueryTimedOutMessage),
-        ),
-      );
-    });
-
-    return completer.future;
-  }
 
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
@@ -189,7 +79,10 @@ class OdbcQuerySyncRunner {
                 resultEncoding: resultEncoding,
               );
 
-        final qr = parser.parseBufferToQueryResult(buf);
+        final qr = parser.parseBufferToQueryResult(
+          buf,
+          lazyStrings: opts?.lazyStrings ?? false,
+        );
         if (qr == null) {
           return await ffi.convertNativeErrorToFailure<QueryResult>(
             errorFactory: ({
@@ -206,6 +99,8 @@ class OdbcQuerySyncRunner {
           );
         }
         return Success(qr);
+      } on OdbcError catch (e) {
+        return Failure<QueryResult, OdbcError>(e);
       } on Exception catch (e) {
         return ffi.convertNativeErrorToFailure<QueryResult>(
           errorFactory: ({
@@ -298,6 +193,8 @@ class OdbcQuerySyncRunner {
           );
         }
         return Success(typed);
+      } on OdbcError catch (e) {
+        return Failure<TypedColumnarResult, OdbcError>(e);
       } on Exception catch (e) {
         return ffi.convertNativeErrorToFailure<TypedColumnarResult>(
           errorFactory: ({

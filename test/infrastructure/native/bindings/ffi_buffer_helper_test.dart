@@ -98,6 +98,33 @@ void main() {
       expect(result, isEmpty);
     });
 
+    test(
+      'default_initialBufferSize_avoids_resize_for_medium_payloads',
+      () {
+        var calls = 0;
+        // Larger than the historical 64 KiB seed, smaller than the new default.
+        const n = 128 * 1024;
+        final result = callWithBuffer(
+          (buf, bufLen, outWritten) {
+            calls++;
+            if (bufLen < n) {
+              outWritten.value = n;
+              return -2;
+            }
+            buf.asTypedList(n).fillRange(0, n, 3);
+            outWritten.value = n;
+            return 0;
+          },
+          maxSize: maxBufferSize,
+        );
+
+        expect(calls, equals(1));
+        expect(result, isNotNull);
+        expect(result, hasLength(n));
+        expect(result, everyElement(3));
+      },
+    );
+
     test('returns copied list for payloads below zero-copy threshold', () {
       const n = zeroCopyResultThresholdBytes - 1;
       final result = callWithBuffer(
@@ -116,31 +143,58 @@ void main() {
       expect(result, everyElement(7));
     });
 
-    test('bypasses scratch pool when allowZeroCopy and limit exceeds threshold',
-        () {
-      const n = zeroCopyResultThresholdBytes;
-      var calls = 0;
+    test(
+      'bypasses scratch pool when initialSize meets zero-copy threshold',
+      () {
+        const n = zeroCopyResultThresholdBytes;
+        var calls = 0;
 
-      final result = callWithBuffer(
-        (buf, bufLen, outWritten) {
-          calls++;
-          expect(bufLen, greaterThanOrEqualTo(n));
-          buf.asTypedList(n).fillRange(0, n, 3);
-          outWritten.value = n;
-          return 0;
-        },
-        initialSize: n,
-        maxSize: n,
-        allowZeroCopy: true,
-      );
+        final result = callWithBuffer(
+          (buf, bufLen, outWritten) {
+            calls++;
+            expect(bufLen, greaterThanOrEqualTo(n));
+            buf.asTypedList(n).fillRange(0, n, 3);
+            outWritten.value = n;
+            return 0;
+          },
+          initialSize: n,
+          maxSize: n,
+          allowZeroCopy: true,
+        );
 
-      expect(calls, 1);
-      expect(result, hasLength(n));
-      expect(result, everyElement(3));
-    });
+        expect(calls, 1);
+        expect(result, hasLength(n));
+        expect(result, everyElement(3));
+      },
+    );
 
     test(
-      'bypasses scratch pool for default maxSize without large params',
+      'keeps scratch pool when seed is small even if maxSize is large',
+      () {
+        const n = 64;
+        var calls = 0;
+
+        final result = callWithBuffer(
+          (buf, bufLen, outWritten) {
+            calls++;
+            expect(bufLen, equals(n));
+            buf.asTypedList(n).fillRange(0, n, 9);
+            outWritten.value = n;
+            return 0;
+          },
+          initialSize: n,
+          maxSize: maxBufferSize,
+          allowZeroCopy: true,
+        );
+
+        expect(calls, 1);
+        expect(result, hasLength(n));
+        expect(result, everyElement(9));
+      },
+    );
+
+    test(
+      'bypasses scratch pool for default seed at or above threshold',
       () {
         const n = zeroCopyResultThresholdBytes;
         var calls = 0;

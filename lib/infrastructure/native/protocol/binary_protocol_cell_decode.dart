@@ -46,5 +46,17 @@ Object decodeProtocolText(Uint8List data) {
     // lazy cells are consumed or decoded.
     return LazyString(data);
   }
+  if (_isAsciiBytes(data)) {
+    return String.fromCharCodes(data);
+  }
   return utf8.decode(data, allowMalformed: true);
+}
+
+bool _isAsciiBytes(Uint8List data) {
+  for (var i = 0; i < data.length; i++) {
+    if (data[i] > 0x7F) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -398,7 +398,8 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         _workerForConnection(connectionId),
       StreamFetchRequest(:final streamId) ||
       StreamCloseRequest(:final streamId) ||
-      StreamPollAsyncRequest(:final streamId) =>
+      StreamPollAsyncRequest(:final streamId) ||
+      StreamPollFetchRequest(:final streamId) =>
         _workerForStream(streamId),
       StreamCancelRequest() => _leastLoadedWorker(),
       AsyncPollRequest(:final asyncRequestId) ||

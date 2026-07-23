@@ -293,6 +293,9 @@ TypedColumn _buildTypedColumn({
   if (odbc == OdbcType.bigInt) {
     return _decodeInt64Column(name: name, raw: raw, rowCount: rowCount);
   }
+  if (odbc == OdbcType.float || odbc == OdbcType.doublePrecision) {
+    return _decodeFloat64Column(name: name, raw: raw, rowCount: rowCount);
+  }
   return _decodeObjectColumn(
     name: name,
     odbcType: odbc,
@@ -363,6 +366,56 @@ TypedColumnInt64 _decodeInt64Column({
   return TypedColumnInt64(name: name, values: values, nullBitmap: bitmap);
 }
 
+/// Float/double wire cells are UTF-8 text; parse once into [Float64List].
+TypedColumnFloat64 _decodeFloat64Column({
+  required String name,
+  required Uint8List raw,
+  required int rowCount,
+}) {
+  final values = Float64List(rowCount);
+  final bitmap = Uint8List((rowCount + 7) >> 3);
+  final bd = ByteData.sublistView(raw);
+  var p = 0;
+  for (var i = 0; i < rowCount; i++) {
+    if (p >= raw.length) {
+      throw const FormatException('Columnar v2: float column truncated');
+    }
+    final n = raw[p++];
+    if (n == 1) {
+      setNullBitmapBit(bitmap, i);
+      continue;
+    }
+    if (p + 4 > raw.length) {
+      throw const FormatException('Columnar v2: float len truncated');
+    }
+    final bl = bd.getUint32(p, _littleEndian);
+    p += 4;
+    if (p + bl > raw.length) {
+      throw const FormatException('Columnar v2: float data truncated');
+    }
+    final text = utf8.decode(
+      Uint8List.sublistView(raw, p, p + bl),
+      allowMalformed: true,
+    );
+    p += bl;
+    values[i] = _parseFloat64Cell(text);
+  }
+  if (p != raw.length) {
+    throw const FormatException(
+      'Columnar v2: float column not fully consumed',
+    );
+  }
+  return TypedColumnFloat64(name: name, values: values, nullBitmap: bitmap);
+}
+
+double _parseFloat64Cell(String text) {
+  final parsed = double.tryParse(text);
+  if (parsed != null) {
+    return parsed;
+  }
+  throw FormatException('Columnar v2: cannot parse float cell "$text"');
+}
+
 TypedColumn _decodeObjectColumn({
   required String name,
   required OdbcType odbcType,
@@ -370,16 +423,16 @@ TypedColumn _decodeObjectColumn({
   required int rowCount,
 }) {
   final kind = _typedKindForOdbcType(odbcType);
-  final values = List<Object?>.filled(rowCount, null);
   final bd = ByteData.sublistView(raw);
   var p = 0;
-  for (var i = 0; i < rowCount; i++) {
+
+  Object? readCell() {
     if (p >= raw.length) {
       throw const FormatException('Columnar v2: object column truncated');
     }
     final n = raw[p++];
     if (n == 1) {
-      continue;
+      return null;
     }
     if (odbcType == OdbcType.binary) {
       if (p + 4 > raw.length) {
@@ -390,9 +443,9 @@ TypedColumn _decodeObjectColumn({
       if (p + bl > raw.length) {
         throw const FormatException('Columnar v2: binary data truncated');
       }
-      values[i] = Uint8List.sublistView(raw, p, p + bl);
+      final bytes = Uint8List.sublistView(raw, p, p + bl);
       p += bl;
-      continue;
+      return bytes;
     }
     if (p + 4 > raw.length) {
       throw const FormatException('Columnar v2: varchar len truncated');
@@ -404,14 +457,117 @@ TypedColumn _decodeObjectColumn({
     }
     final bytes = Uint8List.sublistView(raw, p, p + bl);
     p += bl;
-    values[i] = decodeProtocolCell(bytes, odbcType.discriminant);
+    return decodeProtocolCell(bytes, odbcType.discriminant);
   }
-  if (p != raw.length) {
-    throw const FormatException(
-      'Columnar v2: object column not fully consumed',
-    );
+
+  TypedColumn build(List<Object?> Function() fill) {
+    final values = fill();
+    if (p != raw.length) {
+      throw const FormatException(
+        'Columnar v2: object column not fully consumed',
+      );
+    }
+    return _typedObjectColumnForKind(name, kind, values);
   }
-  return _typedObjectColumnForKind(name, kind, values);
+
+  switch (kind) {
+    case TypedColumnKind.bytes:
+      final values = List<Uint8List?>.filled(rowCount, null);
+      for (var i = 0; i < rowCount; i++) {
+        values[i] = readCell() as Uint8List?;
+      }
+      if (p != raw.length) {
+        throw const FormatException(
+          'Columnar v2: object column not fully consumed',
+        );
+      }
+      return TypedColumnObject<Uint8List>(
+        name: name,
+        kind: kind,
+        values: values,
+      );
+    case TypedColumnKind.bool_:
+      final values = List<bool?>.filled(rowCount, null);
+      for (var i = 0; i < rowCount; i++) {
+        values[i] = _coerceBoolCell(readCell());
+      }
+      if (p != raw.length) {
+        throw const FormatException(
+          'Columnar v2: object column not fully consumed',
+        );
+      }
+      return TypedColumnObject<bool>(
+        name: name,
+        kind: kind,
+        values: values,
+      );
+    case TypedColumnKind.string:
+      if (binaryProtocolLazyStringsActive) {
+        final values = List<Object?>.filled(rowCount, null);
+        for (var i = 0; i < rowCount; i++) {
+          values[i] = readCell();
+        }
+        if (p != raw.length) {
+          throw const FormatException(
+            'Columnar v2: object column not fully consumed',
+          );
+        }
+        return TypedColumnObject<Object>(
+          name: name,
+          kind: kind,
+          values: values,
+        );
+      }
+      final values = List<String?>.filled(rowCount, null);
+      for (var i = 0; i < rowCount; i++) {
+        final v = readCell();
+        if (v == null) {
+          values[i] = null;
+        } else if (v is String) {
+          values[i] = v;
+        } else {
+          values[i] = v.toString();
+        }
+      }
+      if (p != raw.length) {
+        throw const FormatException(
+          'Columnar v2: object column not fully consumed',
+        );
+      }
+      return TypedColumnObject<String>(
+        name: name,
+        kind: kind,
+        values: values,
+      );
+    case TypedColumnKind.dateTime:
+      final values = List<DateTime?>.filled(rowCount, null);
+      for (var i = 0; i < rowCount; i++) {
+        values[i] = _coerceDateTimeCell(readCell());
+      }
+      if (p != raw.length) {
+        throw const FormatException(
+          'Columnar v2: object column not fully consumed',
+        );
+      }
+      return TypedColumnObject<DateTime>(
+        name: name,
+        kind: kind,
+        values: values,
+      );
+    case TypedColumnKind.decimal:
+    case TypedColumnKind.unknown:
+    case TypedColumnKind.int32:
+    case TypedColumnKind.int64:
+    case TypedColumnKind.float64:
+      // Handled in [_buildTypedColumn] via [_decodeFloat64Column].
+      return build(() {
+        final values = List<Object?>.filled(rowCount, null);
+        for (var i = 0; i < rowCount; i++) {
+          values[i] = readCell();
+        }
+        return values;
+      });
+  }
 }
 
 TypedColumn _typedObjectColumnForKind(
@@ -419,69 +575,11 @@ TypedColumn _typedObjectColumnForKind(
   TypedColumnKind kind,
   List<Object?> values,
 ) {
-  return switch (kind) {
-    TypedColumnKind.bytes => TypedColumnObject<Uint8List>(
-        name: name,
-        kind: kind,
-        values: List<Uint8List?>.generate(
-          values.length,
-          (i) => values[i] as Uint8List?,
-          growable: false,
-        ),
-      ),
-    TypedColumnKind.bool_ => TypedColumnObject<bool>(
-        name: name,
-        kind: kind,
-        values: List<bool?>.generate(
-          values.length,
-          (i) => values[i] as bool?,
-          growable: false,
-        ),
-      ),
-    TypedColumnKind.string => binaryProtocolLazyStringsActive
-        ? TypedColumnObject<Object>(
-            name: name,
-            kind: kind,
-            values: List<Object?>.generate(
-              values.length,
-              (i) => values[i],
-              growable: false,
-            ),
-          )
-        : TypedColumnObject<String>(
-            name: name,
-            kind: kind,
-            values: List<String?>.generate(
-              values.length,
-              (i) {
-                final v = values[i];
-                if (v == null) return null;
-                if (v is String) return v;
-                return v.toString();
-              },
-              growable: false,
-            ),
-          ),
-    TypedColumnKind.dateTime => TypedColumnObject<DateTime>(
-        name: name,
-        kind: kind,
-        values: List<DateTime?>.generate(
-          values.length,
-          (i) => _coerceDateTimeCell(values[i]),
-          growable: false,
-        ),
-      ),
-    TypedColumnKind.decimal ||
-    TypedColumnKind.unknown ||
-    TypedColumnKind.int32 ||
-    TypedColumnKind.int64 ||
-    TypedColumnKind.float64 =>
-      TypedColumnObject<Object>(
-        name: name,
-        kind: kind,
-        values: values,
-      ),
-  };
+  return TypedColumnObject<Object>(
+    name: name,
+    kind: kind,
+    values: values,
+  );
 }
 
 TypedColumnKind _typedKindForOdbcType(OdbcType odbcType) {
@@ -502,6 +600,33 @@ TypedColumnKind _typedKindForOdbcType(OdbcType odbcType) {
   };
 }
 
+/// Wire boolean cells are UTF-8 text (`0`/`1`/`true`/`false`); coerce to [bool].
+bool? _coerceBoolCell(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is bool) {
+    return value;
+  }
+  if (value is num) {
+    if (value == 0) {
+      return false;
+    }
+    if (value == 1) {
+      return true;
+    }
+  }
+  final text =
+      (value is String ? value : value.toString()).trim().toLowerCase();
+  if (text == '0' || text == 'false') {
+    return false;
+  }
+  if (text == '1' || text == 'true') {
+    return true;
+  }
+  throw FormatException('Columnar v2: cannot parse bool cell "$value"');
+}
+
 /// Wire datetime cells are UTF-8 text (see [OdbcType] table); coerce to
 /// [DateTime] for [TypedColumnObject].
 DateTime? _coerceDateTimeCell(Object? value) {
@@ -517,9 +642,13 @@ DateTime? _coerceDateTimeCell(Object? value) {
     return parsed;
   }
   // SQL Server often emits `YYYY-MM-DD HH:MM:SS` (space); ISO prefers `T`.
-  final withT = text.replaceFirst(' ', 'T');
-  if (withT != text) {
-    return DateTime.tryParse(withT);
+  final space = text.indexOf(' ');
+  if (space > 0) {
+    final withT = '${text.substring(0, space)}T${text.substring(space + 1)}';
+    final normalized = DateTime.tryParse(withT);
+    if (normalized != null) {
+      return normalized;
+    }
   }
   throw FormatException(
     'Columnar v2: cannot parse datetime cell "$text"',

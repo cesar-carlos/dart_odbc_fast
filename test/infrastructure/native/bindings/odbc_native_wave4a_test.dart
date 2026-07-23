@@ -1,6 +1,7 @@
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:test/test.dart';
 
@@ -252,6 +253,7 @@ void main() {
         FakeOdbcBindings.stub(
           handlers: StubOdbcBindingsHandlers(
             forceSupportsMultiResultStream: true,
+            forceSupportsMultiResultStreamEncodingOptions: false,
             streamMultiStartBatched: (_, __, ___) => 77,
           ),
         ),
@@ -265,6 +267,7 @@ void main() {
         FakeOdbcBindings.stub(
           handlers: StubOdbcBindingsHandlers(
             forceSupportsAsyncMultiResultStream: true,
+            forceSupportsMultiResultStreamEncodingOptions: false,
             streamMultiStartAsync: (_, __, ___) => 88,
           ),
         ),
@@ -300,26 +303,61 @@ void main() {
       expect(capturedEncoding, equals(1));
     });
 
-    test('should_fall_back_to_row_major_multi_batched_when_options_absent', () {
-      final native = OdbcNative.withBindings(
-        FakeOdbcBindings.stub(
-          handlers: StubOdbcBindingsHandlers(
-            forceSupportsMultiResultStream: true,
-            forceSupportsMultiResultStreamEncodingOptions: false,
-            streamMultiStartBatched: (_, __, ___) => 77,
+    test(
+      'should_forward_fetch_size_via_options_when_row_major_requested',
+      () {
+        int? capturedFetchSize;
+        int? capturedEncoding;
+        final native = OdbcNative.withBindings(
+          FakeOdbcBindings.stub(
+            handlers: StubOdbcBindingsHandlers(
+              forceSupportsMultiResultStream: true,
+              forceSupportsMultiResultStreamEncodingOptions: true,
+              streamMultiStartBatchedOptions:
+                  (_, __, fetchSize, ____, encoding) {
+                capturedFetchSize = fetchSize;
+                capturedEncoding = encoding;
+                return 92;
+              },
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(
-        native.streamMultiStartBatched(
-          1,
-          'SELECT 1',
-          resultEncodingWire: 1,
-        ),
-        equals(77),
-      );
-    });
+        expect(
+          native.streamMultiStartBatched(
+            1,
+            'SELECT 1',
+          ),
+          equals(92),
+        );
+        expect(capturedFetchSize, equals(1000));
+        expect(capturedEncoding, equals(0));
+      },
+    );
+
+    test(
+      'should_throw_unsupported_for_multi_batched_columnar_when_options_absent',
+      () {
+        final native = OdbcNative.withBindings(
+          FakeOdbcBindings.stub(
+            handlers: StubOdbcBindingsHandlers(
+              forceSupportsMultiResultStream: true,
+              forceSupportsMultiResultStreamEncodingOptions: false,
+              streamMultiStartBatched: (_, __, ___) => 77,
+            ),
+          ),
+        );
+
+        expect(
+          () => native.streamMultiStartBatched(
+            1,
+            'SELECT 1',
+            resultEncodingWire: 1,
+          ),
+          throwsA(isA<UnsupportedFeatureError>()),
+        );
+      },
+    );
 
     test(
       'should_route_stream_multi_start_async_options_when_columnar_requested',

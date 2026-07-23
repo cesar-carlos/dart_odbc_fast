@@ -156,17 +156,46 @@ mixin _AsyncStreaming
     return _streamPollAsync(streamId);
   }
 
-  Future<StreamFetchResponse> _streamFetch(int streamId) {
+  /// Polls async stream status and, when ready, fetches the next chunk in one
+  /// isolate round-trip. Prefer this over separate [streamPollAsync] +
+  /// [streamFetch] in hot async multi-result loops.
+  Future<StreamPollFetchResponse> streamPollAndFetch(
+    int streamId, {
+    int? bufferSize,
+  }) {
+    return _sendRequest<StreamPollFetchResponse>(
+      StreamPollFetchRequest(
+        _nextRequestId(),
+        streamId,
+        bufferSize: bufferSize,
+      ),
+    );
+  }
+
+  Future<StreamFetchResponse> _streamFetch(
+    int streamId, {
+    int? bufferSize,
+  }) {
     return _sendRequest<StreamFetchResponse>(
-      StreamFetchRequest(_nextRequestId(), streamId),
+      StreamFetchRequest(
+        _nextRequestId(),
+        streamId,
+        bufferSize: bufferSize,
+      ),
     );
   }
 
   /// Fetches the next chunk from an active stream in the worker.
   /// Public counterpart of `_streamFetch`, used by callers that drive the
   /// stream lifecycle themselves (e.g. `streamQueryMulti`). New in v3.3.0.
-  Future<StreamFetchResponse> streamFetch(int streamId) =>
-      _streamFetch(streamId);
+  ///
+  /// Pass [bufferSize] equal to the stream `chunkSize` so the first FFI
+  /// allocation matches the transfer budget.
+  Future<StreamFetchResponse> streamFetch(
+    int streamId, {
+    int? bufferSize,
+  }) =>
+      _streamFetch(streamId, bufferSize: bufferSize);
 
   Future<bool> _streamClose(int streamId) async {
     final r = await _sendRequest<BoolResponse>(

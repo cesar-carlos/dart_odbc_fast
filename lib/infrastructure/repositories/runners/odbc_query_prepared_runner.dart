@@ -142,7 +142,10 @@ class OdbcQueryPreparedRunner {
               maxBufferBytes: maxBuf,
             );
 
-      final qr = parser.parseBufferToQueryResult(buf);
+      final qr = parser.parseBufferToQueryResult(
+        buf,
+        lazyStrings: state.optionsFor(connectionId)?.lazyStrings ?? false,
+      );
       if (qr == null) {
         return await ffi.convertNativeErrorToFailure<QueryResult>(
           errorFactory: ({

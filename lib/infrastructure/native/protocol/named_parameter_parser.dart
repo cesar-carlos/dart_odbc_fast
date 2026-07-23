@@ -112,7 +112,11 @@ class NamedParameterParser {
       );
     }
 
-    return paramNames.map((name) => namedParams[name]).toList();
+    return List<Object?>.generate(
+      paramNames.length,
+      (i) => namedParams[paramNames[i]],
+      growable: false,
+    );
   }
 }
 

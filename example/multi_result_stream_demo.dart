@@ -1,8 +1,11 @@
 // Streaming multi-result demo (M8 in v3.3.0).
 //
-// Shows how `IOdbcService.streamQueryMulti` surfaces every result set and
-// row-count from a batch one-by-one, instead of materialising the whole
-// batch in memory. Each item arrives as soon as the engine produces it.
+// Shows how `IOdbcService.streamQueryMulti` surfaces every logical result set
+// and row-count from a batch one-by-one. Fetch batches that continue the same
+// SQL cursor (wire tag 2) are coalesced into a single `QueryResultMultiItem`
+// so the stream matches `executeQueryMultiFull` item counts. Row-major wire is
+// always used; optional `fetchSize` / `chunkSize` (defaults 1000 / 64 KiB)
+// forward to native when `*_options` exists and seed each `streamFetch`.
 //
 // Run: dart run example/multi_result_stream_demo.dart
 
@@ -45,6 +48,7 @@ void main() async {
 
     AppLogger.info('Streaming multi-result for: ${sql.trim()}');
     var index = 0;
+    // Defaults: fetchSize=1000, chunkSize=64 KiB. Override for large scans.
     await for (final result in service.streamQueryMulti(conn.id, sql)) {
       result.fold(
         (item) {

@@ -359,6 +359,13 @@ WorkerResponse buildWorkerErrorResponse(WorkerRequest request, String error) {
       return IntResponse(id, 0);
     case XaRecoverRequest():
       return XaRecoverResponse(id, error: error);
+    case StreamPollFetchRequest():
+      return StreamPollFetchResponse(
+        id,
+        status: -1,
+        success: false,
+        error: error,
+      );
     case StreamFetchRequest():
       return StreamFetchResponse(
         id,

@@ -26,7 +26,13 @@ class StreamChunkDecoder {
       frame,
       lazyStrings: lazyStrings,
     );
-    return toTypedColumnar(_parser.toQueryResult(rowBuffer));
+    return toTypedColumnarFromWire(
+      columnNames: rowBuffer.columnNames,
+      odbcDiscriminants: [
+        for (final col in rowBuffer.columns) col.odbcType,
+      ],
+      rows: rowBuffer.rows,
+    );
   }
 
   /// Decodes a buffer from a non-stream execute into typed columnar form.

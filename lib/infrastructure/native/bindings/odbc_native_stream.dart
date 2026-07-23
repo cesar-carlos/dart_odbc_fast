@@ -1,5 +1,8 @@
 part of 'odbc_native.dart';
 
+/// Reused per-isolate status pointer for [OdbcNative.streamPollAsync].
+final ffi.Pointer<ffi.Int32> _sharedStreamPollStatus = malloc<ffi.Int32>();
+
 mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
   /// Starts a streaming query.
   ///
@@ -38,20 +41,22 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     if (!_bindings.supportsAsyncStreamApi) {
       return null;
     }
+    _requireResultEncodingWireSupport(
+      resultEncodingWire: resultEncodingWire,
+      supported: _bindings.supportsStreamAsyncEncodingOptions,
+      symbol: 'odbc_stream_start_async_options',
+    );
     return _withSql<int>(
       sql,
       (sqlPtr) {
         if (resultEncodingWire != 0) {
-          final optionsId = _bindings.odbc_stream_start_async_options(
+          return _bindings.odbc_stream_start_async_options(
             connectionId,
             sqlPtr,
             fetchSize,
             chunkSize,
             resultEncodingWire,
           );
-          if (optionsId != null) {
-            return optionsId;
-          }
         }
         return _bindings.odbc_stream_start_async(
           connectionId,
@@ -71,16 +76,12 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     if (!_bindings.supportsAsyncStreamApi) {
       return null;
     }
-    final outStatus = malloc<ffi.Int32>()..value = 0;
-    try {
-      final code = _bindings.odbc_stream_poll_async(streamId, outStatus);
-      if (code != 0) {
-        return null;
-      }
-      return outStatus.value;
-    } finally {
-      malloc.free(outStatus);
+    final outStatus = _sharedStreamPollStatus..value = 0;
+    final code = _bindings.odbc_stream_poll_async(streamId, outStatus);
+    if (code != 0) {
+      return null;
     }
+    return outStatus.value;
   }
 
   /// Fetches the next chunk of data from a streaming query.
@@ -153,6 +154,15 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     int resultEncodingWire = 0,
     Uint8List? paramsBuffer,
   }) {
+    _requireResultEncodingWireSupport(
+      resultEncodingWire: resultEncodingWire,
+      supported: paramsBuffer != null && paramsBuffer.isNotEmpty
+          ? _bindings.supportsStreamStartParamsOptions
+          : _bindings.supportsStreamResultEncodingOptions,
+      symbol: paramsBuffer != null && paramsBuffer.isNotEmpty
+          ? 'odbc_stream_start_batched_params_options'
+          : 'odbc_stream_start_batched_options',
+    );
     return _withSql<int>(
           sql,
           (sqlPtr) {
@@ -166,19 +176,17 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
                     paramsBuffer,
                     (paramsPtr) {
                       if (resultEncodingWire != 0) {
-                        final optionsId =
-                            _bindings.odbc_stream_start_batched_params_options(
-                          connectionId,
-                          sqlPtr,
-                          paramsPtr,
-                          paramsLen,
-                          fetchSize,
-                          chunkSize,
-                          resultEncodingWire,
-                        );
-                        if (optionsId != null) {
-                          return optionsId;
-                        }
+                        return _bindings
+                                .odbc_stream_start_batched_params_options(
+                              connectionId,
+                              sqlPtr,
+                              paramsPtr,
+                              paramsLen,
+                              fetchSize,
+                              chunkSize,
+                              resultEncodingWire,
+                            ) ??
+                            0;
                       }
                       return _bindings.odbc_stream_start_batched_params(
                             connectionId,
@@ -194,16 +202,14 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
                   0;
             }
             if (resultEncodingWire != 0) {
-              final optionsId = _bindings.odbc_stream_start_batched_options(
-                connectionId,
-                sqlPtr,
-                fetchSize,
-                chunkSize,
-                resultEncodingWire,
-              );
-              if (optionsId != null) {
-                return optionsId;
-              }
+              return _bindings.odbc_stream_start_batched_options(
+                    connectionId,
+                    sqlPtr,
+                    fetchSize,
+                    chunkSize,
+                    resultEncodingWire,
+                  ) ??
+                  0;
             }
             return _bindings.odbc_stream_start_batched(
               connectionId,
@@ -244,20 +250,23 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     int resultEncodingWire = 0,
   }) {
     if (!_bindings.supportsMultiResultStream) return null;
+    _requireResultEncodingWireSupport(
+      resultEncodingWire: resultEncodingWire,
+      supported: _bindings.supportsMultiResultStreamEncodingOptions,
+      symbol: 'odbc_stream_multi_start_batched_options',
+    );
     return _withSql<int>(
       sql,
       (sqlPtr) {
-        if (resultEncodingWire != 0) {
-          final optionsId = _bindings.odbc_stream_multi_start_batched_options(
+        // Prefer *_options even for row-major (wire=0) so fetchSize is honored.
+        if (_bindings.supportsMultiResultStreamEncodingOptions) {
+          return _bindings.odbc_stream_multi_start_batched_options(
             connectionId,
             sqlPtr,
             fetchSize,
             chunkSize,
             resultEncodingWire,
           );
-          if (optionsId != null) {
-            return optionsId;
-          }
         }
         return _bindings.odbc_stream_multi_start_batched(
           connectionId,
@@ -278,20 +287,22 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
     int resultEncodingWire = 0,
   }) {
     if (!_bindings.supportsAsyncMultiResultStream) return null;
+    _requireResultEncodingWireSupport(
+      resultEncodingWire: resultEncodingWire,
+      supported: _bindings.supportsMultiResultStreamAsyncEncodingOptions,
+      symbol: 'odbc_stream_multi_start_async_options',
+    );
     return _withSql<int>(
       sql,
       (sqlPtr) {
-        if (resultEncodingWire != 0) {
-          final optionsId = _bindings.odbc_stream_multi_start_async_options(
+        if (_bindings.supportsMultiResultStreamAsyncEncodingOptions) {
+          return _bindings.odbc_stream_multi_start_async_options(
             connectionId,
             sqlPtr,
             fetchSize,
             chunkSize,
             resultEncodingWire,
           );
-          if (optionsId != null) {
-            return optionsId;
-          }
         }
         return _bindings.odbc_stream_multi_start_async(
           connectionId,

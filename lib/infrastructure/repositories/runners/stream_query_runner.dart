@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
-import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
@@ -16,7 +15,6 @@ import 'package:odbc_fast/infrastructure/repositories/runners/odbc_query_runner.
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_repository_types.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/query_timeout_helpers.dart';
-import 'package:odbc_fast/infrastructure/repositories/runners/stream_columnar_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/stream_error_mapper.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -27,16 +25,13 @@ class StreamQueryRunner {
     required this.state,
     required this.parser,
     required this.query,
-    required StreamColumnarRunner columnar,
     required StreamErrorMapper errors,
-  })  : _columnar = columnar,
-        _errors = errors;
+  }) : _errors = errors;
 
   final OdbcFfiDispatch ffi;
   final OdbcRepositoryState state;
   final OdbcResultParser parser;
   final OdbcQueryRunner query;
-  final StreamColumnarRunner _columnar;
   final StreamErrorMapper _errors;
 
   Stream<Result<QueryResult>> streamQuery(
@@ -55,29 +50,16 @@ class StreamQueryRunner {
     final maxBytes = opts?.maxResultBufferBytes;
     final queryTimeout = opts?.queryTimeout;
     final lazyStrings = opts?.lazyStrings ?? false;
-    final encoding = state.defaultResultEncoding;
+    // Row-shaped APIs always use row-major wire. Server profiles that default
+    // to columnar would otherwise rematerialize typed → QueryResult rows.
+    // Prefer [streamQueryColumnar] for columnar end-to-end.
 
     Stream<Result<QueryResult>> createSource() async* {
       try {
-        if (encoding.isColumnar) {
-          await for (final chunk
-              in _columnar.streamNativeColumnarQueryWithFallback(
-            nativeId,
-            sql,
-            maxBufferBytes: maxBytes,
-            lazyStrings: lazyStrings,
-            resultEncoding: encoding,
-          )) {
-            yield Success(fromTypedColumnar(chunk));
-          }
-          return;
-        }
-
         await for (final chunk in streamNativeQueryWithFallback(
           nativeId,
           sql,
           maxBufferBytes: maxBytes,
-          resultEncoding: encoding,
           lazyStrings: lazyStrings,
         )) {
           yield Success(parser.toQueryResult(chunk));
@@ -144,7 +126,6 @@ class StreamQueryRunner {
     final maxBytes = opts?.maxResultBufferBytes;
     final queryTimeout = opts?.queryTimeout;
     final lazyStrings = opts?.lazyStrings ?? false;
-    final encoding = state.defaultResultEncoding;
 
     Stream<Result<QueryResult>> createSource() async* {
       try {
@@ -152,7 +133,6 @@ class StreamQueryRunner {
           nativeId,
           cleanedSql,
           maxBufferBytes: maxBytes,
-          resultEncoding: encoding,
           lazyStrings: lazyStrings,
           paramsBuffer: paramsBuffer,
         )) {

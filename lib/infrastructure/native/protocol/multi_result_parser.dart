@@ -51,8 +51,19 @@ sealed class MultiResultItem {
 
 /// A `MultiResultItem` carrying a [ParsedRowBuffer] (cursor-shaped result).
 final class MultiResultItemResultSet extends MultiResultItem {
-  const MultiResultItemResultSet(this.value) : super._();
+  /// Creates a result-set item.
+  ///
+  /// [isContinuationBatch] is true for streaming wire tag 2 (same SQL cursor,
+  /// next fetch batch). Tag 0 / buffered MULT items leave it false.
+  const MultiResultItemResultSet(
+    this.value, {
+    this.isContinuationBatch = false,
+  }) : super._();
+
   final ParsedRowBuffer value;
+
+  /// Whether this frame continues the previous result-set cursor (tag 2).
+  final bool isContinuationBatch;
 }
 
 /// A `MultiResultItem` carrying an `INSERT`/`UPDATE`/`DELETE` row count.
@@ -108,18 +119,24 @@ class MultiResultParser {
   /// Auto-detects v1 (no magic) and v2 (magic + version) framings.
   ///
   /// Throws [FormatException] on malformed input or unsupported version.
-  static List<MultiResultItem> parse(Uint8List data) {
+  static List<MultiResultItem> parse(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
     if (data.length >= 4) {
       final firstWord =
           ByteData.sublistView(data, 0, 4).getUint32(0, _littleEndian);
       if (firstWord == multiResultMagic) {
-        return _parseV2(data);
+        return _parseV2(data, lazyStrings: lazyStrings);
       }
     }
-    return _parseV1(data);
+    return _parseV1(data, lazyStrings: lazyStrings);
   }
 
-  static List<MultiResultItem> _parseV1(Uint8List data) {
+  static List<MultiResultItem> _parseV1(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
     if (data.length < headerSize) {
       throw const FormatException(
         'Buffer too small for multi-result header',
@@ -127,10 +144,19 @@ class MultiResultParser {
     }
     final byteData = ByteData.sublistView(data);
     final itemCount = byteData.getUint32(0, _littleEndian);
-    return _parseItems(data, byteData, headerSize, itemCount);
+    return _parseItems(
+      data,
+      byteData,
+      headerSize,
+      itemCount,
+      lazyStrings: lazyStrings,
+    );
   }
 
-  static List<MultiResultItem> _parseV2(Uint8List data) {
+  static List<MultiResultItem> _parseV2(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
     if (data.length < _headerV2Len) {
       throw const FormatException(
         'Buffer too small for multi-result v2 header',
@@ -145,15 +171,22 @@ class MultiResultParser {
       );
     }
     final itemCount = byteData.getUint32(8, _littleEndian);
-    return _parseItems(data, byteData, _headerV2Len, itemCount);
+    return _parseItems(
+      data,
+      byteData,
+      _headerV2Len,
+      itemCount,
+      lazyStrings: lazyStrings,
+    );
   }
 
   static List<MultiResultItem> _parseItems(
     Uint8List data,
     ByteData byteData,
     int initialOffset,
-    int itemCount,
-  ) {
+    int itemCount, {
+    bool lazyStrings = false,
+  }) {
     final items = <MultiResultItem>[];
     var offset = initialOffset;
 
@@ -187,8 +220,16 @@ class MultiResultParser {
       switch (tag) {
         case tagResultSet:
         case tagResultSetBatch:
-          final resultSet = BinaryProtocolParser.parse(payload);
-          items.add(MultiResultItemResultSet(resultSet));
+          final resultSet = BinaryProtocolParser.parse(
+            payload,
+            lazyStrings: lazyStrings,
+          );
+          items.add(
+            MultiResultItemResultSet(
+              resultSet,
+              isContinuationBatch: tag == tagResultSetBatch,
+            ),
+          );
 
         case tagRowCount:
           if (length != 8) {
@@ -232,7 +273,10 @@ class MultiResultParser {
   /// Returns a record containing the parsed items and any output parameter
   /// values. Throws [FormatException] on malformed input.
   static ({List<MultiResultItem> items, List<ParamValue> outputParamValues})
-      parseMultiWithOutputs(Uint8List data) {
+      parseMultiWithOutputs(
+    Uint8List data, {
+    bool lazyStrings = false,
+  }) {
     if (data.length < _headerV2Len) {
       throw const FormatException(
         'Buffer too small for MULT + OUT1 header',
@@ -284,7 +328,10 @@ class MultiResultParser {
         case tagResultSet:
         case tagResultSetBatch:
           items.add(
-            MultiResultItemResultSet(BinaryProtocolParser.parse(payload)),
+            MultiResultItemResultSet(
+              BinaryProtocolParser.parse(payload, lazyStrings: lazyStrings),
+              isContinuationBatch: tag == tagResultSetBatch,
+            ),
           );
         case tagRowCount:
           if (length != 8) {

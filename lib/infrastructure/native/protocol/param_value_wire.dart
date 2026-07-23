@@ -1,5 +1,20 @@
 part of 'param_value.dart';
 
+bool _isAsciiOnly(String value) {
+  for (var i = 0; i < value.length; i++) {
+    if (value.codeUnitAt(i) > 0x7F) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void _writeAsciiString(Uint8List out, int offset, String value) {
+  for (var i = 0; i < value.length; i++) {
+    out[offset + i] = value.codeUnitAt(i);
+  }
+}
+
 /// Serializes a list of parameter values to binary format.
 ///
 /// The [params] list should contain [ParamValue] instances in the order
@@ -7,14 +22,14 @@ part of 'param_value.dart';
 ///
 /// Returns a [Uint8List] containing the serialized parameters.
 ///
-/// Uses a two-pass strategy: phase 1 pre-encodes text payloads and computes
-/// the exact total byte count; phase 2 writes directly into a single
-/// pre-sized [Uint8List] — avoiding all intermediate list allocations and
-/// the final [Uint8List.fromList] copy that the old approach required.
+/// Uses a two-pass strategy: phase 1 sizes the buffer (ASCII text writes
+/// code units directly in phase 2; non-ASCII is UTF-8 encoded once);
+/// phase 2 writes into a single pre-sized [Uint8List].
 Uint8List serializeParams(List<ParamValue> params) {
   if (params.isEmpty) return Uint8List(0);
 
-  // Phase 1: pre-encode text payloads and compute total byte size.
+  // Phase 1: size payloads. `encodedText[i] == null` means ASCII (or unused);
+  // non-null holds a one-shot UTF-8 encoding for non-ASCII text.
   var totalBytes = 0;
   final encodedText = List<List<int>?>.filled(params.length, null);
   for (var i = 0; i < params.length; i++) {
@@ -22,17 +37,25 @@ Uint8List serializeParams(List<ParamValue> params) {
       case ParamValueNull():
         totalBytes += 5;
       case ParamValueString(:final value):
-        final b = utf8.encode(value);
-        encodedText[i] = b;
-        totalBytes += 5 + b.length;
+        if (_isAsciiOnly(value)) {
+          totalBytes += 5 + value.length;
+        } else {
+          final b = utf8.encode(value);
+          encodedText[i] = b;
+          totalBytes += 5 + b.length;
+        }
       case ParamValueInt32():
         totalBytes += 9;
       case ParamValueInt64():
         totalBytes += 13;
       case ParamValueDecimal(:final value):
-        final b = utf8.encode(value);
-        encodedText[i] = b;
-        totalBytes += 5 + b.length;
+        if (_isAsciiOnly(value)) {
+          totalBytes += 5 + value.length;
+        } else {
+          final b = utf8.encode(value);
+          encodedText[i] = b;
+          totalBytes += 5 + b.length;
+        }
       case ParamValueBinary(:final value):
         totalBytes += 5 + value.length;
       case ParamValueRefCursorOut():
@@ -50,12 +73,19 @@ Uint8List serializeParams(List<ParamValue> params) {
         out[off] = _tagNull;
         bd.setUint32(off + 1, 0, _littleEndian);
         off += 5;
-      case ParamValueString():
-        final b = encodedText[i]!;
-        out[off] = _tagString;
-        bd.setUint32(off + 1, b.length, _littleEndian);
-        out.setRange(off + 5, off + 5 + b.length, b);
-        off += 5 + b.length;
+      case ParamValueString(:final value):
+        final encoded = encodedText[i];
+        if (encoded != null) {
+          out[off] = _tagString;
+          bd.setUint32(off + 1, encoded.length, _littleEndian);
+          out.setRange(off + 5, off + 5 + encoded.length, encoded);
+          off += 5 + encoded.length;
+        } else {
+          out[off] = _tagString;
+          bd.setUint32(off + 1, value.length, _littleEndian);
+          _writeAsciiString(out, off + 5, value);
+          off += 5 + value.length;
+        }
       case ParamValueInt32(:final value):
         out[off] = _tagInteger;
         bd.setUint32(off + 1, 4, _littleEndian);
@@ -66,12 +96,19 @@ Uint8List serializeParams(List<ParamValue> params) {
         bd.setUint32(off + 1, 8, _littleEndian);
         bd.setInt64(off + 5, value, _littleEndian);
         off += 13;
-      case ParamValueDecimal():
-        final b = encodedText[i]!;
-        out[off] = _tagDecimal;
-        bd.setUint32(off + 1, b.length, _littleEndian);
-        out.setRange(off + 5, off + 5 + b.length, b);
-        off += 5 + b.length;
+      case ParamValueDecimal(:final value):
+        final encoded = encodedText[i];
+        if (encoded != null) {
+          out[off] = _tagDecimal;
+          bd.setUint32(off + 1, encoded.length, _littleEndian);
+          out.setRange(off + 5, off + 5 + encoded.length, encoded);
+          off += 5 + encoded.length;
+        } else {
+          out[off] = _tagDecimal;
+          bd.setUint32(off + 1, value.length, _littleEndian);
+          _writeAsciiString(out, off + 5, value);
+          off += 5 + value.length;
+        }
       case ParamValueBinary(:final value):
         final vLen = value.length;
         out[off] = _tagBinary;

@@ -4,7 +4,7 @@ use crate::plugins::{
 };
 use crate::protocol::bound_param::{BoundParam, ParamDirection};
 use crate::protocol::OdbcType;
-use crate::protocol::ParamValue;
+use crate::protocol::{MultiResultItem, ParamValue};
 
 #[test]
 fn test_execution_engine_new() {

@@ -24,8 +24,14 @@ class ParsedRowBuffer {
   final int rowCount;
   final int columnCount;
 
-  late final List<String> columnNames =
-      List.unmodifiable(columns.map((c) => c.name));
+  List<String>? _columnNames;
+
+  /// Column names cached once from [columns] (shared list; do not mutate).
+  List<String> get columnNames => _columnNames ??= List<String>.generate(
+        columns.length,
+        (i) => columns[i].name,
+        growable: false,
+      );
 }
 
 /// A parsed ODBC binary message: row/column payload plus optional trailers.

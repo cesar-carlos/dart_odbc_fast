@@ -17,6 +17,9 @@ pub(super) fn take_current_batch_chunk(
     chunk_size: usize,
     missing_batch_message: &'static str,
 ) -> Result<Option<Vec<u8>>> {
+    // Owned-Vec API: transfer limit is `chunk_size` (may take the whole batch
+    // when offset==0 and chunk_size covers it). Distinct from
+    // `copy_current_batch_chunk`, which fills the caller FFI buffer (`out.len()`).
     let batch_len = current_batch
         .as_ref()
         .map(Vec::len)
@@ -42,10 +45,13 @@ pub(super) fn copy_current_batch_chunk(
     has_more: bool,
     missing_batch_message: &'static str,
 ) -> Result<StreamCopyResult> {
+    // FFI hot path: fill `out.len()` to minimize round-trips. `chunk_size` is
+    // retained for API parity with take_* but is not the copy limit here.
+    let _ = chunk_size;
     let batch = current_batch
         .as_ref()
         .ok_or_else(|| OdbcError::InternalError(missing_batch_message.to_string()))?;
-    let end = (*offset).saturating_add(chunk_size).min(batch.len());
+    let end = (*offset).saturating_add(out.len()).min(batch.len());
     let needed = end - *offset;
     if out.len() < needed {
         return Ok(StreamCopyResult::BufferTooSmall { needed });

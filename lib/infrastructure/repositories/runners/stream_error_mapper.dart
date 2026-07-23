@@ -49,6 +49,9 @@ class StreamErrorMapper {
   Future<Failure<QueryResult, OdbcError>> streamingFailureFromException(
     Exception error,
   ) async {
+    if (error is OdbcError) {
+      return Failure<QueryResult, OdbcError>(error);
+    }
     final normalizedMessage = error.toString();
     if (isStreamingTimeoutException(error, normalizedMessage)) {
       return const Failure<QueryResult, OdbcError>(

@@ -268,11 +268,17 @@ abstract class IOdbcService
   );
 
   /// Streams a multi-result batch one item at a time. New in v3.3.0 (M8).
+  ///
+  /// [fetchSize] is rows per native batch (default 1000). [chunkSize] is the
+  /// FFI transfer buffer in bytes (default 64 KiB); also seeds each
+  /// `streamFetch` allocation.
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  );
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  });
 
   @override
   Future<Result<QueryResult>> executeQueryNamed(

@@ -111,7 +111,12 @@ class MultiResultStreamDecoder {
             payload,
             lazyStrings: lazyStrings,
           );
-          items.add(MultiResultItemResultSet(rs));
+          items.add(
+            MultiResultItemResultSet(
+              rs,
+              isContinuationBatch: tag == multiStreamItemTagResultSetBatch,
+            ),
+          );
 
         case multiStreamItemTagRowCount:
           if (len != 8) {

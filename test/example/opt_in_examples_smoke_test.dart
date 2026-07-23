@@ -162,6 +162,7 @@ void main() {
         expect(out, contains('Native library resolution'));
         expect(out, contains('ODBC_FAST_PREFER_LOCAL_BUILD'));
         expect(out, contains('ODBC_FAST_SKIP_DOWNLOAD'));
+        expect(out, contains('Preferred on-disk path'));
       },
       timeout: const Timeout(Duration(seconds: 60)),
     );
@@ -171,6 +172,38 @@ void main() {
       () async {
         final result = await _runExampleWithoutDsn(
           'example/event_bus_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should_skip_multi_result_stream_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/multi_result_stream_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'should_skip_multi_result_performance_benchmark_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/multi_result_performance_benchmark.dart',
         );
 
         expect(result.exitCode, equals(0));

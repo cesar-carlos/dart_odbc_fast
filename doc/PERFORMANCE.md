@@ -443,7 +443,7 @@ serial vs worker-pool behavior with a local slow query instead of the default
 | Knob | Value | Effect |
 | ---- | ----- | ------ |
 | `zeroCopyResultThresholdBytes` | `32 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). Sync param paths with large directed blobs use a transient allocation via `preferTransientFfiBufferForParams`. |
-| Scratch pool | unchanged for small payloads | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Large results allocate a transient buffer and attach a `NativeFinalizer` (`malloc.nativeFree`). |
+| Scratch pool | small seeds (`initialSize < 32 KiB`) | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Transient + zero-copy when `preferTransient` or `initialSize >= 32 KiB` (not gated on the 16 MiB max ceiling). |
 | `odbc_release_buffer` | exported | C ABI hook for releasing Dart `malloc` buffers; Dart uses the paired `malloc.nativeFree` finalizer today. |
 
 Opt-out is automatic on older native builds that do not export the symbol — the helper falls back to copying.
@@ -455,7 +455,7 @@ Opt-out is automatic on older native builds that do not export the symbol — th
 Worker requests that carry serialized parameter blobs (`ExecuteQueryParamsRequest`,
 `ExecutePreparedRequest`, `ExecuteQueryMultiParamsRequest`,
 `ExecuteAsyncStartParamsRequest`) use the same `TransferableTypedData` threshold
-as bulk insert (`isolateTransferablePayloadThresholdBytes`, 64 KiB). Factory
+as bulk insert (`isolateTransferablePayloadThresholdBytes`, 32 KiB). Factory
 helpers (`*.withSerializedParams`) avoid an extra isolate copy for large directed
 parameter buffers on the async worker path.
 
@@ -475,21 +475,54 @@ parameter buffers on the async worker path.
 
 ## `streamQueryColumnar` and native columnar batched wire (v4.2)
 
+`IQueryService.streamQuery` / `streamQueryNamed` / `streamQueryMulti` always
+request **row-major** wire even when `ServiceLocator` / repository
+`defaultResultEncoding` is columnar. That avoids rematerializing typed columns
+into `QueryResult` row lists on server profiles. Prefer
+`streamQueryColumnar*` (or `executeQueryColumnarParamValues`) when you want
+columnar end-to-end. Low-level `streamStartAsync` follows the same row-major
+policy.
+
+For `streamQueryMulti`, optional `fetchSize` (default 1000) and `chunkSize`
+(default 64 KiB) forward to `odbc_stream_multi_start_*_options` when available;
+each fetch seeds the FFI buffer with `bufferSize: chunkSize`. Older natives
+without the options symbol keep the legacy entry (engine default fetch 100).
+Wire tag 2 (continuation batch of the same SQL cursor) is coalesced in the
+repository runner into one `QueryResultMultiItem` so stream item counts match
+`executeQueryMultiFull` (growable row list — no per-batch `List.of`). Async
+backends use `streamMultiStartAsync` + `streamPollAndFetch` (one isolate hop
+when ready).
+
+No-param `executeQuery` is a **one-shot** `execQuery` / empty-params path (not a
+drained batched stream). Use `streamQuery*` for incremental delivery of large
+results.
+
+Columnar float/double decode builds `TypedColumnFloat64` (`Float64List`) from
+UTF-8 wire text. Native binary scalar cells (float/bool/date on the wire) remain
+a future protocol-version follow-up.
+
+Batched stream framing (`ProtocolByteAccumulator.take`) transfers frame ownership
+via views so drain loops avoid an extra `fromList` copy per message.
+
 `IQueryService.streamQueryColumnar` / repository `streamQueryColumnar` call
 `odbc_stream_start_batched_options` with `ResultEncoding.columnar` when the
 loaded native library exports that symbol (v4.2+). Each batched chunk is a
 columnar v2 protocol message decoded to `TypedColumnarResult` via
-`toTypedColumnar`. Older natives fall back to row-major batched streaming with
-the same Dart conversion path.
+`parseColumnarToTyped`. Older natives that lack the options symbol fail with
+`UnsupportedFeatureError` when columnar encoding is requested.
 
 For a single-shot buffered query with native columnar encoding, use
 `executeQueryColumnarParamValues` (`ResultEncoding.columnar`). Repository
 extensions expose `streamQueryColumnarNative` as an explicit alias.
 
-Multi-result streaming (`odbc_stream_multi_*`) now encodes each cursor in
+Buffered parsers (`parseBufferToQueryResult`, `MultiResultParser`) honor
+`ConnectionOptions.lazyStrings` the same way streaming paths do.
+
+Multi-result streaming (`odbc_stream_multi_*`) encodes each cursor in
 fetch-sized batches. Tag `0` opens a result set; tag `2` continues the same
-result set; tag `1` is row count. Dart `MultiResultStreamDecoder` accepts tags
-`0` and `2` as result-set payloads.
+result set; tag `1` is row count. Dart `MultiResultStreamDecoder` preserves
+frame boundaries (`isContinuationBatch` on tag 2); `streamQueryMulti`
+coalesces tag-2 batches into one logical `QueryResultMultiItem` per cursor.
 
 ---
 
@@ -514,6 +547,10 @@ These performance-sensitive items are tracked outside the feature backlog:
   connection strings). Cross-category cleanup still nests locks in the
   documented order (`GLOBAL_STATE` → xa → transactions → pools → …).
 - **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
+- **Native binary scalars on wire** — float/double/bool/date cells are still
+  UTF-8 text on the protocol; Dart now parses float/double into
+  `TypedColumnFloat64` and coerces bool text, but a protocol version with
+  native binary cells remains a separate follow-up.
 
 Feature-level open work is tracked in
 [`Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md):

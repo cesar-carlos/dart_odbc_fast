@@ -130,6 +130,26 @@ fn test_async_copy_next_chunk_splits_across_chunk_size() {
     );
     assert_eq!(last[0], 5);
 }
+
+#[test]
+fn test_async_copy_fills_out_buffer_even_when_larger_than_chunk_size() {
+    let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
+    let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3, 4, 5]));
+    let _ = tx.send(BatchedMessage::Done);
+    drop(tx);
+
+    // chunk_size=2, but out is larger — one copy should take the whole batch.
+    let mut state = AsyncStreamingState::from_receiver(rx, 2);
+    let mut out = [0u8; 8];
+    assert_eq!(
+        state.copy_next_chunk(&mut out).unwrap(),
+        StreamCopyResult::Copied {
+            written: 5,
+            has_more: true
+        }
+    );
+    assert_eq!(&out[..5], &[1, 2, 3, 4, 5]);
+}
 #[test]
 fn test_async_poll_disconnected_marks_done_before_blocking_fetch() {
     let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);

@@ -157,6 +157,7 @@ void _handleRequest(
       case StreamMultiStartBatchedRequest():
       case StreamMultiStartAsyncRequest():
       case StreamPollAsyncRequest():
+      case StreamPollFetchRequest():
       case StreamFetchRequest():
       case StreamCancelRequest():
       case StreamCloseRequest():

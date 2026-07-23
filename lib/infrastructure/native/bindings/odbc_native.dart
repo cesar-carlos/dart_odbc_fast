@@ -9,6 +9,8 @@ import 'package:meta/meta.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart'
+    show UnsupportedFeatureError;
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show
         callWithBuffer,
@@ -137,6 +139,10 @@ class OdbcNative extends _OdbcNativeState
   bool get supportsMultiResultStreamEncodingOptions =>
       _bindings.supportsMultiResultStreamEncodingOptions;
 
+  /// True when multi-result async streaming accepts [ResultEncoding].
+  bool get supportsMultiResultStreamAsyncEncodingOptions =>
+      _bindings.supportsMultiResultStreamAsyncEncodingOptions;
+
   /// True when the loaded native library exposes metadata cache FFI APIs.
   bool get supportsMetadataCacheApi => _bindings.supportsMetadataCacheApi;
 
@@ -188,5 +194,6 @@ class OdbcNative extends _OdbcNativeState
   /// Should be called when the instance is no longer needed.
   void dispose() {
     _sqlCache.dispose();
+    _releaseParamsScratch();
   }
 }

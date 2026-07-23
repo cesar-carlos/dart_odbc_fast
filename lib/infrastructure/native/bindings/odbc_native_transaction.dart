@@ -9,13 +9,13 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
   /// The [savepointDialect] is the wire code from `SavepointDialect.code`
   /// (default `0` = `auto`, resolved on the Rust side via SQLGetInfo).
   /// The [accessMode] is the wire code from `TransactionAccessMode.code`
-  /// (default `0` = `readWrite`). When the loaded native library predates
-  /// Sprint 4.1 the parameter is silently ignored — see
-  /// [supportsTransactionAccessMode].
+  /// (default `0` = `readWrite`). Non-default values require
+  /// [supportsTransactionAccessMode]; otherwise throws
+  /// [UnsupportedFeatureError].
   /// The [lockTimeoutMs] is the per-transaction lock timeout in
-  /// milliseconds (default `0` = engine default). Sprint 4.2. When the
-  /// loaded native library predates Sprint 4.2 the parameter is
-  /// silently ignored — see [supportsTransactionLockTimeout].
+  /// milliseconds (default `0` = engine default). Non-zero values require
+  /// [supportsTransactionLockTimeout]; otherwise throws
+  /// [UnsupportedFeatureError].
   ///
   /// Returns a transaction ID on success, 0 on failure.
   int transactionBegin(
@@ -25,6 +25,20 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
     int accessMode = 0,
     int lockTimeoutMs = 0,
   }) {
+    if (accessMode != 0 && !_bindings.supportsTransactionAccessMode) {
+      throw const UnsupportedFeatureError(
+        message: 'TransactionAccessMode requires native symbol '
+            'odbc_transaction_begin_v2. Upgrade odbc_engine or use '
+            'TransactionAccessMode.readWrite.',
+      );
+    }
+    if (lockTimeoutMs != 0 && !_bindings.supportsTransactionLockTimeout) {
+      throw const UnsupportedFeatureError(
+        message: 'Per-transaction lockTimeoutMs requires native symbol '
+            'odbc_transaction_begin_v3. Upgrade odbc_engine or omit '
+            'lockTimeout.',
+      );
+    }
     if (accessMode == 0 && lockTimeoutMs == 0) {
       // Stay on the v1 entry-point when the caller is OK with every
       // engine default. Avoids touching v2/v3 at all so any FFI
@@ -57,15 +71,13 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
 
   /// True when the loaded native library exports `odbc_transaction_begin_v2`
   /// (Sprint 4.1). Callers that intend to pass a non-default `accessMode`
-  /// should gate on this flag; older binaries fall back to v1 and `READ
-  /// ONLY` becomes a silent no-op.
+  /// should gate on this flag.
   bool get supportsTransactionAccessMode =>
       _bindings.supportsTransactionAccessMode;
 
   /// True when the loaded native library exports `odbc_transaction_begin_v3`
   /// (Sprint 4.2). Callers that intend to pass a non-default
-  /// `lockTimeoutMs` should gate on this flag; older binaries fall back
-  /// to v2/v1 and the timeout becomes a silent no-op (engine default).
+  /// `lockTimeoutMs` should gate on this flag.
   bool get supportsTransactionLockTimeout =>
       _bindings.supportsTransactionLockTimeout;
 
@@ -90,16 +102,8 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
   /// The [txnId] must be a valid transaction identifier from
   /// [transactionBegin]. Returns true on success, false on failure.
   bool savepointCreate(int txnId, String name) {
-    final namePtr = name.toNativeUtf8();
-    try {
-      return _bindings.odbc_savepoint_create(
-            txnId,
-            namePtr.cast<bindings.Utf8>(),
-          ) ==
-          0;
-    } finally {
-      malloc.free(namePtr);
-    }
+    final namePtr = _sqlCache.acquire(name);
+    return _bindings.odbc_savepoint_create(txnId, namePtr) == 0;
   }
 
   /// Rolls back to a savepoint. The transaction remains active.
@@ -107,16 +111,8 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
   /// The [txnId] must be a valid transaction identifier.
   /// Returns true on success, false on failure.
   bool savepointRollback(int txnId, String name) {
-    final namePtr = name.toNativeUtf8();
-    try {
-      return _bindings.odbc_savepoint_rollback(
-            txnId,
-            namePtr.cast<bindings.Utf8>(),
-          ) ==
-          0;
-    } finally {
-      malloc.free(namePtr);
-    }
+    final namePtr = _sqlCache.acquire(name);
+    return _bindings.odbc_savepoint_rollback(txnId, namePtr) == 0;
   }
 
   /// Releases a savepoint. The transaction remains active.
@@ -124,15 +120,7 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
   /// The [txnId] must be a valid transaction identifier.
   /// Returns true on success, false on failure.
   bool savepointRelease(int txnId, String name) {
-    final namePtr = name.toNativeUtf8();
-    try {
-      return _bindings.odbc_savepoint_release(
-            txnId,
-            namePtr.cast<bindings.Utf8>(),
-          ) ==
-          0;
-    } finally {
-      malloc.free(namePtr);
-    }
+    final namePtr = _sqlCache.acquire(name);
+    return _bindings.odbc_savepoint_release(txnId, namePtr) == 0;
   }
 }

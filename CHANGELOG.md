@@ -7,19 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-result stream `fetchSize`** — row-major `streamMultiStartBatched` /
+  `streamMultiStartAsync` call `*_options` (wire=0) when the symbol exists so
+  Dart's default `fetchSize` (1000) is honored instead of the legacy native
+  default (100).
+- **`streamQueryMulti` tag-2 coalesce** — continuation batches of the same SQL
+  cursor merge into one `QueryResultMultiItem`, matching `executeQueryMultiFull`
+  item semantics.
+
 ### Changed
 
 - **Native Assets hook** — resolution prefers a newer (or equal) local release
   over `~/.cache/odbc_fast/<version>/`, honors `ODBC_FAST_PREFER_LOCAL_BUILD`,
   skips GitHub download for non-x64 arches (no flat arm64 assets yet), and
   verifies SHA-256 when a `<lib>.sha256` sidecar is published. Release workflow
-  now uploads those sidecars; `library_loader` loads local build paths before
-  Native Assets so `cargo build --release` wins without re-running the hook.
-  Unit coverage extended for loader path priority and hook download/skip/SHA
-  mismatch contracts.
+  now uploads those sidecars; `library_loader` uses the same local-vs-cache
+  prefer-local / mtime policy before Native Assets / PATH so runtime and hook
+  agree on which on-disk binary wins. Unit coverage extended for loader path
+  priority and hook download/skip/SHA mismatch contracts.
+- **Capability guards** — requesting `ResultEncoding.columnar*`, non-default
+  `TransactionAccessMode`, or per-txn `lockTimeout` without the matching native
+  symbol now throws `UnsupportedFeatureError` instead of silently falling back
+  to row-major / READ WRITE / engine default. `cancelStatement` remains a stub
+  (`SQLSTATE 0A000`) mapped to `UnsupportedFeatureError` at the service layer;
+  prefer `ConnectionOptions.queryTimeout`.
+- **Async `streamQueryMulti`** — isolate path starts with `streamMultiStartAsync`
+  and uses `streamPollAndFetch` (poll + fetch in one hop when ready).
 
 ### Performance
 
+- **`streamQueryMulti` knobs** — additive `fetchSize` / `chunkSize` (defaults
+  unchanged: 1000 / 64 KiB); each `streamFetch` seeds `bufferSize: chunkSize`.
+- **`MultiStreamCoalescer` growable rows** — tag-2 continuations `addAll` into
+  one growable row list instead of rematerializing with `List.of` per batch.
+- **Async multi poll+fetch** — one isolate hop (`streamPollAndFetch`) when the
+  stream is ready, instead of separate poll then fetch round-trips.
+- **Multi-stream framing** — `frame_item` moves payload via `append`; producer
+  channel depth is 2 so one frame can be pre-buffered while the consumer copies.
+- **MULT writer** — buffered multi-result collect appends items into one growing
+  MULT v2 buffer (`MultiResultWriter`) instead of `Vec` items + second encode.
+  Small batches avoid realloc cascades via per-push `reserve`, payload `append`
+  (move), and `reserve_similar` after the first encoded cursor.
+- **Stream FFI copy** — `copy_current_batch_chunk` fills up to the caller's out
+  buffer length (not an artificial `chunk_size` cap when `out` is larger).
+  KPI is fewer FFI poll rounds when Dart's buffer exceeds the stored
+  `chunk_size`; when `bufferSize == chunkSize` (the usual path) behavior matches
+  the previous cap.
+- **`executeQuery` one-shot** — no-param `executeQuery` uses the same FFI path as
+  empty `executeQueryParamValues` (no batched stream drain + row stitch).
+- **`TypedColumnFloat64`** — columnar float/double wire cells parse once into
+  `Float64List` (+ bool text coerce for flag columns).
+- **Stream frame ownership** — `ProtocolByteAccumulator.take` hands off views
+  (zero-copy) instead of `Uint8List.fromList` on every frame.
+- **`streamStartAsync` row-major** — admin async stream start ignores columnar
+  repository defaults (same policy as `streamQuery`).
+- **FFI/stream polish** — reused stream `outWritten`/`hasMore` and poll status
+  pointers; small-param scratch (≤8 KiB) + skip alloc for empty params;
+  `BulkInsertBuilder` ASCII text encode; ASCII fast-path in `decodeProtocolText`;
+  `toQueryResult` keeps `columnsMetadata`; row→typed fallback uses wire ODBC
+  kinds; `asyncGetResult` honors connection `lazyStrings`.
+- **Row-shaped streaming** — `streamQuery` / `streamQueryNamed` / `streamQueryMulti`
+  always request row-major wire even when the repository default is columnar,
+  avoiding typed→row rematerialization. Use `streamQueryColumnar*` for columnar
+  end-to-end.
+- **`lazyStrings` on buffered parse** — `parseBufferToQueryResult` and
+  `MultiResultParser` honor `ConnectionOptions.lazyStrings` (same as streams).
+- **FFI scratch gate** — `callWithBuffer` uses the scratch pool for small seeds;
+  transient + zero-copy only when `preferTransient` or
+  `initialSize >= 32 KiB` (no longer gates on the 16 MiB max ceiling).
+- **Columnar object columns** — decode into the final typed list once (no
+  Object→typed second pass); datetime coerce avoids blind `replaceFirst`.
+- **`serializeParams` ASCII** — ASCII string/decimal payloads write code units
+  directly into the wire buffer (UTF-8 encode only for non-ASCII).
+- **Isolate TransferableTypedData** — threshold aligned to 32 KiB (same as FFI
+  zero-copy).
+- **SqlPointerCache** — savepoints, catalog pair strings, and bulk table/column
+  names reuse the SQL UTF-8 cache (no per-call `toNativeUtf8` + free).
+- **FFI result buffer seed** — default `initialBufferSize` raised from 64 KiB to
+  256 KiB so typical medium frames succeed without a `-2` resize round-trip;
+  streams should still pass `chunkSize` as `initialSize`.
+- **Stream frame decode** — `decodeBatchedStreamFrame` uses
+  `BinaryProtocolParser.parse` (direct columnar→row) instead of
+  typed-columnar rematerialization; keep `streamQueryColumnar*` for typed
+  end-to-end paths.
+- **Multi-params FFI** — `execQueryMultiParams` reuses `_withParamsBuffer`
+  (same alloc/free path as other param queries).
 - **Local transaction begin** — `CachedConnection` caches canonical `engine_id`
   (single `SQL_DBMS_NAME`); begin uses thin detect (no max-name-len / catalog
   `SQLGetInfo`), a single connection lock for detect + isolation/access/lock/
@@ -45,8 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`example/native_assets_resolution_demo.dart`** — DSN-free probe of hook /
-  `library_loader` resolution order, `ODBC_FAST_*` env vars, local/cache paths,
-  and an `OdbcNative` load smoke check.
+  `library_loader` resolution order, `ODBC_FAST_*` env vars, preferred on-disk
+  path, and an `OdbcNative` load smoke check.
 - **Async XA / 2PC** — isolate backend now supports the full `odbc_xa_*` lifecycle
   (`xaStart`, end/prepare/commit/rollback, recover, resume) with `xaId` worker
   affinity. `XaTransactionHandle` lifecycle methods return `Future<bool>`

@@ -313,6 +313,16 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
       streamMultiStartBatchedResult;
 
   @override
+  Future<int> streamMultiStartAsync(
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) async =>
+      streamMultiStartBatchedResult;
+
+  @override
   Future<Uint8List?> executeQueryMultiParams(
     int connectionId,
     String sql,

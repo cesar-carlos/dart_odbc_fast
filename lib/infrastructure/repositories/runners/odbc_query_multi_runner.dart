@@ -68,7 +68,10 @@ class OdbcQueryMultiRunner {
                 resultEncoding: resultEncoding,
               );
 
-        final qr = parser.parseBufferToQueryResult(buf);
+        final qr = parser.parseBufferToQueryResult(
+          buf,
+          lazyStrings: opts?.lazyStrings ?? false,
+        );
         if (qr == null) {
           return await ffi.convertNativeErrorToFailure<QueryResult>(
             errorFactory: ({
@@ -160,7 +163,9 @@ class OdbcQueryMultiRunner {
       );
     }
 
-    final maxBytes = state.optionsFor(connectionId)?.maxResultBufferBytes;
+    final opts = state.optionsFor(connectionId);
+    final maxBytes = opts?.maxResultBufferBytes;
+    final lazyStrings = opts?.lazyStrings ?? false;
 
     Future<Result<QueryResultMulti>> run() async {
       try {
@@ -179,7 +184,7 @@ class OdbcQueryMultiRunner {
           );
         }
 
-        final items = MultiResultParser.parse(buf);
+        final items = MultiResultParser.parse(buf, lazyStrings: lazyStrings);
         return Success(parser.toQueryResultMulti(items));
       } on Exception catch (e) {
         return ffi.convertNativeErrorToFailure<QueryResultMulti>(
@@ -254,7 +259,10 @@ class OdbcQueryMultiRunner {
           return const Success(QueryResultMulti(items: []));
         }
 
-        final items = MultiResultParser.parse(buf);
+        final items = MultiResultParser.parse(
+          buf,
+          lazyStrings: opts?.lazyStrings ?? false,
+        );
         return Success(parser.toQueryResultMulti(items));
       } on Exception catch (e) {
         return ffi.convertNativeErrorToFailure<QueryResultMulti>(

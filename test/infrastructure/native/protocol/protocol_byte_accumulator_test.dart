@@ -43,5 +43,27 @@ void main() {
       acc.add(Uint8List.fromList([5, 6]));
       expect(acc.take(2), equals([5, 6]));
     });
+
+    test('should_hand_off_view_without_copy_when_taking_full_length', () {
+      final acc = ProtocolByteAccumulator(initialCapacity: 16)
+        ..add(Uint8List.fromList([9, 8, 7]));
+      final taken = acc.take(3);
+      expect(taken, equals([9, 8, 7]));
+      expect(taken.lengthInBytes, equals(3));
+      expect(acc.length, equals(0));
+      // Accumulator reuse must not mutate the handed-off frame.
+      acc.add(Uint8List.fromList([1]));
+      expect(taken, equals([9, 8, 7]));
+    });
+
+    test('should_hand_off_prefix_view_when_taking_partial_length', () {
+      final acc = ProtocolByteAccumulator(initialCapacity: 8)
+        ..add(Uint8List.fromList([1, 2, 3, 4, 5, 6]));
+      final frame = acc.take(4);
+      expect(frame, equals([1, 2, 3, 4]));
+      expect(acc.length, equals(2));
+      expect(acc.take(2), equals([5, 6]));
+      expect(frame, equals([1, 2, 3, 4]));
+    });
   });
 }

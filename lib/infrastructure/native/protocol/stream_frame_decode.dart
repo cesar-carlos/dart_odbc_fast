@@ -7,23 +7,16 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 
-/// Decodes one complete batched-stream protocol frame.
+/// Decodes one complete batched-stream protocol frame into a [ParsedRowBuffer].
 ///
-/// Columnar v2 frames use [BinaryProtocolParser.parseColumnarToTyped] and are
-/// materialized to [ParsedRowBuffer] only when callers require row-major
-/// chunks. Row-major v1 frames use [BinaryProtocolParser.parse] directly.
+/// Columnar v2 frames are decoded via [BinaryProtocolParser.parse] (direct
+/// columnar→row path). Callers that want to keep typed columns should use
+/// [BinaryProtocolParser.parseColumnarToTyped] / `streamQueryColumnar*` instead
+/// of this helper.
 ParsedRowBuffer decodeBatchedStreamFrame(
   Uint8List frame, {
   bool lazyStrings = false,
 }) {
-  if (BinaryProtocolParser.isColumnarV2Message(frame)) {
-    return parsedRowBufferFromTypedColumnar(
-      BinaryProtocolParser.parseColumnarToTyped(
-        frame,
-        lazyStrings: lazyStrings,
-      ),
-    );
-  }
   return BinaryProtocolParser.parse(frame, lazyStrings: lazyStrings);
 }
 

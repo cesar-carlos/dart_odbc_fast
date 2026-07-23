@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -66,6 +67,7 @@ class StreamAsyncLifecycleRunner {
           : ffi.sync.executeAsyncStart(nativeId, sql);
       final resolved = requestId ?? 0;
       if (resolved > 0) {
+        state.asyncRequestConnectionById[resolved] = connectionId;
         return Success(resolved);
       }
       return await ffi.convertNativeErrorToFailure<int>(
@@ -114,6 +116,10 @@ class StreamAsyncLifecycleRunner {
       );
     }
 
+    final connectionId = state.asyncRequestConnectionById[requestId];
+    final lazyStrings = connectionId != null &&
+        (state.optionsFor(connectionId)?.lazyStrings ?? false);
+
     try {
       final data = ffi.isAsync
           ? await ffi.async.asyncGetResult(
@@ -121,7 +127,10 @@ class StreamAsyncLifecycleRunner {
               maxBufferBytes: maxBufferBytes,
             )
           : ffi.sync.asyncGetResult(requestId);
-      final parsed = parser.parseBufferToQueryResult(data);
+      final parsed = parser.parseBufferToQueryResult(
+        data,
+        lazyStrings: lazyStrings,
+      );
       if (parsed == null) {
         return await ffi.convertNativeErrorToFailure<QueryResult>(
           errorFactory: ({required message, sqlState, nativeCode}) =>
@@ -182,6 +191,7 @@ class StreamAsyncLifecycleRunner {
           ? await ffi.async.asyncFree(requestId)
           : ffi.sync.asyncFree(requestId);
       if (ok) {
+        state.asyncRequestConnectionById.remove(requestId);
         return const Success(unit);
       }
       return await ffi.convertNativeErrorToFailure<Unit>(
@@ -212,7 +222,9 @@ class StreamAsyncLifecycleRunner {
       );
     }
 
-    final resultEncodingWire = state.defaultResultEncoding.wireCode;
+    // Row-shaped admin stream API always uses row-major wire (same policy as
+    // streamQuery). Columnar consumers use streamQueryColumnar*.
+    final resultEncodingWire = ResultEncoding.rowMajor.wireCode;
 
     try {
       final streamId = ffi.isAsync

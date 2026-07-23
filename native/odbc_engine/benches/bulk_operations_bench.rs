@@ -2,7 +2,9 @@ use criterion::{black_box, criterion_group, criterion_main, BatchSize, Benchmark
 use odbc_engine::engine::core::ArrayBinding;
 use odbc_engine::engine::{StreamCopyResult, StreamingState};
 use odbc_engine::protocol::types::OdbcType;
-use odbc_engine::protocol::{RowBuffer, RowBufferEncoder};
+use odbc_engine::protocol::{
+    try_encode_multi, MultiResultItem, MultiResultWriter, RowBuffer, RowBufferEncoder,
+};
 
 fn benchmark_array_binding_new(c: &mut Criterion) {
     c.bench_function("array_binding_new_1000", |b| {
@@ -93,6 +95,132 @@ fn benchmark_streaming_copy_next_chunk(c: &mut Criterion) {
     group.finish();
 }
 
+/// A/B: old collect-then-`try_encode_multi` path vs in-place [`MultiResultWriter`].
+///
+/// Both arms start from the same owned result-set payloads. The writer avoids the
+/// intermediate `Vec<MultiResultItem>` and the capacity pre-scan.
+fn benchmark_multi_result_writer_vs_encode(c: &mut Criterion) {
+    let shapes: &[(usize, usize)] = &[(8, 4 * 1024), (32, 64 * 1024), (128, 16 * 1024)];
+    let mut group = c.benchmark_group("multi_result_writer_vs_encode");
+
+    for &(item_count, payload_len) in shapes {
+        let payloads: Vec<Vec<u8>> = (0..item_count)
+            .map(|i| {
+                let mut buf = vec![0u8; payload_len];
+                for (j, byte) in buf.iter_mut().enumerate() {
+                    *byte = ((i * 131 + j) % 251) as u8;
+                }
+                buf
+            })
+            .collect();
+        let id = format!("{item_count}x{payload_len}");
+
+        group.bench_with_input(
+            BenchmarkId::new("collect_then_try_encode", &id),
+            &payloads,
+            |b, payloads| {
+                b.iter(|| {
+                    let items: Vec<MultiResultItem> = payloads
+                        .iter()
+                        .map(|p| MultiResultItem::ResultSet(p.clone()))
+                        .chain(std::iter::once(MultiResultItem::RowCount(42)))
+                        .collect();
+                    black_box(try_encode_multi(&items).expect("encode"))
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("multi_result_writer", &id),
+            &payloads,
+            |b, payloads| {
+                b.iter(|| {
+                    let mut writer = MultiResultWriter::new();
+                    if let Some(first) = payloads.first() {
+                        writer.reserve_similar(first.len(), payloads.len().saturating_sub(1));
+                    }
+                    for payload in payloads {
+                        writer
+                            .push_result_set(payload.clone())
+                            .expect("push result set");
+                    }
+                    writer.push_row_count(42).expect("push row count");
+                    black_box(writer.finish().expect("finish"))
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// A/B for FFI stream copy when the Dart output buffer is larger than the
+/// configured `chunk_size` (the case fixed by limiting copy to `out.len()`).
+///
+/// **KPI is FFI round count**, not isolated memcpy wall time. In production
+/// Dart usually passes `bufferSize == chunkSize` (both default 64 KiB), so the
+/// paths are equivalent; this bench forces a mismatch (`chunk_size=4KiB`,
+/// `out=64KiB`) to show the round-trip reduction (64 → 4). Larger per-call
+/// memcpy can look slower in Criterion while still winning end-to-end because
+/// each Dart↔native poll is far more expensive than the copy itself.
+fn benchmark_stream_copy_chunk_vs_out_capacity(c: &mut Criterion) {
+    let batch: Vec<u8> = (0..(256 * 1024)).map(|i| (i % 251) as u8).collect();
+    let chunk_size = 4 * 1024usize;
+    let out_capacity = 64 * 1024usize;
+    let mut group = c.benchmark_group("stream_copy_chunk_vs_out_capacity");
+    group.throughput(criterion::Throughput::Bytes(batch.len() as u64));
+
+    group.bench_function("limit_by_chunk_size", |b| {
+        b.iter_batched(
+            || (batch.clone(), vec![0u8; out_capacity]),
+            |(batch, mut out)| {
+                let mut offset = 0usize;
+                let mut total = 0usize;
+                let mut ffi_rounds = 0usize;
+                while offset < batch.len() {
+                    let end = offset.saturating_add(chunk_size).min(batch.len());
+                    let needed = end - offset;
+                    out[..needed].copy_from_slice(&batch[offset..end]);
+                    black_box(&out[..needed]);
+                    offset = end;
+                    total += needed;
+                    ffi_rounds += 1;
+                }
+                // Expected: 256KiB / 4KiB = 64 rounds vs 4 with out.len().
+                assert_eq!(ffi_rounds, 64);
+                black_box((total, ffi_rounds))
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("limit_by_out_len", |b| {
+        b.iter_batched(
+            || (batch.clone(), vec![0u8; out_capacity]),
+            |(batch, mut out)| {
+                let mut offset = 0usize;
+                let mut total = 0usize;
+                let mut ffi_rounds = 0usize;
+                while offset < batch.len() {
+                    let end = offset.saturating_add(out.len()).min(batch.len());
+                    let needed = end - offset;
+                    out[..needed].copy_from_slice(&batch[offset..end]);
+                    black_box(&out[..needed]);
+                    offset = end;
+                    total += needed;
+                    ffi_rounds += 1;
+                }
+                // Expected: 256KiB / 64KiB = 4 rounds vs 64 with 4KiB chunks.
+                assert_eq!(ffi_rounds, 4);
+                black_box((total, ffi_rounds))
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_array_binding_new,
@@ -100,5 +228,7 @@ criterion_group!(
     benchmark_encode_small_buffer,
     benchmark_encode_with_compression,
     benchmark_streaming_copy_next_chunk,
+    benchmark_multi_result_writer_vs_encode,
+    benchmark_stream_copy_chunk_vs_out_capacity,
 );
 criterion_main!(benches);

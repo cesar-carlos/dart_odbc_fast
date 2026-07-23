@@ -16,6 +16,12 @@ String _libraryName() {
   throw UnsupportedError('Platform not supported: ${Platform.operatingSystem}');
 }
 
+/// When true, a local release artifact wins over cache even if older.
+bool preferLocalOdbcEngineBuild([Map<String, String>? environment]) {
+  final env = environment ?? Platform.environment;
+  return env['ODBC_FAST_PREFER_LOCAL_BUILD'] == 'true';
+}
+
 /// Finds package root by walking up until a directory contains pubspec.yaml.
 String? _findPackageRoot() {
   var dir = Directory.current;
@@ -52,22 +58,142 @@ DynamicLibrary? _tryLoadFromRoot(String root, String name, String sep) {
   return DynamicLibrary.open(path);
 }
 
+String? _versionFromPubspec(String packageRoot) {
+  final sep = Platform.pathSeparator;
+  final pubspec = File('$packageRoot${sep}pubspec.yaml');
+  if (!pubspec.existsSync()) {
+    return null;
+  }
+  try {
+    for (final line in pubspec.readAsLinesSync()) {
+      final trimmed = line.trimLeft();
+      if (trimmed.startsWith('#')) {
+        continue;
+      }
+      if (trimmed.startsWith('version:')) {
+        final raw = trimmed.substring('version:'.length).trim();
+        final version = raw.split(RegExp(r'\s+#')).first.trim();
+        return version.isEmpty ? null : version;
+      }
+    }
+  } on FileSystemException {
+    return null;
+  }
+  return null;
+}
+
+/// Hook cache path for the current host (x64 Windows/Linux only).
+@visibleForTesting
+String? odbcEngineCachedLibraryPath({
+  required String libName,
+  String? packageRoot,
+  Map<String, String>? environment,
+}) {
+  final env = environment ?? Platform.environment;
+  final home = env['HOME'] ?? env['USERPROFILE'];
+  if (home == null) {
+    return null;
+  }
+
+  final version = packageRoot == null ? null : _versionFromPubspec(packageRoot);
+  final cacheBase = version == null || version.isEmpty
+      ? '$home${Platform.pathSeparator}.cache${Platform.pathSeparator}'
+          'odbc_fast'
+      : '$home${Platform.pathSeparator}.cache${Platform.pathSeparator}'
+          'odbc_fast${Platform.pathSeparator}$version';
+
+  final platformDir = Platform.isWindows
+      ? 'windows_x64'
+      : Platform.isLinux
+          ? 'linux_x64'
+          : null;
+  if (platformDir == null) {
+    return null;
+  }
+
+  final cached = File(
+    '$cacheBase${Platform.pathSeparator}$platformDir'
+    '${Platform.pathSeparator}$libName',
+  );
+  if (!cached.existsSync()) {
+    return null;
+  }
+  return cached.absolute.path;
+}
+
+/// Picks between local and cached paths using the same policy as
+/// `hook/native_library_resolver.dart` `chooseLocalOrCached`.
+@visibleForTesting
+String? chooseLocalOrCachedLibraryPath({
+  required String? localPath,
+  required String? cachedPath,
+  bool preferLocal = false,
+  DateTime Function(String path)? modifiedAt,
+}) {
+  DateTime mtime(String path) {
+    if (modifiedAt != null) {
+      return modifiedAt(path);
+    }
+    return File(path).lastModifiedSync();
+  }
+
+  if (preferLocal && localPath != null) {
+    return localPath;
+  }
+
+  if (localPath != null && cachedPath != null) {
+    final localTime = mtime(localPath);
+    final cachedTime = mtime(cachedPath);
+    if (!localTime.isBefore(cachedTime)) {
+      return localPath;
+    }
+    return cachedPath;
+  }
+
+  return cachedPath ?? localPath;
+}
+
+/// Resolves the preferred on-disk library path before Native Assets / PATH.
+String? resolvePreferredOdbcEngineFilePath({
+  required String cwd,
+  String? packageRoot,
+  Map<String, String>? environment,
+  DateTime Function(String path)? modifiedAt,
+}) {
+  final name = _libraryName();
+  final localPath = findFirstExistingOdbcEnginePath(
+    cwd: cwd,
+    packageRoot: packageRoot,
+  );
+  final cachedPath = odbcEngineCachedLibraryPath(
+    libName: name,
+    packageRoot: packageRoot ?? (localPath == null ? null : cwd),
+    environment: environment,
+  );
+  return chooseLocalOrCachedLibraryPath(
+    localPath: localPath,
+    cachedPath: cachedPath,
+    preferLocal: preferLocalOdbcEngineBuild(environment),
+    modifiedAt: modifiedAt,
+  );
+}
+
 /// Returns the loaded [DynamicLibrary] instance.
 ///
 /// Resolution order (aligned with `hook/build.dart` / `doc/BUILD.md`):
-/// 1. Development local — `native/target/release/` (workspace) or
-///    `native/odbc_engine/target/release/` (crate-local), from cwd then package
-///    root
-/// 2. Native Assets — `package:odbc_fast/<lib>` (hook cache / download)
+/// 1. Preferred on-disk file — local release vs `~/.cache/odbc_fast/...`
+///    using `ODBC_FAST_PREFER_LOCAL_BUILD` and mtime (same policy as the hook)
+/// 2. Native Assets — `package:odbc_fast/<lib>` (hook-registered asset)
 /// 3. System library paths — PATH / LD_LIBRARY_PATH
 DynamicLibrary loadOdbcLibrary() {
   final name = _libraryName();
-  final localPath = findFirstExistingOdbcEnginePath(
+  final packageRoot = _findPackageRoot();
+  final preferred = resolvePreferredOdbcEngineFilePath(
     cwd: Directory.current.path,
-    packageRoot: _findPackageRoot(),
+    packageRoot: packageRoot,
   );
-  if (localPath != null) {
-    return DynamicLibrary.open(localPath);
+  if (preferred != null) {
+    return DynamicLibrary.open(preferred);
   }
 
   // Native Assets (production) - package:odbc_fast/

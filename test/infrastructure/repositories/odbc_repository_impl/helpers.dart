@@ -20,6 +20,72 @@ Uint8List rowCountMultiStreamFrame(int n) {
   return builder.toBytes();
 }
 
+/// Streaming multi-result result-set frame with a simple varchar payload.
+Uint8List resultSetMultiStreamFrame(
+  List<String> columns,
+  List<List<String>> rows, {
+  int tag = multiStreamItemTagResultSet,
+}) {
+  final cols = <int>[];
+  for (final c in columns) {
+    final nameBytes = c.codeUnits;
+    cols.addAll([
+      0x01,
+      0x00,
+      nameBytes.length & 0xFF,
+      (nameBytes.length >> 8) & 0xFF,
+      ...nameBytes,
+    ]);
+  }
+  final rowsBytes = <int>[];
+  for (final row in rows) {
+    for (final cell in row) {
+      final cellBytes = cell.codeUnits;
+      rowsBytes
+        ..add(0)
+        ..addAll([
+          cellBytes.length & 0xFF,
+          (cellBytes.length >> 8) & 0xFF,
+          (cellBytes.length >> 16) & 0xFF,
+          (cellBytes.length >> 24) & 0xFF,
+        ])
+        ..addAll(cellBytes);
+    }
+  }
+  final payloadAfterHeader = <int>[...cols, ...rowsBytes];
+  final colCount = columns.length;
+  final rowCount = rows.length;
+  final payloadSize = payloadAfterHeader.length;
+  final header = <int>[
+    0x43,
+    0x42,
+    0x44,
+    0x4F,
+    0x01,
+    0x00,
+    colCount & 0xFF,
+    (colCount >> 8) & 0xFF,
+    rowCount & 0xFF,
+    (rowCount >> 8) & 0xFF,
+    (rowCount >> 16) & 0xFF,
+    (rowCount >> 24) & 0xFF,
+    payloadSize & 0xFF,
+    (payloadSize >> 8) & 0xFF,
+    (payloadSize >> 16) & 0xFF,
+    (payloadSize >> 24) & 0xFF,
+  ];
+  final inner = Uint8List.fromList([...header, ...payloadAfterHeader]);
+  final out = BytesBuilder()
+    ..addByte(tag)
+    ..add(
+      (ByteData(4)..setUint32(0, inner.length, Endian.little))
+          .buffer
+          .asUint8List(),
+    )
+    ..add(inner);
+  return out.toBytes();
+}
+
 /// SQLSTATE `0A000` as raw bytes for structured cancellation errors.
 const List<int> sqlState0A000 = [48, 65, 48, 48, 48];
 

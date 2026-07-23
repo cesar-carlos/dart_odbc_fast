@@ -8,7 +8,8 @@
 //! [tag: u8] [len: u32 LE] [payload: len bytes]
 //! ```
 //!
-//! Live ODBC tests are gated by `ENABLE_E2E_TESTS=1` + `ODBC_TEST_DSN`.
+//! Live ODBC tests self-gate via `ENABLE_E2E_TESTS=1` + `ODBC_TEST_DSN`
+//! (early return when unset; no `#[ignore]` required).
 
 use odbc_engine::engine::{
     execute_multi_result, start_multi_batched_stream, OdbcConnection, OdbcEnvironment,
@@ -64,7 +65,6 @@ fn parse_frames(buf: &[u8]) -> Vec<(u8, Vec<u8>)> {
 }
 
 #[test]
-#[ignore]
 fn streaming_shape_1_three_cursors() {
     let Some(dsn_str) = dsn() else {
         eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set / ENABLE_E2E_TESTS != 1");
@@ -94,7 +94,6 @@ fn streaming_shape_1_three_cursors() {
 }
 
 #[test]
-#[ignore]
 fn streaming_shape_3_rowcount_then_cursor() {
     let Some(dsn_str) = dsn() else {
         eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set / ENABLE_E2E_TESTS != 1");
@@ -154,7 +153,6 @@ fn streaming_shape_3_rowcount_then_cursor() {
 }
 
 #[test]
-#[ignore]
 fn streaming_shape_4_cursor_then_rowcount() {
     let Some(dsn_str) = dsn() else {
         eprintln!("⚠️  Skipping: ODBC_TEST_DSN not set / ENABLE_E2E_TESTS != 1");

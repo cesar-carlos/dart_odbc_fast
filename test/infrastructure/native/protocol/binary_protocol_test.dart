@@ -233,6 +233,46 @@ void main() {
       );
     });
 
+    test('parseColumnarToTyped builds TypedColumnFloat64 for float wire', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'score', type: 15),
+          (name: 'ratio', type: 14),
+        ],
+        rows: [
+          ['1.5', '2.25'],
+          [null, 'Infinity'],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(data);
+      final score = typed.column<TypedColumnFloat64>('score');
+      expect(score.values[0], 1.5);
+      expect(score.isNullAt(1), isTrue);
+      final ratio = typed.column<TypedColumnFloat64>('ratio');
+      expect(ratio.values[0], 2.25);
+      expect(ratio.values[1], double.infinity);
+    });
+
+    test('parseColumnarToTyped coerces bool text cells', () {
+      final data = _createColumnarV2Buffer(
+        columns: const [
+          (name: 'flag', type: 13),
+        ],
+        rows: [
+          ['1'],
+          ['false'],
+          [null],
+        ],
+      );
+
+      final typed = BinaryProtocolParser.parseColumnarToTyped(data);
+      final flag = typed.column<TypedColumnObject<bool>>('flag');
+      expect(flag.values[0], isTrue);
+      expect(flag.values[1], isFalse);
+      expect(flag.values[2], isNull);
+    });
+
     test('columnar v2 binary cells decode as Uint8List', () {
       final data = _createColumnarV2Buffer(
         columns: const [

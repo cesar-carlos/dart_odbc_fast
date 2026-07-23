@@ -41,10 +41,14 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     int? maxBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
+    _requireResultEncodingSupport(
+      resultEncoding: resultEncoding,
+      supported: _bindings.supportsExecQueryParamsOptions,
+      symbol: 'odbc_exec_query_params_options',
+    );
     final paramsOrEmpty =
         (params == null || params.isEmpty) ? Uint8List(0) : params;
-    final useOptions = resultEncoding != ResultEncoding.rowMajor &&
-        _bindings.supportsExecQueryParamsOptions;
+    final useOptions = resultEncoding != ResultEncoding.rowMajor;
     return _withSql(
       sql,
       (sqlPtr) {
@@ -172,28 +176,29 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     }
     return _withSql(
       sql,
-      (sqlPtr) => callWithBuffer(
-        (buf, bufLen, outWritten) {
-          final hasParams = paramsBuffer != null && paramsBuffer.isNotEmpty;
-          if (hasParams) {
-            final paramsLen = paramsBuffer.length;
-            final paramsPtr = malloc<ffi.Uint8>(paramsLen);
-            try {
-              paramsPtr.asTypedList(paramsLen).setAll(0, paramsBuffer);
-              return _bindings.odbc_exec_query_multi_params(
+      (sqlPtr) {
+        final hasParams = paramsBuffer != null && paramsBuffer.isNotEmpty;
+        if (hasParams) {
+          return _withParamsBuffer(
+            paramsBuffer,
+            (paramsPtr) => callWithBuffer(
+              (buf, bufLen, outWritten) =>
+                  _bindings.odbc_exec_query_multi_params(
                 connectionId,
                 sqlPtr,
                 paramsPtr,
-                paramsLen,
+                paramsBuffer.length,
                 buf,
                 bufLen,
                 outWritten,
-              );
-            } finally {
-              malloc.free(paramsPtr);
-            }
-          }
-          return _bindings.odbc_exec_query_multi_params(
+              ),
+              maxSize: maxBufferBytes,
+              preferTransient: preferTransientFfiBufferForParams(paramsBuffer),
+            ),
+          );
+        }
+        return callWithBuffer(
+          (buf, bufLen, outWritten) => _bindings.odbc_exec_query_multi_params(
             connectionId,
             sqlPtr,
             null,
@@ -201,12 +206,10 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
             buf,
             bufLen,
             outWritten,
-          );
-        },
-        maxSize: maxBufferBytes,
-        preferTransient: paramsBuffer != null &&
-            preferTransientFfiBufferForParams(paramsBuffer),
-      ),
+          ),
+          maxSize: maxBufferBytes,
+        );
+      },
     );
   }
 
@@ -224,7 +227,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
       final n = outWritten.value;
       if (n < metricsSize) return null;
       return OdbcMetrics.fromBytes(
-        Uint8List.fromList(buf.asTypedList(metricsSize)),
+        buf.asTypedList(metricsSize),
       );
     } finally {
       malloc
@@ -247,7 +250,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
       final n = outWritten.value;
       if (n < metricsSize) return null;
       return PreparedStatementMetrics.fromBytes(
-        Uint8List.fromList(buf.asTypedList(metricsSize)),
+        buf.asTypedList(metricsSize),
       );
     } finally {
       malloc

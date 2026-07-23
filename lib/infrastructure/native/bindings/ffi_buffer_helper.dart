@@ -4,8 +4,12 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 
-/// Initial buffer size for FFI buffer allocations (64 KB).
-const int initialBufferSize = 64 * 1024;
+/// Initial buffer size for FFI buffer allocations (256 KB).
+///
+/// Sized to cover typical medium result frames on the first attempt and avoid
+/// a `-2` resize round-trip. Callers with known budgets should still pass
+/// [callWithBuffer]'s `initialSize` / `maxSize` (streams: use `chunkSize`).
+const int initialBufferSize = 256 * 1024;
 
 /// Maximum buffer size for FFI buffer allocations (16 MB).
 const int maxBufferSize = 16 * 1024 * 1024;
@@ -105,19 +109,18 @@ StreamBufferFetchResult? _streamCallWithTransientBuffer(
   required int initialSize,
   required bool allowZeroCopy,
 }) {
+  final outWritten = _streamStatusOutWritten;
+  final hasMore = _streamStatusHasMore;
   var size = initialSize <= limit ? initialSize : limit;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
-    final outWritten = malloc<ffi.Uint32>()..value = 0;
-    final hasMore = malloc<ffi.Uint8>()..value = 0;
+    outWritten.value = 0;
+    hasMore.value = 0;
     try {
       final code = fn(buf, size, outWritten, hasMore);
       if (code == 0) {
         final n = outWritten.value;
         final more = hasMore.value != 0;
-        malloc
-          ..free(outWritten)
-          ..free(hasMore);
         final data = n > 0
             ? materializeFfiBytes(
                 buf,
@@ -130,28 +133,24 @@ StreamBufferFetchResult? _streamCallWithTransientBuffer(
       }
       if (code == -2) {
         final requested = outWritten.value;
-        malloc
-          ..free(buf)
-          ..free(outWritten)
-          ..free(hasMore);
+        malloc.free(buf);
         size = requested > size ? requested : size * 2;
         continue;
       }
-      malloc
-        ..free(buf)
-        ..free(outWritten)
-        ..free(hasMore);
+      malloc.free(buf);
       return null;
     } on Object {
-      malloc
-        ..free(buf)
-        ..free(outWritten)
-        ..free(hasMore);
+      malloc.free(buf);
       rethrow;
     }
   }
   return null;
 }
+
+/// Reused per-isolate status pointers for stream fetches (data buffer stays
+/// transient for zero-copy).
+final ffi.Pointer<ffi.Uint32> _streamStatusOutWritten = malloc<ffi.Uint32>();
+final ffi.Pointer<ffi.Uint8> _streamStatusHasMore = malloc<ffi.Uint8>();
 
 /// Materializes FFI bytes using the same zero-copy policy as [callWithBuffer].
 Uint8List materializeFfiBytes(
@@ -190,7 +189,10 @@ Uint8List? callWithBuffer(
   final limit = maxSize ?? maxBufferSize;
   final size = initialSize ?? initialBufferSize;
   final zeroCopy = allowZeroCopy ?? isZeroCopyResultBufferAvailable;
-  if (zeroCopy && (preferTransient || limit >= zeroCopyResultThresholdBytes)) {
+  // Prefer transient only when the caller opts in or the seed size already
+  // suggests a large payload. Do not gate on [limit] (often 16 MiB) — that
+  // forced malloc/free for every sync query and skipped the scratch pool.
+  if (zeroCopy && (preferTransient || size >= zeroCopyResultThresholdBytes)) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,
@@ -226,7 +228,7 @@ Uint8List? _callWithTransientBuffer(
   required bool allowZeroCopy,
 }) {
   // Clamp to limit so callers passing maxBufferBytes smaller than the default
-  // 64 KB initialSize still enter the loop instead of skipping it entirely.
+  // initialSize still enter the loop instead of skipping it entirely.
   var size = initialSize <= limit ? initialSize : limit;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
@@ -364,6 +366,16 @@ final class _ReusableFfiScratch {
       if (code == -2) {
         final requested = _outWritten.value;
         size = requested > size ? requested : size * 2;
+        if (allowZeroCopy && size >= zeroCopyResultThresholdBytes) {
+          // Large resize: leave the scratch pool and use a transient buffer so
+          // zero-copy materialization does not need a scratch→owned copy.
+          return _callWithTransientBuffer(
+            fn,
+            limit: limit,
+            initialSize: size <= limit ? size : limit,
+            allowZeroCopy: true,
+          );
+        }
         continue;
       }
       return null;

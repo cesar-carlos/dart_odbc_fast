@@ -99,11 +99,64 @@ class StreamPollAsyncRequest extends WorkerRequest {
   final int streamId;
 }
 
+/// Poll async stream and, when ready, fetch the next chunk in one isolate hop.
+class StreamPollFetchRequest extends WorkerRequest {
+  const StreamPollFetchRequest(
+    int requestId,
+    this.streamId, {
+    this.bufferSize,
+  }) : super(requestId, RequestType.streamPollFetch);
+  final int streamId;
+
+  /// Optional FFI output buffer seed (typically stream `chunkSize`).
+  final int? bufferSize;
+}
+
+/// Combined poll (+ optional fetch) response for [StreamPollFetchRequest].
+class StreamPollFetchResponse extends WorkerResponse {
+  StreamPollFetchResponse(
+    super.requestId, {
+    required this.status,
+    this.success = true,
+    Uint8List? data,
+    TransferableTypedData? transferableData,
+    this.hasMore = false,
+    this.error,
+  })  : _data = data,
+        _transferableData = transferableData;
+
+  /// Native async poll status (`pending` / `ready` / `done` / error codes).
+  final int status;
+  final bool success;
+  Uint8List? _data;
+  final TransferableTypedData? _transferableData;
+  final bool hasMore;
+  final String? error;
+
+  Uint8List? get data {
+    final data = _data;
+    if (data != null) {
+      return data;
+    }
+    final transferableData = _transferableData;
+    if (transferableData == null) {
+      return null;
+    }
+    return _data = transferableData.materialize().asUint8List();
+  }
+}
+
 /// Fetch next chunk from an active stream.
 class StreamFetchRequest extends WorkerRequest {
-  const StreamFetchRequest(int requestId, this.streamId)
-      : super(requestId, RequestType.streamFetch);
+  const StreamFetchRequest(
+    int requestId,
+    this.streamId, {
+    this.bufferSize,
+  }) : super(requestId, RequestType.streamFetch);
   final int streamId;
+
+  /// Optional FFI output buffer seed (typically stream `chunkSize`).
+  final int? bufferSize;
 }
 
 /// Cancel active stream.

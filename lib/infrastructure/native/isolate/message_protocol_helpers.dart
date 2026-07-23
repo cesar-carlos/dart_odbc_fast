@@ -27,6 +27,7 @@ enum RequestType {
   streamMultiStartBatched,
   streamMultiStartAsync,
   streamPollAsync,
+  streamPollFetch,
   streamFetch,
   streamCancel,
   streamClose,
@@ -239,7 +240,7 @@ class AuditClearRequest extends WorkerRequest {
 }
 
 /// Minimum payload size before isolate messages use [TransferableTypedData].
-const int isolateTransferablePayloadThresholdBytes = 64 * 1024;
+const int isolateTransferablePayloadThresholdBytes = 32 * 1024;
 
 /// Returns transferable ownership for large byte payloads sent to workers.
 TransferableTypedData? transferableIsolatePayload(Uint8List bytes) {
@@ -286,6 +287,46 @@ StreamFetchResponse isolateStreamDataResponse({
   }
   return StreamFetchResponse(
     requestId,
+    success: success,
+    data: data,
+    hasMore: hasMore,
+    error: error,
+  );
+}
+
+/// Builds a worker [StreamPollFetchResponse] with inline or transferable
+/// payload.
+StreamPollFetchResponse isolateStreamPollFetchResponse({
+  required int requestId,
+  required int status,
+  required bool success,
+  required Uint8List? data,
+  required bool hasMore,
+  String? error,
+}) {
+  if (data == null) {
+    return StreamPollFetchResponse(
+      requestId,
+      status: status,
+      success: success,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
+  final transferable = transferableIsolatePayload(data);
+  if (transferable != null) {
+    return StreamPollFetchResponse(
+      requestId,
+      status: status,
+      success: success,
+      transferableData: transferable,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
+  return StreamPollFetchResponse(
+    requestId,
+    status: status,
     success: success,
     data: data,
     hasMore: hasMore,

@@ -100,9 +100,16 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
 
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) =>
-      query.streamQueryMulti(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      query.streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,

@@ -107,10 +107,13 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
   ///
   /// The [stmtId] must be a valid prepared statement identifier.
   ///
-  /// Current native contract may return unsupported feature errors depending
-  /// on runtime capabilities.
+  /// **Not implemented end-to-end:** the native `odbc_cancel` entry point is a
+  /// stub that returns SQLSTATE `0A000` / native code `5001`. Higher layers
+  /// (`IOdbcService.cancelStatement`) map that to [UnsupportedFeatureError].
+  /// Prefer connection `queryTimeout` for reliable interruption.
   ///
-  /// Returns true on success, false on failure.
+  /// Returns true only on a successful cancel (currently never for the stub);
+  /// false on failure or unsupported feature.
   bool cancelStatement(int stmtId) {
     return _bindings.odbc_cancel(stmtId) == 0;
   }

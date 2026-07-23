@@ -8,6 +8,8 @@
 library;
 
 export 'infrastructure/native/async_native_odbc_connection.dart';
+export 'infrastructure/native/bindings/library_loader.dart'
+    show preferLocalOdbcEngineBuild, resolvePreferredOdbcEngineFilePath;
 export 'infrastructure/native/bindings/odbc_native.dart';
 export 'infrastructure/native/bindings/opentelemetry_ffi.dart';
 export 'infrastructure/native/driver_capabilities_mapper.dart';

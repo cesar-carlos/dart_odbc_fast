@@ -295,9 +295,16 @@ class OdbcService implements IOdbcService {
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) =>
-      _query.streamQueryMulti(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
+      _query.streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryNamed(

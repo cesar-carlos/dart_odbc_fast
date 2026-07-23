@@ -53,7 +53,10 @@ fn test_batched_streaming_state_takes_whole_batch_when_chunk_fits() {
     assert_eq!(state.fetch_next_chunk().unwrap(), None);
 }
 #[test]
-fn test_batched_streaming_state_copy_preserves_offset_when_buffer_too_small() {
+fn test_batched_streaming_state_copy_fills_partial_out_without_buffer_too_small() {
+    // With copy limited by out.len() (not chunk_size), a tiny caller buffer
+    // receives a partial copy and advances offset — BufferTooSmall is not
+    // returned when out can hold at least one byte of the remaining batch.
     let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(2);
     let _ = tx.send(BatchedMessage::Batch(vec![1, 2, 3, 4]));
     let _ = tx.send(BatchedMessage::Done);
@@ -63,18 +66,22 @@ fn test_batched_streaming_state_copy_preserves_offset_when_buffer_too_small() {
     let mut tiny = [0u8; 2];
     assert_eq!(
         state.copy_next_chunk(&mut tiny).unwrap(),
-        StreamCopyResult::BufferTooSmall { needed: 3 }
+        StreamCopyResult::Copied {
+            written: 2,
+            has_more: true
+        }
     );
+    assert_eq!(&tiny, &[1, 2]);
 
     let mut out = [0u8; 3];
     assert_eq!(
         state.copy_next_chunk(&mut out).unwrap(),
         StreamCopyResult::Copied {
-            written: 3,
+            written: 2,
             has_more: true
         }
     );
-    assert_eq!(&out, &[1, 2, 3]);
+    assert_eq!(&out[..2], &[3, 4]);
 }
 #[test]
 fn test_batched_streaming_state_error() {

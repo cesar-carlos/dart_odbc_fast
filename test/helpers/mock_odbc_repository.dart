@@ -504,8 +504,10 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) async* {
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) async* {
     final full = await executeQueryMultiFull(connectionId, sql);
     if (full.isError()) {
       final err = full.exceptionOrNull();

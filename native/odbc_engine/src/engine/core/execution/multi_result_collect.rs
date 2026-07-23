@@ -4,8 +4,8 @@ use super::param_binding::{
 use super::ExecutionEngine;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{
-    param_values_to_input_params, param_values_to_input_params_with_descriptions, try_encode_multi,
-    MultiResultItem, ParamValue,
+    param_values_to_input_params, param_values_to_input_params_with_descriptions, MultiResultItem,
+    MultiResultWriter, ParamValue,
 };
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
 use odbc_api::{Connection, CursorImpl};
@@ -38,6 +38,15 @@ pub(super) fn bound_params_first_multi_item(
     }
 }
 
+/// After the first encoded cursor, reserve room for a few similar siblings so
+/// small multi-result batches avoid realloc cascades in [`MultiResultWriter`].
+fn push_first_or_next_result_set(writer: &mut MultiResultWriter, encoded: Vec<u8>) -> Result<()> {
+    if writer.item_count() == 0 {
+        writer.reserve_similar(encoded.len(), 3);
+    }
+    writer.push_result_set(encoded)
+}
+
 impl ExecutionEngine {
     pub(super) fn execute_multi_result_inner(
         &self,
@@ -45,7 +54,7 @@ impl ExecutionEngine {
         sql: &str,
     ) -> Result<Vec<u8>> {
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-        let mut all_items: Vec<MultiResultItem> = Vec::new();
+        let mut writer = MultiResultWriter::new();
 
         // Encode the initial result inside a scope that bounds the cursor's
         // borrow on `stmt`. We use `cursor.into_stmt()` to drop the cursor
@@ -55,7 +64,7 @@ impl ExecutionEngine {
             let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
             if let Some(cursor) = initial_cursor {
                 let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
-                all_items.push(MultiResultItem::ResultSet(encoded));
+                push_first_or_next_result_set(&mut writer, encoded)?;
                 // Consume cursor *without* close_cursor (preserves pending
                 // result sets for SQLMoreResults below).
                 let _stmt_ref = cursor.into_stmt();
@@ -67,11 +76,11 @@ impl ExecutionEngine {
 
         if !had_initial_cursor {
             let rc = odbc_row_count_i64(stmt.row_count().map_err(OdbcError::from)?);
-            all_items.push(MultiResultItem::RowCount(rc));
+            writer.push_row_count(rc)?;
         }
 
-        self.drive_more_results(&mut stmt, &mut all_items)?;
-        try_encode_multi(&all_items)
+        self.drive_more_results(&mut stmt, &mut writer)?;
+        writer.finish()
     }
 
     pub(super) fn execute_multi_result_with_params_inner(
@@ -86,7 +95,7 @@ impl ExecutionEngine {
         ) {
             let parameters = require_inference_input_params(params)?;
             let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
-            let mut all_items: Vec<MultiResultItem> = Vec::new();
+            let mut writer = MultiResultWriter::new();
 
             let had_initial_cursor = {
                 let initial_cursor = if parameters.is_empty() {
@@ -99,7 +108,7 @@ impl ExecutionEngine {
 
                 if let Some(cursor) = initial_cursor {
                     let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
-                    all_items.push(MultiResultItem::ResultSet(encoded));
+                    push_first_or_next_result_set(&mut writer, encoded)?;
                     let _stmt_ref = cursor.into_stmt();
                     true
                 } else {
@@ -109,11 +118,11 @@ impl ExecutionEngine {
 
             if !had_initial_cursor {
                 let rc = odbc_row_count_i64(prealloc.row_count().map_err(OdbcError::from)?);
-                all_items.push(MultiResultItem::RowCount(rc));
+                writer.push_row_count(rc)?;
             }
 
-            self.drive_more_results(&mut prealloc, &mut all_items)?;
-            return try_encode_multi(&all_items);
+            self.drive_more_results(&mut prealloc, &mut writer)?;
+            return writer.finish();
         }
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
@@ -132,7 +141,7 @@ impl ExecutionEngine {
             }
             MultiResultParamBindingPlan::PreparedStandard => param_values_to_input_params(params)?,
         };
-        let mut all_items: Vec<MultiResultItem> = Vec::new();
+        let mut writer = MultiResultWriter::new();
 
         let had_initial_cursor = {
             let initial_cursor = if parameters.is_empty() {
@@ -144,7 +153,7 @@ impl ExecutionEngine {
 
             if let Some(cursor) = initial_cursor {
                 let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
-                all_items.push(MultiResultItem::ResultSet(encoded));
+                push_first_or_next_result_set(&mut writer, encoded)?;
                 // Same SQLCloseCursor avoidance as in `execute_multi_result_inner`.
                 let _stmt_ref = cursor.into_stmt();
                 true
@@ -155,11 +164,11 @@ impl ExecutionEngine {
 
         if !had_initial_cursor {
             let rc = odbc_row_count_i64(stmt.row_count().map_err(OdbcError::from)?);
-            all_items.push(MultiResultItem::RowCount(rc));
+            writer.push_row_count(rc)?;
         }
 
-        self.drive_more_results(&mut stmt, &mut all_items)?;
-        try_encode_multi(&all_items)
+        self.drive_more_results(&mut stmt, &mut writer)?;
+        writer.finish()
     }
 
     /// Walk every additional result set produced by `stmt` after the first
@@ -178,7 +187,7 @@ impl ExecutionEngine {
     pub(super) fn drive_more_results<S>(
         &self,
         stmt: &mut S,
-        all_items: &mut Vec<MultiResultItem>,
+        writer: &mut MultiResultWriter,
     ) -> Result<()>
     where
         S: AsStatementRef,
@@ -230,7 +239,7 @@ impl ExecutionEngine {
                 // `SQLCloseCursor`.
                 let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
                 let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
-                all_items.push(MultiResultItem::ResultSet(encoded));
+                push_first_or_next_result_set(writer, encoded)?;
                 let _stmt_ref = cursor.into_stmt();
             } else {
                 let rc = stmt
@@ -238,7 +247,7 @@ impl ExecutionEngine {
                     .row_count()
                     .into_result(&stmt.as_stmt_ref())
                     .map_err(OdbcError::from)?;
-                all_items.push(MultiResultItem::RowCount(rc as i64));
+                writer.push_row_count(rc as i64)?;
             }
         }
     }

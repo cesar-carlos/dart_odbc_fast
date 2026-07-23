@@ -25,11 +25,18 @@ class FakeOdbcBindings {
           supportsDriverCapabilitiesApi: false,
           supportsAsyncExecuteApi: false,
           supportsAsyncExecuteParamsApi: false,
+          supportsAsyncExecuteParamsOptionsApi: false,
           supportsAsyncStreamApi: false,
           supportsTransactionAccessMode: false,
           supportsTransactionLockTimeout: false,
           supportsXa: false,
           supportsExecQueryMultiParams: false,
+          supportsExecQueryParamsOptions: false,
+          supportsStreamResultEncodingOptions: false,
+          supportsStreamStartParamsOptions: false,
+          supportsStreamAsyncEncodingOptions: false,
+          supportsMultiResultStreamEncodingOptions: false,
+          supportsMultiResultStreamAsyncEncodingOptions: false,
           supportsPoolCreateWithOptions: false,
           hasConnectWithTimeoutSymbol: false,
         ),
@@ -473,6 +480,11 @@ class StubOdbcBindings extends TestOdbcBindings {
   bool get supportsMultiResultStreamEncodingOptions =>
       _handlers.forceSupportsMultiResultStreamEncodingOptions ??
       super.supportsMultiResultStreamEncodingOptions;
+
+  @override
+  bool get supportsMultiResultStreamAsyncEncodingOptions =>
+      _handlers.forceSupportsMultiResultStreamEncodingOptions ??
+      super.supportsMultiResultStreamAsyncEncodingOptions;
 
   @override
   bool get supportsStructuredErrorForConnection =>

@@ -114,7 +114,8 @@ void main() {
     );
 
     test(
-      'streamQueryMulti passes columnar default encoding to native multi-start',
+      'streamQueryMulti forces row-major even when default encoding is '
+      'columnar',
       () async {
         final columnarRepo = OdbcRepositoryImpl(
           native,
@@ -129,12 +130,13 @@ void main() {
             StreamFetchResponse(0, success: true),
           ];
         await columnarRepo.streamQueryMulti(colConn.id, 'SELECT 1').toList();
-        expect(native.lastStreamMultiStartResultEncodingWire, equals(1));
+        expect(native.lastStreamMultiStartResultEncodingWire, equals(0));
       },
     );
 
     test(
-      'streamQueryMulti passes columnarCompressed default encoding to native',
+      'streamQueryMulti forces row-major even when default is '
+      'columnarCompressed',
       () async {
         final compressedRepo = OdbcRepositoryImpl(
           native,
@@ -151,7 +153,203 @@ void main() {
         await compressedRepo
             .streamQueryMulti(compressedConn.id, 'SELECT 1')
             .toList();
-        expect(native.lastStreamMultiStartResultEncodingWire, equals(2));
+        expect(native.lastStreamMultiStartResultEncodingWire, equals(0));
+      },
+    );
+
+    test(
+      'streamQueryMulti coalesces tag0+tag2 into one result-set item',
+      () async {
+        final frames = BytesBuilder()
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['1'],
+              ],
+            ),
+          )
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['2'],
+              ],
+              tag: multiStreamItemTagResultSetBatch,
+            ),
+          )
+          ..add(rowCountMultiStreamFrame(99));
+        native
+          ..streamMultiStartBatchedResult = 55
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: frames.toBytes(),
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMulti(connectionId, 'SELECT 1')
+            .toList();
+        expect(chunks, hasLength(2));
+        expect(native.lastStreamMultiStartWasAsync, isTrue);
+        expect(chunks[0].isSuccess(), isTrue);
+        final first = chunks[0].getOrNull()!;
+        expect(first.isResultSet, isTrue);
+        expect(first.resultSet!.rowCount, equals(2));
+        expect(first.resultSet!.rows, hasLength(2));
+        expect(chunks[1].isSuccess(), isTrue);
+        expect(chunks[1].getOrNull()!.rowCount, equals(99));
+      },
+    );
+
+    test(
+      'streamQueryMulti does not merge consecutive tag0 result sets',
+      () async {
+        final frames = BytesBuilder()
+          ..add(
+            resultSetMultiStreamFrame(
+              ['a'],
+              [
+                ['1'],
+              ],
+            ),
+          )
+          ..add(
+            resultSetMultiStreamFrame(
+              ['b'],
+              [
+                ['2'],
+              ],
+            ),
+          );
+        native
+          ..streamMultiStartBatchedResult = 56
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: frames.toBytes(),
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMulti(connectionId, 'SELECT 1; SELECT 2')
+            .toList();
+        expect(chunks, hasLength(2));
+        expect(chunks[0].getOrNull()!.resultSet!.columns, equals(['a']));
+        expect(chunks[1].getOrNull()!.resultSet!.columns, equals(['b']));
+      },
+    );
+
+    test(
+      'streamQueryMulti coalesces multiple tag2 continuations into one set',
+      () async {
+        final frames = BytesBuilder()
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['1'],
+              ],
+            ),
+          )
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['2'],
+              ],
+              tag: multiStreamItemTagResultSetBatch,
+            ),
+          )
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['3'],
+                ['4'],
+              ],
+              tag: multiStreamItemTagResultSetBatch,
+            ),
+          )
+          ..add(rowCountMultiStreamFrame(7));
+        native
+          ..streamMultiStartBatchedResult = 57
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: frames.toBytes(),
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMulti(connectionId, 'SELECT 1')
+            .toList();
+        expect(chunks, hasLength(2));
+        final first = chunks[0].getOrNull()!;
+        expect(first.isResultSet, isTrue);
+        expect(first.resultSet!.rowCount, equals(4));
+        expect(first.resultSet!.rows, hasLength(4));
+        expect(
+          first.resultSet!.rows.map((r) => r[0]).toList(),
+          equals(['1', '2', '3', '4']),
+        );
+        expect(chunks[1].getOrNull()!.rowCount, equals(7));
+      },
+    );
+
+    test(
+      'streamQueryMulti forwards fetchSize and seeds streamFetch bufferSize',
+      () async {
+        native
+          ..streamMultiStartBatchedResult = 58
+          ..streamFetchResponses = [
+            StreamFetchResponse(0, success: true),
+          ];
+
+        const fetchSize = 2500;
+        const chunkSize = 256 * 1024;
+        await repository
+            .streamQueryMulti(
+              connectionId,
+              'SELECT 1',
+              fetchSize: fetchSize,
+              chunkSize: chunkSize,
+            )
+            .toList();
+
+        expect(native.lastStreamMultiStartFetchSize, equals(fetchSize));
+        expect(native.lastStreamMultiStartChunkSize, equals(chunkSize));
+        expect(native.lastStreamFetchBufferSize, equals(chunkSize));
+      },
+    );
+
+    test(
+      'streamQueryMulti async ready path uses one pollAndFetch hop',
+      () async {
+        final frame = rowCountMultiStreamFrame(42);
+        native
+          ..streamMultiStartBatchedResult = 59
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: frame,
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMulti(connectionId, 'SELECT 1')
+            .toList();
+
+        expect(chunks, hasLength(1));
+        expect(chunks.single.getOrNull()!.rowCount, equals(42));
+        // One combined hop for the ready fetch + one for the Done poll.
+        expect(native.streamPollAndFetchCallCount, equals(2));
+        expect(native.lastStreamFetchBufferSize, equals(64 * 1024));
       },
     );
 

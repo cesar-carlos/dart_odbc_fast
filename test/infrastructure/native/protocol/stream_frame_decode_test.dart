@@ -29,7 +29,7 @@ Uint8List _wrapResultSetFrame(Uint8List inner) {
 
 void main() {
   group('decodeBatchedStreamFrame', () {
-    test('should_decode_columnar_v2_without_row_major_intermediate', () {
+    test('should_decode_columnar_v2_frame_to_parsed_row_buffer', () {
       final frame = _buildColumnarV2Frame();
       final parsed = decodeBatchedStreamFrame(frame);
       expect(parsed.rowCount, 1);

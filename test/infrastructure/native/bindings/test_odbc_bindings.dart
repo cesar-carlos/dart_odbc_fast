@@ -247,11 +247,18 @@ class TestOdbcBindingsCapabilities {
     this.supportsDriverCapabilitiesApi,
     this.supportsAsyncExecuteApi,
     this.supportsAsyncExecuteParamsApi,
+    this.supportsAsyncExecuteParamsOptionsApi,
     this.supportsAsyncStreamApi,
     this.supportsTransactionAccessMode,
     this.supportsTransactionLockTimeout,
     this.supportsXa,
     this.supportsExecQueryMultiParams,
+    this.supportsExecQueryParamsOptions,
+    this.supportsStreamResultEncodingOptions,
+    this.supportsStreamStartParamsOptions,
+    this.supportsStreamAsyncEncodingOptions,
+    this.supportsMultiResultStreamEncodingOptions,
+    this.supportsMultiResultStreamAsyncEncodingOptions,
     this.supportsPoolCreateWithOptions,
     this.hasConnectWithTimeoutSymbol,
   });
@@ -260,11 +267,18 @@ class TestOdbcBindingsCapabilities {
   final bool? supportsDriverCapabilitiesApi;
   final bool? supportsAsyncExecuteApi;
   final bool? supportsAsyncExecuteParamsApi;
+  final bool? supportsAsyncExecuteParamsOptionsApi;
   final bool? supportsAsyncStreamApi;
   final bool? supportsTransactionAccessMode;
   final bool? supportsTransactionLockTimeout;
   final bool? supportsXa;
   final bool? supportsExecQueryMultiParams;
+  final bool? supportsExecQueryParamsOptions;
+  final bool? supportsStreamResultEncodingOptions;
+  final bool? supportsStreamStartParamsOptions;
+  final bool? supportsStreamAsyncEncodingOptions;
+  final bool? supportsMultiResultStreamEncodingOptions;
+  final bool? supportsMultiResultStreamAsyncEncodingOptions;
   final bool? supportsPoolCreateWithOptions;
 
   /// When false, connect-with-timeout uses the v1 connect fallback path.
@@ -305,6 +319,11 @@ class TestOdbcBindings extends OdbcBindings {
       super.supportsAsyncExecuteParamsApi;
 
   @override
+  bool get supportsAsyncExecuteParamsOptionsApi =>
+      _capabilities.supportsAsyncExecuteParamsOptionsApi ??
+      super.supportsAsyncExecuteParamsOptionsApi;
+
+  @override
   bool get supportsAsyncStreamApi =>
       _capabilities.supportsAsyncStreamApi ?? super.supportsAsyncStreamApi;
 
@@ -325,6 +344,36 @@ class TestOdbcBindings extends OdbcBindings {
   bool get supportsExecQueryMultiParams =>
       _capabilities.supportsExecQueryMultiParams ??
       super.supportsExecQueryMultiParams;
+
+  @override
+  bool get supportsExecQueryParamsOptions =>
+      _capabilities.supportsExecQueryParamsOptions ??
+      super.supportsExecQueryParamsOptions;
+
+  @override
+  bool get supportsStreamResultEncodingOptions =>
+      _capabilities.supportsStreamResultEncodingOptions ??
+      super.supportsStreamResultEncodingOptions;
+
+  @override
+  bool get supportsStreamStartParamsOptions =>
+      _capabilities.supportsStreamStartParamsOptions ??
+      super.supportsStreamStartParamsOptions;
+
+  @override
+  bool get supportsStreamAsyncEncodingOptions =>
+      _capabilities.supportsStreamAsyncEncodingOptions ??
+      super.supportsStreamAsyncEncodingOptions;
+
+  @override
+  bool get supportsMultiResultStreamEncodingOptions =>
+      _capabilities.supportsMultiResultStreamEncodingOptions ??
+      super.supportsMultiResultStreamEncodingOptions;
+
+  @override
+  bool get supportsMultiResultStreamAsyncEncodingOptions =>
+      _capabilities.supportsMultiResultStreamAsyncEncodingOptions ??
+      super.supportsMultiResultStreamAsyncEncodingOptions;
 
   @override
   bool get supportsPoolCreateWithOptions =>

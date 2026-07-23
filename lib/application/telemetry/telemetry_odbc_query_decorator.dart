@@ -164,11 +164,18 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
-    String sql,
-  ) =>
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+  }) =>
       _ops.wrapStream(
         'ODBC.streamQueryMulti',
-        () => _queries.streamQueryMulti(connectionId, sql),
+        () => _queries.streamQueryMulti(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override

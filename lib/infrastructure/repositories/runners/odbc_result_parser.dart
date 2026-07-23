@@ -24,7 +24,10 @@ import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dar
 class OdbcResultParser {
   const OdbcResultParser();
 
-  QueryResult? parseBufferToQueryResult(Uint8List? buf) {
+  QueryResult? parseBufferToQueryResult(
+    Uint8List? buf, {
+    bool lazyStrings = false,
+  }) {
     if (buf == null) return null;
     if (buf.isEmpty) {
       return const QueryResult(
@@ -38,10 +41,13 @@ class OdbcResultParser {
         final firstWord =
             ByteData.sublistView(buf, 0, 4).getUint32(0, Endian.little);
         if (firstWord == multiResultMagic) {
-          return _parseMultiDirectedBuffer(buf);
+          return _parseMultiDirectedBuffer(buf, lazyStrings: lazyStrings);
         }
       }
-      final p = BinaryProtocolParser.parseWithOutputs(buf);
+      final p = BinaryProtocolParser.parseWithOutputs(
+        buf,
+        lazyStrings: lazyStrings,
+      );
       return QueryResult(
         columns: p.rowBuffer.columnNames,
         columnsMetadata: p.rowBuffer.columns,
@@ -85,7 +91,7 @@ class OdbcResultParser {
         final firstWord =
             ByteData.sublistView(buf, 0, 4).getUint32(0, Endian.little);
         if (firstWord == multiResultMagic) {
-          final qr = _parseMultiDirectedBuffer(buf);
+          final qr = _parseMultiDirectedBuffer(buf, lazyStrings: lazyStrings);
           return toTypedColumnar(qr);
         }
       }
@@ -129,8 +135,14 @@ class OdbcResultParser {
     }
   }
 
-  QueryResult _parseMultiDirectedBuffer(Uint8List buf) {
-    final parsed = MultiResultParser.parseMultiWithOutputs(buf);
+  QueryResult _parseMultiDirectedBuffer(
+    Uint8List buf, {
+    bool lazyStrings = false,
+  }) {
+    final parsed = MultiResultParser.parseMultiWithOutputs(
+      buf,
+      lazyStrings: lazyStrings,
+    );
     final items = parsed.items;
     final outputParamValues = parsed.outputParamValues;
 
@@ -181,6 +193,7 @@ class OdbcResultParser {
   QueryResult toQueryResult(ParsedRowBuffer buffer) {
     return QueryResult(
       columns: buffer.columnNames,
+      columnsMetadata: buffer.columns,
       rows: buffer.rows,
       rowCount: buffer.rowCount,
     );

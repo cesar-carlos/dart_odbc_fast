@@ -1,3 +1,5 @@
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:test/test.dart';
 
@@ -82,5 +84,74 @@ void main() {
       expect(asyncOnly.supportsAsyncExecuteApi, isTrue);
       expect(asyncOnly.supportsAsyncExecuteParamsApi, isFalse);
     });
+  });
+
+  group('OdbcNative encoding and transaction capability guards', () {
+    test(
+      'should_throw_unsupported_when_columnar_requested_'
+      'without_options_symbol',
+      () {
+        final native =
+            OdbcNative.withBindings(FakeOdbcBindings.legacyMinimal());
+
+        expect(
+          () => native.execQueryParams(
+            1,
+            'SELECT 1',
+            null,
+            resultEncoding: ResultEncoding.columnar,
+          ),
+          throwsA(isA<UnsupportedFeatureError>()),
+        );
+      },
+    );
+
+    test(
+      'should_throw_unsupported_when_access_mode_requested_'
+      'without_v2_symbol',
+      () {
+        final native = OdbcNative.withBindings(
+          FakeOdbcBindings.transactionV1Only(),
+        );
+
+        expect(
+          () => native.transactionBegin(1, 0, accessMode: 1),
+          throwsA(isA<UnsupportedFeatureError>()),
+        );
+      },
+    );
+
+    test(
+      'should_throw_unsupported_when_lock_timeout_requested_'
+      'without_v3_symbol',
+      () {
+        final native = OdbcNative.withBindings(
+          FakeOdbcBindings.transactionV1Only(),
+        );
+
+        expect(
+          () => native.transactionBegin(1, 0, lockTimeoutMs: 1000),
+          throwsA(isA<UnsupportedFeatureError>()),
+        );
+      },
+    );
+
+    test(
+      'should_throw_unsupported_when_stream_columnar_'
+      'without_options_symbol',
+      () {
+        final native =
+            OdbcNative.withBindings(FakeOdbcBindings.legacyMinimal());
+
+        expect(
+          () => native.streamStartBatched(
+            1,
+            'SELECT 1',
+            resultEncodingWire: ResultEncoding.columnar.wireCode,
+          ),
+          throwsA(isA<UnsupportedFeatureError>()),
+        );
+      },
+    );
   });
 }

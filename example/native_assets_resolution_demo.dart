@@ -20,17 +20,15 @@ void main() {
 
   _line('=== Native library resolution ===');
   _line('Runtime order (library_loader):');
-  _line('  1. native/target/release/<lib> (cwd, then package root)');
-  _line('  2. native/odbc_engine/target/release/<lib>');
-  _line('  3. package:odbc_fast/<lib> (Native Assets via hook)');
-  _line('  4. system PATH / LD_LIBRARY_PATH');
+  _line('  1. preferred on-disk file (local vs ~/.cache, same policy as hook)');
+  _line('  2. package:odbc_fast/<lib> (Native Assets via hook)');
+  _line('  3. system PATH / LD_LIBRARY_PATH');
   _line('');
   _line('Hook order (hook/build.dart):');
   _line('  prefer-local / newer-local -> cache -> local -> GitHub (x64)');
   _line('');
 
-  final preferLocal =
-      Platform.environment['ODBC_FAST_PREFER_LOCAL_BUILD'] == 'true';
+  final preferLocal = preferLocalOdbcEngineBuild();
   final skipDownload =
       Platform.environment['ODBC_FAST_SKIP_DOWNLOAD'] == 'true';
   _line('ODBC_FAST_PREFER_LOCAL_BUILD=$preferLocal');
@@ -38,6 +36,17 @@ void main() {
   _line('');
 
   final root = _findPackageRoot();
+  final preferred = root == null
+      ? null
+      : resolvePreferredOdbcEngineFilePath(
+          cwd: Directory.current.path,
+          packageRoot: root,
+        );
+  if (preferred != null) {
+    _line('Preferred on-disk path: $preferred');
+  } else {
+    _line('Preferred on-disk path: (none)');
+  }
   if (root == null) {
     _line('Could not locate package root (pubspec.yaml).');
     return;
