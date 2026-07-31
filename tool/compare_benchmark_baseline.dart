@@ -10,6 +10,7 @@ Future<void> main(List<String> args) async {
       '[--max-regression-percent 30] '
       '[--max-p95-regression-percent 30] '
       '[--max-fallbacks-delta 5] '
+      '[--min-baseline-elapsed-ms 0] '
       '[--strict-scenarios]',
     );
     exitCode = 64;
@@ -41,7 +42,14 @@ Future<void> main(List<String> args) async {
 
     final baselineElapsed = baselineResult.elapsedMs;
     final currentElapsed = currentResult.elapsedMs;
-    if (baselineElapsed > 0 && currentElapsed > 0) {
+    // Short wall times (e.g. SELECT 1 smoke) are dominated by host noise;
+    // keep fallback checks, skip percentage gates on timing/throughput.
+    final timingComparable =
+        baselineElapsed >= options.minBaselineElapsedMs &&
+        currentElapsed > 0 &&
+        baselineElapsed > 0;
+
+    if (timingComparable) {
       final maxElapsed = baselineElapsed * (1 + options.maxRegression / 100);
       if (currentElapsed > maxElapsed) {
         regressions.add(
@@ -53,7 +61,9 @@ Future<void> main(List<String> args) async {
 
     final baselineRowsPerSecond = baselineResult.rowsPerSecond;
     final currentRowsPerSecond = currentResult.rowsPerSecond;
-    if (baselineRowsPerSecond > 0 && currentRowsPerSecond > 0) {
+    if (timingComparable &&
+        baselineRowsPerSecond > 0 &&
+        currentRowsPerSecond > 0) {
       final minRowsPerSecond =
           baselineRowsPerSecond * (1 - options.maxRegression / 100);
       if (currentRowsPerSecond < minRowsPerSecond) {
@@ -67,7 +77,7 @@ Future<void> main(List<String> args) async {
 
     final baselineQps = baselineResult.queriesPerSecond;
     final currentQps = currentResult.queriesPerSecond;
-    if (baselineQps > 0 && currentQps > 0) {
+    if (timingComparable && baselineQps > 0 && currentQps > 0) {
       final minQps = baselineQps * (1 - options.maxRegression / 100);
       if (currentQps < minQps) {
         regressions.add(
@@ -80,7 +90,7 @@ Future<void> main(List<String> args) async {
 
     final baselineP95 = baselineResult.latencyP95Micros;
     final currentP95 = currentResult.latencyP95Micros;
-    if (baselineP95 > 0 && currentP95 > 0) {
+    if (timingComparable && baselineP95 > 0 && currentP95 > 0) {
       final maxP95 = baselineP95 * (1 + options.maxP95Regression / 100);
       if (currentP95 > maxP95) {
         regressions.add(
@@ -158,6 +168,7 @@ final class _CompareOptions {
     required this.maxRegression,
     required this.maxP95Regression,
     required this.maxFallbacksDelta,
+    required this.minBaselineElapsedMs,
     required this.strictScenarios,
   });
 
@@ -167,6 +178,7 @@ final class _CompareOptions {
     var maxRegression = 30.0;
     var maxP95Regression = 30.0;
     var maxFallbacksDelta = 5.0;
+    var minBaselineElapsedMs = 0.0;
     var strictScenarios = false;
 
     for (var i = 0; i < args.length; i++) {
@@ -191,6 +203,11 @@ final class _CompareOptions {
         maxFallbacksDelta = double.tryParse(args[++i]) ?? maxFallbacksDelta;
         continue;
       }
+      if (arg == '--min-baseline-elapsed-ms' && i + 1 < args.length) {
+        minBaselineElapsedMs =
+            double.tryParse(args[++i]) ?? minBaselineElapsedMs;
+        continue;
+      }
       if (arg == '--strict-scenarios') {
         strictScenarios = true;
         continue;
@@ -206,6 +223,8 @@ final class _CompareOptions {
       maxRegression: maxRegression < 0 ? 0 : maxRegression,
       maxP95Regression: maxP95Regression < 0 ? 0 : maxP95Regression,
       maxFallbacksDelta: maxFallbacksDelta < 0 ? 0 : maxFallbacksDelta,
+      minBaselineElapsedMs:
+          minBaselineElapsedMs < 0 ? 0 : minBaselineElapsedMs,
       strictScenarios: strictScenarios,
     );
   }
@@ -215,6 +234,7 @@ final class _CompareOptions {
   final double maxRegression;
   final double maxP95Regression;
   final double maxFallbacksDelta;
+  final double minBaselineElapsedMs;
   final bool strictScenarios;
 }
 

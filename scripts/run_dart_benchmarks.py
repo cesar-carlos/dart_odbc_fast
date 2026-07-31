@@ -206,6 +206,13 @@ def compare(root: Path, tag: str, kind: str) -> int:
         return 0
     print_step(f"compare {kind}-{tag}")
     cmd = _compare_tool_argv(root)
+    # SELECT 1 smoke wall times are ~10-30ms; percentage gates are noise-dominated.
+    # Still enforce fallbacksToBlocking. Override via BENCHMARK_MIN_BASELINE_ELAPSED_MS.
+    min_elapsed = os.environ.get("BENCHMARK_MIN_BASELINE_ELAPSED_MS", "").strip()
+    if min_elapsed:
+        cmd += ["--min-baseline-elapsed-ms", min_elapsed]
+    elif tag == "smoke":
+        cmd += ["--min-baseline-elapsed-ms", "50"]
     cmd += [
         "--baseline",
         str(baseline),
