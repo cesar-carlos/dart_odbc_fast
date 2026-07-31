@@ -1,8 +1,9 @@
 // Columnar streaming via `streamQueryColumnar` on the server preset.
 //
 // `OdbcUsageProfile.balancedServer` enables async workers, a larger native
-// pool, and `recommendedResultEncoding: columnar` so batched streaming uses
-// columnar v2 wire without per-call encoding overrides.
+// pool, and `recommendedResultEncoding: columnar`. This demo passes
+// `chunkSize: locator.recommendedStreamChunkSizeBytes` (1 MiB on server
+// presets) so batched streaming matches PERFORMANCE.md guidance.
 //
 // Run: dart run example/stream_query_columnar_demo.dart
 //
@@ -55,9 +56,15 @@ Future<void> main() async {
   }
 
   final conn = connect.getOrThrow();
+  final chunkSize = locator.recommendedStreamChunkSizeBytes;
+  AppLogger.info('streamChunkSizeBytes=$chunkSize (profile recommendation)');
   try {
     var chunkIndex = 0;
-    await for (final chunk in queries.streamQueryColumnarFor(conn, sql)) {
+    await for (final chunk in queries.streamQueryColumnarFor(
+      conn,
+      sql,
+      chunkSize: chunkSize,
+    )) {
       chunk.fold(
         (typed) {
           AppLogger.info(

@@ -38,13 +38,22 @@ Object? decodeProtocolCell(Uint8List data, int odbcType) {
     return decodeProtocolText(data);
   }
   if (type == OdbcType.float || type == OdbcType.doublePrecision) {
+    // Dual-support: prefer ASCII float text (incl. "Infinity"/"NaN"), then
+    // 8-byte LE IEEE-754 from native cell_reader / block_fetch.
     final parsed = tryParseAsciiFloat64(data);
     if (parsed != null) {
       return parsed;
     }
+    if (data.length == 8) {
+      return ByteData.sublistView(data).getFloat64(0, Endian.little);
+    }
     return decodeProtocolText(data);
   }
   if (type == OdbcType.boolean) {
+    // Dual-support: single 0/1 byte or ASCII bool text.
+    if (data.length == 1 && (data[0] == 0 || data[0] == 1)) {
+      return data[0] == 1;
+    }
     final parsed = tryParseAsciiBool(data);
     if (parsed != null) {
       return parsed;

@@ -407,9 +407,14 @@ TypedColumnFloat64 _decodeFloat64Column({
 }
 
 double _parseFloat64CellBytes(Uint8List bytes) {
+  // Prefer legacy UTF-8 float text first so ASCII specials like "Infinity"
+  // (exactly 8 bytes) are not misread as IEEE-754 payloads.
   final parsed = tryParseAsciiFloat64(bytes);
   if (parsed != null) {
     return parsed;
+  }
+  if (bytes.length == 8) {
+    return ByteData.sublistView(bytes).getFloat64(0, Endian.little);
   }
   final text = utf8.decode(bytes, allowMalformed: true);
   throw FormatException('Columnar v2: cannot parse float cell "$text"');

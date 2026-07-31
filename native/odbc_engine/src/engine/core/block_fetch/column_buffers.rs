@@ -39,6 +39,10 @@ pub(super) fn append_batch_to_row_buffer(
         match odbc_type {
             OdbcType::Integer => copy_nullable_i32(slice, col_idx, starting_row, row_buffer)?,
             OdbcType::BigInt => copy_nullable_i64(slice, col_idx, starting_row, row_buffer)?,
+            OdbcType::Float | OdbcType::Double => {
+                copy_nullable_f64(slice, col_idx, starting_row, row_buffer)?
+            }
+            OdbcType::Boolean => copy_nullable_bit(slice, col_idx, starting_row, row_buffer)?,
             OdbcType::Binary => copy_binary(slice, col_idx, starting_row, row_buffer)?,
             OdbcType::Date => copy_nullable_date(slice, col_idx, starting_row, row_buffer)?,
             OdbcType::Time => copy_nullable_time(slice, col_idx, starting_row, row_buffer)?,
@@ -87,6 +91,47 @@ fn copy_nullable_i64(
         if let Some(&v) = value {
             row_buffer.rows[starting_row + row_offset][col_idx] =
                 Some(cell_bytes_from_slice(&v.to_le_bytes()));
+        }
+    }
+    Ok(())
+}
+
+fn copy_nullable_f64(
+    slice: AnySlice<'_>,
+    col_idx: usize,
+    starting_row: usize,
+    row_buffer: &mut RowBuffer,
+) -> Result<()> {
+    let view = slice.as_nullable_slice::<f64>().ok_or_else(|| {
+        OdbcError::InternalError(format!(
+            "Block fetch: column {col_idx} expected nullable f64 slice"
+        ))
+    })?;
+    for (row_offset, value) in view.into_iter().enumerate() {
+        if let Some(&v) = value {
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(cell_bytes_from_slice(&v.to_le_bytes()));
+        }
+    }
+    Ok(())
+}
+
+fn copy_nullable_bit(
+    slice: AnySlice<'_>,
+    col_idx: usize,
+    starting_row: usize,
+    row_buffer: &mut RowBuffer,
+) -> Result<()> {
+    let view = slice.as_nullable_slice::<odbc_api::Bit>().ok_or_else(|| {
+        OdbcError::InternalError(format!(
+            "Block fetch: column {col_idx} expected nullable bit slice"
+        ))
+    })?;
+    for (row_offset, value) in view.into_iter().enumerate() {
+        if let Some(&v) = value {
+            let byte: u8 = if v.as_bool() { 1 } else { 0 };
+            row_buffer.rows[starting_row + row_offset][col_idx] =
+                Some(cell_bytes_from_slice(&[byte]));
         }
     }
     Ok(())

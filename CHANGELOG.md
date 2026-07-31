@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Examples cleanup** — `columnar_result_encoding_demo` now teaches
+  `forQueryResultWire` clamp vs `executeQueryColumnar*`; patterns /
+  columnar stream demos pass `recommendedStreamChunkSizeBytes`; typed
+  columnar demo is buffered-only (stream lives in
+  `stream_query_columnar_demo`); pool demo parallel bulk is a smoke +
+  pointer to `bulk_insert_parallel_demo`.
 - **Benchmark harness stability** — async concurrency `elapsedMs` is now
   fractional (from microseconds). CRUD SELECT benches use 1 warmup + median
   of 3 timed runs; parallel pool insert warms checkouts before timing.
@@ -63,6 +69,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Native binary float/bool wire** — `Float`/`Double`/`Boolean` cells emit
+  LE IEEE-754 (8 bytes) / single `0|1` byte via `CellReader` and block-fetch;
+  Dart decoders dual-support legacy UTF-8 text and the binary payloads.
+- **Prepared cache + NULL inference** — legacy param lists with NULLs that
+  share an inferable sibling type now hit the prepared LRU (typed
+  `SQL_NULL_DATA` rebind) instead of always falling through to
+  `PreparedNullAware`.
+- **Stream prepared reuse** — batched `streamQuery*` workers reuse the
+  per-connection prepared LRU via `CachedConnection::with_prepared_mut`
+  when params are cache-eligible.
+- **Pool checkout reset opt-out** — `PoolOptions.sessionResetOnCheckout` /
+  DSN `Pool_Session_Reset` / env `ODBC_POOL_SESSION_RESET` (default still
+  reset). Checkin reset remains unconditional.
+- **FFI mid-size transient** — `callWithBuffer` prefers transient allocation
+  from the 32 KiB zero-copy floor (was 256 KiB seed), reducing scratch copies
+  for medium frames.
+- **Admin `streamStartAsync` chunk** — resolves
+  `ConnectionOptions.streamChunkSizeBytes` / profile recommendation when
+  `chunkSize` is omitted (same chain as `streamQuery*`).
+- **`ConnectionOptions.blockFetchBatchSize`** — additive field documenting
+  buffered block-fetch intent (prepared/`ODBC_FAST_BLOCK_FETCH_BATCH` /
+  `streamQuery*` remain the live knobs).
 - **Pool checkout session reset** — `is_valid` runs the health query only;
   `ConnectionPool::get` owns the single per-checkout `pool_session_reset`.
   Avoids a double reset when `test_on_check_out` is enabled (r2d2

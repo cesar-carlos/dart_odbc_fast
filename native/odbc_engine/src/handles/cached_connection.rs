@@ -27,7 +27,8 @@ use std::sync::OnceLock;
 use std::ops::Deref;
 
 use crate::protocol::{
-    deserialize_param_buffer, has_null_param, param_values_to_input_params, ParamList, ParamValue,
+    deserialize_param_buffer, has_null_param, param_values_to_input_params,
+    param_values_to_input_params_with_inference, ParamList, ParamValue,
 };
 
 #[cfg(feature = "statement-handle-reuse")]
@@ -236,9 +237,10 @@ impl CachedConnection {
         }
     }
 
-    /// Execute from a raw FFI parameter buffer when the legacy no-NULL plan
-    /// is eligible for the prepared cache; otherwise falls back to the raw
-    /// connection dispatcher.
+    /// Execute from a raw FFI parameter buffer when the legacy plan is
+    /// eligible for the prepared cache (including NULL binds that share a
+    /// sibling non-null type via inference); otherwise falls back to the raw
+    /// connection dispatcher (`PreparedNullAware` / directed params).
     pub fn try_execute_param_buffer_with_encoding(
         &mut self,
         sql: &str,
@@ -246,7 +248,7 @@ impl CachedConnection {
         encoding: ResultEncoding,
     ) -> Result<Vec<u8>> {
         match deserialize_param_buffer(param_bytes) {
-            Ok(ParamList::Legacy(params)) if !has_null_param(&params) => {
+            Ok(ParamList::Legacy(params)) if params_eligible_for_prepared_cache(&params) => {
                 if params.is_empty() {
                     self.execute_with_encoding(sql, encoding)
                 } else {
@@ -334,6 +336,12 @@ impl CachedConnection {
         Ok(result)
     }
 
+    /// True when params can rebind on a cached prepared handle (no NULLs, or
+    /// NULLs with an inferable sibling non-null type).
+    pub fn can_reuse_prepared_for_params(&self, params: &[ParamValue]) -> bool {
+        params_eligible_for_prepared_cache(params)
+    }
+
     /// Cache hits (when feature enabled).
     pub fn cache_hits(&self) -> u64 {
         self.cache_hits.load(Ordering::Relaxed)
@@ -342,6 +350,32 @@ impl CachedConnection {
     /// Cache misses (when feature enabled).
     pub fn cache_misses(&self) -> u64 {
         self.cache_misses.load(Ordering::Relaxed)
+    }
+
+    /// Get-or-prepare a cached statement and run `f` while the handle is
+    /// exclusively borrowed. Used by batched streaming to avoid re-prepare.
+    #[cfg(feature = "statement-handle-reuse")]
+    pub fn with_prepared_mut<R, F>(&mut self, sql: &str, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut Prepared<odbc_api::handles::StatementImpl<'static>>) -> Result<R>,
+    {
+        if let Some(cached) = self.stmt_cache.get_mut(sql) {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return cached.with_mut(f);
+        }
+
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        let prepared = self.conn.prepare(sql).map_err(OdbcError::from)?;
+        let capacity = self.stmt_cache.cap().get();
+        let should_count_eviction = self.stmt_cache.len() >= capacity;
+        // SAFETY: see [`OwnedPreparedStatement::from_borrowed`].
+        let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
+        let result = owned.with_mut(f)?;
+        self.stmt_cache.put(sql.to_string(), owned);
+        if should_count_eviction {
+            self.cache_evictions.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(result)
     }
 
     /// Roll back any open transaction and restore autocommit without
@@ -408,9 +442,31 @@ fn execute_stmt_with_params_and_encoding<S>(
 where
     S: odbc_api::handles::AsStatementRef,
 {
-    let parameters = param_values_to_input_params(params)?;
+    let parameters = if has_null_param(params) {
+        // Inference-only path: sibling non-null values fix the C type so
+        // `SQL_NULL_DATA` rebinds stay safe without re-describe.
+        param_values_to_input_params_with_inference(params)?.ok_or_else(|| {
+            OdbcError::InternalError(
+                "NULL params reached prepared cache without inferable type".to_string(),
+            )
+        })?
+    } else {
+        param_values_to_input_params(params)?
+    };
     let cursor = stmt
         .execute(parameters.as_slice())
         .map_err(OdbcError::from)?;
     encode_optional_cursor_with_encoding(cursor, encoding, None, None)
+}
+
+/// Legacy params may use the prepared cache when there are no NULLs, or when
+/// NULLs share an inferable sibling non-null type (avoids untyped string NULL).
+fn params_eligible_for_prepared_cache(params: &[ParamValue]) -> bool {
+    if !has_null_param(params) {
+        return true;
+    }
+    matches!(
+        param_values_to_input_params_with_inference(params),
+        Ok(Some(_))
+    )
 }

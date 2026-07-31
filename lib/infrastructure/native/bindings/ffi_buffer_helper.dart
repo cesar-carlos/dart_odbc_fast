@@ -193,10 +193,10 @@ Uint8List? callWithBuffer(
   final size = initialSize ?? initialBufferSize;
   final zeroCopy = allowZeroCopy ?? isZeroCopyResultBufferAvailable;
   // Prefer transient when the caller opts in or the seed is already at/above
-  // the FFI default seed (256 KiB). Smaller seeds (e.g. runner default 64 KiB)
-  // use the scratch pool; large results still escalate to transient on resize
-  // when the written length meets [zeroCopyResultThresholdBytes].
-  if (zeroCopy && (preferTransient || size >= initialBufferSize)) {
+  // the zero-copy floor (32 KiB). Mid-size frames (32–256 KiB) skip the scratch
+  // pool so successful results can return a NativeFinalizer view without an
+  // extra copy. Smaller seeds still use the scratch pool.
+  if (zeroCopy && (preferTransient || size >= zeroCopyResultThresholdBytes)) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,

@@ -1,11 +1,12 @@
-// Demonstrates opt-in result encodings for parameterized query execution.
+// QueryResult wire clamp vs typed columnar APIs.
 //
-// With `OdbcUsageProfile.balanced` / legacy, row-major remains the default.
-// Server presets (`balancedServer`, `highThroughput`) already recommend
-// columnar via `recommendedResultEncoding` — see
-// example/stream_query_columnar_demo.dart. Prefer columnar after validating
-// the target workload and driver; use `columnarCompressed` only when wire
-// size matters more than CPU.
+// Row-shaped APIs (`executeQuery*`, `streamQuery*`) always request row-major
+// wire via `forQueryResultWire` — passing `ResultEncoding.columnar` there is
+// a no-op. End-to-end columnar requires `executeQueryColumnar*` /
+// `streamQueryColumnar*` (see also stream_query_columnar_demo.dart).
+//
+// Native encoding matrix including `columnarCompressed`:
+//   example/async_concurrency_benchmark.dart
 //
 // Run:
 //   dart run example/columnar_result_encoding_demo.dart
@@ -51,26 +52,53 @@ void main() async {
 
   final connId = connect.getOrThrow().id;
   try {
-    for (final encoding in ResultEncoding.values) {
-      final result = await service.executeQueryParamValuesFromObjects(
-        connId,
-        sql,
-        const <Object?>[],
-        resultEncoding: encoding,
-      );
-      result.fold(
-        (ok) => AppLogger.info(
-          '${encoding.name}: rowCount=${ok.rowCount}, '
-          'columns=${ok.columns.length}, '
-          'firstRow=${ok.rows.isEmpty ? const <Object?>[] : ok.rows.first}',
-        ),
-        (error) => AppLogger.warning(
-          '${encoding.name} failed: $error. '
-          'For compressed columnar, confirm the loaded native library exports '
-          'odbc_columnar_decompress.',
-        ),
-      );
-    }
+    AppLogger.info(
+      'forQueryResultWire(columnar)='
+      '${forQueryResultWire(ResultEncoding.columnar).name} '
+      '(QueryResult paths always clamp columnar requests)',
+    );
+
+    final clamped = await service.executeQueryParamValuesFromObjects(
+      connId,
+      sql,
+      const <Object?>[],
+      resultEncoding: ResultEncoding.columnar,
+    );
+    clamped.fold(
+      (ok) => AppLogger.info(
+        'QueryResult + resultEncoding=columnar (clamped to row-major): '
+        'rowCount=${ok.rowCount}, firstRow='
+        '${ok.rows.isEmpty ? const <Object?>[] : ok.rows.first}',
+      ),
+      (error) => AppLogger.warning('clamped QueryResult path failed: $error'),
+    );
+
+    final typed = await service.executeQueryColumnarParamValues(
+      connId,
+      sql,
+      params: const <ParamValue>[],
+    );
+    typed.fold(
+      (ok) {
+        final ids = ok.column<TypedColumnInt32>('id');
+        final labels = ok.column<TypedColumnObject<String>>('label');
+        AppLogger.info(
+          'executeQueryColumnarParamValues (true columnar wire): '
+          'rowCount=${ok.rowCount}, '
+          'id0=${ids.isNullAt(0) ? null : ids.values[0]}, '
+          'label0=${labels.values[0]}',
+        );
+      },
+      (error) => AppLogger.warning(
+        'typed columnar failed: $error. '
+        'Confirm the native library exports columnar decode paths.',
+      ),
+    );
+
+    AppLogger.info(
+      'For stream + server preset: stream_query_columnar_demo.dart. '
+      'For columnarCompressed native matrix: async_concurrency_benchmark.dart.',
+    );
   } finally {
     await service.disconnect(connId);
     locator.shutdown();

@@ -447,7 +447,12 @@ Checkin still resets before returning the connection to the idle set.
 For trusted low-latency pools where the health round-trip dominates, disable
 validation with `Pool_Test_On_Checkout=false` in the DSN (aliases:
 `test_on_check_out`, `TestOnCheckout`, …) or `ODBC_POOL_TEST_ON_CHECKOUT=0`.
-Session reset on checkout still runs.
+
+To also skip **checkout** session reset (rollback / lock-timeout / autocommit),
+set `PoolOptions(sessionResetOnCheckout: false)`, DSN `Pool_Session_Reset=false`,
+or `ODBC_POOL_SESSION_RESET=0`. Prefer this only for trusted pools that never
+leave open transactions or session overrides. **Checkin reset remains
+unconditional.**
 
 `poolHealthCheck` still performs a full r2d2 `pool.get()` (runs the health
 query when `test_on_check_out` is on; it does not go through
@@ -605,11 +610,11 @@ These performance-sensitive items are tracked outside the feature backlog:
   `ffi::state::*`. Residual `GlobalState` holds only `env` (+ optional BCP
   connection strings). Cross-category cleanup still nests locks in the
   documented order (`GLOBAL_STATE` → xa → transactions → pools → …).
-- **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine.
-- **Native binary scalars on wire** — float/double/bool/date cells are still
-  UTF-8 text on the protocol; Dart now parses float/double into
-  `TypedColumnFloat64` and coerces bool text, but a protocol version with
-  native binary cells remains a separate follow-up.
+- **BCP / array-binding streaming** — bulk insert via `BulkCopyExecutor` and `ArrayBinding` does not stream; the full payload is materialised in the Rust engine. Prefer `bulkInsertParallel` with bounded row batches from the Dart side until native streaming BCP lands.
+- **Native binary scalars on wire** — `Float`/`Double`/`Boolean` now emit
+  little-endian / single-byte payloads on the cell path (dual-support with
+  legacy UTF-8 text in Dart). Date/time remain ISO text; a fixed-layout
+  `ColumnData::Float64` columnar kind remains a separate follow-up.
 
 Feature-level open work is tracked in
 [`Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md):

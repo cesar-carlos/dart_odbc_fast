@@ -8,12 +8,14 @@ import 'package:odbc_fast/domain/entities/odbc_usage_profile_preset.dart';
 ///
 /// Mirror of the Rust `pool::PoolOptions` struct. Every field is `null` by
 /// default; the native side falls back to the engine defaults
-/// (`connection_timeout = 30s`, no `idle_timeout`, no `max_lifetime`).
+/// (`connection_timeout = 30s`, no `idle_timeout`, no `max_lifetime`,
+/// `session_reset_on_checkout = true` unless DSN/env overrides).
 class PoolOptions {
   const PoolOptions({
     this.idleTimeout,
     this.maxLifetime,
     this.connectionTimeout,
+    this.sessionResetOnCheckout,
   });
 
   factory PoolOptions.fromUsageProfile(OdbcUsageProfile profile) {
@@ -37,6 +39,11 @@ class PoolOptions {
   /// `null` falls back to the engine default (30 s).
   final Duration? connectionTimeout;
 
+  /// When `false`, skip `pool_session_reset` on checkout (trusted pool).
+  /// `null` defers to DSN `Pool_Session_Reset` / env `ODBC_POOL_SESSION_RESET`
+  /// / default `true`. Checkin reset remains unconditional.
+  final bool? sessionResetOnCheckout;
+
   /// Encode as the JSON shape expected by `odbc_pool_create_with_options`.
   /// Returns an empty string when no fields are set (caller may pass `null`
   /// FFI pointer instead, equivalent meaning).
@@ -49,6 +56,8 @@ class PoolOptions {
       if (maxLifetime != null) 'max_lifetime_ms': msOrZero(maxLifetime!),
       if (connectionTimeout != null)
         'connection_timeout_ms': msOrZero(connectionTimeout!),
+      if (sessionResetOnCheckout != null)
+        'session_reset_on_checkout': sessionResetOnCheckout,
     };
     if (map.isEmpty) return null;
     return jsonEncode(map);
@@ -56,5 +65,8 @@ class PoolOptions {
 
   /// `true` iff at least one option is set.
   bool get hasAnyOption =>
-      idleTimeout != null || maxLifetime != null || connectionTimeout != null;
+      idleTimeout != null ||
+      maxLifetime != null ||
+      connectionTimeout != null ||
+      sessionResetOnCheckout != null;
 }

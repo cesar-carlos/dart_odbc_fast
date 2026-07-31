@@ -69,9 +69,9 @@ Future<void> _runHappyPath(IOdbcService service, String connectionId) async {
     <String, Object?>{'id': 42, 'label': 'streamQueryNamed-demo'},
   );
 
-  // The stream yields exactly one chunk (the full result) for a successful
-  // call. Iterate with await-for to keep the call site uniform with truly
-  // incremental APIs like `streamQuery`.
+  // Current natives yield batched chunks (same path as streamQuery*). Older
+  // binaries without batched named-stream symbols fall back to one buffered
+  // executeQueryNamed chunk. Iterate with await-for either way.
   await for (final chunk in stream) {
     chunk.fold(
       (qr) => AppLogger.info(

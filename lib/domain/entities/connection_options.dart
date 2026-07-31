@@ -48,6 +48,7 @@ class ConnectionOptions {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
     this.streamChunkSizeBytes,
+    this.blockFetchBatchSize,
     this.sqlPointerCacheMaxSize,
     this.autoReconnectOnConnectionLost = false,
     this.maxReconnectAttempts,
@@ -102,6 +103,15 @@ class ConnectionOptions {
   /// `chunkSize`. Server presets use 1 MiB; otherwise runners fall back to
   /// 64 KiB ([defaultRecommendedStreamChunkSizeBytes]).
   final int? streamChunkSizeBytes;
+
+  /// Preferred ODBC block-fetch row batch for buffered `executeQuery*` drains.
+  ///
+  /// When null, the native engine uses `ODBC_FAST_BLOCK_FETCH_BATCH` (default
+  /// 256). Prepared statements already honor `StatementOptions.fetchSize`;
+  /// prefer `streamQuery*` for large scans where Dart `fetchSize` is plumbed
+  /// end-to-end. This field documents the connection-level intent and is
+  /// forwarded when runners open prepared one-shots for buffered queries.
+  final int? blockFetchBatchSize;
 
   /// Optional max entries for the process-local SQL UTF-8 pointer cache on the
   /// native engine constructed for this options set (default 256 when null).

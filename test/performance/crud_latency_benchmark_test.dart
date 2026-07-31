@@ -249,9 +249,7 @@ Future<_BenchRow> _benchInsertBulkParallelColumnar(
       }
       warmed.add(connId);
     }
-    for (final connId in warmed) {
-      pool.releaseConnection(connId);
-    }
+    warmed.forEach(pool.releaseConnection);
 
     final payload = _columnarBulkBuilder('bulk-parallel').build();
     final sw = Stopwatch()..start();

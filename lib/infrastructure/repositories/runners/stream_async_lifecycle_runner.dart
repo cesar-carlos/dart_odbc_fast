@@ -1,3 +1,4 @@
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
@@ -213,7 +214,7 @@ class StreamAsyncLifecycleRunner {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) async {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
@@ -225,6 +226,10 @@ class StreamAsyncLifecycleRunner {
     // Row-shaped admin stream API always uses row-major wire (same policy as
     // streamQuery). Columnar consumers use streamQueryColumnar*.
     final resultEncodingWire = ResultEncoding.rowMajor.wireCode;
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: state.optionsFor(connectionId),
+    );
 
     try {
       final streamId = ffi.isAsync
@@ -232,14 +237,14 @@ class StreamAsyncLifecycleRunner {
               nativeId,
               sql,
               fetchSize: fetchSize,
-              chunkSize: chunkSize,
+              chunkSize: effectiveChunk,
               resultEncodingWire: resultEncodingWire,
             )
           : ffi.sync.streamStartAsync(
               nativeId,
               sql,
               fetchSize: fetchSize,
-              chunkSize: chunkSize,
+              chunkSize: effectiveChunk,
               resultEncodingWire: resultEncodingWire,
             );
       final resolved = streamId ?? 0;

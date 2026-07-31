@@ -46,6 +46,12 @@ void main() {
       });
     });
 
+    test('emits session_reset_on_checkout when set', () {
+      final json = const PoolOptions(sessionResetOnCheckout: false).toJson();
+      final decoded = jsonDecode(json!) as Map<String, dynamic>;
+      expect(decoded, {'session_reset_on_checkout': false});
+    });
+
     test('hasAnyOption reflects field state', () {
       expect(
         const PoolOptions(idleTimeout: Duration(seconds: 1)).hasAnyOption,
@@ -57,6 +63,10 @@ void main() {
       );
       expect(
         const PoolOptions(connectionTimeout: Duration(seconds: 1)).hasAnyOption,
+        isTrue,
+      );
+      expect(
+        const PoolOptions(sessionResetOnCheckout: true).hasAnyOption,
         isTrue,
       );
     });

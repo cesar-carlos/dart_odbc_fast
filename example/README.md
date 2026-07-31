@@ -81,6 +81,7 @@ and the performance/native demos listed below.
 - [advanced_entities_demo.dart](advanced_entities_demo.dart): `RetryHelper`, `RetryOptions`, `PreparedStatementConfig`, `StatementOptions`, and schema metadata entities.
 - [simple_demo.dart](simple_demo.dart): low-level API with `connectWithTimeout`, structured errors, `TransactionHandle`, `CatalogQuery`, prepared statements, and result parsing.
 - [quick_start_balanced_demo.dart](quick_start_balanced_demo.dart): minimal `ServiceLocator` + `OdbcUsageProfile.balanced`, `recommendedConnectionOptions`, optional pool hints, and `resolvedUsageProfile` inspection (replaces the removed async ServiceLocator demo).
+- **[recommended_performance_patterns_demo.dart](recommended_performance_patterns_demo.dart)**: workload → API checklist (`executeQuery*` / `streamQuery*`+`recommendedStreamChunkSizeBytes` / `bulkInsert`); uses `streamQueryColumnar` automatically on server profiles (`ODBC_PERF_PROFILE=balancedServer|highThroughput`).
 - [query_result_access_demo.dart](query_result_access_demo.dart): `QueryResultAccess` helpers (`columnIndex`, `cell`, `rowAsMap`, scalar getters) on row-major `QueryResult`.
 - **[sub_interfaces_migration_demo.dart](sub_interfaces_migration_demo.dart)**: side-by-side `IOdbcService` (full aggregate) vs `IQueryService` (narrow sub-interface) consumer, exercising `executeQueryFor(Connection conn, ...)` that drops manual `conn.id` plumbing; includes a DSN-free smoke of `ServiceLocator` segregated repository getters (`queryRepository`, `poolRepository`).
 
@@ -89,11 +90,11 @@ and the performance/native demos listed below.
 - [async_demo.dart](async_demo.dart): async API with `AsyncNativeOdbcConnection` (`requestTimeout` + `autoRecoverOnWorkerCrash`) — CRUD walkthrough.
 - [execute_async_demo.dart](execute_async_demo.dart): raw `executeAsync` and `streamAsync` for non-blocking single-query and streaming (distinct from `async_demo.dart`, which uses the higher-level async query helpers).
 - [high_concurrency_worker_pool_demo.dart](high_concurrency_worker_pool_demo.dart): `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections; compares serial vs concurrent query dispatch.
-- [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)` with native pool checkout/query/release, an explicit in-flight task limit from the resolved profile, and `recommendedResultEncoding` (columnar for server presets).
+- [high_concurrency_pool_demo.dart](high_concurrency_pool_demo.dart): `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)` with native pool checkout/query/release, an explicit in-flight task limit from the resolved profile. Note: `executeQuery` stays row-major; columnar APIs are separate (`stream_query_columnar_demo.dart`).
 - [backpressure_modes_demo.dart](backpressure_modes_demo.dart): contrasts `AsyncBackpressureMode.failFast` (extra requests rejected with `resourceExhausted`) and `AsyncBackpressureMode.waitForSlot` (FIFO queueing until `backpressureTimeout`), and wires the `setOnWorkerRecovered` callback that fires after auto-recovery so higher layers can wipe stale ids.
-- [columnar_result_encoding_demo.dart](columnar_result_encoding_demo.dart): opt-in `ResultEncoding.rowMajor`, `columnar`, and `columnarCompressed` comparison for a live DSN.
-- [typed_columnar_demo.dart](typed_columnar_demo.dart): `executeQueryColumnarParamValues` and typed `TypedColumnarResult` column access (`Int32List`, `Float64List`, string columns).
-- **[stream_query_columnar_demo.dart](stream_query_columnar_demo.dart)**: `streamQueryColumnar` / `streamQueryColumnarFor` on `OdbcUsageProfile.balancedServer` (columnar default encoding, async workers) with typed column consumption per chunk.
+- [columnar_result_encoding_demo.dart](columnar_result_encoding_demo.dart): shows `forQueryResultWire` clamp on QueryResult paths vs true columnar via `executeQueryColumnarParamValues` (compressed matrix → `async_concurrency_benchmark.dart`).
+- [typed_columnar_demo.dart](typed_columnar_demo.dart): buffered `executeQueryColumnarParamValues` + typed column access under `balanced` (explicit API; streaming → `stream_query_columnar_demo.dart`).
+- **[stream_query_columnar_demo.dart](stream_query_columnar_demo.dart)**: `streamQueryColumnar` / `streamQueryColumnarFor` on `OdbcUsageProfile.balancedServer` with `recommendedStreamChunkSizeBytes` and typed column consumption per chunk.
 - [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming via native `streamQuery` / `streamQueryBatched`.
 
 ### Performance and concurrency
@@ -102,6 +103,7 @@ These files overlap in topic but serve different roles — keep the one that mat
 
 | File | Role | Distinct focus |
 | ---- | ---- | -------------- |
+| [`recommended_performance_patterns_demo.dart`](recommended_performance_patterns_demo.dart) | **Demo** | Workload → API decision map with recommended chunk size |
 | [`high_concurrency_worker_pool_demo.dart`](high_concurrency_worker_pool_demo.dart) | **Demo** | Educational serial vs parallel with `AsyncNativeOdbcConnection` + multiple connections |
 | [`high_concurrency_pool_demo.dart`](high_concurrency_pool_demo.dart) | **Demo** | `ServiceLocator` + `highThroughput` native pool checkout pattern |
 | [`async_concurrency_benchmark.dart`](async_concurrency_benchmark.dart) | **Benchmark** | Multi-scenario Stopwatch matrix: worker pools, columnar encodings, native pool, prepared reuse, streaming; JSON/CSV export |
@@ -170,7 +172,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 ### Queries / parameters
 
 - [named_parameters_demo.dart](named_parameters_demo.dart): service-level named params with `@name` and `:name` via `executeQueryNamed` / `prepareNamed` / `executePreparedNamed`, including repeated placeholders, `>5` named params, and prepared statement reuse.
-- **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — same single-chunk delivery as `executeQueryNamed`, but exposed as `Stream<Result<QueryResult>>` for uniform call sites and a typed failure stream item for missing named params.
+- **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — named params as `Stream<Result<QueryResult>>` with batched chunks on current natives (older binaries fall back to one buffered chunk); typed failure stream item for missing named params.
 - **[param_value_migration_demo.dart](param_value_migration_demo.dart)**: DSN-free side-by-side `executeQueryParamValuesFromObjects` (bridge) vs explicit `executeQueryParamValues` (`List<ParamValue>`).
 - [multi_result_demo.dart](multi_result_demo.dart): service-level multi-result via `executeQueryMultiFull` and parameterized `executeQueryMultiParamValues` (portable SELECT batches).
 - [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result with `streamQueryMulti` (tag-2 fetch batches coalesced per SQL cursor; optional `fetchSize` / `chunkSize`, defaults 1000 / 64 KiB).
@@ -183,7 +185,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 
 - [connection_string_builder_demo.dart](connection_string_builder_demo.dart): fluent connection string creation for **all 7 builders** (SQL Server, PostgreSQL, MySQL, plus v3.0 MariaDB / SQLite / Db2 / Snowflake).
 - **[native_assets_resolution_demo.dart](native_assets_resolution_demo.dart)**: DSN-free probe of Native Assets / hook resolution — documents runtime vs hook order, prints `ODBC_FAST_PREFER_LOCAL_BUILD` / `ODBC_FAST_SKIP_DOWNLOAD`, checks local release + `~/.cache/odbc_fast/<version>/` paths, and loads `OdbcNative` for an engine version smoke check. See also [doc/BUILD.md](../doc/BUILD.md).
-- [pool_demo.dart](pool_demo.dart): connection pool lifecycle, reuse, pooled checkout -> local transaction -> release flow, state/health checks, and parallel bulk insert (column-oriented `addColumnText`).
+- [pool_demo.dart](pool_demo.dart): native connection pool lifecycle, reuse, health/state, concurrent checkouts, and a tiny `bulkInsertParallel` smoke (scale-up → [`bulk_insert_parallel_demo.dart`](bulk_insert_parallel_demo.dart)).
 - [bulk_insert_demo.dart](bulk_insert_demo.dart): single-connection `bulkInsert` with ~500 rows via `addColumnInt32` + `addColumnText` through `ServiceLocator.syncService`.
 - **[pool_with_options_demo.dart](pool_with_options_demo.dart)** *(v3.0)*: typed `PoolOptions` (`idleTimeout`, `maxLifetime`, `connectionTimeout`) with `OdbcPoolFactory`, automatic legacy fallback, and resize-safe config preservation.
 - [bulk_insert_parallel_demo.dart](bulk_insert_parallel_demo.dart): native pool `bulkInsertParallel` with 2000 rows and configurable parallelism.

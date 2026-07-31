@@ -1,4 +1,10 @@
 // High-concurrency native pool demo through async ServiceLocator.
+//
+// Focus: pool checkout / release under `OdbcUsageProfile.highThroughput`.
+// `executeQuery` stays on row-major QueryResult wire (forQueryResultWire).
+// For typed columnar analytics on checkouts, use executeQueryColumnar* /
+// streamQueryColumnar* — see stream_query_columnar_demo.dart.
+//
 // Run: dart run example/high_concurrency_pool_demo.dart
 
 import 'dart:io';
@@ -44,7 +50,8 @@ Future<void> main() async {
       'Pool ready: poolId=$poolId, poolSize=$poolSize, '
       'profile=${tuning.profile.name}, workers=${tuning.workerCount}, '
       'pendingCap=${tuning.maxPendingRequests}, maxInFlight=$maxInFlight, '
-      'recommendedEncoding=${tuning.recommendedResultEncoding.name}',
+      'recommendedEncoding=${tuning.recommendedResultEncoding.name} '
+      '(applies to columnar APIs; executeQuery below stays row-major)',
     );
     _log(
       'The ${tuning.profile.name} profile starts multiple Dart worker '

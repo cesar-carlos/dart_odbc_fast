@@ -781,8 +781,9 @@ dart run example/multi_result_demo.dart
 dart run example/multi_result_stream_demo.dart         # streamQueryMulti per-item
 dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
 dart run example/oracle_ref_cursor_demo.dart           # ParamValueRefCursorOut (opt-in)
-dart run example/columnar_result_encoding_demo.dart    # ResultEncoding.columnar / .columnarCompressed
-dart run example/typed_columnar_demo.dart              # TypedColumnarResult consumption
+dart run example/columnar_result_encoding_demo.dart    # QueryResult clamp vs executeQueryColumnar*
+dart run example/typed_columnar_demo.dart              # TypedColumnarResult buffered consumption
+dart run example/stream_query_columnar_demo.dart       # balancedServer + recommended chunk size
 dart run example/streaming_demo.dart
 dart run example/streaming_performance_benchmark.dart  # streamQuery vs streamQueryBatched
 
@@ -841,8 +842,8 @@ Coverage-oriented examples:
   and pattern-matches the sealed `OdbcEvent` variants (`PoolResize`,
   `SlowQueryDetected`, etc.).
 - `example/columnar_result_encoding_demo.dart` and
-  `example/streaming_performance_benchmark.dart`: opt-in result-encoding
-  comparison and streaming throughput benchmark.
+  `example/streaming_performance_benchmark.dart`: QueryResult wire-clamp vs
+  typed columnar APIs, plus streaming throughput benchmark.
 - `example/multi_result_stream_demo.dart`: per-item multi-result streaming
   via `streamQueryMulti`.
 - `example/output_param_directions_demo.dart` and
@@ -1127,13 +1128,13 @@ Async-pool flow control
 #### Columnar result encoding
 
 **[columnar_result_encoding_demo.dart](example/columnar_result_encoding_demo.dart)** -
-Opt-in `ResultEncoding` comparison
+QueryResult clamp vs typed columnar
 
-- ✅ Runs the same SQL through `rowMajor`, `columnar`, and
-  `columnarCompressed` encodings
-- ✅ Surfaces decompression errors when the loaded native library
-  lacks `odbc_columnar_decompress`
-- ✅ Row-major remains the default; columnar is opt-in per call
+- ✅ Shows `forQueryResultWire` clamps columnar requests on QueryResult paths
+- ✅ Contrasts with `executeQueryColumnarParamValues` (true columnar wire)
+- ✅ Points to `async_concurrency_benchmark.dart` for `columnarCompressed`
+- ✅ Row-major remains the QueryResult default; use columnar-typed APIs for
+  end-to-end columnar
 
 #### Multi-result streaming
 

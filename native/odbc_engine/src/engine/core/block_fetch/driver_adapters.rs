@@ -90,6 +90,8 @@ pub(crate) fn buffer_desc_for(odbc_type: OdbcType, data_type: &DataType) -> Opti
     match odbc_type {
         OdbcType::Integer => Some(BufferDesc::I32 { nullable: true }),
         OdbcType::BigInt => Some(BufferDesc::I64 { nullable: true }),
+        OdbcType::Float | OdbcType::Double => Some(BufferDesc::F64 { nullable: true }),
+        OdbcType::Boolean => Some(BufferDesc::Bit { nullable: true }),
         OdbcType::Binary => binary_buffer_desc(data_type),
         // Sprint 4 follow-up B5: temporal types can be bound natively so
         // we skip the driver-side WCHAR transcoding for the common case.
@@ -137,6 +139,18 @@ fn wide_text_buffer_desc(data_type: &DataType) -> Option<BufferDesc> {
 mod tests {
     use super::*;
     use std::num::NonZeroUsize;
+
+    #[test]
+    fn buffer_desc_for_float_is_nullable_f64() {
+        let desc = buffer_desc_for(OdbcType::Float, &DataType::Double);
+        assert_eq!(desc, Some(BufferDesc::F64 { nullable: true }));
+    }
+
+    #[test]
+    fn buffer_desc_for_boolean_is_nullable_bit() {
+        let desc = buffer_desc_for(OdbcType::Boolean, &DataType::Bit);
+        assert_eq!(desc, Some(BufferDesc::Bit { nullable: true }));
+    }
 
     #[test]
     fn buffer_desc_for_integer_is_nullable_i32() {

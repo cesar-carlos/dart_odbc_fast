@@ -42,7 +42,8 @@ pub extern "C" fn odbc_pool_create(conn_str: *const c_char, max_size: c_uint) ->
 /// `conn_str`: NUL-terminated UTF-8 connection string.
 /// `max_size`: maximum number of connections.
 /// `options_json`: NUL-terminated UTF-8 JSON
-///   `{ "idle_timeout_ms"?: int, "max_lifetime_ms"?: int, "connection_timeout_ms"?: int }`.
+///   `{ "idle_timeout_ms"?: int, "max_lifetime_ms"?: int,
+///      "connection_timeout_ms"?: int, "session_reset_on_checkout"?: bool }`.
 ///   May be null/empty to use defaults.
 ///
 /// Returns: pool_id (>0) on success, 0 on failure.
@@ -90,6 +91,8 @@ pub extern "C" fn odbc_pool_create_with_options(
                     max_lifetime_ms: Option<u64>,
                     #[serde(default)]
                     connection_timeout_ms: Option<u64>,
+                    #[serde(default)]
+                    session_reset_on_checkout: Option<bool>,
                 }
                 let parsed: OptsJson = match serde_json::from_str(s) {
                     Ok(p) => p,
@@ -99,6 +102,7 @@ pub extern "C" fn odbc_pool_create_with_options(
                     idle_timeout: parsed.idle_timeout_ms.map(Duration::from_millis),
                     max_lifetime: parsed.max_lifetime_ms.map(Duration::from_millis),
                     connection_timeout: parsed.connection_timeout_ms.map(Duration::from_millis),
+                    session_reset_on_checkout: parsed.session_reset_on_checkout,
                 }
             }
         };

@@ -1,12 +1,11 @@
-// Typed columnar query demo: `executeQueryColumnarParamValues`,
-// `streamQueryColumnar`, and `TypedColumnarResult` consumption.
+// Buffered typed columnar query: `executeQueryColumnarParamValues` +
+// `TypedColumnarResult` column access (`Int32List` / `Float64List` / strings).
 //
-// Under `balanced` / legacy, row-major `QueryResult` remains the default.
-// For server workloads prefer `OdbcUsageProfile.balancedServer` (or
-// `highThroughput`) so columnar is the recommended encoding without per-call
-// overrides — see example/stream_query_columnar_demo.dart. Use the typed
-// columnar surface when numeric pipelines benefit from `Int32List` /
-// `Int64List` / `Float64List` instead of per-cell `dynamic` boxing.
+// This demo stays on `OdbcUsageProfile.balanced` to show the **explicit** typed
+// API (columnar wire even when the profile still recommends row-major for
+// QueryResult paths). For the recommended server streaming path, use
+// `OdbcUsageProfile.balancedServer` + example/stream_query_columnar_demo.dart
+// (`streamQueryColumnar` + `recommendedStreamChunkSizeBytes`).
 //
 // Run: dart run example/typed_columnar_demo.dart
 //
@@ -80,23 +79,9 @@ Future<void> main() async {
       (error) => AppLogger.warning('columnar query failed: $error'),
     );
 
-    var chunkIndex = 0;
-    await for (final chunk in service.streamQueryColumnar(connId, sql)) {
-      chunk.fold(
-        (typed) {
-          AppLogger.info(
-            'streamQueryColumnar chunk $chunkIndex: rowCount=${typed.rowCount}',
-          );
-          final ids = typed.column<TypedColumnInt32>('id');
-          if (typed.rowCount > 0 && !ids.isNullAt(0)) {
-            AppLogger.info('  first id=${ids.values[0]}');
-          }
-        },
-        (error) =>
-            AppLogger.warning('streamQueryColumnar chunk failed: $error'),
-      );
-      chunkIndex++;
-    }
+    AppLogger.info(
+      'Streaming columnar: dart run example/stream_query_columnar_demo.dart',
+    );
   } finally {
     await service.disconnect(connId);
     locator.shutdown();

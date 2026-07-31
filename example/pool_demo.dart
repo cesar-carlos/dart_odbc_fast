@@ -1,4 +1,9 @@
-// Connection pool demo.
+// Connection pool demo (native `ConnectionPool` lifecycle).
+//
+// Covers create → checkout/reuse → health/state → concurrent checkouts.
+// Parallel bulk is a one-liner smoke only; scale-up lives in
+// example/bulk_insert_parallel_demo.dart.
+//
 // Run: dart run example/pool_demo.dart
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -30,7 +35,7 @@ void main() async {
 
   try {
     await _createPoolTestTable(native, pool);
-    _demoParallelBulkInsert(pool);
+    _demoParallelBulkInsertSmoke(pool);
     await _demoConnectionReuse(native, pool);
     _demoHealthCheck(pool);
     _demoPoolState(pool);
@@ -41,7 +46,9 @@ void main() async {
   }
 }
 
-void _demoParallelBulkInsert(ConnectionPool pool) {
+void _demoParallelBulkInsertSmoke(ConnectionPool pool) {
+  // Tiny smoke that the pool surface exposes parallel bulk. Prefer
+  // bulk_insert_parallel_demo.dart for realistic row counts / tuning.
   final payload = BulkInsertBuilder()
       .table('pool_test_table')
       .addColumnText('name', const ['parallel-a', 'parallel-b'], maxLen: 100)
@@ -54,10 +61,13 @@ void _demoParallelBulkInsert(ConnectionPool pool) {
   );
 
   if (inserted < 0) {
-    AppLogger.warning('Parallel bulk insert failed');
+    AppLogger.warning('Parallel bulk insert smoke failed');
     return;
   }
-  AppLogger.info('Parallel bulk insert rows: $inserted');
+  AppLogger.info(
+    'Parallel bulk smoke rows: $inserted '
+    '(see bulk_insert_parallel_demo.dart for 2k+ scale)',
+  );
 }
 
 Future<void> _createPoolTestTable(

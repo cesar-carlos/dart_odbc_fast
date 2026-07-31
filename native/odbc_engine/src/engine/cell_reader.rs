@@ -24,6 +24,8 @@ impl CellReader {
             OdbcType::Binary => self.read_binary(row, column_number),
             OdbcType::Integer => self.read_i32_as_le_bytes(row, column_number),
             OdbcType::BigInt => self.read_i64_as_le_bytes(row, column_number),
+            OdbcType::Float | OdbcType::Double => self.read_f64_as_le_bytes(row, column_number),
+            OdbcType::Boolean => self.read_bool_as_byte(row, column_number),
             _ => self.read_text(row, column_number),
         }
     }
@@ -124,6 +126,42 @@ impl CellReader {
         match target.into_opt() {
             None => Ok(None),
             Some(value) => Ok(Some(cell_bytes_from_slice(&value.to_le_bytes()))),
+        }
+    }
+
+    /// Fetches float/double as `SQL_C_DOUBLE` and emits 8 little-endian bytes.
+    ///
+    /// Dual-support with legacy UTF-8 float text: Dart decoders accept both
+    /// ASCII and `len == 8` IEEE-754 payloads on the same varchar cell shape.
+    fn read_f64_as_le_bytes(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<CellBytes>> {
+        let mut target: Nullable<f64> = Nullable::null();
+        row.get_data(column_number, &mut target)
+            .map_err(OdbcError::from)?;
+        match target.into_opt() {
+            None => Ok(None),
+            Some(value) => Ok(Some(cell_bytes_from_slice(&value.to_le_bytes()))),
+        }
+    }
+
+    /// Fetches a bit/boolean as a single `0`/`1` byte (dual-support with ASCII).
+    fn read_bool_as_byte(
+        &mut self,
+        row: &mut CursorRow<'_>,
+        column_number: u16,
+    ) -> Result<Option<CellBytes>> {
+        let mut target: Nullable<odbc_api::Bit> = Nullable::null();
+        row.get_data(column_number, &mut target)
+            .map_err(OdbcError::from)?;
+        match target.into_opt() {
+            None => Ok(None),
+            Some(value) => {
+                let byte: u8 = if value.as_bool() { 1 } else { 0 };
+                Ok(Some(cell_bytes_from_slice(&[byte])))
+            }
         }
     }
 

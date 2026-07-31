@@ -31,10 +31,16 @@ impl ConnectionPool {
         options: PoolOptions,
     ) -> Result<Self> {
         let config = PoolConfig::from_connection_string(connection_string);
+        let session_reset_on_checkout = pool_config::resolve_session_reset_on_checkout(
+            options.session_reset_on_checkout,
+            config.session_reset_on_checkout,
+            pool_config::read_session_reset_from_env_for_pool(),
+        );
         let runtime = PoolRuntimeConfig {
             connection_string: config.sanitized_connection_string,
             test_on_check_out: config.test_on_check_out,
             health_check_query: config.health_check_query,
+            session_reset_on_checkout,
             options,
         };
         Self::from_runtime_config(runtime, max_size)
@@ -82,15 +88,19 @@ impl ConnectionPool {
         // not on idle checkout. Reset here so every delivered connection is
         // clean regardless of `test_on_check_out`. `is_valid` (when enabled)
         // only runs the health query to avoid a second reset on that path.
+        // Trusted pools may disable checkout reset via PoolOptions /
+        // `Pool_Session_Reset` / `ODBC_POOL_SESSION_RESET` (checkin still resets).
         let mut pooled = self.pool.get().map_err(|e| {
             OdbcError::PoolError(format!("Failed to get connection from pool: {}", e))
         })?;
-        pooled.pool_session_reset().map_err(|e| {
-            OdbcError::PoolError(format!(
-                "Failed to reset pooled connection on checkout: {}",
-                e
-            ))
-        })?;
+        if self.config.session_reset_on_checkout {
+            pooled.pool_session_reset().map_err(|e| {
+                OdbcError::PoolError(format!(
+                    "Failed to reset pooled connection on checkout: {}",
+                    e
+                ))
+            })?;
+        }
         Ok(PooledConnectionWrapper { pooled })
     }
 
@@ -290,6 +300,7 @@ mod tests {
                 idle_timeout: Some(Duration::from_secs(5)),
                 max_lifetime: Some(Duration::from_secs(7)),
                 connection_timeout: Some(Duration::from_secs(11)),
+                session_reset_on_checkout: None,
             },
         )
         .expect("pool should build with the configured test DSN");
@@ -306,6 +317,7 @@ mod tests {
         assert_eq!(snapshot.health_check_query, "SELECT CURRENT_TIMESTAMP");
         assert_eq!(snapshot.options.idle_timeout, Some(Duration::from_secs(5)));
         assert_eq!(snapshot.options.max_lifetime, Some(Duration::from_secs(7)));
+        assert!(snapshot.session_reset_on_checkout);
         assert_eq!(
             snapshot.options.connection_timeout,
             Some(Duration::from_secs(11))

@@ -51,11 +51,14 @@ Future<void> main() async {
   final locator = ServiceLocator()..initialize(profile: profile);
   final service = locator.service;
   final tuning = locator.resolvedUsageProfile;
+  final chunkSize = locator.recommendedStreamChunkSizeBytes;
+  final useColumnarStream = tuning.recommendedResultEncoding.isColumnar;
 
   AppLogger.info(
     'profile=${tuning.profile.name} async=${tuning.useAsync} '
     'workers=${tuning.workerCount} '
-    'encoding=${tuning.recommendedResultEncoding.name}',
+    'encoding=${tuning.recommendedResultEncoding.name} '
+    'streamChunk=$chunkSize',
   );
   AppLogger.info(
     'Pointers: streaming_demo / stream_query_columnar_demo / '
@@ -83,7 +86,12 @@ Future<void> main() async {
   final conn = connResult.getOrThrow();
   try {
     await _smallQuery(service, conn.id);
-    await _streamRead(service, conn.id);
+    await _streamRead(
+      service,
+      conn.id,
+      chunkSize: chunkSize,
+      useColumnar: useColumnarStream,
+    );
     await _bulkInsertSample(service, conn.id);
   } finally {
     await service.disconnect(conn.id);
@@ -107,13 +115,42 @@ Future<void> _smallQuery(IOdbcService service, String connId) async {
   );
 }
 
-Future<void> _streamRead(IOdbcService service, String connId) async {
-  // Service streamQuery uses batched streaming by default.
+Future<void> _streamRead(
+  IOdbcService service,
+  String connId, {
+  required int chunkSize,
+  required bool useColumnar,
+}) async {
+  const sql = 'SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3';
   var chunks = 0;
   var rows = 0;
+
+  if (useColumnar) {
+    await for (final item in service.streamQueryColumnar(
+      connId,
+      sql,
+      chunkSize: chunkSize,
+    )) {
+      item.fold(
+        (r) {
+          chunks++;
+          rows += r.rowCount;
+        },
+        (e) => AppLogger.warning('columnar stream chunk failed: $e'),
+      );
+    }
+    AppLogger.info(
+      'large-read pattern (streamQueryColumnar, chunkSize=$chunkSize): '
+      'chunks=$chunks rows=$rows',
+    );
+    return;
+  }
+
+  // Service streamQuery uses batched streaming by default (row-major wire).
   await for (final item in service.streamQuery(
     connId,
-    'SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3',
+    sql,
+    chunkSize: chunkSize,
   )) {
     item.fold(
       (r) {
@@ -124,9 +161,9 @@ Future<void> _streamRead(IOdbcService service, String connId) async {
     );
   }
   AppLogger.info(
-    'large-read pattern (streamQuery → batched): '
+    'large-read pattern (streamQuery → batched, chunkSize=$chunkSize): '
     'chunks=$chunks rows=$rows '
-    '(scale: streamQueryColumnar + chunkSize≥1MiB; see PERFORMANCE.md)',
+    '(server profiles → streamQueryColumnar; see PERFORMANCE.md)',
   );
 }
 

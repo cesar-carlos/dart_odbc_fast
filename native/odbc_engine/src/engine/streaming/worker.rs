@@ -249,6 +249,83 @@ impl StreamingExecutor {
         Ok(())
     }
 
+    /// Like [`Self::execute_streaming_batched_with_params`], but reuses the
+    /// per-connection prepared LRU when params are cache-eligible.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Mirrors execute_streaming_batched_with_params for CachedConnection"
+    )]
+    pub fn execute_streaming_batched_with_cached_params<F>(
+        &self,
+        cached: &mut crate::handles::CachedConnection,
+        sql: &str,
+        params: &[crate::protocol::ParamValue],
+        fetch_size: usize,
+        mut on_batch: F,
+        cancel_requested: Option<Arc<AtomicBool>>,
+        result_encoding: ResultEncoding,
+    ) -> Result<()>
+    where
+        F: FnMut(Vec<u8>) -> Result<()>,
+    {
+        #[cfg(feature = "statement-handle-reuse")]
+        {
+            if cached.can_reuse_prepared_for_params(params) {
+                use crate::protocol::{
+                    has_null_param, param_values_to_input_params,
+                    param_values_to_input_params_with_inference,
+                };
+                let batch_size = fetch_size.max(1);
+                let cancel_check = || {
+                    cancel_requested
+                        .as_ref()
+                        .is_some_and(|c| c.load(Ordering::Relaxed))
+                };
+                return cached.with_prepared_mut(sql, |stmt| {
+                    let cursor = if params.is_empty() {
+                        stmt.execute(()).map_err(OdbcError::from)?
+                    } else if has_null_param(params) {
+                        let parameters =
+                            param_values_to_input_params_with_inference(params)?.ok_or_else(
+                                || {
+                                    OdbcError::InternalError(
+                                        "NULL params reached stream prepared reuse without inferable type"
+                                            .to_string(),
+                                    )
+                                },
+                            )?;
+                        stmt.execute(parameters.as_slice())
+                            .map_err(OdbcError::from)?
+                    } else {
+                        let parameters = param_values_to_input_params(params)?;
+                        stmt.execute(parameters.as_slice())
+                            .map_err(OdbcError::from)?
+                    };
+                    let Some(cursor) = cursor else {
+                        return Ok(());
+                    };
+                    drain_cursor_in_batches(
+                        cursor,
+                        batch_size,
+                        result_encoding,
+                        &mut on_batch,
+                        cancel_check,
+                    )?;
+                    Ok(())
+                });
+            }
+        }
+        self.execute_streaming_batched_with_params(
+            cached.connection(),
+            sql,
+            params,
+            fetch_size,
+            on_batch,
+            cancel_requested,
+            result_encoding,
+        )
+    }
+
     /// Starts cursor-based batched streaming via a worker thread. Uses
     /// `execute_streaming_batched` internally; memory is bounded to one batch.
     /// Returns state that yields chunks on `fetch_next_chunk` until done.
@@ -307,15 +384,15 @@ impl StreamingExecutor {
 
         let cancel = Arc::clone(&cancel_requested);
         let join = std::thread::spawn(move || {
-            let Ok(conn_guard) = conn_arc.lock() else {
+            let Ok(mut conn_guard) = conn_arc.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
                     "Failed to lock connection".to_string(),
                 ));
                 return;
             };
             let executor = StreamingExecutor::new(chunk_size);
-            match executor.execute_streaming_batched_with_params(
-                conn_guard.connection(),
+            match executor.execute_streaming_batched_with_cached_params(
+                &mut conn_guard,
                 &sql,
                 &params,
                 fetch_size,
@@ -405,15 +482,15 @@ impl StreamingExecutor {
 
         let cancel = Arc::clone(&cancel_requested);
         let join = std::thread::spawn(move || {
-            let Ok(conn_guard) = conn_arc.lock() else {
+            let Ok(mut conn_guard) = conn_arc.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
                     "Failed to lock connection".to_string(),
                 ));
                 return;
             };
             let executor = StreamingExecutor::new(chunk_size);
-            match executor.execute_streaming_batched_with_params(
-                conn_guard.connection(),
+            match executor.execute_streaming_batched_with_cached_params(
+                &mut conn_guard,
                 &sql,
                 &params,
                 fetch_size,
@@ -494,15 +571,15 @@ impl StreamingExecutor {
             let cancel = Arc::clone(&cancel_requested);
             move || {
                 let _completion = WorkerCompletion::new(on_complete);
-                let Ok(conn_guard) = pooled.lock() else {
+                let Ok(mut conn_guard) = pooled.lock() else {
                     let _ = tx.send(BatchedMessage::Error(
                         "Failed to lock pooled connection".to_string(),
                     ));
                     return;
                 };
                 let executor = StreamingExecutor::new(chunk_size);
-                match executor.execute_streaming_batched_with_params(
-                    conn_guard.get_connection(),
+                match executor.execute_streaming_batched_with_cached_params(
+                    conn_guard.cached_mut(),
                     &sql,
                     &params,
                     fetch_size,
@@ -581,15 +658,15 @@ impl StreamingExecutor {
             let cancel = Arc::clone(&cancel_requested);
             move || {
                 let _completion = WorkerCompletion::new(on_complete);
-                let Ok(conn_guard) = pooled.lock() else {
+                let Ok(mut conn_guard) = pooled.lock() else {
                     let _ = tx.send(BatchedMessage::Error(
                         "Failed to lock pooled connection".to_string(),
                     ));
                     return;
                 };
                 let executor = StreamingExecutor::new(chunk_size);
-                match executor.execute_streaming_batched_with_params(
-                    conn_guard.get_connection(),
+                match executor.execute_streaming_batched_with_cached_params(
+                    conn_guard.cached_mut(),
                     &sql,
                     &params,
                     fetch_size,
