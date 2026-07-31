@@ -125,7 +125,7 @@ class OdbcAdminService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _repository.streamStartAsync(
         connectionId,

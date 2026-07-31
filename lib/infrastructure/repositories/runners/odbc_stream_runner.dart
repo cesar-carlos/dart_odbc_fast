@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
@@ -80,7 +81,7 @@ class OdbcStreamRunner {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) async* {
     final nativeId = _state.connectionIds[connectionId];
     if (nativeId == null) {
@@ -90,7 +91,12 @@ class OdbcStreamRunner {
       return;
     }
 
-    final lazyStrings = _state.optionsFor(connectionId)?.lazyStrings ?? false;
+    final opts = _state.optionsFor(connectionId);
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: opts,
+    );
+    final lazyStrings = opts?.lazyStrings ?? false;
     // Multi-result items are row-shaped QueryResultMultiItem values; keep
     // row-major wire and use streamQueryColumnar* for typed columnar.
     const resultEncoding = ResultEncoding.rowMajor;
@@ -120,14 +126,14 @@ class OdbcStreamRunner {
               nativeId,
               sql,
               fetchSize: fetchSize,
-              chunkSize: chunkSize,
+              chunkSize: effectiveChunk,
               resultEncodingWire: resultEncoding.wireCode,
             )
           : _ffi.sync.streamMultiStartBatched(
                 nativeId,
                 sql,
                 fetchSize: fetchSize,
-                chunkSize: chunkSize,
+                chunkSize: effectiveChunk,
                 resultEncodingWire: resultEncoding.wireCode,
               ) ??
               0;
@@ -167,13 +173,13 @@ class OdbcStreamRunner {
               streamId: streamId,
               decoder: decoder,
               coalescer: coalescer,
-              chunkSize: chunkSize,
+              chunkSize: effectiveChunk,
             )
           : _driveSyncMultiStream(
               streamId: streamId,
               decoder: decoder,
               coalescer: coalescer,
-              chunkSize: chunkSize,
+              chunkSize: effectiveChunk,
             );
       await for (final chunk in drive) {
         yield chunk;
@@ -312,15 +318,33 @@ class OdbcStreamRunner {
     }
   }
 
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
-      _queryRunner.streamQuery(connectionId, sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _queryRunner.streamQuery(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      _queryRunner.streamQueryNamed(connectionId, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _queryRunner.streamQueryNamed(
+        connectionId,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Stream<ParsedRowBuffer> streamNativeQueryWithFallback(
     int nativeId,
@@ -328,6 +352,8 @@ class OdbcStreamRunner {
     int? maxBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     bool lazyStrings = false,
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
   }) =>
       _queryRunner.streamNativeQueryWithFallback(
         nativeId,
@@ -335,6 +361,8 @@ class OdbcStreamRunner {
         maxBufferBytes: maxBufferBytes,
         resultEncoding: resultEncoding,
         lazyStrings: lazyStrings,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
       );
 
   Stream<TypedColumnarResult> streamNativeColumnarQueryWithFallback(
@@ -342,19 +370,30 @@ class OdbcStreamRunner {
     String sql, {
     int? maxBufferBytes,
     bool lazyStrings = false,
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
   }) =>
       _columnarRunner.streamNativeColumnarQueryWithFallback(
         nativeId,
         sql,
         maxBufferBytes: maxBufferBytes,
         lazyStrings: lazyStrings,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
       );
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) =>
-      _columnarRunner.streamQueryColumnar(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _columnarRunner.streamQueryColumnar(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Failure<QueryResult, OdbcError>> streamingFailureFromException(
     Exception error,
@@ -389,14 +428,19 @@ class OdbcStreamRunner {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
-  }) =>
-      _asyncLifecycle.streamStartAsync(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-      );
+    int? chunkSize,
+  }) {
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: _state.optionsFor(connectionId),
+    );
+    return _asyncLifecycle.streamStartAsync(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: effectiveChunk,
+    );
+  }
 
   Future<Result<int>> streamPollAsync(int streamId) =>
       _asyncLifecycle.streamPollAsync(streamId);

@@ -12,6 +12,7 @@ class StatementOptions {
     this.timeout,
     this.fetchSize,
     this.maxBufferSize,
+    this.initialBufferSize,
   });
 
   /// Timeout for this specific execution (overrides connection/global).
@@ -29,4 +30,10 @@ class StatementOptions {
   /// When set, caps the result buffer; otherwise uses package default.
   /// Reduces memory usage for large result sets.
   final int? maxBufferSize;
+
+  /// Initial FFI result buffer seed in bytes for this execution.
+  ///
+  /// When null, the connection `initialResultBufferBytes` is used, then
+  /// the package default of 64 KiB.
+  final int? initialBufferSize;
 }

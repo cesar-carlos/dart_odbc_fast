@@ -144,7 +144,7 @@ void main() {
     });
 
     test(
-      'bypasses scratch pool when initialSize meets zero-copy threshold',
+      'keeps scratch pool when initialSize is below FFI default seed',
       () {
         const n = zeroCopyResultThresholdBytes;
         var calls = 0;
@@ -194,7 +194,7 @@ void main() {
     );
 
     test(
-      'bypasses scratch pool for default seed at or above threshold',
+      'bypasses scratch pool for default FFI seed (256 KiB)',
       () {
         const n = zeroCopyResultThresholdBytes;
         var calls = 0;

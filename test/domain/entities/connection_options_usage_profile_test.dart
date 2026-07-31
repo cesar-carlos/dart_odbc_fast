@@ -31,6 +31,14 @@ void main() {
             options.reconnectBackoff,
             resolved.connectionOptions.reconnectBackoff,
           );
+          expect(
+            options.lazyStrings,
+            resolved.connectionOptions.lazyStrings,
+          );
+          expect(
+            options.initialResultBufferBytes,
+            resolved.connectionOptions.initialResultBufferBytes,
+          );
           expect(options.validate(), isNull);
         },
       );

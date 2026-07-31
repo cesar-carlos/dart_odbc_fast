@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.dart';
 
 /// Wraps a UTF-8 byte slice and decodes it to a [String] only on demand.
 ///
@@ -60,7 +61,16 @@ class LazyString {
   int get byteLength => _bytes.length;
 
   /// Triggers decoding (or returns the cached result on repeat access).
-  String get value => _decoded ??= utf8.decode(_bytes, allowMalformed: true);
+  String get value {
+    final cached = _decoded;
+    if (cached != null) {
+      return cached;
+    }
+    if (isAsciiBytes(_bytes)) {
+      return _decoded = String.fromCharCodes(_bytes);
+    }
+    return _decoded = utf8.decode(_bytes, allowMalformed: true);
+  }
 
   /// Whether [value] has been computed yet. Useful in tests and metrics
   /// to confirm the decode actually happens lazily.

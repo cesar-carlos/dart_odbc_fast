@@ -47,7 +47,12 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
     }
 
     fn is_valid(&self, conn: &mut Self::Connection) -> std::result::Result<(), Self::Error> {
-        conn.pool_session_reset()?;
+        // Health-check only. r2d2 0.8 calls `is_valid` on idle checkout when
+        // `test_on_check_out` is set, then returns the connection — it does
+        // *not* call `CustomizeConnection::on_acquire` on that path.
+        // Per-checkout `pool_session_reset` lives in `ConnectionPool::get` so
+        // we do not pay rollback/autocommit twice when validation is on.
+        // Checkin still resets before return to the idle set.
         conn.connection()
             .execute(&self.health_check_query, (), None)
             .map(|_| ())
@@ -59,9 +64,11 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
     }
 }
 
-/// Forces `set_autocommit(true)` on every checkout regardless of
-/// `test_on_check_out`. Prevents conn reuse in mid-transaction state when
-/// validation is disabled.
+/// Resets session state immediately after `ManageConnection::connect`.
+///
+/// r2d2 only invokes this for **new** connections, not for idle checkouts.
+/// The per-checkout reset (including when `test_on_check_out` is false) is
+/// owned by [`super::ConnectionPool::get`].
 #[derive(Debug)]
 pub(crate) struct PoolAutocommitCustomizer;
 
@@ -79,5 +86,17 @@ mod tests {
             super::super::pool_config::DEFAULT_HEALTH_CHECK_QUERY,
             "SELECT 1"
         );
+    }
+
+    #[test]
+    fn checkout_reset_contract_is_documented_for_r2d2_08() {
+        // r2d2 0.8 `CustomizeConnection::on_acquire` runs only after
+        // `ManageConnection::connect`, not when popping an idle connection.
+        // Per-checkout reset therefore belongs in `ConnectionPool::get`.
+        // `is_valid` must stay health-query-only so `test_on_check_out=true`
+        // does not double `pool_session_reset` on the same checkout.
+        const {
+            assert!(super::super::pool_config::DEFAULT_TEST_ON_CHECKOUT);
+        }
     }
 }

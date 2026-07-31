@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
@@ -36,8 +37,10 @@ class StreamQueryRunner {
 
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
-    String sql,
-  ) async* {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       yield const Failure<QueryResult, OdbcError>(
@@ -45,7 +48,10 @@ class StreamQueryRunner {
       );
       return;
     }
-
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: state.optionsFor(connectionId),
+    );
     final opts = state.optionsFor(connectionId);
     final maxBytes = opts?.maxResultBufferBytes;
     final queryTimeout = opts?.queryTimeout;
@@ -61,6 +67,8 @@ class StreamQueryRunner {
           sql,
           maxBufferBytes: maxBytes,
           lazyStrings: lazyStrings,
+          fetchSize: fetchSize,
+          chunkSize: effectiveChunk,
         )) {
           yield Success(parser.toQueryResult(chunk));
         }
@@ -83,8 +91,10 @@ class StreamQueryRunner {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) async* {
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       yield const Failure<QueryResult, OdbcError>(
@@ -123,6 +133,10 @@ class StreamQueryRunner {
     }
 
     final opts = state.optionsFor(connectionId);
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: opts,
+    );
     final maxBytes = opts?.maxResultBufferBytes;
     final queryTimeout = opts?.queryTimeout;
     final lazyStrings = opts?.lazyStrings ?? false;
@@ -135,6 +149,8 @@ class StreamQueryRunner {
           maxBufferBytes: maxBytes,
           lazyStrings: lazyStrings,
           paramsBuffer: paramsBuffer,
+          fetchSize: fetchSize,
+          chunkSize: effectiveChunk,
         )) {
           yield Success(parser.toQueryResult(chunk));
         }
@@ -159,11 +175,15 @@ class StreamQueryRunner {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     bool lazyStrings = false,
     Uint8List? paramsBuffer,
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
   }) async* {
     final batched = ffi.isAsync
         ? ffi.async.streamQueryBatched(
             nativeId,
             sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
             maxBufferBytes: maxBufferBytes,
             resultEncodingWire: resultEncoding.wireCode,
             lazyStrings: lazyStrings,
@@ -172,6 +192,8 @@ class StreamQueryRunner {
         : ffi.sync.streamQueryBatched(
             nativeId,
             sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
             resultEncoding: resultEncoding,
             lazyStrings: lazyStrings,
             paramsBuffer: paramsBuffer,

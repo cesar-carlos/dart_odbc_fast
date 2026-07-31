@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_reader.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.dart';
 
 /// Active lazy-string mode for the current parse call.
 bool binaryProtocolLazyStringsActive = false;
@@ -27,17 +27,71 @@ Object? decodeProtocolCell(Uint8List data, int odbcType) {
   }
   if (type == OdbcType.integer) {
     if (data.length >= 4) {
-      return ByteData.sublistView(data).getInt32(0, binaryProtocolLittleEndian);
+      return readInt32Le(data);
     }
     return decodeProtocolText(data);
   }
   if (type == OdbcType.bigInt) {
     if (data.length >= 8) {
-      return ByteData.sublistView(data).getInt64(0, binaryProtocolLittleEndian);
+      return readInt64Le(data);
+    }
+    return decodeProtocolText(data);
+  }
+  if (type == OdbcType.float || type == OdbcType.doublePrecision) {
+    final parsed = tryParseAsciiFloat64(data);
+    if (parsed != null) {
+      return parsed;
+    }
+    return decodeProtocolText(data);
+  }
+  if (type == OdbcType.boolean) {
+    final parsed = tryParseAsciiBool(data);
+    if (parsed != null) {
+      return parsed;
+    }
+    return decodeProtocolText(data);
+  }
+  if (type == OdbcType.smallInt) {
+    final parsed = tryParseAsciiInt(data);
+    if (parsed != null) {
+      return parsed;
+    }
+    return decodeProtocolText(data);
+  }
+  if (type == OdbcType.date ||
+      type == OdbcType.timestamp ||
+      type == OdbcType.timestampWithTz ||
+      type == OdbcType.datetimeOffset ||
+      type == OdbcType.time) {
+    final parsed = tryParseAsciiDateTime(data);
+    if (parsed != null) {
+      return parsed;
     }
     return decodeProtocolText(data);
   }
   return decodeProtocolText(data);
+}
+
+/// Little-endian i32 without allocating a [ByteData] view.
+int readInt32Le(Uint8List data, [int offset = 0]) {
+  final v = data[offset] |
+      (data[offset + 1] << 8) |
+      (data[offset + 2] << 16) |
+      (data[offset + 3] << 24);
+  return v.toSigned(32);
+}
+
+/// Little-endian i64 without allocating a [ByteData] view.
+int readInt64Le(Uint8List data, [int offset = 0]) {
+  final lo = data[offset] |
+      (data[offset + 1] << 8) |
+      (data[offset + 2] << 16) |
+      (data[offset + 3] << 24);
+  final hi = data[offset + 4] |
+      (data[offset + 5] << 8) |
+      (data[offset + 6] << 16) |
+      (data[offset + 7] << 24);
+  return (hi.toSigned(32) << 32) | (lo & 0xFFFFFFFF);
 }
 
 Object decodeProtocolText(Uint8List data) {
@@ -46,17 +100,8 @@ Object decodeProtocolText(Uint8List data) {
     // lazy cells are consumed or decoded.
     return LazyString(data);
   }
-  if (_isAsciiBytes(data)) {
+  if (isAsciiBytes(data)) {
     return String.fromCharCodes(data);
   }
   return utf8.decode(data, allowMalformed: true);
-}
-
-bool _isAsciiBytes(Uint8List data) {
-  for (var i = 0; i < data.length; i++) {
-    if (data[i] > 0x7F) {
-      return false;
-    }
-  }
-  return true;
 }

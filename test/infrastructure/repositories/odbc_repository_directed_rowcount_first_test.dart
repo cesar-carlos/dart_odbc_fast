@@ -109,8 +109,9 @@ class _FakeAsyncNative extends AsyncNativeOdbcConnection {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     Duration? timeout,
-    ResultEncoding? resultEncoding,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       _responseBuffer;
 

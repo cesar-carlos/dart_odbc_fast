@@ -13,6 +13,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
           maxBufferBytes: request.maxResultBufferBytes,
+          initialBufferBytes: request.initialResultBufferBytes,
           resultEncoding: request.resultEncoding,
         );
         if (data != null) {
@@ -30,6 +31,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.connectionId,
           request.sql,
           maxBufferBytes: request.maxResultBufferBytes,
+          initialBufferBytes: request.initialResultBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -49,6 +51,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.sql,
           bytes,
           maxBufferBytes: request.maxResultBufferBytes,
+          initialBufferBytes: request.initialResultBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -78,6 +81,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.timeoutOverrideMs,
           request.fetchSize,
           maxBufferBytes: request.maxResultBufferBytes,
+          initialBufferBytes: request.initialResultBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -126,6 +130,8 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.connectionId,
           catalog: request.catalog,
           schema: request.schema,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -141,6 +147,8 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         final data = conn.catalogColumns(
           request.connectionId,
           request.table,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -153,7 +161,11 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         }
 
       case CatalogTypeInfoRequest():
-        final data = conn.catalogTypeInfo(request.connectionId);
+        final data = conn.catalogTypeInfo(
+          request.connectionId,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
+        );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
         } else {
@@ -168,6 +180,8 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         final data = conn.catalogPrimaryKeys(
           request.connectionId,
           request.table,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -183,6 +197,8 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         final data = conn.catalogForeignKeys(
           request.connectionId,
           request.table,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -198,6 +214,8 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         final data = conn.catalogIndexes(
           request.connectionId,
           request.table,
+          initialBufferBytes: request.initialBufferBytes,
+          maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -235,7 +253,11 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
         sendPort.send(IntResponse(request.requestId, status ?? -1));
 
       case AsyncGetResultRequest():
-        final data = conn.asyncGetResult(request.asyncRequestId);
+        final data = conn.asyncGetResult(
+          request.asyncRequestId,
+          maxBufferBytes: request.maxResultBufferBytes,
+          initialBufferBytes: request.initialResultBufferBytes,
+        );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
         } else {

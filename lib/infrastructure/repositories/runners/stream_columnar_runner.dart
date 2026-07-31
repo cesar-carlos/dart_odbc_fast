@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
@@ -28,11 +29,15 @@ class StreamColumnarRunner {
     int? maxBufferBytes,
     bool lazyStrings = false,
     ResultEncoding resultEncoding = ResultEncoding.columnar,
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
   }) async* {
     final batched = ffi.isAsync
         ? ffi.async.streamQueryColumnarBatched(
             nativeId,
             sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
             maxBufferBytes: maxBufferBytes,
             lazyStrings: lazyStrings,
             resultEncoding: resultEncoding,
@@ -40,6 +45,8 @@ class StreamColumnarRunner {
         : ffi.sync.streamQueryColumnarBatched(
             nativeId,
             sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
             lazyStrings: lazyStrings,
             resultEncoding: resultEncoding,
           );
@@ -51,8 +58,10 @@ class StreamColumnarRunner {
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) async* {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       yield const Failure<TypedColumnarResult, OdbcError>(
@@ -62,6 +71,10 @@ class StreamColumnarRunner {
     }
 
     final opts = state.optionsFor(connectionId);
+    final effectiveChunk = resolveStreamChunkSizeBytes(
+      chunkSize: chunkSize,
+      options: opts,
+    );
     final maxBytes = opts?.maxResultBufferBytes;
     final queryTimeout = opts?.queryTimeout;
     final lazyStrings = opts?.lazyStrings ?? false;
@@ -77,6 +90,8 @@ class StreamColumnarRunner {
           maxBufferBytes: maxBytes,
           lazyStrings: lazyStrings,
           resultEncoding: encoding,
+          fetchSize: fetchSize,
+          chunkSize: effectiveChunk,
         )) {
           yield Success(chunk);
         }

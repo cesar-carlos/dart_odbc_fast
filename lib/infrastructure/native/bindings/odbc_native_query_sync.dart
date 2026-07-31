@@ -39,6 +39,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     String sql,
     Uint8List? params, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
     _requireResultEncodingSupport(
@@ -76,6 +77,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
                     outWritten,
                   ),
             maxSize: maxBufferBytes,
+            initialSize: initialBufferBytes,
             preferTransient: preferTransientFfiBufferForParams(paramsOrEmpty),
           ),
         );
@@ -97,6 +99,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
     if (params.isEmpty) {
@@ -105,6 +108,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
         sql,
         null,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
       );
     }
@@ -114,6 +118,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
       sql,
       buf,
       maxBufferBytes: maxBufferBytes,
+      initialBufferBytes: initialBufferBytes,
       resultEncoding: resultEncoding,
     );
   }
@@ -130,6 +135,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     int connectionId,
     String sql, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) {
     return _withSql(
       sql,
@@ -142,6 +148,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
           outWritten,
         ),
         maxSize: maxBufferBytes,
+        initialSize: initialBufferBytes,
       ),
     );
   }
@@ -168,6 +175,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     String sql,
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) {
     if (!_bindings.supportsExecQueryMultiParams) {
       throw StateError(
@@ -193,6 +201,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
                 outWritten,
               ),
               maxSize: maxBufferBytes,
+              initialSize: initialBufferBytes,
               preferTransient: preferTransientFfiBufferForParams(paramsBuffer),
             ),
           );
@@ -208,6 +217,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
             outWritten,
           ),
           maxSize: maxBufferBytes,
+          initialSize: initialBufferBytes,
         );
       },
     );

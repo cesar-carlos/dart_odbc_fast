@@ -4,6 +4,7 @@ import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_cell_de
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_constants.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_reader.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_types.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 
 ParsedRowBuffer parseRowMajorV1(Uint8List data) {
   final reader = BinaryProtocolBufferReader(data);
@@ -38,25 +39,41 @@ ParsedRowBuffer parseRowMajorV1(Uint8List data) {
   }
 
   final columns = <ColumnMetadata>[];
+  final columnTypes = List<OdbcType>.filled(columnCount, OdbcType.varchar);
   for (var i = 0; i < columnCount; i++) {
     final odbcType = reader.readUint16();
     final nameLen = reader.readUint16();
     final name = reader.readString(nameLen);
     columns.add(ColumnMetadata(name: name, odbcType: odbcType));
+    columnTypes[i] = OdbcType.fromDiscriminant(odbcType);
   }
 
   final rows = List<List<dynamic>>.generate(
     rowCount,
     (_) => List<dynamic>.filled(columnCount, null),
-    growable: false,
   );
   for (var r = 0; r < rowCount; r++) {
     for (var c = 0; c < columnCount; c++) {
       final isNull = reader.readUint8();
       if (isNull != 1) {
         final cellLen = reader.readUint32();
-        final cellBytes = reader.readBytes(cellLen);
-        rows[r][c] = decodeProtocolCell(cellBytes, columns[c].odbcType);
+        final type = columnTypes[c];
+        // Decode fixed-width integers from the frame ByteData by offset so
+        // we do not allocate a ByteData view per cell.
+        if (type == OdbcType.integer && cellLen >= 4) {
+          rows[r][c] = reader.readInt32Le();
+          if (cellLen > 4) {
+            reader.skip(cellLen - 4);
+          }
+        } else if (type == OdbcType.bigInt && cellLen >= 8) {
+          rows[r][c] = reader.readInt64Le();
+          if (cellLen > 8) {
+            reader.skip(cellLen - 8);
+          }
+        } else {
+          final cellBytes = reader.readBytes(cellLen);
+          rows[r][c] = decodeProtocolCell(cellBytes, columns[c].odbcType);
+        }
       }
     }
   }

@@ -129,7 +129,7 @@ Future<_BenchmarkResult> _benchWorkerPool({
       poolSize: null,
       maxInFlight: queryCount,
       queryCount: queryCount,
-      elapsedMs: elapsed.inMilliseconds,
+      elapsedMs: elapsed.inMicroseconds / 1000.0,
       rowsOrBatches: queryCount,
       resultEncoding: resultEncoding,
       stats: stats,
@@ -185,7 +185,7 @@ Future<_BenchmarkResult> _benchNativePool({
       poolSize: poolSize,
       maxInFlight: maxInFlight,
       queryCount: taskCount,
-      elapsedMs: elapsed.inMilliseconds,
+      elapsedMs: elapsed.inMicroseconds / 1000.0,
       rowsOrBatches: taskCount,
       resultEncoding: ResultEncoding.rowMajor,
       stats: stats,
@@ -241,7 +241,7 @@ Future<_BenchmarkResult> _benchPreparedReuse({
       poolSize: null,
       maxInFlight: 1,
       queryCount: queryCount,
-      elapsedMs: elapsed.inMilliseconds,
+      elapsedMs: elapsed.inMicroseconds / 1000.0,
       rowsOrBatches: queryCount,
       resultEncoding: ResultEncoding.rowMajor,
       stats: async.getWorkerPoolStats(),
@@ -284,7 +284,7 @@ Future<_BenchmarkResult> _benchStreaming({
       poolSize: null,
       maxInFlight: 1,
       queryCount: 1,
-      elapsedMs: elapsed.inMilliseconds,
+      elapsedMs: elapsed.inMicroseconds / 1000.0,
       rowsOrBatches: batches,
       resultEncoding: ResultEncoding.rowMajor,
       stats: async.getWorkerPoolStats(),
@@ -353,7 +353,7 @@ int _envInt(String name, int fallback) {
   return int.tryParse(raw) ?? fallback;
 }
 
-double _throughputPerSecond(int units, int elapsedMs) {
+double _throughputPerSecond(int units, double elapsedMs) {
   if (elapsedMs <= 0 || units <= 0) return 0;
   return units * 1000.0 / elapsedMs;
 }
@@ -440,7 +440,10 @@ final class _BenchmarkResult {
   final int? poolSize;
   final int maxInFlight;
   final int queryCount;
-  final int elapsedMs;
+
+  /// Wall time in milliseconds (fractional; avoids int-ms quantization noise
+  /// on short smoke runs of tens of milliseconds).
+  final double elapsedMs;
   final int rowsOrBatches;
   final ResultEncoding resultEncoding;
   final AsyncWorkerPoolStats stats;

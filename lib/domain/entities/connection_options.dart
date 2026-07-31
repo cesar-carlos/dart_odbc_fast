@@ -21,6 +21,19 @@ const Duration defaultReconnectBackoff = Duration(seconds: 1);
 /// connection.
 const int defaultInitialResultBufferBytes = 64 * 1024;
 
+/// Resolves the effective stream FFI chunk size for a connection.
+///
+/// Explicit [chunkSize] wins; otherwise
+/// [ConnectionOptions.streamChunkSizeBytes], then
+/// [defaultRecommendedStreamChunkSizeBytes] (64 KiB).
+int resolveStreamChunkSizeBytes({
+  required int? chunkSize,
+  ConnectionOptions? options,
+}) =>
+    chunkSize ??
+    options?.streamChunkSizeBytes ??
+    defaultRecommendedStreamChunkSizeBytes;
+
 /// Options for connection establishment and statement execution.
 ///
 /// Used when calling connect to configure timeouts. [loginTimeout] is passed
@@ -34,6 +47,8 @@ class ConnectionOptions {
     this.queryTimeout,
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.streamChunkSizeBytes,
+    this.sqlPointerCacheMaxSize,
     this.autoReconnectOnConnectionLost = false,
     this.maxReconnectAttempts,
     this.reconnectBackoff,
@@ -51,9 +66,12 @@ class ConnectionOptions {
       connectionTimeout: preset.connectionTimeout,
       loginTimeout: preset.loginTimeout,
       queryTimeout: preset.queryTimeout,
+      initialResultBufferBytes: preset.recommendedInitialResultBufferBytes,
+      streamChunkSizeBytes: preset.recommendedStreamChunkSizeBytes,
       autoReconnectOnConnectionLost: preset.autoReconnectOnConnectionLost,
       maxReconnectAttempts: preset.maxReconnectAttempts,
       reconnectBackoff: preset.reconnectBackoff,
+      lazyStrings: preset.recommendedLazyStrings,
     );
   }
 
@@ -74,9 +92,20 @@ class ConnectionOptions {
   final int? maxResultBufferBytes;
 
   /// Initial size in bytes for query result buffer allocation. When null,
-  /// [defaultInitialResultBufferBytes] is used. Larger values can reduce
-  /// reallocation rounds for large result sets.
+  /// repository runners use [defaultInitialResultBufferBytes] (64 KiB).
+  /// Larger values (e.g. server presets at 1 MiB) reduce reallocation rounds
+  /// for large result sets. Low-level FFI calls without an explicit seed still
+  /// fall back to the native helper default (256 KiB).
   final int? initialResultBufferBytes;
+
+  /// Preferred FFI stream fetch chunk size when `streamQuery*` callers omit
+  /// `chunkSize`. Server presets use 1 MiB; otherwise runners fall back to
+  /// 64 KiB ([defaultRecommendedStreamChunkSizeBytes]).
+  final int? streamChunkSizeBytes;
+
+  /// Optional max entries for the process-local SQL UTF-8 pointer cache on the
+  /// native engine constructed for this options set (default 256 when null).
+  final int? sqlPointerCacheMaxSize;
 
   /// When true, the repository may attempt to reconnect and re-execute the
   /// operation on connection-lost errors. Default is false.
@@ -150,6 +179,12 @@ class ConnectionOptions {
     }
     if (initialResultBufferBytes != null && initialResultBufferBytes! <= 0) {
       return 'initialResultBufferBytes must be greater than zero';
+    }
+    if (streamChunkSizeBytes != null && streamChunkSizeBytes! <= 0) {
+      return 'streamChunkSizeBytes must be greater than zero';
+    }
+    if (sqlPointerCacheMaxSize != null && sqlPointerCacheMaxSize! <= 0) {
+      return 'sqlPointerCacheMaxSize must be greater than zero';
     }
     if (maxResultBufferBytes != null &&
         initialResultBufferBytes != null &&

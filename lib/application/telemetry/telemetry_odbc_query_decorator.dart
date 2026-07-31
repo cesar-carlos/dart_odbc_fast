@@ -63,10 +63,20 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
       );
 
   @override
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
       _ops.wrapStream(
         'ODBC.streamQuery',
-        () => _queries.streamQuery(connectionId, sql),
+        () => _queries.streamQuery(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<int>> prepare(
@@ -166,7 +176,7 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _ops.wrapStream(
         'ODBC.streamQueryMulti',
@@ -193,11 +203,19 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
       _ops.wrapStream(
         'ODBC.streamQueryNamed',
-        () => _queries.streamQueryNamed(connectionId, sql, namedParams),
+        () => _queries.streamQueryNamed(
+          connectionId,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -218,11 +236,18 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) =>
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
       _ops.wrapStream(
         'ODBC.streamQueryColumnar',
-        () => _queries.streamQueryColumnar(connectionId, sql),
+        () => _queries.streamQueryColumnar(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<QueryResult>> catalogTables({

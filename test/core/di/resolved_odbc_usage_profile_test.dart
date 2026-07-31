@@ -27,6 +27,8 @@ void main() {
       );
       expect(resolved.poolOptions.hasAnyOption, isFalse);
       expect(resolved.recommendedResultEncoding, ResultEncoding.rowMajor);
+      expect(resolved.connectionOptions.lazyStrings, isFalse);
+      expect(resolved.recommendedStreamChunkSizeBytes, 64 * 1024);
     });
 
     test('should_resolve_balanced_profile_when_requested', () {
@@ -118,6 +120,12 @@ void main() {
       );
       expect(resolved.poolOptions.idleTimeout, const Duration(minutes: 5));
       expect(resolved.recommendedResultEncoding, ResultEncoding.columnar);
+      expect(resolved.connectionOptions.lazyStrings, isTrue);
+      expect(
+        resolved.connectionOptions.initialResultBufferBytes,
+        1024 * 1024,
+      );
+      expect(resolved.recommendedStreamChunkSizeBytes, 1024 * 1024);
     });
 
     test('should_resolve_high_throughput_profile_when_requested', () {
@@ -142,6 +150,12 @@ void main() {
       );
       expect(resolved.poolOptions.maxLifetime, const Duration(minutes: 30));
       expect(resolved.recommendedResultEncoding, ResultEncoding.columnar);
+      expect(resolved.connectionOptions.lazyStrings, isTrue);
+      expect(
+        resolved.connectionOptions.initialResultBufferBytes,
+        1024 * 1024,
+      );
+      expect(resolved.recommendedStreamChunkSizeBytes, 1024 * 1024);
     });
   });
 

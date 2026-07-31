@@ -25,6 +25,10 @@ abstract interface class IQueryService {
   });
 
   /// Typed positional parameters via [ParamValue] wire tags.
+  ///
+  /// Always requests row-major wire (columnar [resultEncoding] is clamped)
+  /// because this API returns [QueryResult]. Prefer
+  /// [executeQueryColumnarParamValues] for columnar end-to-end.
   Future<Result<QueryResult>> executeQueryParamValues(
     String connectionId,
     String sql,
@@ -44,19 +48,26 @@ abstract interface class IQueryService {
     Map<String, Object?> namedParams,
   );
 
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  );
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   });
 
   /// Column-major opt-in variant of [executeQueryParamValues].
@@ -82,8 +93,10 @@ abstract interface class IQueryService {
   /// explicit alias of this method on repository extensions.
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  );
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 }
 
 /// Ergonomic overloads that take a [Connection] directly instead of a
@@ -129,22 +142,44 @@ extension IQueryServiceConnectionOverloads on IQueryService {
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(
     Connection conn,
-    String sql,
-  ) =>
-      streamQuery(conn.id, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQuery(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   /// `streamQueryNamed` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryNamedFor(
     Connection conn,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      streamQueryNamed(conn.id, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryNamed(
+        conn.id,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   /// `streamQueryColumnar` overload that accepts a [Connection].
   Stream<Result<TypedColumnarResult>> streamQueryColumnarFor(
     Connection conn,
-    String sql,
-  ) =>
-      streamQueryColumnar(conn.id, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryColumnar(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 }

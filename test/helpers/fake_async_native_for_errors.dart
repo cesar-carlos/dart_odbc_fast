@@ -119,6 +119,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     List<ParamValue>? params,
     int timeoutOverrideMs,
     int fetchSize, {
+    int? initialBufferBytes,
     int? maxBufferBytes,
   }) async =>
       executePreparedResult;
@@ -143,6 +144,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
   Future<Uint8List?> executeQueryMulti(
     int connectionId,
     String sql, {
+    int? initialBufferBytes,
     int? maxBufferBytes,
   }) async =>
       executeQueryMultiResult;

@@ -1,3 +1,4 @@
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
@@ -61,6 +62,8 @@ class OdbcQuerySyncRunner {
     Future<Result<QueryResult>> run() async {
       try {
         final maxBytes = opts?.maxResultBufferBytes;
+        final initialBytes =
+            opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
         final queryTimeout = opts?.queryTimeout;
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryParams(
@@ -68,6 +71,7 @@ class OdbcQuerySyncRunner {
                 sql,
                 params,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 timeout: queryTimeout,
                 resultEncoding: resultEncoding,
               )
@@ -76,6 +80,7 @@ class OdbcQuerySyncRunner {
                 sql,
                 params,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 resultEncoding: resultEncoding,
               );
 
@@ -155,6 +160,8 @@ class OdbcQuerySyncRunner {
     Future<Result<TypedColumnarResult>> run() async {
       try {
         final maxBytes = opts?.maxResultBufferBytes;
+        final initialBytes =
+            opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
         final queryTimeout = opts?.queryTimeout;
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryParams(
@@ -162,6 +169,7 @@ class OdbcQuerySyncRunner {
                 sql,
                 params,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 timeout: queryTimeout,
                 resultEncoding: ResultEncoding.columnar,
               )
@@ -170,6 +178,7 @@ class OdbcQuerySyncRunner {
                 sql,
                 params,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 resultEncoding: ResultEncoding.columnar,
               );
 

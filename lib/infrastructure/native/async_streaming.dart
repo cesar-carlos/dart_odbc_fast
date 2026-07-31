@@ -27,7 +27,7 @@ mixin _AsyncStreaming
     Uint8List? paramsBuffer,
   }) async {
     final r = await _sendRequest<IntResponse>(
-      StreamStartBatchedRequest(
+      StreamStartBatchedRequest.withParamsBuffer(
         _nextRequestId(),
         connectionId,
         sql,
@@ -252,7 +252,7 @@ mixin _AsyncStreaming
     var completed = false;
     try {
       while (true) {
-        final fetched = await streamFetch(streamId);
+        final fetched = await streamFetch(streamId, bufferSize: chunkSize);
         if (!fetched.success) {
           final workerError = fetched.error ?? await _safeGetWorkerError();
           throw AsyncError(
@@ -328,7 +328,7 @@ mixin _AsyncStreaming
     var completed = false;
     try {
       while (true) {
-        final fetched = await _streamFetch(streamId);
+        final fetched = await _streamFetch(streamId, bufferSize: chunkSize);
         if (!fetched.success) {
           final workerError = fetched.error ?? await _safeGetWorkerError();
           throw AsyncError(
@@ -528,7 +528,7 @@ mixin _AsyncStreaming
           );
         }
 
-        final fetched = await _streamFetch(streamId);
+        final fetched = await _streamFetch(streamId, bufferSize: chunkSize);
         if (!fetched.success) {
           final workerError = fetched.error ?? await _safeGetWorkerError();
           throw AsyncError(

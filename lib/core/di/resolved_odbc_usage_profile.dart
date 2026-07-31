@@ -24,6 +24,7 @@ final class ResolvedOdbcUsageProfile {
     required this.poolOptions,
     required this.recommendedPoolMaxSize,
     required this.recommendedResultEncoding,
+    required this.recommendedStreamChunkSizeBytes,
   });
 
   factory ResolvedOdbcUsageProfile.fromUsageProfile(OdbcUsageProfile profile) {
@@ -41,6 +42,7 @@ final class ResolvedOdbcUsageProfile {
       poolOptions: PoolOptions.fromUsageProfile(profile),
       recommendedPoolMaxSize: preset.recommendedPoolMaxSize,
       recommendedResultEncoding: preset.recommendedResultEncoding,
+      recommendedStreamChunkSizeBytes: preset.recommendedStreamChunkSizeBytes,
     );
   }
 
@@ -71,12 +73,17 @@ final class ResolvedOdbcUsageProfile {
   /// Suggested `poolCreate(..., maxSize)` value for this profile.
   final int recommendedPoolMaxSize;
 
-  /// Suggested [ResultEncoding] for large SELECT workloads on this profile.
+  /// Suggested [ResultEncoding] for **columnar-typed** SELECT workloads.
   ///
   /// [OdbcUsageProfile.balancedServer] and [OdbcUsageProfile.highThroughput]
   /// use [ResultEncoding.columnar]; other presets keep row-major.
-  /// ServiceLocator wires this into repository `defaultResultEncoding`, so
-  /// `executeQueryParamValues` uses columnar wire unless callers pass
-  /// `resultEncoding` explicitly.
+  /// ServiceLocator wires this into repository `defaultResultEncoding` for
+  /// `executeQueryColumnar*` / `streamQueryColumnar*`. QueryResult APIs
+  /// (`executeQuery*`, `streamQuery*`) always request row-major wire.
   final ResultEncoding recommendedResultEncoding;
+
+  /// Suggested `streamQuery*(chunkSize:)` for large scans on this profile.
+  /// Server presets use 1 MiB; others keep 64 KiB. Public API defaults stay
+  /// at 64 KiB — pass this value explicitly when using recommended options.
+  final int recommendedStreamChunkSizeBytes;
 }

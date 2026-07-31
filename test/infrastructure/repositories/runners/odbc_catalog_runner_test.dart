@@ -22,50 +22,92 @@ class _FakeNativeForCatalog extends NativeOdbcConnection {
   String? lastTable;
   String? lastCatalog;
   String? lastSchema;
+  int? lastInitialBufferBytes;
+  int? lastMaxBufferBytes;
 
   @override
   Uint8List? catalogTables(
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   }) {
     lastCatalog = catalog;
     lastSchema = schema;
+    lastInitialBufferBytes = initialBufferBytes;
+    lastMaxBufferBytes = maxBufferBytes;
     return catalogTablesResult;
   }
 
   @override
-  Uint8List? catalogColumns(int connectionId, String table) {
+  Uint8List? catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) {
     lastTable = table;
+    lastInitialBufferBytes = initialBufferBytes;
+    lastMaxBufferBytes = maxBufferBytes;
     return catalogColumnsResult;
   }
 
   @override
-  Uint8List? catalogTypeInfo(int connectionId) => catalogTypeInfoResult;
+  Uint8List? catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) {
+    lastInitialBufferBytes = initialBufferBytes;
+    lastMaxBufferBytes = maxBufferBytes;
+    return catalogTypeInfoResult;
+  }
 
   @override
-  Uint8List? catalogPrimaryKeys(int connectionId, String table) {
+  Uint8List? catalogPrimaryKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) {
     lastTable = table;
     return catalogPrimaryKeysResult;
   }
 
   @override
-  Uint8List? catalogForeignKeys(int connectionId, String table) {
+  Uint8List? catalogForeignKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) {
     lastTable = table;
     return catalogForeignKeysResult;
   }
 
   @override
-  Uint8List? catalogIndexes(int connectionId, String table) {
+  Uint8List? catalogIndexes(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) {
     lastTable = table;
     return catalogIndexesResult;
   }
 }
 
-QueryResult? _stubParser(Uint8List? buf) {
+QueryResult? _stubParser(
+  Uint8List? buf, {
+  bool lazyStrings = false,
+}) {
+  lastLazyStrings = lazyStrings;
   if (buf == null || buf.isEmpty) return null;
   return const QueryResult(columns: ['c1'], rows: [], rowCount: 0);
 }
+
+bool lastLazyStrings = false;
 
 Future<Failure<QueryResult, OdbcError>> _stubConvertError({
   required String fallbackMessage,

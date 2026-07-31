@@ -69,7 +69,12 @@ class NativeOdbcConnection extends _NativeOdbcState
         _NativeStreaming
     implements OdbcConnectionBackend {
   /// Creates a new [NativeOdbcConnection] instance.
-  NativeOdbcConnection() : super(bindings.OdbcNative());
+  NativeOdbcConnection({int? sqlPointerCacheMaxSize})
+      : super(
+          bindings.OdbcNative(
+            sqlPointerCacheMaxSize: sqlPointerCacheMaxSize,
+          ),
+        );
 
   /// Creates an instance backed by injected [native] (unit tests only).
   @visibleForTesting

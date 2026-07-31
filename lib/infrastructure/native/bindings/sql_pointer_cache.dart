@@ -33,7 +33,9 @@ import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
 class SqlPointerCache {
   SqlPointerCache({this.maxSize = _defaultMaxSize});
 
-  static const int _defaultMaxSize = 256;
+  static const int defaultMaxSize = 256;
+
+  static const int _defaultMaxSize = defaultMaxSize;
 
   /// Maximum number of cached entries. Once full, the oldest entry is freed
   /// to make room for the new one (LRU policy via [LinkedHashMap] insertion

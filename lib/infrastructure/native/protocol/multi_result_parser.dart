@@ -133,6 +133,67 @@ class MultiResultParser {
     return _parseV1(data, lazyStrings: lazyStrings);
   }
 
+  /// Returns a zero-copy view of the first result-set payload without decoding
+  /// cell data. Skips leading row-count items. Returns null when no result-set
+  /// item is present.
+  ///
+  /// Used by typed-columnar decode to avoid rematerializing a columnar v2
+  /// first result set through `QueryResult`.
+  static Uint8List? peekFirstResultSetPayload(Uint8List data) {
+    late final int offset;
+    late final int itemCount;
+    final byteData = ByteData.sublistView(data);
+
+    if (data.length >= 4 &&
+        byteData.getUint32(0, _littleEndian) == multiResultMagic) {
+      if (data.length < _headerV2Len) {
+        throw const FormatException(
+          'Buffer too small for multi-result v2 header',
+        );
+      }
+      final version = byteData.getUint16(4, _littleEndian);
+      if (version != multiResultVersionV2) {
+        throw FormatException(
+          'Unsupported multi-result version: $version '
+          '(expected $multiResultVersionV2)',
+        );
+      }
+      itemCount = byteData.getUint32(8, _littleEndian);
+      offset = _headerV2Len;
+    } else {
+      if (data.length < headerSize) {
+        throw const FormatException(
+          'Buffer too small for multi-result header',
+        );
+      }
+      itemCount = byteData.getUint32(0, _littleEndian);
+      offset = headerSize;
+    }
+
+    var cursor = offset;
+    for (var i = 0; i < itemCount; i++) {
+      if (cursor + itemHeaderSize > data.length) {
+        throw const FormatException(
+          'Multi-result buffer truncated at item header',
+        );
+      }
+      final tag = data[cursor];
+      cursor += 1;
+      final length = byteData.getUint32(cursor, _littleEndian);
+      cursor += 4;
+      if (cursor + length > data.length) {
+        throw const FormatException(
+          'Multi-result buffer truncated at item payload',
+        );
+      }
+      if (tag == tagResultSet || tag == tagResultSetBatch) {
+        return Uint8List.sublistView(data, cursor, cursor + length);
+      }
+      cursor += length;
+    }
+    return null;
+  }
+
   static List<MultiResultItem> _parseV1(
     Uint8List data, {
     bool lazyStrings = false,

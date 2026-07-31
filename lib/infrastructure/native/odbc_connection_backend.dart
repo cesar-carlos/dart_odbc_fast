@@ -46,6 +46,7 @@ abstract class OdbcConnectionBackend {
   /// The [timeoutOverrideMs] overrides statement timeout (0 = use stored).
   /// The [fetchSize] specifies rows per batch (default: 1000).
   /// When [maxBufferBytes] is set, caps the result buffer size.
+  /// When [initialBufferBytes] is set, seeds the FFI result buffer.
   /// Returns binary result data on success, null on failure.
   Uint8List? executePrepared(
     int stmtId,
@@ -53,6 +54,7 @@ abstract class OdbcConnectionBackend {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   });
 
   /// Closes and releases a prepared statement.
@@ -81,6 +83,8 @@ abstract class OdbcConnectionBackend {
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   });
 
   /// Queries the database catalog for column information.
@@ -88,34 +92,58 @@ abstract class OdbcConnectionBackend {
   /// The [connectionId] must be a valid active connection.
   /// The [table] is the table name to query.
   /// Returns binary result data on success, null on failure.
-  Uint8List? catalogColumns(int connectionId, String table);
+  Uint8List? catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  });
 
   /// Queries the database catalog for data type information.
   ///
   /// The [connectionId] must be a valid active connection.
   /// Returns binary result data on success, null on failure.
-  Uint8List? catalogTypeInfo(int connectionId);
+  Uint8List? catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  });
 
   /// Queries the database catalog for primary key information.
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [table] is the table name to query.
   /// Returns binary result data on success, null on failure.
-  Uint8List? catalogPrimaryKeys(int connectionId, String table);
+  Uint8List? catalogPrimaryKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  });
 
   /// Queries the database catalog for foreign key information.
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [table] is the table name to query.
   /// Returns binary result data on success, null on failure.
-  Uint8List? catalogForeignKeys(int connectionId, String table);
+  Uint8List? catalogForeignKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  });
 
   /// Queries the database catalog for index information.
   ///
   /// The [connectionId] must be a valid active connection.
   /// The [table] is the table name to query.
   /// Returns binary result data on success, null on failure.
-  Uint8List? catalogIndexes(int connectionId, String table);
+  Uint8List? catalogIndexes(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  });
 
   /// Gets a connection from the pool.
   ///

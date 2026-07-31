@@ -60,6 +60,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) =>
       _native.executeTyped(
         stmtId,
@@ -67,6 +68,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         timeoutOverrideMs,
         fetchSize,
         maxBufferBytes,
+        initialBufferBytes,
       );
 
   /// Executes a prepared statement with params already serialized (bytes).
@@ -79,6 +81,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) =>
       _native.execute(
         stmtId,
@@ -86,6 +89,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         timeoutOverrideMs,
         fetchSize,
         maxBufferBytes,
+        initialBufferBytes,
       );
 
   /// Requests cancellation of a prepared statement execution.
@@ -114,6 +118,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.execQueryParamsTyped(
@@ -121,6 +126,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         sql,
         params,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
       );
 
@@ -134,6 +140,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     String sql,
     Uint8List? serializedParams, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.execQueryParams(
@@ -141,6 +148,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         sql,
         serializedParams,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
       );
 
@@ -156,8 +164,14 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int connectionId,
     String sql, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) =>
-      _native.execQueryMulti(connectionId, sql, maxBufferBytes: maxBufferBytes);
+      _native.execQueryMulti(
+        connectionId,
+        sql,
+        maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
+      );
 
   /// Whether the loaded native library exports
   /// `odbc_exec_query_multi_params` (added in v3.2.0).
@@ -215,11 +229,13 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     String sql,
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) =>
       _native.execQueryMultiParams(
         connectionId,
         sql,
         paramsBuffer,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
       );
 }

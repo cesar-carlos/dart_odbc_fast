@@ -14,15 +14,66 @@ class StreamStartRequest extends WorkerRequest {
 
 /// Start low-level batched streaming query.
 class StreamStartBatchedRequest extends WorkerRequest {
-  const StreamStartBatchedRequest(
+  StreamStartBatchedRequest(
     int requestId,
     this.connectionId,
     this.sql, {
     this.fetchSize = 1000,
     this.chunkSize = 64 * 1024,
     this.resultEncodingWire = 0,
-    this.paramsBuffer,
-  }) : super(requestId, RequestType.streamStartBatched);
+    Uint8List? paramsBuffer,
+  })  : _paramsBuffer = paramsBuffer,
+        _transferableParams = null,
+        super(requestId, RequestType.streamStartBatched);
+
+  StreamStartBatchedRequest._transferable(
+    int requestId,
+    this.connectionId,
+    this.sql,
+    TransferableTypedData transferableParams, {
+    this.fetchSize = 1000,
+    this.chunkSize = 64 * 1024,
+    this.resultEncodingWire = 0,
+  })  : _paramsBuffer = null,
+        _transferableParams = transferableParams,
+        super(requestId, RequestType.streamStartBatched);
+
+  factory StreamStartBatchedRequest.withParamsBuffer(
+    int requestId,
+    int connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+    Uint8List? paramsBuffer,
+  }) {
+    if (paramsBuffer != null) {
+      final transferableParams = transferableIsolatePayload(paramsBuffer);
+      if (transferableParams != null) {
+        return StreamStartBatchedRequest._transferable(
+          requestId,
+          connectionId,
+          sql,
+          transferableParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        );
+      }
+    }
+    return StreamStartBatchedRequest(
+      requestId,
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      resultEncodingWire: resultEncodingWire,
+      paramsBuffer: paramsBuffer,
+    );
+  }
+
+  Uint8List? _paramsBuffer;
+  final TransferableTypedData? _transferableParams;
   final int connectionId;
   final String sql;
   final int fetchSize;
@@ -32,7 +83,17 @@ class StreamStartBatchedRequest extends WorkerRequest {
   final int resultEncodingWire;
 
   /// Serialized ParamValue / DRT1 Input buffer; null or empty = no params.
-  final Uint8List? paramsBuffer;
+  Uint8List? get paramsBuffer {
+    final inline = _paramsBuffer;
+    if (inline != null) {
+      return inline;
+    }
+    final transferable = _transferableParams;
+    if (transferable == null) {
+      return null;
+    }
+    return _paramsBuffer = transferable.materialize().asUint8List();
+  }
 }
 
 /// Start low-level async batched streaming query.

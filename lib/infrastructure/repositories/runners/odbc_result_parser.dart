@@ -11,7 +11,7 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
-    show BinaryProtocolParser, ParsedRowBuffer;
+    show BinaryProtocolParser, ColumnMetadata, ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
     show
         MultiResultItem,
@@ -76,8 +76,10 @@ class OdbcResultParser {
   }
 
   /// Decodes a native buffer directly to [TypedColumnarResult] when the wire
-  /// layout is columnar v2; row-major and multi-result buffers fall back to
-  /// [toTypedColumnar] after row materialization.
+  /// layout is columnar v2; row-major buffers fall back to
+  /// [toTypedColumnarFromWire] after row materialization. Multi-result
+  /// envelopes decode the first result-set payload directly when it is
+  /// columnar v2.
   TypedColumnarResult? parseBufferToTypedColumnar(
     Uint8List? buf, {
     bool lazyStrings = false,
@@ -91,8 +93,16 @@ class OdbcResultParser {
         final firstWord =
             ByteData.sublistView(buf, 0, 4).getUint32(0, Endian.little);
         if (firstWord == multiResultMagic) {
+          final payload = MultiResultParser.peekFirstResultSetPayload(buf);
+          if (payload != null &&
+              BinaryProtocolParser.isColumnarV2Message(payload)) {
+            return BinaryProtocolParser.parseColumnarToTyped(
+              payload,
+              lazyStrings: lazyStrings,
+            );
+          }
           final qr = _parseMultiDirectedBuffer(buf, lazyStrings: lazyStrings);
-          return toTypedColumnar(qr);
+          return _typedFromQueryResultWire(qr, assumeLazyStrings: lazyStrings);
         }
       }
       if (BinaryProtocolParser.isColumnarV2Message(buf)) {
@@ -105,24 +115,13 @@ class OdbcResultParser {
         buf,
         lazyStrings: lazyStrings,
       );
-      return toTypedColumnar(
-        QueryResult(
-          columns: p.rowBuffer.columnNames,
-          columnsMetadata: p.rowBuffer.columns,
-          rows: p.rowBuffer.rows,
-          rowCount: p.rowBuffer.rowCount,
-          outputParamValues: p.outputParamValues,
-          refCursorResults: p.refCursorRowBuffers
-              .map(
-                (b) => QueryResult(
-                  columns: b.columnNames,
-                  columnsMetadata: b.columns,
-                  rows: b.rows,
-                  rowCount: b.rowCount,
-                ),
-              )
-              .toList(growable: false),
-        ),
+      return toTypedColumnarFromWire(
+        columnNames: p.rowBuffer.columnNames,
+        odbcDiscriminants: [
+          for (final col in p.rowBuffer.columns) col.odbcType,
+        ],
+        rows: p.rowBuffer.rows,
+        assumeLazyStrings: lazyStrings,
       );
     } on FormatException catch (e, st) {
       AppLogger.warning(
@@ -133,6 +132,22 @@ class OdbcResultParser {
       );
       return null;
     }
+  }
+
+  TypedColumnarResult _typedFromQueryResultWire(
+    QueryResult qr, {
+    bool assumeLazyStrings = false,
+  }) {
+    final meta = qr.columnsMetadata;
+    if (meta != null && meta.isNotEmpty) {
+      return toTypedColumnarFromWire(
+        columnNames: qr.columns,
+        odbcDiscriminants: [for (final col in meta) col.odbcType],
+        rows: qr.rows,
+        assumeLazyStrings: assumeLazyStrings,
+      );
+    }
+    return toTypedColumnar(qr);
   }
 
   QueryResult _parseMultiDirectedBuffer(
@@ -152,6 +167,7 @@ class OdbcResultParser {
     var columns = const <String>[];
     var rows = const <List<dynamic>>[];
     var rowCount = 0;
+    List<ColumnMetadata>? columnsMetadata;
     int startTailAt;
 
     if (firstIsResultSet) {
@@ -159,6 +175,7 @@ class OdbcResultParser {
       columns = rb.columnNames;
       rows = rb.rows;
       rowCount = rb.rowCount;
+      columnsMetadata = rb.columns;
       startTailAt = 1;
     } else {
       startTailAt = 0;
@@ -183,6 +200,7 @@ class OdbcResultParser {
 
     return QueryResult(
       columns: columns,
+      columnsMetadata: columnsMetadata,
       rows: rows,
       rowCount: rowCount,
       outputParamValues: outputParamValues,

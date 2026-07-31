@@ -80,8 +80,10 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   late final OdbcCatalogRunner _catalog;
   late final OdbcBulkRunner _bulk;
 
-  /// Effective default for `executeQueryParamValues` when callers omit
-  /// `resultEncoding`. Wired from `ServiceLocator` for server presets.
+  /// Default wire encoding for **columnar** APIs (`executeQueryColumnar*`,
+  /// `streamQueryColumnar*`) when the repository was built with a server
+  /// profile. QueryResult-returning APIs ignore this and always use
+  /// [forQueryResultWire] (row-major).
   @visibleForTesting
   ResultEncoding get defaultResultEncoding => _state.defaultResultEncoding;
 
@@ -122,6 +124,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       backend: _backend,
       nativeIdLookup: (id) => _state.connectionIds[id],
       parseBuffer: _parser.parseBufferToQueryResult,
+      optionsLookup: _state.optionsFor,
       convertQueryError: ({
         required fallbackMessage,
         nativeConnectionId,
@@ -206,7 +209,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _stream.streamQueryMulti(
         connectionId,
@@ -216,15 +219,32 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
 
   @override
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
-      _stream.streamQuery(connectionId, sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _stream.streamQuery(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) =>
-      _stream.streamQueryColumnar(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _stream.streamQueryColumnar(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   bool isInitialized() => _connection.isInitialized();
@@ -363,7 +383,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         connectionId,
         sql,
         params,
-        resultEncoding: resultEncoding ?? _state.defaultResultEncoding,
+        resultEncoding: forQueryResultWire(resultEncoding),
       );
 
   @override
@@ -385,7 +405,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
         connectionId,
         sql,
         paramBuffer,
-        resultEncoding: resultEncoding ?? _state.defaultResultEncoding,
+        resultEncoding: forQueryResultWire(resultEncoding),
       );
 
   @override
@@ -408,9 +428,17 @@ class OdbcRepositoryImpl implements IOdbcRepository {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      _stream.streamQueryNamed(connectionId, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _stream.streamQueryNamed(
+        connectionId,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryMulti(
@@ -651,7 +679,7 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _stream.streamStartAsync(
         connectionId,

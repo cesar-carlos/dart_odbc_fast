@@ -18,9 +18,11 @@ import 'package:result_dart/result_dart.dart';
 class OdbcRepositoryState {
   OdbcRepositoryState({this.defaultResultEncoding = ResultEncoding.rowMajor});
 
-  /// Wire encoding used when callers omit `resultEncoding` on param execute
-  /// APIs. `ServiceLocator` sets this from
+  /// Default wire encoding for **columnar** APIs (`executeQueryColumnar*`,
+  /// `streamQueryColumnar*`). `ServiceLocator` sets this from
   /// `ResolvedOdbcUsageProfile.recommendedResultEncoding` for server presets.
+  /// QueryResult-returning APIs always request row-major via
+  /// `forQueryResultWire` and do not read this field.
   ResultEncoding defaultResultEncoding;
 
   /// Domain `connectionId` (string) → native id (int).

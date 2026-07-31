@@ -124,8 +124,18 @@ class OdbcService implements IOdbcService {
       _query.executeQueryDirectedParams(connectionId, sql, params);
 
   @override
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
-      _query.streamQuery(connectionId, sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQuery(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Future<Result<int>> beginTransaction(
@@ -297,7 +307,7 @@ class OdbcService implements IOdbcService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _query.streamQueryMulti(
         connectionId,
@@ -318,9 +328,17 @@ class OdbcService implements IOdbcService {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      _query.streamQueryNamed(connectionId, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQueryNamed(
+        connectionId,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -337,9 +355,16 @@ class OdbcService implements IOdbcService {
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) =>
-      _query.streamQueryColumnar(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQueryColumnar(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Future<Result<QueryResult>> catalogTables({
@@ -565,7 +590,7 @@ class OdbcService implements IOdbcService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _admin.streamStartAsync(
         connectionId,

@@ -37,4 +37,22 @@ class BinaryProtocolBufferReader {
     _offset += length;
     return bytes;
   }
+
+  /// Reads a little-endian i32 from the current offset without allocating.
+  int readInt32Le() {
+    final value = _byteData.getInt32(_offset, binaryProtocolLittleEndian);
+    _offset += 4;
+    return value;
+  }
+
+  /// Reads a little-endian i64 from the current offset without allocating.
+  int readInt64Le() {
+    final value = _byteData.getInt64(_offset, binaryProtocolLittleEndian);
+    _offset += 8;
+    return value;
+  }
+
+  void skip(int length) {
+    _offset += length;
+  }
 }

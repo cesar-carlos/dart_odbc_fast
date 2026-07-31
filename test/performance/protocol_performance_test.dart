@@ -4,8 +4,11 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/bulk_insert_builder.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
+import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
 import 'package:test/test.dart';
 
 List<int> _legacyU32Le(int v) {
@@ -399,7 +402,126 @@ void main() {
         );
       }
     });
+
+    test('P4.2 ProtocolByteAccumulator free-list acquire/offer', () {
+      ProtocolByteAccumulator.clearPoolForTest();
+      const iterations = 5000;
+      final watch = Stopwatch()..start();
+      var checksum = 0;
+      for (var i = 0; i < iterations; i++) {
+        final acc = ProtocolByteAccumulator()
+          ..add(Uint8List(64 * 1024))
+          ..add(Uint8List.fromList([1]));
+        checksum ^= acc.length;
+        // Growth offers the abandoned default backing back to the pool.
+      }
+      watch.stop();
+      print(
+        'P4.2 accumulator growth+pool: ${watch.elapsedMilliseconds}ms '
+        '(checksum=$checksum, '
+        'pool=${ProtocolByteAccumulator.pooledBackingCount})',
+      );
+      expect(ProtocolByteAccumulator.pooledBackingCount, greaterThan(0));
+      expect(ProtocolByteAccumulator.pooledBackingCount, lessThanOrEqualTo(4));
+      ProtocolByteAccumulator.clearPoolForTest();
+    });
+
+    test('P4.3 MULT first columnar RS typed decode', () {
+      const iterations = 2000;
+      final inner = _columnarBuffer(rows: 64);
+      final mult = _multV2Envelope(inner);
+      const parser = OdbcResultParser();
+
+      final watch = Stopwatch()..start();
+      var rows = 0;
+      for (var i = 0; i < iterations; i++) {
+        final typed = parser.parseBufferToTypedColumnar(mult);
+        rows += typed!.rowCount;
+      }
+      watch.stop();
+      print(
+        'P4.3 MULT columnar→typed: ${watch.elapsedMilliseconds}ms '
+        'rows=$rows',
+      );
+      expect(rows, equals(64 * iterations));
+    });
+
+    test('P4.4 row-major int-heavy decode', () {
+      const rows = 4000;
+      const iterations = 80;
+      final buffer = _rowMajorIntHeavyBuffer(rows: rows);
+
+      final watch = Stopwatch()..start();
+      var cells = 0;
+      for (var i = 0; i < iterations; i++) {
+        final parsed = BinaryProtocolParser.parse(buffer);
+        cells += parsed.rowCount * parsed.columnCount;
+        expect(parsed.rows.first[0], isA<int>());
+        expect(parsed.rows.first[1], isA<int>());
+      }
+      watch.stop();
+      print(
+        'P4.4 row-major int-heavy: ${watch.elapsedMilliseconds}ms '
+        'cells=$cells',
+      );
+      expect(cells, equals(rows * 2 * iterations));
+    });
   });
+}
+
+Uint8List _rowMajorIntHeavyBuffer({required int rows}) {
+  final payload = <int>[];
+  const columns = [
+    (name: 'id', type: 2),
+    (name: 'big', type: 3),
+  ];
+  for (final column in columns) {
+    payload
+      ..addAll(column.type.toBytes(2))
+      ..addAll(column.name.length.toBytes(2))
+      ..addAll(column.name.codeUnits);
+  }
+  for (var i = 0; i < rows; i++) {
+    payload
+      ..add(0)
+      ..addAll(4.toBytes(4))
+      ..addAll((-i).toBytes(4))
+      ..add(0)
+      ..addAll(8.toBytes(4))
+      ..addAll((i * 10000000000).toBytes(8));
+  }
+  return Uint8List.fromList(
+    <int>[
+      ...BinaryProtocolParser.magic.toBytes(4),
+      ...BinaryProtocolParser.protocolVersionRowMajor.toBytes(2),
+      ...columns.length.toBytes(2),
+      ...rows.toBytes(4),
+      ...payload.length.toBytes(4),
+      ...payload,
+    ],
+  );
+}
+
+Uint8List _multV2Envelope(Uint8List inner) {
+  final out = BytesBuilder()
+    ..add(_u32List(multiResultMagic))
+    ..add(_u16List(multiResultVersionV2))
+    ..add(_u16List(0))
+    ..add(_u32List(1))
+    ..addByte(MultiResultParser.tagResultSet)
+    ..add(_u32List(inner.length))
+    ..add(inner);
+  return out.toBytes();
+}
+
+List<int> _u32List(int v) {
+  final b = ByteData(4)..setUint32(0, v, Endian.little);
+  return b.buffer.asUint8List();
+}
+
+List<int> _u16List(int v) {
+  final b = ByteData(2)..setUint16(0, v, Endian.little);
+  return b.buffer.asUint8List();
 }
 
 Uint8List _rowMajorBuffer({required int rows}) {

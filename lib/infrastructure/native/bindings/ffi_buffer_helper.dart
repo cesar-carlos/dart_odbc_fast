@@ -152,6 +152,9 @@ StreamBufferFetchResult? _streamCallWithTransientBuffer(
 final ffi.Pointer<ffi.Uint32> _streamStatusOutWritten = malloc<ffi.Uint32>();
 final ffi.Pointer<ffi.Uint8> _streamStatusHasMore = malloc<ffi.Uint8>();
 
+/// Reused per-isolate `outWritten` for transient query buffers.
+final ffi.Pointer<ffi.Uint32> _transientOutWritten = malloc<ffi.Uint32>();
+
 /// Materializes FFI bytes using the same zero-copy policy as [callWithBuffer].
 Uint8List materializeFfiBytes(
   ffi.Pointer<ffi.Uint8> buf,
@@ -189,10 +192,11 @@ Uint8List? callWithBuffer(
   final limit = maxSize ?? maxBufferSize;
   final size = initialSize ?? initialBufferSize;
   final zeroCopy = allowZeroCopy ?? isZeroCopyResultBufferAvailable;
-  // Prefer transient only when the caller opts in or the seed size already
-  // suggests a large payload. Do not gate on [limit] (often 16 MiB) — that
-  // forced malloc/free for every sync query and skipped the scratch pool.
-  if (zeroCopy && (preferTransient || size >= zeroCopyResultThresholdBytes)) {
+  // Prefer transient when the caller opts in or the seed is already at/above
+  // the FFI default seed (256 KiB). Smaller seeds (e.g. runner default 64 KiB)
+  // use the scratch pool; large results still escalate to transient on resize
+  // when the written length meets [zeroCopyResultThresholdBytes].
+  if (zeroCopy && (preferTransient || size >= initialBufferSize)) {
     return _callWithTransientBuffer(
       fn,
       limit: limit,
@@ -230,14 +234,14 @@ Uint8List? _callWithTransientBuffer(
   // Clamp to limit so callers passing maxBufferBytes smaller than the default
   // initialSize still enter the loop instead of skipping it entirely.
   var size = initialSize <= limit ? initialSize : limit;
+  final outWritten = _transientOutWritten;
   while (size <= limit) {
     final buf = malloc<ffi.Uint8>(size);
-    final outWritten = malloc<ffi.Uint32>()..value = 0;
+    outWritten.value = 0;
     try {
       final code = fn(buf, size, outWritten);
       if (code == 0) {
         final n = outWritten.value;
-        malloc.free(outWritten);
         return _materializeFfiBytes(
           buf,
           n,
@@ -247,20 +251,14 @@ Uint8List? _callWithTransientBuffer(
       }
       if (code == -2) {
         final requested = outWritten.value;
-        malloc
-          ..free(buf)
-          ..free(outWritten);
+        malloc.free(buf);
         size = requested > size ? requested : size * 2;
         continue;
       }
-      malloc
-        ..free(buf)
-        ..free(outWritten);
+      malloc.free(buf);
       return null;
     } on Object {
-      malloc
-        ..free(buf)
-        ..free(outWritten);
+      malloc.free(buf);
       rethrow;
     }
   }

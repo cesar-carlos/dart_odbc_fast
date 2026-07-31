@@ -40,7 +40,7 @@ void main() {
       const CloseStatementRequest(id, 1),
       const ClearAllStatementsRequest(id),
       const StreamStartRequest(id, 1, 'SELECT 1'),
-      const StreamStartBatchedRequest(id, 1, 'SELECT 1'),
+      StreamStartBatchedRequest(id, 1, 'SELECT 1'),
       const StreamStartAsyncRequest(id, 1, 'SELECT 1'),
       const StreamMultiStartBatchedRequest(id, 1, 'SELECT 1'),
       const StreamMultiStartAsyncRequest(id, 1, 'SELECT 1'),

@@ -21,28 +21,22 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
       for (var i = 0; i < columns.length; i++) {
         (colPtrs + i).value = _sqlCache.acquire(columns[i]);
       }
-      final rowsInserted = malloc<ffi.Uint32>();
-      try {
-        final dataPtr = _allocUint8List(dataBuffer);
-        try {
-          final code = _bindings.odbc_bulk_insert_array(
-            connectionId,
-            tablePtr,
-            colPtrs,
-            columns.length,
-            dataPtr,
-            dataBuffer.length,
-            rowCount,
-            rowsInserted,
-          );
-          if (code != 0) return -1;
-          return rowsInserted.value;
-        } finally {
-          malloc.free(dataPtr);
-        }
-      } finally {
-        malloc.free(rowsInserted);
-      }
+      final rowsInserted = _bulkRowsInsertedPtr();
+      return _withByteBuffer(dataBuffer, (dataPtr) {
+            final code = _bindings.odbc_bulk_insert_array(
+              connectionId,
+              tablePtr,
+              colPtrs,
+              columns.length,
+              dataPtr,
+              dataBuffer.length,
+              rowCount,
+              rowsInserted,
+            );
+            if (code != 0) return -1;
+            return rowsInserted.value;
+          }) ??
+          -1;
     } finally {
       malloc.free(colPtrs);
     }
@@ -65,28 +59,22 @@ mixin _OdbcNativeQueryBulk on _OdbcNativeState, _OdbcNativeHelpers {
       for (var i = 0; i < columns.length; i++) {
         (colPtrs + i).value = _sqlCache.acquire(columns[i]);
       }
-      final rowsInserted = malloc<ffi.Uint32>();
-      try {
-        final dataPtr = _allocUint8List(dataBuffer);
-        try {
-          final code = _bindings.odbc_bulk_insert_parallel(
-            poolId,
-            tablePtr,
-            colPtrs,
-            columns.length,
-            dataPtr,
-            dataBuffer.length,
-            parallelism,
-            rowsInserted,
-          );
-          if (code != 0) return -1;
-          return rowsInserted.value;
-        } finally {
-          malloc.free(dataPtr);
-        }
-      } finally {
-        malloc.free(rowsInserted);
-      }
+      final rowsInserted = _bulkRowsInsertedPtr();
+      return _withByteBuffer(dataBuffer, (dataPtr) {
+            final code = _bindings.odbc_bulk_insert_parallel(
+              poolId,
+              tablePtr,
+              colPtrs,
+              columns.length,
+              dataPtr,
+              dataBuffer.length,
+              parallelism,
+              rowsInserted,
+            );
+            if (code != 0) return -1;
+            return rowsInserted.value;
+          }) ??
+          -1;
     } finally {
       malloc.free(colPtrs);
     }

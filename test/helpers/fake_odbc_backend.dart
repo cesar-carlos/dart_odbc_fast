@@ -62,6 +62,7 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) {
     lastExecutePreparedParams = params;
     lastExecutePreparedTimeoutOverrideMs = timeoutOverrideMs;
@@ -87,26 +88,53 @@ class FakeOdbcConnectionBackend implements OdbcConnectionBackend {
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   }) =>
       catalogTablesResult;
 
   @override
-  Uint8List? catalogColumns(int connectionId, String table) =>
+  Uint8List? catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
       catalogColumnsResult;
 
   @override
-  Uint8List? catalogTypeInfo(int connectionId) => catalogTypeInfoResult;
+  Uint8List? catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      catalogTypeInfoResult;
 
   @override
-  Uint8List? catalogPrimaryKeys(int connectionId, String table) =>
+  Uint8List? catalogPrimaryKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
       catalogPrimaryKeysResult;
 
   @override
-  Uint8List? catalogForeignKeys(int connectionId, String table) =>
+  Uint8List? catalogForeignKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
       catalogForeignKeysResult;
 
   @override
-  Uint8List? catalogIndexes(int connectionId, String table) =>
+  Uint8List? catalogIndexes(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
       catalogIndexesResult;
 
   @override

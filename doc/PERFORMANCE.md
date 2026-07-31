@@ -50,21 +50,51 @@ for [`ServiceLocator.initialize`](../lib/core/di/service_locator.dart): async vs
 sync, worker count, backpressure, and the shape of
 `recommendedConnectionOptions` / `recommendedPoolOptions`.
 
-| Profile           | When to use                                   | Async | Workers | Pending cap | Recommended `ResultEncoding` |
-| ----------------- | --------------------------------------------- | ----- | ------- | ----------- | ---------------------------- |
-| `balanced`        | Recommended opt-in preset for general apps    | yes   | 2       | 24          | row-major                    |
-| `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          | row-major                    |
-| `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          | **columnar**                 |
-| `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          | **columnar**                 |
-| `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   | row-major                    |
+| Profile           | When to use                                   | Async | Workers | Pending cap | Recommended columnar encoding | Stream `chunkSize` | `lazyStrings` |
+| ----------------- | --------------------------------------------- | ----- | ------- | ----------- | ----------------------------- | ------------------ | ------------- |
+| `balanced`        | Recommended opt-in preset for general apps    | yes   | 2       | 24          | row-major                     | 64 KiB             | off           |
+| `balancedFlutter` | Mostly one connection, UI responsiveness      | yes   | 1       | 16          | row-major                     | 64 KiB             | off           |
+| `balancedServer`  | Native pool + concurrent checkouts            | yes   | 4       | 32          | **columnar**                  | **1 MiB**          | **on**        |
+| `highThroughput`  | Heavier server workloads with larger pools    | yes   | 6       | 48          | **columnar**                  | **1 MiB**          | **on**        |
+| `legacy`          | Default; CLI, tests, minimal isolate overhead | no    | 1       | unbounded   | row-major                     | 64 KiB             | off           |
 
-Per-query APIs use `ResultEncoding? resultEncoding` on
-`executeQueryParamValues` / `executeQueryParamBuffer`: when omitted (`null`),
-the repository applies its `defaultResultEncoding` (`rowMajor` for direct
-`OdbcRepositoryImpl(...)` construction, `columnar` when created through
-`ServiceLocator` with `balancedServer` or `highThroughput`). Pass
-`resultEncoding: ResultEncoding.rowMajor` explicitly to force the legacy wire
-on server presets.
+**QueryResult vs columnar wire:** APIs that return `QueryResult`
+(`executeQuery*`, `streamQuery*`) always request **row-major** wire via
+`forQueryResultWire` (columnar requests are clamped). This avoids
+columnar-wire → `List<List<dynamic>>` rematerialization. Server presets still
+set repository `defaultResultEncoding` to columnar for
+`executeQueryColumnar*` / `streamQueryColumnar*` only.
+
+`ServiceLocator.recommendedStreamChunkSizeBytes` exposes the table's stream
+chunk suggestion; public `streamQuery` / `streamQueryNamed` /
+`streamQueryColumnar` / `streamQueryMulti` signature defaults remain 64 KiB —
+pass `chunkSize: locator.recommendedStreamChunkSizeBytes` (and optional
+`fetchSize`) explicitly for large scans. Those parameters forward through to
+batched native start and each `streamFetch(bufferSize: chunkSize)` (async and
+sync).
+
+`ConnectionOptions.fromUsageProfile` for server presets enables `lazyStrings`
+and sets `initialResultBufferBytes` to 1 MiB. Repository runners seed FFI via
+`callWithBuffer(initialSize:)` for single-result, multi-result, and prepared
+execute (clamped by `maxResultBufferBytes`). When the connection option is
+null, runners use `defaultInitialResultBufferBytes` (64 KiB). Prepared
+executions may override with `StatementOptions.initialBufferSize`.
+
+FFI scratch vs transient: seeds below 256 KiB reuse the scratch pool; seeds at
+or above 256 KiB (or `preferTransient`) use transient allocation for
+zero-copy. The shared byte scratch (params + mid-size bulk ≤256 KiB) and
+`ProtocolByteAccumulator` growth past 64 KiB snaps to the 1 MiB pool tier.
+
+Buffered `executeQueryMulti*` timeouts are Dart-side only (`Future.timeout`);
+they do not cancel in-flight worker FFI. Prefer `streamQueryMulti` when
+cancellation matters.
+
+`streamQuery*` `chunkSize` may be omitted (`null`): runners use
+`ConnectionOptions.streamChunkSizeBytes` (1 MiB on server presets) or 64 KiB.
+
+`LazyString` cells still equal `String` via `==`; use `.value` (or disable
+lazy strings) when `is String` checks matter. ASCII text uses
+`String.fromCharCodes` on decode.
 
 Columnar modes need the native engine to export `odbc_execute_async_params_options`
 so the worker isolate can start async execution with a non-row-major encoding.
@@ -128,6 +158,12 @@ python scripts/run_dart_benchmarks.py --all
 async runs, the script prints a short
 `fallbacksToBlocking` summary per scenario (columnar should trend to **0**
 once async encoding reaches the native async path).
+
+Smoke compare tips: async `elapsedMs` is fractional (µs-based) to avoid
+int-millisecond quantization on short `SELECT 1` runs. CRUD SELECT scenarios
+use 1 warmup + median of 3 timed passes. Prefer `latencyP95Micros` / higher
+`ODBC_BENCH_QUERY_COUNT` when judging async worker lanes; wall-clock qps on
+24 queries remains noisy across machines.
 
 Rust micro-benches are local guardrails, not CI pass/fail thresholds. The FFI
 sync parameter path now borrows caller buffers only for the duration of each
@@ -290,7 +326,7 @@ Takeaways:
 | ---- | ----------- | --- |
 | `chunkSize` | Large scans (often **1–4 MiB**) | Fewer FFI fetch round-trips / resize loops; seed via `streamFetch(bufferSize:)` |
 | Columnar / `streamQueryColumnar*` | Analytics pipelines that keep **typed numeric** columns or use `lazyStrings` | Avoids row `List` framing; **not** a free win for full `SELECT *` string/datetime materialization |
-| Service `balancedServer` / `highThroughput` | Server apps already on the repository path | Default recommended encoding is columnar for those profiles |
+| Service `balancedServer` / `highThroughput` | Server apps already on the repository path | Columnar default for **typed** APIs; QueryResult APIs stay row-major wire; recommended stream chunk 1 MiB via `locator.recommendedStreamChunkSizeBytes` |
 
 Standalone `my_test` files default `chunkSize` to **1 MiB** when
 `MY_TEST_FULL_TABLE_SCAN=1` (override with `MY_TEST_CHUNK_SIZE_BYTES`).
@@ -390,7 +426,7 @@ supports them.
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `odbc_pool_get_connection` releases the global state mutex before calling `r2d2::Pool::get()` | Without this, every concurrent FFI call serialised behind slow pool checkouts (up to 30 s). Throughput under contention now scales close to `r2d2.max_size`.                                                                               |
 | `odbc_pool_close` drains live checkouts before removing the pool entry                        | Prevents a deadlock when other threads still hold pooled connections at shutdown.                                                                                                                                                          |
-| `PoolAutocommitCustomizer` sets `autocommit(true)` on every checkout                          | One extra ODBC call per checkout; eliminates the worst case where a connection returned mid-transaction silently affected the next caller.                                                                                                 |
+| `ConnectionPool::get` runs one `pool_session_reset` per checkout                              | r2d2 `on_acquire` only runs after `connect`, not on idle checkout. Resetting in `get` keeps sessions clean even when `test_on_check_out` is false. `is_valid` runs the health query only so validation does not double the reset.         |
 | `recv_timeout` + structured worker-disconnect error                                           | Converts an indefinite hang into an explicit `WorkerCrashed` error so the consumer can recover.                                                                                                                                            |
 | `read_exact` in disk-spill readback                                                           | Eliminates silent short-read truncation on Windows for large spills with no happy-path cost.                                                                                                                                               |
 | `Mutex<GlobalState>` granularity                                                              | Critical paths (pool checkout, metrics, audit, per-connection errors, async requests, legacy global error) are off the outer mutex. Connection, pool, transaction, stream, statement, and XA maps live in dedicated `ffi::state::*` shards. Residual `GlobalState` owns only `env` (+ optional BCP connection strings). |
@@ -398,6 +434,25 @@ supports them.
 | Direct `AsyncNativeOdbcConnection(...)` defaults                                              | Constructor defaults remain `workerCount = 1`, `maxPendingRequests = null`, and `backpressureMode = failFast`. Use `ServiceLocator` presets when you want profile-guided tuning instead of raw constructor defaults.                      |
 | Async backpressure (`maxPendingRequests` / `asyncMaxPendingRequests`)                         | In services with native pools, keep the pending cap near `poolSize * 2` to `poolSize * 4` so the Dart worker queue does not hide saturation.                                                                                              |
 | Worker isolates instead of raw threads                                                        | Dart consumers should scale with `workerCount` / `asyncWorkerCount`, not hand-spawn raw isolates around one connection. More workers only reduce bottlenecks when work can be routed across multiple connections or native-pool checkouts. |
+
+### Native pool checkout cost and tuning
+
+Default checkout path (`test_on_check_out = true`):
+
+1. Optional health query (`SELECT 1`, or `Health_Check_Query` / `ODBC_POOL_HEALTH_CHECK_QUERY`)
+2. One `pool_session_reset` in `ConnectionPool::get` (rollback + lock-timeout restore + autocommit)
+
+Checkin still resets before returning the connection to the idle set.
+
+For trusted low-latency pools where the health round-trip dominates, disable
+validation with `Pool_Test_On_Checkout=false` in the DSN (aliases:
+`test_on_check_out`, `TestOnCheckout`, …) or `ODBC_POOL_TEST_ON_CHECKOUT=0`.
+Session reset on checkout still runs.
+
+`poolHealthCheck` still performs a full r2d2 `pool.get()` (runs the health
+query when `test_on_check_out` is on; it does not go through
+`ConnectionPool::get`'s session reset). Prefer `poolGetState` /
+`poolGetStateDetailed` for frequent monitoring.
 
 ---
 
@@ -444,7 +499,7 @@ serial vs worker-pool behavior with a local slow query instead of the default
 | Knob | Value | Effect |
 | ---- | ----- | ------ |
 | `zeroCopyResultThresholdBytes` | `32 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). Sync param paths with large directed blobs use a transient allocation via `preferTransientFfiBufferForParams`. |
-| Scratch pool | small seeds (`initialSize < 32 KiB`) | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Transient + zero-copy when `preferTransient` or `initialSize >= 32 KiB` (not gated on the 16 MiB max ceiling). |
+| Scratch pool | seeds `< 256 KiB` | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Transient + zero-copy when `preferTransient` or `initialSize >= 256 KiB` (not gated on the 16 MiB max ceiling). |
 | `odbc_release_buffer` | exported | C ABI hook for releasing Dart `malloc` buffers; Dart uses the paired `malloc.nativeFree` finalizer today. |
 
 Opt-out is automatic on older native builds that do not export the symbol — the helper falls back to copying.
@@ -484,13 +539,16 @@ into `QueryResult` row lists on server profiles. Prefer
 columnar end-to-end. Low-level `streamStartAsync` follows the same row-major
 policy.
 
-For `streamQueryMulti`, optional `fetchSize` (default 1000) and `chunkSize`
-(default 64 KiB) forward to `odbc_stream_multi_start_*_options` when available;
-each fetch seeds the FFI buffer with `bufferSize: chunkSize`. Older natives
-without the options symbol keep the legacy entry (engine default fetch 100).
+For `streamQuery` / `streamQueryNamed` / `streamQueryColumnar`, optional
+`fetchSize` (default 1000) and `chunkSize` (default 64 KiB) forward to batched
+native start; each fetch seeds the FFI buffer with `bufferSize: chunkSize`
+(async and sync). For `streamQueryMulti`, the same knobs forward to
+`odbc_stream_multi_start_*_options` when available; older natives without the
+options symbol keep the legacy entry (engine default fetch 100).
 Wire tag 2 (continuation batch of the same SQL cursor) is coalesced in the
 repository runner into one `QueryResultMultiItem` so stream item counts match
-`executeQueryMultiFull` (growable row list — no per-batch `List.of`). Async
+`executeQueryMultiFull` (growable row list — no per-batch `List.of` when the
+list is already growable). Async
 backends use `streamMultiStartAsync` + `streamPollAndFetch` (one isolate hop
 when ready).
 

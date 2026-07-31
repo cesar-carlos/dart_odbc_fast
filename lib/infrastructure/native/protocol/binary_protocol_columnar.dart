@@ -6,7 +6,9 @@ import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_cell_decode.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_constants.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_types.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.dart';
 
 const Endian _littleEndian = Endian.little;
 
@@ -58,7 +60,6 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
   final rows = List<List<dynamic>>.generate(
     rowCount,
     (_) => List<dynamic>.filled(colCount, null),
-    growable: false,
   );
 
   for (var c = 0; c < colCount; c++) {
@@ -393,12 +394,9 @@ TypedColumnFloat64 _decodeFloat64Column({
     if (p + bl > raw.length) {
       throw const FormatException('Columnar v2: float data truncated');
     }
-    final text = utf8.decode(
-      Uint8List.sublistView(raw, p, p + bl),
-      allowMalformed: true,
-    );
+    final bytes = Uint8List.sublistView(raw, p, p + bl);
     p += bl;
-    values[i] = _parseFloat64Cell(text);
+    values[i] = _parseFloat64CellBytes(bytes);
   }
   if (p != raw.length) {
     throw const FormatException(
@@ -408,11 +406,12 @@ TypedColumnFloat64 _decodeFloat64Column({
   return TypedColumnFloat64(name: name, values: values, nullBitmap: bitmap);
 }
 
-double _parseFloat64Cell(String text) {
-  final parsed = double.tryParse(text);
+double _parseFloat64CellBytes(Uint8List bytes) {
+  final parsed = tryParseAsciiFloat64(bytes);
   if (parsed != null) {
     return parsed;
   }
+  final text = utf8.decode(bytes, allowMalformed: true);
   throw FormatException('Columnar v2: cannot parse float cell "$text"');
 }
 
@@ -616,6 +615,18 @@ bool? _coerceBoolCell(Object? value) {
       return true;
     }
   }
+  if (value is Uint8List) {
+    final parsed = tryParseAsciiBool(value);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  if (value is LazyString) {
+    final parsed = tryParseAsciiBool(value.bytes);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
   final text =
       (value is String ? value : value.toString()).trim().toLowerCase();
   if (text == '0' || text == 'false') {
@@ -635,6 +646,18 @@ DateTime? _coerceDateTimeCell(Object? value) {
   }
   if (value is DateTime) {
     return value;
+  }
+  if (value is Uint8List) {
+    final fast = tryParseAsciiDateTime(value);
+    if (fast != null) {
+      return fast;
+    }
+  }
+  if (value is LazyString) {
+    final fast = tryParseAsciiDateTime(value.bytes);
+    if (fast != null) {
+      return fast;
+    }
   }
   final text = value is String ? value : value.toString();
   final parsed = DateTime.tryParse(text);

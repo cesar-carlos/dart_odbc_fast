@@ -83,26 +83,23 @@ void validateDirectedOutInOut(ParamDirection direction, ParamValue pv) {
   }
 }
 
-List<int> _u32Le(int v) {
-  final buffer = Uint8List(4);
-  ByteData.view(buffer.buffer).setUint32(0, v, Endian.little);
-  return buffer;
-}
-
 /// Serialises [DirectedParam] values to a **DRT1** buffer.
 Uint8List serializeDirectedParams(List<DirectedParam> params) {
-  final out = BytesBuilder()
-    ..add(drt1MagicBytes)
-    ..add(_u32Le(params.length));
-  for (final d in params) {
-    out.addByte(d.direction.index);
+  final directions = List<int>.filled(params.length, 0);
+  final values = List<ParamValue>.filled(
+    params.length,
+    const ParamValueNull(),
+  );
+  for (var i = 0; i < params.length; i++) {
+    final d = params[i];
+    directions[i] = d.direction.index;
     final pv = d.type == null
         ? toParamValue(d.value)
         : toParamValue(typedParam(d.type!, d.value));
     validateDirectedOutInOut(d.direction, pv);
-    out.add(pv.serialize());
+    values[i] = pv;
   }
-  return out.toBytes();
+  return serializeDirectedParamList(directions, values);
 }
 
 /// Converts [DirectedParam] rows to a legacy **v0** binary [ParamValue] list.

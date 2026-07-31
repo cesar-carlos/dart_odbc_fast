@@ -51,8 +51,7 @@ class OdbcBulkRunner {
         ValidationError(message: 'Invalid connection ID'),
       );
     }
-    final buffer =
-        dataBuffer is Uint8List ? dataBuffer : Uint8List.fromList(dataBuffer);
+    final buffer = asUint8List(dataBuffer);
     try {
       final n = await _bulkInsertArray(
         nativeId: nativeId,
@@ -110,8 +109,7 @@ class OdbcBulkRunner {
         ValidationError(message: 'Row count must be greater than zero'),
       );
     }
-    final buffer =
-        dataBuffer is Uint8List ? dataBuffer : Uint8List.fromList(dataBuffer);
+    final buffer = asUint8List(dataBuffer);
 
     if (parallelism <= 1) {
       return _bulkInsertParallelFallback(
@@ -249,3 +247,9 @@ class OdbcBulkRunner {
           connection.poolReleaseConnection(connId),
       };
 }
+
+/// Returns [data] unchanged when it is already a [Uint8List]; otherwise copies.
+///
+/// Keeps the hot path zero-copy for `BulkInsertBuilder.build()` payloads.
+Uint8List asUint8List(List<int> data) =>
+    data is Uint8List ? data : Uint8List.fromList(data);

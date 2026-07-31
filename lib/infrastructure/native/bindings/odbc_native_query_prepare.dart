@@ -33,6 +33,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
     int timeoutOverrideMs = 0,
     int fetchSize = 1000,
     int? maxBufferBytes,
+    int? initialBufferBytes,
   ]) {
     if (params == null || params.isEmpty) {
       return callWithBuffer(
@@ -47,6 +48,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
           outWritten,
         ),
         maxSize: maxBufferBytes,
+        initialSize: initialBufferBytes,
       );
     }
     return _withParamsBuffer(
@@ -63,6 +65,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
           outWritten,
         ),
         maxSize: maxBufferBytes,
+        initialSize: initialBufferBytes,
         preferTransient: preferTransientFfiBufferForParams(params),
       ),
     );
@@ -84,6 +87,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
     int timeoutOverrideMs = 0,
     int fetchSize = 1000,
     int? maxBufferBytes,
+    int? initialBufferBytes,
   ]) {
     if (params == null || params.isEmpty) {
       return execute(
@@ -92,6 +96,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
         timeoutOverrideMs,
         fetchSize,
         maxBufferBytes,
+        initialBufferBytes,
       );
     }
     return execute(
@@ -100,6 +105,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
       timeoutOverrideMs,
       fetchSize,
       maxBufferBytes,
+      initialBufferBytes,
     );
   }
 

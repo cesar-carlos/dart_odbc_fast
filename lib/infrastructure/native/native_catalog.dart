@@ -5,32 +5,81 @@ mixin _NativeCatalog on _NativeOdbcState {
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   }) =>
       _native.catalogTables(
         connectionId,
         catalog: catalog,
         schema: schema,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
       );
 
   /// Creates a [CatalogQuery] wrapper for database catalog queries.
-  ///
-  /// The [connectionId] must be a valid active connection.
-  /// Returns a [CatalogQuery] instance for querying database metadata.
   CatalogQuery catalogQuery(int connectionId) =>
       CatalogQuery(_connection, connectionId);
 
-  Uint8List? catalogColumns(int connectionId, String table) =>
-      _native.catalogColumns(connectionId, table);
+  Uint8List? catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      _native.catalogColumns(
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      );
 
-  Uint8List? catalogTypeInfo(int connectionId) =>
-      _native.catalogTypeInfo(connectionId);
+  Uint8List? catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      _native.catalogTypeInfo(
+        connectionId,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      );
 
-  Uint8List? catalogPrimaryKeys(int connectionId, String table) =>
-      _native.catalogPrimaryKeys(connectionId, table);
+  Uint8List? catalogPrimaryKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      _native.catalogPrimaryKeys(
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      );
 
-  Uint8List? catalogForeignKeys(int connectionId, String table) =>
-      _native.catalogForeignKeys(connectionId, table);
+  Uint8List? catalogForeignKeys(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      _native.catalogForeignKeys(
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      );
 
-  Uint8List? catalogIndexes(int connectionId, String table) =>
-      _native.catalogIndexes(connectionId, table);
+  Uint8List? catalogIndexes(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) =>
+      _native.catalogIndexes(
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      );
 }

@@ -61,10 +61,15 @@ QueryResult fromTypedColumnar(TypedColumnarResult result) {
 
 /// Converts a row-major buffer into typed columns using wire ODBC
 /// discriminants when provided (avoids a [QueryResult] intermediate).
+///
+/// When [assumeLazyStrings] is true, string columns keep `Object?` cells
+/// without a pre-scan for [LazyString] (caller already decoded with
+/// `lazyStrings: true`).
 TypedColumnarResult toTypedColumnarFromWire({
   required List<String> columnNames,
   required List<int> odbcDiscriminants,
   required List<List<dynamic>> rows,
+  bool assumeLazyStrings = false,
 }) {
   final n = rows.length;
   final columns = <TypedColumn>[];
@@ -72,7 +77,16 @@ TypedColumnarResult toTypedColumnarFromWire({
     final kind = c < odbcDiscriminants.length
         ? _kindFromDiscriminant(odbcDiscriminants[c], rows, c)
         : _inferKind(rows, c);
-    columns.add(_buildColumn(columnNames[c], kind, rows, c, n));
+    columns.add(
+      _buildColumn(
+        columnNames[c],
+        kind,
+        rows,
+        c,
+        n,
+        assumeLazyStrings: assumeLazyStrings,
+      ),
+    );
   }
   return TypedColumnarResult(columns: columns, rowCount: n);
 }
@@ -161,8 +175,9 @@ TypedColumn _buildColumn(
   TypedColumnKind kind,
   List<List<dynamic>> rows,
   int col,
-  int n,
-) {
+  int n, {
+  bool assumeLazyStrings = false,
+}) {
   switch (kind) {
     case TypedColumnKind.int32:
       final values = Int32List(n);
@@ -233,18 +248,33 @@ TypedColumn _buildColumn(
         }),
       );
     case TypedColumnKind.string:
-      final hasLazy = rows.any((row) => row[col] is LazyString);
-      if (hasLazy) {
+      if (assumeLazyStrings) {
         return TypedColumnObject<Object>(
           name: name,
           kind: kind,
           values: List<Object?>.generate(n, (i) => rows[i][col]),
         );
       }
+      // Single pass: detect LazyString while materializing when present.
+      var hasLazy = false;
+      final values = List<Object?>.generate(n, (i) {
+        final v = rows[i][col];
+        if (v is LazyString) {
+          hasLazy = true;
+        }
+        return v;
+      });
+      if (hasLazy) {
+        return TypedColumnObject<Object>(
+          name: name,
+          kind: kind,
+          values: values,
+        );
+      }
       return TypedColumnObject<String>(
         name: name,
         kind: kind,
-        values: List<String?>.generate(n, (i) => rows[i][col] as String?),
+        values: List<String?>.generate(n, (i) => values[i] as String?),
       );
     case TypedColumnKind.bytes:
       return TypedColumnObject<List<int>>(

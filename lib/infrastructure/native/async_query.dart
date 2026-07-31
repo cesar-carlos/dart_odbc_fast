@@ -44,6 +44,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final bytes =
         params == null || params.isEmpty ? null : serializeParams(params);
@@ -55,6 +56,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         timeoutOverrideMs: timeoutOverrideMs,
         fetchSize: fetchSize,
         maxResultBufferBytes: maxBufferBytes,
+        initialResultBufferBytes: initialBufferBytes,
       ),
     );
     if (r.error != null) return null;
@@ -73,6 +75,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int timeoutOverrideMs,
     int fetchSize, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final paramOrder = _namedParamOrderByStmtId[stmtId];
     if (paramOrder == null) {
@@ -94,6 +97,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         timeoutOverrideMs,
         fetchSize,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
       );
     } on ParameterMissingException catch (e) {
       throw AsyncError(
@@ -112,6 +116,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
@@ -121,6 +126,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       sql,
       bytes,
       maxBufferBytes: maxBufferBytes,
+      initialBufferBytes: initialBufferBytes,
       timeout: timeout,
       resultEncoding: resultEncoding,
     );
@@ -131,6 +137,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql,
     Uint8List bytes, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final r = await _sendRequest<QueryResponse>(
@@ -140,6 +147,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         sql,
         bytes,
         maxResultBufferBytes: maxBufferBytes,
+        initialResultBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
       ),
     );
@@ -154,6 +162,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
@@ -169,6 +178,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       return _waitForAsyncResult(
         asyncRequestId,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
         timeout: timeout,
       );
     }
@@ -179,6 +189,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       sql,
       bytes,
       maxBufferBytes: maxBufferBytes,
+      initialBufferBytes: initialBufferBytes,
       resultEncoding: resultEncoding,
     );
   }
@@ -196,6 +207,9 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql,
     Map<String, Object?> namedParams, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
+    Duration? timeout,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     try {
       final extract = NamedParameterParser.extract(sql);
@@ -209,6 +223,9 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         extract.cleanedSql,
         paramValues,
         maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
+        timeout: timeout,
+        resultEncoding: resultEncoding,
       );
     } on ParameterMissingException catch (e) {
       throw AsyncError(
@@ -225,6 +242,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int connectionId,
     String sql, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryMultiRequest(
@@ -232,6 +250,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         connectionId,
         sql,
         maxResultBufferBytes: maxBufferBytes,
+        initialResultBufferBytes: initialBufferBytes,
       ),
     );
     if (r.error != null) return null;
@@ -247,6 +266,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql,
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryMultiParamsRequest.withSerializedParams(
@@ -255,6 +275,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         sql,
         paramsBuffer ?? Uint8List(0),
         maxResultBufferBytes: maxBufferBytes,
+        initialResultBufferBytes: initialBufferBytes,
       ),
     );
     if (r.error != null) return null;
@@ -299,6 +320,8 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       CatalogTablesRequest(
@@ -306,6 +329,8 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         connectionId,
         catalog: catalog,
         schema: schema,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
       ),
     );
     if (r.error != null) return null;
@@ -314,18 +339,38 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
 
   /// Returns catalog columns for [table] on [connectionId]. Binary result or
   /// `null` on error.
-  Future<Uint8List?> catalogColumns(int connectionId, String table) async {
+  Future<Uint8List?> catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
-      CatalogColumnsRequest(_nextRequestId(), connectionId, table),
+      CatalogColumnsRequest(
+        _nextRequestId(),
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;
   }
 
   /// Returns type info for [connectionId]. Binary result or `null` on error.
-  Future<Uint8List?> catalogTypeInfo(int connectionId) async {
+  Future<Uint8List?> catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
-      CatalogTypeInfoRequest(_nextRequestId(), connectionId),
+      CatalogTypeInfoRequest(
+        _nextRequestId(),
+        connectionId,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;
@@ -333,10 +378,18 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
 
   Future<Uint8List?> catalogPrimaryKeys(
     int connectionId,
-    String table,
-  ) async {
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
-      CatalogPrimaryKeysRequest(_nextRequestId(), connectionId, table),
+      CatalogPrimaryKeysRequest(
+        _nextRequestId(),
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;
@@ -344,10 +397,18 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
 
   Future<Uint8List?> catalogForeignKeys(
     int connectionId,
-    String table,
-  ) async {
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
-      CatalogForeignKeysRequest(_nextRequestId(), connectionId, table),
+      CatalogForeignKeysRequest(
+        _nextRequestId(),
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;
@@ -355,10 +416,18 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
 
   Future<Uint8List?> catalogIndexes(
     int connectionId,
-    String table,
-  ) async {
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async {
     final r = await _sendRequest<QueryResponse>(
-      CatalogIndexesRequest(_nextRequestId(), connectionId, table),
+      CatalogIndexesRequest(
+        _nextRequestId(),
+        connectionId,
+        table,
+        initialBufferBytes: initialBufferBytes,
+        maxBufferBytes: maxBufferBytes,
+      ),
     );
     if (r.error != null) return null;
     return r.data;

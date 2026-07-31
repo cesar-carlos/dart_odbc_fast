@@ -19,6 +19,11 @@ void main() {
       final repo = locator.repository as OdbcRepositoryImpl;
       expect(repo.defaultResultEncoding, ResultEncoding.columnar);
       expect(locator.recommendedResultEncoding, ResultEncoding.columnar);
+      // QueryResult APIs still clamp to row-major.
+      expect(
+        forQueryResultWire(repo.defaultResultEncoding),
+        ResultEncoding.rowMajor,
+      );
       locator.shutdown();
     });
 
@@ -27,6 +32,10 @@ void main() {
         ..initialize(profile: OdbcUsageProfile.highThroughput);
       final repo = locator.repository as OdbcRepositoryImpl;
       expect(repo.defaultResultEncoding, ResultEncoding.columnar);
+      expect(
+        forQueryResultWire(repo.defaultResultEncoding),
+        ResultEncoding.rowMajor,
+      );
       locator.shutdown();
     });
 

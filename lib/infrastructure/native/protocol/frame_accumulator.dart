@@ -22,10 +22,13 @@ class BinaryFrameAccumulator {
   void add(Uint8List chunk) => _buffer.add(chunk);
 
   Iterable<Uint8List> drainFrames() sync* {
+    // Columnar v2 header is the largest supported fixed header (19 bytes).
+    const maxHeaderSize = BinaryProtocolParser.headerSizeColumnarV2;
     while (length >= 6) {
-      final headerPrefix = _buffer.peek(6);
+      final headerPeekLen = length < maxHeaderSize ? length : maxHeaderSize;
+      final headerPeek = _buffer.peek(headerPeekLen);
       final version =
-          ByteData.sublistView(headerPrefix, 4, 6).getUint16(0, Endian.little);
+          ByteData.sublistView(headerPeek, 4, 6).getUint16(0, Endian.little);
       final headerSize = switch (version) {
         BinaryProtocolParser.protocolVersionRowMajor =>
           BinaryProtocolParser.headerSizeV1,
@@ -33,11 +36,14 @@ class BinaryFrameAccumulator {
           BinaryProtocolParser.headerSizeColumnarV2,
         _ => throw FormatException('Unsupported protocol version: $version'),
       };
-      if (length < headerSize) {
+      if (headerPeekLen < headerSize) {
         break;
       }
-      final header = _buffer.peek(headerSize);
-      final frameLength = BinaryProtocolParser.messageLengthFromHeader(header);
+      final frameLength = BinaryProtocolParser.messageLengthFromHeader(
+        headerPeekLen == headerSize
+            ? headerPeek
+            : Uint8List.sublistView(headerPeek, 0, headerSize),
+      );
       // DoS guard: refuse to yield/allocate frames whose declared length
       // exceeds the configured ceiling. A malformed wire header could
       // otherwise force a multi-GB allocation.

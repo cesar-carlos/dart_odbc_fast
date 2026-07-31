@@ -16,9 +16,13 @@ class StreamingQuery {
           onPause: () {},
           onResume: () {},
         ) {
-    _controller.onPause = () => _isPaused = true;
-    _controller.onResume = () => _isPaused = false;
-    _outputStream = _controller.stream.map(_onDeliver);
+    _controller
+      ..onPause = () {
+        _isPaused = true;
+      }
+      ..onResume = () {
+        _isPaused = false;
+      };
   }
 
   /// Maximum number of chunks to buffer. Null = unbounded.
@@ -28,9 +32,8 @@ class StreamingQuery {
   bool _isPaused = false;
   int _pendingCount = 0;
   Completer<void>? _resumeCompleter;
-  late final Stream<ParsedRowBuffer> _outputStream;
 
-  ParsedRowBuffer _onDeliver(ParsedRowBuffer chunk) {
+  void _onDelivered() {
     _pendingCount = (_pendingCount - 1).clamp(0, 0x7FFFFFFF);
     if (maxBufferSize != null &&
         _resumeCompleter != null &&
@@ -38,7 +41,6 @@ class StreamingQuery {
       _resumeCompleter!.complete();
       _resumeCompleter = null;
     }
-    return chunk;
   }
 
   /// Stream of parsed row buffers.
@@ -46,7 +48,22 @@ class StreamingQuery {
   /// Listen to this stream to receive query result chunks. When
   /// [maxBufferSize] is set, backpressure is applied to producers
   /// that call [addChunk].
-  Stream<ParsedRowBuffer> get stream => _outputStream;
+  Stream<ParsedRowBuffer> get stream => Stream<ParsedRowBuffer>.multi(
+        (listener) {
+          final subscription = _controller.stream.listen(
+            (chunk) {
+              _onDelivered();
+              listener.add(chunk);
+            },
+            onError: listener.addError,
+            onDone: listener.close,
+          );
+          listener
+            ..onPause = subscription.pause
+            ..onResume = subscription.resume
+            ..onCancel = subscription.cancel;
+        },
+      );
 
   /// Adds a chunk. When [maxBufferSize] is set and the buffer is full,
   /// waits until the consumer reduces the count below [maxBufferSize].

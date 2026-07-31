@@ -106,13 +106,19 @@ class ServiceLocator {
   int get recommendedPoolMaxSize =>
       _resolvedUsageProfile.recommendedPoolMaxSize;
 
-  /// Suggested [ResultEncoding] for analytics SELECT workloads on
+  /// Suggested [ResultEncoding] for **columnar-typed** SELECT workloads on
   /// [resolvedUsageProfile]. Server presets (`balancedServer`,
   /// `highThroughput`) apply this as the repository default for
-  /// `executeQueryParamValues` unless callers pass `resultEncoding`
-  /// explicitly.
+  /// `executeQueryColumnar*` / `streamQueryColumnar*`. QueryResult APIs
+  /// always request row-major wire.
   ResultEncoding get recommendedResultEncoding =>
       _resolvedUsageProfile.recommendedResultEncoding;
+
+  /// Suggested `streamQuery*(chunkSize:)` for large scans on
+  /// [resolvedUsageProfile]. Server presets use 1 MiB; others 64 KiB.
+  /// Public API signature defaults stay at 64 KiB — pass this explicitly.
+  int get recommendedStreamChunkSizeBytes =>
+      _resolvedUsageProfile.recommendedStreamChunkSizeBytes;
 
   /// Initializes all services and dependencies.
   ///
@@ -186,6 +192,7 @@ class ServiceLocator {
 
     _telemetry = telemetry;
 
+    final usagePreset = resolveOdbcUsageProfilePreset(profile);
     final resolvedUsageProfile = ResolvedOdbcUsageProfile(
       profile: profile,
       useAsync: effectiveUseAsync,
@@ -196,8 +203,9 @@ class ServiceLocator {
       connectionOptions: ConnectionOptions.fromUsageProfile(profile),
       poolOptions: PoolOptions.fromUsageProfile(profile),
       recommendedPoolMaxSize: profile.recommendedPoolMaxSize,
-      recommendedResultEncoding:
-          resolveOdbcUsageProfilePreset(profile).recommendedResultEncoding,
+      recommendedResultEncoding: usagePreset.recommendedResultEncoding,
+      recommendedStreamChunkSizeBytes:
+          usagePreset.recommendedStreamChunkSizeBytes,
     );
 
     _activeProfile = profile;
@@ -254,7 +262,10 @@ class ServiceLocator {
   // calls are no-ops once _nativeConnection is non-null.
   void _ensureSyncStack() {
     if (_nativeConnection != null) return;
-    final conn = NativeOdbcConnection();
+    final opts = _resolvedUsageProfile.connectionOptions;
+    final conn = NativeOdbcConnection(
+      sqlPointerCacheMaxSize: opts.sqlPointerCacheMaxSize,
+    );
     _nativeConnection = conn;
     final repo = OdbcRepositoryImpl(
       conn,

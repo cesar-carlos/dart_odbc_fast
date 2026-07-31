@@ -35,8 +35,18 @@ class OdbcQueryService {
   ) =>
       _repository.executeQueryDirectedParams(connectionId, sql, params);
 
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
-      _repository.streamQuery(connectionId, sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _repository.streamQuery(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<int>> prepare(
     String connectionId,
@@ -107,7 +117,7 @@ class OdbcQueryService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       _repository.streamQueryMulti(
         connectionId,
@@ -126,9 +136,17 @@ class OdbcQueryService {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      _repository.streamQueryNamed(connectionId, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _repository.streamQueryNamed(
+        connectionId,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
@@ -143,10 +161,16 @@ class OdbcQueryService {
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) async* {
-    await for (final chunk
-        in _repository.streamQueryColumnar(connectionId, sql)) {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
+    await for (final chunk in _repository.streamQueryColumnar(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    )) {
       yield chunk;
     }
   }

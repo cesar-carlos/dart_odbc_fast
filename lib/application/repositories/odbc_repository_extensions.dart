@@ -143,24 +143,46 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(
     Connection conn,
-    String sql,
-  ) =>
-      streamQuery(conn.id, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQuery(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   /// `streamQueryNamed` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryNamedFor(
     Connection conn,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      streamQueryNamed(conn.id, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryNamed(
+        conn.id,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   /// `streamQueryColumnar` overload that accepts a [Connection].
   Stream<Result<TypedColumnarResult>> streamQueryColumnarFor(
     Connection conn,
-    String sql,
-  ) =>
-      streamQueryColumnar(conn.id, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryColumnar(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 }
 
 /// Typed positional helpers that convert plain Dart values to wire tags.

@@ -32,6 +32,7 @@ class StreamChunkDecoder {
         for (final col in rowBuffer.columns) col.odbcType,
       ],
       rows: rowBuffer.rows,
+      assumeLazyStrings: lazyStrings,
     );
   }
 

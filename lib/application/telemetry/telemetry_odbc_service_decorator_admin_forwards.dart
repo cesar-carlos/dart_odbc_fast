@@ -102,7 +102,7 @@ mixin TelemetryOdbcServiceAdminForwards on TelemetryOdbcServiceDecoratorBase {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       admin.streamStartAsync(
         connectionId,

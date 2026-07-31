@@ -46,12 +46,18 @@ const int _defaultStreamChunkSize = 1000;
 
 /// Shared native state for [OdbcNative] mixins.
 abstract class _OdbcNativeState {
-  _OdbcNativeState(bindings.OdbcBindings injected) : _bindings = injected;
+  _OdbcNativeState(
+    bindings.OdbcBindings injected, {
+    int? sqlPointerCacheMaxSize,
+  })  : _bindings = injected,
+        _sqlCache = SqlPointerCache(
+          maxSize: sqlPointerCacheMaxSize ?? SqlPointerCache.defaultMaxSize,
+        );
 
   final bindings.OdbcBindings _bindings;
 
   /// Per-instance LRU cache of native UTF-8 SQL pointers.
-  final SqlPointerCache _sqlCache = SqlPointerCache();
+  final SqlPointerCache _sqlCache;
 }
 
 /// Native ODBC bindings wrapper.
@@ -75,11 +81,20 @@ class OdbcNative extends _OdbcNativeState
   /// Creates a new [OdbcNative] instance.
   ///
   /// Automatically loads the ODBC engine library and initializes bindings.
-  OdbcNative() : super(bindings.OdbcBindings(loadOdbcLibrary()));
+  /// [sqlPointerCacheMaxSize] overrides the SQL UTF-8 pointer cache capacity
+  /// (default 256).
+  OdbcNative({int? sqlPointerCacheMaxSize})
+      : super(
+          bindings.OdbcBindings(loadOdbcLibrary()),
+          sqlPointerCacheMaxSize: sqlPointerCacheMaxSize,
+        );
 
   /// Creates an instance backed by injected [bindings] (unit tests only).
   @visibleForTesting
-  OdbcNative.withBindings(super.injected);
+  OdbcNative.withBindings(
+    super.injected, {
+    super.sqlPointerCacheMaxSize,
+  });
 
   /// Diagnostic counters for the SQL pointer cache. Useful from benchmarks
   /// to verify that hot paths actually hit. Not part of the public API

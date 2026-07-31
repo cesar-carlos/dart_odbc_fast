@@ -15,12 +15,19 @@ import 'package:result_dart/result_dart.dart';
 abstract interface class IQueryRepository {
   Future<Result<QueryResult>> executeQuery(String connectionId, String sql);
 
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  );
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Future<Result<int>> prepare(
     String connectionId,
@@ -88,8 +95,10 @@ abstract interface class IQueryRepository {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  );
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
@@ -111,7 +120,7 @@ abstract interface class IQueryRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   });
 
   Future<Result<QueryResult>> catalogTables(

@@ -51,12 +51,14 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
   Future<Uint8List?> asyncGetResult(
     int asyncRequestId, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       AsyncGetResultRequest(
         _nextRequestId(),
         asyncRequestId,
         maxResultBufferBytes: maxBufferBytes,
+        initialResultBufferBytes: initialBufferBytes,
       ),
     );
     if (r.error != null) {
@@ -95,6 +97,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
     Duration pollInterval = const Duration(milliseconds: 10),
     Duration? timeout,
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async {
     final effectiveTimeout =
         timeout ?? _requestTimeout ?? _defaultRequestTimeout;
@@ -111,6 +114,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
             return asyncGetResult(
               requestId,
               maxBufferBytes: maxBufferBytes,
+              initialBufferBytes: initialBufferBytes,
             );
           case 0: // pending
             if (effectiveTimeout > Duration.zero &&

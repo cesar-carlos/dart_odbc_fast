@@ -1,9 +1,8 @@
 import 'dart:io';
 
 import 'package:code_assets/code_assets.dart';
-import 'package:test/test.dart';
-
 import 'package:odbc_fast/src/native_assets/native_library_resolver.dart';
+import 'package:test/test.dart';
 
 void main() {
   group('extractVersionFromPubspec', () {

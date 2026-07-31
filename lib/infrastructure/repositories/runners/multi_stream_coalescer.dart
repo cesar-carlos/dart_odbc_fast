@@ -60,8 +60,10 @@ class MultiStreamCoalescer {
   }
 
   void _openCursor(ParsedRowBuffer value) {
-    // Own a growable row list once so tag-2 continuations only addAll.
-    final rows = List<List<dynamic>>.of(value.rows);
+    // Take ownership of the row list for tag-2 continuations. Stream parsers
+    // hand growable outer lists; callers must not retain [value.rows] for
+    // mutation after this transfer.
+    final rows = value.rows;
     _openRows = rows;
     _openRowCount = value.rowCount;
     _openMeta = ParsedRowBuffer(

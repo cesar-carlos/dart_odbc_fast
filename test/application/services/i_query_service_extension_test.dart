@@ -85,7 +85,12 @@ class _FakeQueryService implements IQueryService {
   }
 
   @override
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) {
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
     streamCalled = true;
@@ -98,8 +103,10 @@ class _FakeQueryService implements IQueryService {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) {
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
     capturedNamedParams = namedParams;
@@ -114,7 +121,7 @@ class _FakeQueryService implements IQueryService {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
@@ -137,8 +144,10 @@ class _FakeQueryService implements IQueryService {
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
     streamColumnarCalled = true;

@@ -62,7 +62,7 @@ abstract interface class IAdminRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   });
 
   Future<Result<int>> streamPollAsync(int streamId);

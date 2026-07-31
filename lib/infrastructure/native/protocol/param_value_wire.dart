@@ -125,6 +125,129 @@ Uint8List serializeParams(List<ParamValue> params) {
   return out;
 }
 
+/// Serializes directed parameters as **DRT1** (magic + count + direction +
+/// ParamValue payload per entry) using the same two-pass writer as
+/// [serializeParams].
+Uint8List serializeDirectedParamList(
+  List<int> directions,
+  List<ParamValue> params,
+) {
+  if (directions.length != params.length) {
+    throw ArgumentError(
+      'directions.length (${directions.length}) != params.length '
+      '(${params.length})',
+    );
+  }
+  if (params.isEmpty) {
+    final empty = Uint8List(8);
+    empty[0] = 0x44; // D
+    empty[1] = 0x52; // R
+    empty[2] = 0x54; // T
+    empty[3] = 0x31; // 1
+    // count = 0 already
+    return empty;
+  }
+
+  var totalBytes = 8; // magic(4) + count(4)
+  final encodedText = List<List<int>?>.filled(params.length, null);
+  for (var i = 0; i < params.length; i++) {
+    totalBytes += 1; // direction
+    switch (params[i]) {
+      case ParamValueNull():
+        totalBytes += 5;
+      case ParamValueString(:final value):
+        if (_isAsciiOnly(value)) {
+          totalBytes += 5 + value.length;
+        } else {
+          final b = utf8.encode(value);
+          encodedText[i] = b;
+          totalBytes += 5 + b.length;
+        }
+      case ParamValueInt32():
+        totalBytes += 9;
+      case ParamValueInt64():
+        totalBytes += 13;
+      case ParamValueDecimal(:final value):
+        if (_isAsciiOnly(value)) {
+          totalBytes += 5 + value.length;
+        } else {
+          final b = utf8.encode(value);
+          encodedText[i] = b;
+          totalBytes += 5 + b.length;
+        }
+      case ParamValueBinary(:final value):
+        totalBytes += 5 + value.length;
+      case ParamValueRefCursorOut():
+        totalBytes += 5;
+    }
+  }
+
+  final out = Uint8List(totalBytes);
+  final bd = ByteData.sublistView(out);
+  out[0] = 0x44;
+  out[1] = 0x52;
+  out[2] = 0x54;
+  out[3] = 0x31;
+  bd.setUint32(4, params.length, _littleEndian);
+  var off = 8;
+  for (var i = 0; i < params.length; i++) {
+    out[off++] = directions[i];
+    switch (params[i]) {
+      case ParamValueNull():
+        out[off] = _tagNull;
+        bd.setUint32(off + 1, 0, _littleEndian);
+        off += 5;
+      case ParamValueString(:final value):
+        final encoded = encodedText[i];
+        if (encoded != null) {
+          out[off] = _tagString;
+          bd.setUint32(off + 1, encoded.length, _littleEndian);
+          out.setRange(off + 5, off + 5 + encoded.length, encoded);
+          off += 5 + encoded.length;
+        } else {
+          out[off] = _tagString;
+          bd.setUint32(off + 1, value.length, _littleEndian);
+          _writeAsciiString(out, off + 5, value);
+          off += 5 + value.length;
+        }
+      case ParamValueInt32(:final value):
+        out[off] = _tagInteger;
+        bd.setUint32(off + 1, 4, _littleEndian);
+        bd.setInt32(off + 5, value, _littleEndian);
+        off += 9;
+      case ParamValueInt64(:final value):
+        out[off] = _tagBigInt;
+        bd.setUint32(off + 1, 8, _littleEndian);
+        bd.setInt64(off + 5, value, _littleEndian);
+        off += 13;
+      case ParamValueDecimal(:final value):
+        final encoded = encodedText[i];
+        if (encoded != null) {
+          out[off] = _tagDecimal;
+          bd.setUint32(off + 1, encoded.length, _littleEndian);
+          out.setRange(off + 5, off + 5 + encoded.length, encoded);
+          off += 5 + encoded.length;
+        } else {
+          out[off] = _tagDecimal;
+          bd.setUint32(off + 1, value.length, _littleEndian);
+          _writeAsciiString(out, off + 5, value);
+          off += 5 + value.length;
+        }
+      case ParamValueBinary(:final value):
+        final vLen = value.length;
+        out[off] = _tagBinary;
+        bd.setUint32(off + 1, vLen, _littleEndian);
+        out.setRange(off + 5, off + 5 + vLen, value);
+        off += 5 + vLen;
+      case ParamValueRefCursorOut():
+        out[off] = _tagRefCursorOut;
+        bd.setUint32(off + 1, 0, _littleEndian);
+        off += 5;
+    }
+  }
+  return out;
+}
+
 /// Deserialises a single [ParamValue] from [data] starting at [offset] (mirrors
 /// `ParamValue::deserialize` in the Rust engine). Returns the value and the
 /// number of bytes consumed.

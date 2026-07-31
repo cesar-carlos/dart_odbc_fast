@@ -83,8 +83,9 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql,
     List<ParamValue> params, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     Duration? timeout,
-    ResultEncoding? resultEncoding,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       null;
 
@@ -94,8 +95,9 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql,
     Uint8List? paramBuffer, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
     Duration? timeout,
-    ResultEncoding? resultEncoding,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       null;
 
@@ -157,35 +159,53 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int connectionId, {
     String catalog = '',
     String schema = '',
+    int? initialBufferBytes,
+    int? maxBufferBytes,
   }) async =>
       null;
 
   @override
-  Future<Uint8List?> catalogColumns(int connectionId, String table) async =>
+  Future<Uint8List?> catalogColumns(
+    int connectionId,
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async =>
       null;
 
   @override
-  Future<Uint8List?> catalogTypeInfo(int connectionId) async => null;
+  Future<Uint8List?> catalogTypeInfo(
+    int connectionId, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async =>
+      null;
 
   @override
   Future<Uint8List?> catalogPrimaryKeys(
     int connectionId,
-    String table,
-  ) async =>
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async =>
       null;
 
   @override
   Future<Uint8List?> catalogForeignKeys(
     int connectionId,
-    String table,
-  ) async =>
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async =>
       null;
 
   @override
   Future<Uint8List?> catalogIndexes(
     int connectionId,
-    String table,
-  ) async =>
+    String table, {
+    int? initialBufferBytes,
+    int? maxBufferBytes,
+  }) async =>
       null;
 
   @override
@@ -279,6 +299,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
   Future<Uint8List?> asyncGetResult(
     int asyncRequestId, {
     int? maxBufferBytes,
+    int? initialBufferBytes,
   }) async =>
       null;
 
@@ -298,6 +319,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
   Future<Uint8List?> executeQueryMulti(
     int connectionId,
     String sql, {
+    int? initialBufferBytes,
     int? maxBufferBytes,
   }) async =>
       executeQueryMultiResult;
@@ -327,6 +349,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int connectionId,
     String sql,
     Uint8List? paramsBuffer, {
+    int? initialBufferBytes,
     int? maxBufferBytes,
   }) async =>
       null;

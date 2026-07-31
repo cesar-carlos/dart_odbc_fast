@@ -72,7 +72,12 @@ class _FakeRepository implements IOdbcRepository {
   }
 
   @override
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) {
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
     capturedConnectionId = connectionId;
     capturedSql = sql;
     streamCalled = true;
@@ -84,9 +89,16 @@ class _FakeRepository implements IOdbcRepository {
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) async* {
-    await for (final chunk in streamQuery(connectionId, sql)) {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
+    await for (final chunk in streamQuery(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    )) {
       yield chunk.fold(
         (qr) => Success(toTypedColumnar(qr)),
         (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),

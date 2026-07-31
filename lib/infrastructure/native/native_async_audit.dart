@@ -71,7 +71,16 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
   int? asyncPoll(int requestId) => _native.asyncPoll(requestId);
 
   /// Retrieves binary result for a completed async request.
-  Uint8List? asyncGetResult(int requestId) => _native.asyncGetResult(requestId);
+  Uint8List? asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+    int? initialBufferBytes,
+  }) =>
+      _native.asyncGetResult(
+        requestId,
+        maxBufferBytes: maxBufferBytes,
+        initialBufferBytes: initialBufferBytes,
+      );
 
   /// Best-effort cancellation for an async request.
   bool asyncCancel(int requestId) => _native.asyncCancel(requestId);

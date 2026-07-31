@@ -29,15 +29,26 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
     }
   }
 
-  static const int _paramsScratchCapacity = 8 * 1024;
+  /// Shared scratch for params and mid-size bulk payloads (per isolate).
+  static const int _byteScratchCapacity = 256 * 1024;
 
-  ffi.Pointer<ffi.Uint8> _paramsScratch = ffi.nullptr;
-  var _paramsScratchBusy = false;
+  ffi.Pointer<ffi.Uint8> _byteScratch = ffi.nullptr;
+  var _byteScratchBusy = false;
+
+  /// Reused out-param for bulk insert row counts (per isolate).
+  ffi.Pointer<ffi.Uint32> _bulkRowsInserted = ffi.nullptr;
 
   ffi.Pointer<ffi.Uint8> _allocUint8List(Uint8List list) {
     final p = malloc<ffi.Uint8>(list.length);
     p.asTypedList(list.length).setAll(0, list);
     return p;
+  }
+
+  ffi.Pointer<ffi.Uint32> _bulkRowsInsertedPtr() {
+    if (_bulkRowsInserted == ffi.nullptr) {
+      _bulkRowsInserted = malloc<ffi.Uint32>();
+    }
+    return _bulkRowsInserted;
   }
 
   T? _withSql<T>(
@@ -52,26 +63,27 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
     return f(ptr);
   }
 
-  T? _withParamsBuffer<T>(
-    Uint8List params,
+  /// Copies [bytes] into a reusable scratch (≤256 KiB) or a transient malloc.
+  T? _withByteBuffer<T>(
+    Uint8List bytes,
     T? Function(ffi.Pointer<ffi.Uint8> ptr) f,
   ) {
-    if (params.isEmpty) {
+    if (bytes.isEmpty) {
       return f(ffi.nullptr);
     }
-    if (params.length <= _paramsScratchCapacity && !_paramsScratchBusy) {
-      if (_paramsScratch == ffi.nullptr) {
-        _paramsScratch = malloc<ffi.Uint8>(_paramsScratchCapacity);
+    if (bytes.length <= _byteScratchCapacity && !_byteScratchBusy) {
+      if (_byteScratch == ffi.nullptr) {
+        _byteScratch = malloc<ffi.Uint8>(_byteScratchCapacity);
       }
-      _paramsScratchBusy = true;
+      _byteScratchBusy = true;
       try {
-        _paramsScratch.asTypedList(params.length).setAll(0, params);
-        return f(_paramsScratch);
+        _byteScratch.asTypedList(bytes.length).setAll(0, bytes);
+        return f(_byteScratch);
       } finally {
-        _paramsScratchBusy = false;
+        _byteScratchBusy = false;
       }
     }
-    final ptr = _allocUint8List(params);
+    final ptr = _allocUint8List(bytes);
     try {
       return f(ptr);
     } finally {
@@ -79,12 +91,22 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
     }
   }
 
+  T? _withParamsBuffer<T>(
+    Uint8List params,
+    T? Function(ffi.Pointer<ffi.Uint8> ptr) f,
+  ) =>
+      _withByteBuffer(params, f);
+
   void _releaseParamsScratch() {
-    if (_paramsScratch != ffi.nullptr) {
-      malloc.free(_paramsScratch);
-      _paramsScratch = ffi.nullptr;
+    if (_byteScratch != ffi.nullptr) {
+      malloc.free(_byteScratch);
+      _byteScratch = ffi.nullptr;
     }
-    _paramsScratchBusy = false;
+    _byteScratchBusy = false;
+    if (_bulkRowsInserted != ffi.nullptr) {
+      malloc.free(_bulkRowsInserted);
+      _bulkRowsInserted = ffi.nullptr;
+    }
   }
 
   T? _withUtf8Pair<T>(

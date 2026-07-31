@@ -161,8 +161,10 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
-    String sql,
-  ) async* {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
     streamQueryCalled = true;
     _queryCount++;
     yield const Success(
@@ -179,9 +181,16 @@ class MockOdbcRepository implements IOdbcRepository {
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) async* {
-    await for (final chunk in streamQuery(connectionId, sql)) {
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
+    await for (final chunk in streamQuery(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    )) {
       yield chunk.fold(
         (qr) => Success(toTypedColumnar(qr)),
         (e) => Failure<TypedColumnarResult, OdbcError>(e as OdbcError),
@@ -277,8 +286,10 @@ class MockOdbcRepository implements IOdbcRepository {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) async* {
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
     streamQueryNamedCalled = true;
     _queryCount++;
     yield const Success(
@@ -506,7 +517,7 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) async* {
     final full = await executeQueryMultiFull(connectionId, sql);
     if (full.isError()) {
@@ -956,7 +967,7 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) async {
     streamStartAsyncCalled = true;
     return const Success(1);

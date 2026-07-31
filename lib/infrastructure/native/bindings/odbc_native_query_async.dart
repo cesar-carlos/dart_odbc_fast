@@ -1,5 +1,8 @@
 part of 'odbc_native.dart';
 
+/// Reused async poll status out-param (one per isolate process lifetime).
+final ffi.Pointer<ffi.Int32> _asyncPollStatus = malloc<ffi.Int32>();
+
 mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
   /// Starts non-blocking query execution and returns async request ID.
   ///
@@ -84,22 +87,22 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
     if (!_bindings.supportsAsyncExecuteApi) {
       return null;
     }
-    final outStatus = malloc<ffi.Int32>()..value = 0;
-    try {
-      final code = _bindings.odbc_async_poll(requestId, outStatus);
-      if (code != 0) {
-        return null;
-      }
-      return outStatus.value;
-    } finally {
-      malloc.free(outStatus);
+    final outStatus = _asyncPollStatus..value = 0;
+    final code = _bindings.odbc_async_poll(requestId, outStatus);
+    if (code != 0) {
+      return null;
     }
+    return outStatus.value;
   }
 
   /// Retrieves async query result payload for a completed request.
   ///
   /// Returns null on API unavailable, request not ready, or native failure.
-  Uint8List? asyncGetResult(int requestId) {
+  Uint8List? asyncGetResult(
+    int requestId, {
+    int? maxBufferBytes,
+    int? initialBufferBytes,
+  }) {
     if (!_bindings.supportsAsyncExecuteApi) {
       return null;
     }
@@ -107,6 +110,8 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
       (buf, bufLen, outWritten) =>
           _bindings.odbc_async_get_result(requestId, buf, bufLen, outWritten) ??
           -1,
+      maxSize: maxBufferBytes,
+      initialSize: initialBufferBytes,
     );
     if (data == null || data.isEmpty) {
       return null;

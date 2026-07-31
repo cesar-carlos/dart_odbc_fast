@@ -1,3 +1,4 @@
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
@@ -126,6 +127,10 @@ class OdbcQueryPreparedRunner {
       final timeoutMs = options?.timeout?.inMilliseconds ?? 0;
       final fetchSizeVal = options?.fetchSize ?? 1000;
       final maxBuf = options?.maxBufferSize;
+      final connOpts = state.optionsFor(connectionId);
+      final initialBytes = options?.initialBufferSize ??
+          connOpts?.initialResultBufferBytes ??
+          defaultInitialResultBufferBytes;
       final buf = ffi.isAsync
           ? await ffi.async.executePrepared(
               stmtId,
@@ -133,6 +138,7 @@ class OdbcQueryPreparedRunner {
               timeoutMs,
               fetchSizeVal,
               maxBufferBytes: maxBuf,
+              initialBufferBytes: initialBytes,
             )
           : ffi.sync.executePrepared(
               stmtId,
@@ -140,11 +146,12 @@ class OdbcQueryPreparedRunner {
               timeoutMs,
               fetchSizeVal,
               maxBufferBytes: maxBuf,
+              initialBufferBytes: initialBytes,
             );
 
       final qr = parser.parseBufferToQueryResult(
         buf,
-        lazyStrings: state.optionsFor(connectionId)?.lazyStrings ?? false,
+        lazyStrings: connOpts?.lazyStrings ?? false,
       );
       if (qr == null) {
         return await ffi.convertNativeErrorToFailure<QueryResult>(

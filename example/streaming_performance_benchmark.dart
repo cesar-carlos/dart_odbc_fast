@@ -73,7 +73,7 @@ Future<_StreamingBenchmarkResult> _benchStreamQuery(
   stopwatch.stop();
   return _StreamingBenchmarkResult(
     scenario: 'streamQuery',
-    elapsedMs: stopwatch.elapsedMilliseconds,
+    elapsedMs: stopwatch.elapsedMicroseconds / 1000.0,
     rows: rows,
     chunks: chunks,
     fetchSize: null,
@@ -103,7 +103,7 @@ Future<_StreamingBenchmarkResult> _benchStreamQueryBatched(
   stopwatch.stop();
   return _StreamingBenchmarkResult(
     scenario: 'streamQueryBatched',
-    elapsedMs: stopwatch.elapsedMilliseconds,
+    elapsedMs: stopwatch.elapsedMicroseconds / 1000.0,
     rows: rows,
     chunks: chunks,
     fetchSize: fetchSize,
@@ -184,7 +184,7 @@ final class _StreamingBenchmarkResult {
   });
 
   final String scenario;
-  final int elapsedMs;
+  final double elapsedMs;
   final int rows;
   final int chunks;
   final int? fetchSize;

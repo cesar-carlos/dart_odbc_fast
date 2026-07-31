@@ -86,8 +86,10 @@ abstract class IOdbcService
   @override
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
-    String sql,
-  );
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   @override
   Future<Result<int>> beginTransaction(
@@ -277,7 +279,7 @@ abstract class IOdbcService
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   });
 
   @override
@@ -297,8 +299,10 @@ abstract class IOdbcService
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  );
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -313,8 +317,10 @@ abstract class IOdbcService
   @override
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  );
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
 
   Future<Result<QueryResult>> catalogTables({
     required String connectionId,
@@ -458,7 +464,7 @@ abstract class IOdbcService
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   });
 
   Future<Result<int>> streamPollAsync(int streamId);

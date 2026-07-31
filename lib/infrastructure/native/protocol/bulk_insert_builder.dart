@@ -100,7 +100,12 @@ abstract class _BulkInsertBuilderState {
 /// Builder for creating bulk insert data buffers.
 ///
 /// Provides a fluent API to define table structure, columns, and rows
-/// for efficient bulk insert operations.
+/// for efficient bulk insert operations. [build] returns a [Uint8List] that
+/// can be passed straight to `bulkInsert` / `bulkInsertParallel` without an
+/// extra copy.
+///
+/// Prefer columnar `addColumnInt32` / `addColumnInt64` / `addColumnText` when
+/// source data is already column-shaped (medium and large batches).
 ///
 /// Rows passed to [addRow] are stored by reference; do not mutate a row list
 /// after it is added (wrap with `List.unmodifiable` when the same list instance

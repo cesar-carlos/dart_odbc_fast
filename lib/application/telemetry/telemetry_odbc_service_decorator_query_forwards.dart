@@ -30,8 +30,18 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
   ) =>
       query.executeQueryDirectedParams(connectionId, sql, params);
 
-  Stream<Result<QueryResult>> streamQuery(String connectionId, String sql) =>
-      query.streamQuery(connectionId, sql);
+  Stream<Result<QueryResult>> streamQuery(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      query.streamQuery(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<int>> prepare(
     String connectionId,
@@ -102,7 +112,7 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String connectionId,
     String sql, {
     int fetchSize = 1000,
-    int chunkSize = 64 * 1024,
+    int? chunkSize,
   }) =>
       query.streamQueryMulti(
         connectionId,
@@ -121,9 +131,17 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
     String sql,
-    Map<String, Object?> namedParams,
-  ) =>
-      query.streamQueryNamed(connectionId, sql, namedParams);
+    Map<String, Object?> namedParams, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      query.streamQueryNamed(
+        connectionId,
+        sql,
+        namedParams,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
@@ -138,9 +156,16 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
     String connectionId,
-    String sql,
-  ) =>
-      query.streamQueryColumnar(connectionId, sql);
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      query.streamQueryColumnar(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   Future<Result<QueryResult>> catalogTables({
     required String connectionId,

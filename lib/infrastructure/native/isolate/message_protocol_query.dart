@@ -7,6 +7,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     this.sql,
     Uint8List serializedParams, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
     this.resultEncoding = ResultEncoding.rowMajor,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
@@ -18,6 +19,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     this.sql,
     TransferableTypedData transferableParams, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
     this.resultEncoding = ResultEncoding.rowMajor,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
@@ -29,6 +31,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     String sql,
     Uint8List serializedParams, {
     int? maxResultBufferBytes,
+    int? initialResultBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
@@ -39,6 +42,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
         sql,
         transferableParams,
         maxResultBufferBytes: maxResultBufferBytes,
+        initialResultBufferBytes: initialResultBufferBytes,
         resultEncoding: resultEncoding,
       );
     }
@@ -48,6 +52,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
       sql,
       serializedParams,
       maxResultBufferBytes: maxResultBufferBytes,
+      initialResultBufferBytes: initialResultBufferBytes,
       resultEncoding: resultEncoding,
     );
   }
@@ -57,6 +62,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
   final int connectionId;
   final String sql;
   final int? maxResultBufferBytes;
+  final int? initialResultBufferBytes;
   final ResultEncoding resultEncoding;
 
   Uint8List get serializedParams {
@@ -75,10 +81,12 @@ class ExecuteQueryMultiRequest extends WorkerRequest {
     this.connectionId,
     this.sql, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   }) : super(requestId, RequestType.executeQueryMulti);
   final int connectionId;
   final String sql;
   final int? maxResultBufferBytes;
+  final int? initialResultBufferBytes;
 }
 
 /// Execute parameterised multi-result query (M5 in v3.2.0).
@@ -89,6 +97,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     this.sql,
     Uint8List serializedParams, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executeQueryMultiParams);
@@ -99,6 +108,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     this.sql,
     TransferableTypedData transferableParams, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executeQueryMultiParams);
@@ -109,6 +119,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     String sql,
     Uint8List serializedParams, {
     int? maxResultBufferBytes,
+    int? initialResultBufferBytes,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -118,6 +129,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
         sql,
         transferableParams,
         maxResultBufferBytes: maxResultBufferBytes,
+        initialResultBufferBytes: initialResultBufferBytes,
       );
     }
     return ExecuteQueryMultiParamsRequest(
@@ -126,6 +138,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
       sql,
       serializedParams,
       maxResultBufferBytes: maxResultBufferBytes,
+      initialResultBufferBytes: initialResultBufferBytes,
     );
   }
 
@@ -134,6 +147,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
   final int connectionId;
   final String sql;
   final int? maxResultBufferBytes;
+  final int? initialResultBufferBytes;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;
@@ -166,6 +180,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     this.timeoutOverrideMs = 0,
     this.fetchSize = 1000,
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executePrepared);
@@ -177,6 +192,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     this.timeoutOverrideMs = 0,
     this.fetchSize = 1000,
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executePrepared);
@@ -188,6 +204,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     int timeoutOverrideMs = 0,
     int fetchSize = 1000,
     int? maxResultBufferBytes,
+    int? initialResultBufferBytes,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -198,6 +215,7 @@ class ExecutePreparedRequest extends WorkerRequest {
         timeoutOverrideMs: timeoutOverrideMs,
         fetchSize: fetchSize,
         maxResultBufferBytes: maxResultBufferBytes,
+        initialResultBufferBytes: initialResultBufferBytes,
       );
     }
     return ExecutePreparedRequest(
@@ -207,6 +225,7 @@ class ExecutePreparedRequest extends WorkerRequest {
       timeoutOverrideMs: timeoutOverrideMs,
       fetchSize: fetchSize,
       maxResultBufferBytes: maxResultBufferBytes,
+      initialResultBufferBytes: initialResultBufferBytes,
     );
   }
 
@@ -216,6 +235,7 @@ class ExecutePreparedRequest extends WorkerRequest {
   final int timeoutOverrideMs;
   final int fetchSize;
   final int? maxResultBufferBytes;
+  final int? initialResultBufferBytes;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;
@@ -388,49 +408,87 @@ class CatalogTablesRequest extends WorkerRequest {
     this.connectionId, {
     this.catalog = '',
     this.schema = '',
+    this.initialBufferBytes,
+    this.maxBufferBytes,
   }) : super(requestId, RequestType.catalogTables);
   final int connectionId;
   final String catalog;
   final String schema;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 /// Catalog columns.
 class CatalogColumnsRequest extends WorkerRequest {
-  const CatalogColumnsRequest(int requestId, this.connectionId, this.table)
-      : super(requestId, RequestType.catalogColumns);
+  const CatalogColumnsRequest(
+    int requestId,
+    this.connectionId,
+    this.table, {
+    this.initialBufferBytes,
+    this.maxBufferBytes,
+  }) : super(requestId, RequestType.catalogColumns);
   final int connectionId;
   final String table;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 /// Catalog type info.
 class CatalogTypeInfoRequest extends WorkerRequest {
-  const CatalogTypeInfoRequest(int requestId, this.connectionId)
-      : super(requestId, RequestType.catalogTypeInfo);
+  const CatalogTypeInfoRequest(
+    int requestId,
+    this.connectionId, {
+    this.initialBufferBytes,
+    this.maxBufferBytes,
+  }) : super(requestId, RequestType.catalogTypeInfo);
   final int connectionId;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 /// Catalog primary keys.
 class CatalogPrimaryKeysRequest extends WorkerRequest {
-  const CatalogPrimaryKeysRequest(int requestId, this.connectionId, this.table)
-      : super(requestId, RequestType.catalogPrimaryKeys);
+  const CatalogPrimaryKeysRequest(
+    int requestId,
+    this.connectionId,
+    this.table, {
+    this.initialBufferBytes,
+    this.maxBufferBytes,
+  }) : super(requestId, RequestType.catalogPrimaryKeys);
   final int connectionId;
   final String table;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 /// Catalog foreign keys.
 class CatalogForeignKeysRequest extends WorkerRequest {
-  const CatalogForeignKeysRequest(int requestId, this.connectionId, this.table)
-      : super(requestId, RequestType.catalogForeignKeys);
+  const CatalogForeignKeysRequest(
+    int requestId,
+    this.connectionId,
+    this.table, {
+    this.initialBufferBytes,
+    this.maxBufferBytes,
+  }) : super(requestId, RequestType.catalogForeignKeys);
   final int connectionId;
   final String table;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 /// Catalog indexes.
 class CatalogIndexesRequest extends WorkerRequest {
-  const CatalogIndexesRequest(int requestId, this.connectionId, this.table)
-      : super(requestId, RequestType.catalogIndexes);
+  const CatalogIndexesRequest(
+    int requestId,
+    this.connectionId,
+    this.table, {
+    this.initialBufferBytes,
+    this.maxBufferBytes,
+  }) : super(requestId, RequestType.catalogIndexes);
   final int connectionId;
   final String table;
+  final int? initialBufferBytes;
+  final int? maxBufferBytes;
 }
 
 class ExecuteAsyncStartRequest extends WorkerRequest {
@@ -519,9 +577,11 @@ class AsyncGetResultRequest extends WorkerRequest {
     int requestId,
     this.asyncRequestId, {
     this.maxResultBufferBytes,
+    this.initialResultBufferBytes,
   }) : super(requestId, RequestType.asyncGetResult);
   final int asyncRequestId;
   final int? maxResultBufferBytes;
+  final int? initialResultBufferBytes;
 }
 
 /// Cancel async request.

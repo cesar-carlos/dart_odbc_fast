@@ -15,6 +15,8 @@ typedef StreamNativeQueryFn = Stream<ParsedRowBuffer> Function(
   int nativeId,
   String sql, {
   int? maxBufferBytes,
+  int fetchSize,
+  int chunkSize,
 });
 
 typedef StreamingFailureFn = Future<Failure<QueryResult, OdbcError>> Function(

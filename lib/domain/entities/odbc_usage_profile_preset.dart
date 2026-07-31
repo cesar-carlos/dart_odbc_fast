@@ -1,6 +1,12 @@
 import 'package:odbc_fast/domain/entities/odbc_usage_profile.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 
+/// Default stream FFI chunk size (64 KiB) for non-server profiles.
+const int defaultRecommendedStreamChunkSizeBytes = 64 * 1024;
+
+/// Larger stream FFI chunk (1 MiB) for server / high-throughput profiles.
+const int serverRecommendedStreamChunkSizeBytes = 1024 * 1024;
+
 final class OdbcUsageProfilePreset {
   const OdbcUsageProfilePreset({
     required this.useAsync,
@@ -19,6 +25,10 @@ final class OdbcUsageProfilePreset {
     required this.poolConnectionTimeout,
     required this.recommendedPoolMaxSize,
     required this.recommendedResultEncoding,
+    this.recommendedLazyStrings = false,
+    this.recommendedStreamChunkSizeBytes =
+        defaultRecommendedStreamChunkSizeBytes,
+    this.recommendedInitialResultBufferBytes,
   });
 
   final bool useAsync;
@@ -39,8 +49,21 @@ final class OdbcUsageProfilePreset {
 
   /// Suggested [ResultEncoding] for analytics-style SELECT workloads on this
   /// profile. Server presets default to [ResultEncoding.columnar]; other
-  /// presets keep [ResultEncoding.rowMajor] for compatibility.
+  /// presets keep [ResultEncoding.rowMajor] for compatibility. Applied to
+  /// columnar-typed APIs only — QueryResult APIs always use row-major wire.
   final ResultEncoding recommendedResultEncoding;
+
+  /// When true, `ConnectionOptions.fromUsageProfile` enables `lazyStrings`.
+  /// Server presets opt in for text-heavy analytics; other presets stay false.
+  final bool recommendedLazyStrings;
+
+  /// Suggested `streamQuery*(chunkSize:)` value for large scans on this
+  /// profile. Does not change public API signature defaults (still 64 KiB).
+  final int recommendedStreamChunkSizeBytes;
+
+  /// Suggested `ConnectionOptions.initialResultBufferBytes` for this profile.
+  /// Server presets use 1 MiB; others leave null (package default 64 KiB).
+  final int? recommendedInitialResultBufferBytes;
 }
 
 OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
@@ -103,6 +126,10 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 8,
         recommendedResultEncoding: ResultEncoding.columnar,
+        recommendedLazyStrings: true,
+        recommendedStreamChunkSizeBytes: serverRecommendedStreamChunkSizeBytes,
+        recommendedInitialResultBufferBytes:
+            serverRecommendedStreamChunkSizeBytes,
       );
     case OdbcUsageProfile.highThroughput:
       return const OdbcUsageProfilePreset(
@@ -122,6 +149,10 @@ OdbcUsageProfilePreset resolveOdbcUsageProfilePreset(
         poolConnectionTimeout: Duration(seconds: 30),
         recommendedPoolMaxSize: 12,
         recommendedResultEncoding: ResultEncoding.columnar,
+        recommendedLazyStrings: true,
+        recommendedStreamChunkSizeBytes: serverRecommendedStreamChunkSizeBytes,
+        recommendedInitialResultBufferBytes:
+            serverRecommendedStreamChunkSizeBytes,
       );
     case OdbcUsageProfile.legacy:
       return const OdbcUsageProfilePreset(

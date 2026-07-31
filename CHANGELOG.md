@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Catalog buffer / lazy strings** — catalog runners seed FFI from
+  `initialResultBufferBytes` / `maxResultBufferBytes` and honor
+  `lazyStrings` / `queryTimeout` from connection options.
+- **Multi / prepared FFI seed** — `executeQueryMulti` / `MultiParams` and
+  prepared execute now pass `initialResultBufferBytes` (or
+  `StatementOptions.initialBufferSize`) into `callWithBuffer(initialSize:)`,
+  matching single-result query paths.
+- **Async stream `chunkSize`** — `streamQueryBatched` / columnar / async
+  single-result fetches now pass `bufferSize: chunkSize` on every
+  `streamFetch`, matching sync streaming (avoids the FFI 256 KiB seed when
+  callers request a larger chunk).
+- **QueryResult buffered encoding** — `executeQueryParamValues` /
+  `executeQueryParamBuffer` always request row-major wire (columnar requests
+  are clamped via `forQueryResultWire`), matching `streamQuery*`. Server
+  profiles no longer rematerialize columnar wire into `List<List<dynamic>>`
+  on QueryResult APIs. Use `executeQueryColumnar*` / `streamQueryColumnar*`
+  for columnar end-to-end.
+
+### Changed
+
+- **Benchmark harness stability** — async concurrency `elapsedMs` is now
+  fractional (from microseconds). CRUD SELECT benches use 1 warmup + median
+  of 3 timed runs; parallel pool insert warms checkouts before timing.
+  Streaming smoke also uses fractional `elapsedMs`. Smoke baselines
+  (`async-smoke`, `streaming-smoke`) refreshed after confirming wall-clock
+  gates on short `SELECT 1` runs were false positives.
+- **`streamQuery*` `chunkSize`** — now `int?` (default `null`). Effective size
+  is `chunkSize ?? ConnectionOptions.streamChunkSizeBytes ?? 64 KiB`. Server
+  presets set `streamChunkSizeBytes` to 1 MiB via
+  `ConnectionOptions.fromUsageProfile`.
+- **`ConnectionOptions.streamChunkSizeBytes` /
+  `sqlPointerCacheMaxSize`** — additive optional fields.
+- **`StatementOptions.initialBufferSize`** — additive optional seed for a
+  single prepared execution (falls back to connection then 64 KiB).
+- **Runner default seed** — when connection `initialResultBufferBytes` is
+  null, runners use `defaultInitialResultBufferBytes` (64 KiB). Low-level FFI
+  without an explicit seed still falls back to 256 KiB.
+- **`streamQuery` / `streamQueryNamed` / `streamQueryColumnar`** — additive
+  `fetchSize` / `chunkSize` (defaults: fetchSize 1000; chunkSize null →
+  connection/64 KiB), forwarded to batched native start + fetch. Use
+  `ServiceLocator.recommendedStreamChunkSizeBytes` for explicit server 1 MiB
+  scans.
+- **Server usage presets** — `balancedServer` / `highThroughput`
+  `ConnectionOptions.fromUsageProfile` now enable `lazyStrings` and set
+  `initialResultBufferBytes` / `streamChunkSizeBytes` to 1 MiB. Text cells
+  compare equal to `String` via `LazyString.==`; callers that use `is String`
+  should read `.value` or keep `lazyStrings: false`.
+- **`recommendedStreamChunkSizeBytes`** — exposed on `ResolvedOdbcUsageProfile`
+  and `ServiceLocator` (1 MiB for server presets, 64 KiB otherwise).
+- **`defaultResultEncoding`** — documented and used as the default for
+  **columnar-typed** APIs only; QueryResult APIs ignore it.
+
+### Performance
+
+- **Pool checkout session reset** — `is_valid` runs the health query only;
+  `ConnectionPool::get` owns the single per-checkout `pool_session_reset`.
+  Avoids a double reset when `test_on_check_out` is enabled (r2d2
+  `on_acquire` only runs after `connect`, not on idle checkout). Checkin
+  reset is unchanged.
+- **Bulk FFI scratch** — mid-size bulk payloads (≤256 KiB) reuse a per-isolate
+  byte scratch; `rowsInserted` out-param is reused (no per-call malloc).
+- **ASCII scalar decode** — float/bool/smallInt/datetime prefer byte parsers
+  without allocating intermediate `String`s; `LazyString.value` uses ASCII
+  `fromCharCodes` when possible.
+- **Directed params** — DRT1 encode uses the same two-pass writer as
+  `serializeParams`.
+- **`asyncPoll`** — reuses a process-lifetime `Int32` status pointer.
+- **FFI scratch gate** — transient/zero-copy path only when
+  `preferTransient` or seed ≥ 256 KiB; 64 KiB OLTP seeds reuse the scratch
+  pool. Transient query path reuses a per-isolate `outWritten` pointer.
+- **Row-major type cache** — `OdbcType` resolved once per column (not per
+  cell); INTEGER/BIGINT still decode via frame offsets.
+- **`ProtocolByteAccumulator` growth** — snaps past 64 KiB to the 1 MiB pool
+  tier (cap 2) instead of 128/256/512 KiB orphans.
+- **Typed lazy strings** — `toTypedColumnarFromWire(assumeLazyStrings:)` skips
+  the LazyString pre-scan when the parse already used lazy mode.
+- **Frame / stream / bulk micros** — single header peek in
+  `BinaryFrameAccumulator`; `StreamingQuery` without `.map`; bulk UTF-8
+  avoids redundant `fromList`; async `executeQueryNamed` forwards
+  `initialBufferBytes`.
+- **`initialResultBufferBytes` → FFI** — connection option now seeds
+  `callWithBuffer(initialSize:)` on sync/async/prepared/multi/catalog query
+  paths (clamped by `maxResultBufferBytes`).
+- **Row-major INTEGER/BIGINT decode** — uses the frame `ByteData` / LE helpers
+  instead of allocating a `ByteData` view per cell.
+- **Typed columnar fallback** — row-major / MULT non-columnar paths use
+  `toTypedColumnarFromWire` (ODBC discriminants) instead of `_inferKind` scans.
+- **Params scratch** — native helper scratch capacity raised to 256 KiB
+  (shared with bulk); `StreamStartBatchedRequest` params use
+  `TransferableTypedData` above 32 KiB.
+- **`ProtocolByteAccumulator` free-list** — recycles up to four 64 KiB and two
+  1 MiB backings after growth / GC of fully transferred frames.
+- **Multi-stream coalescer** — reuses growable row lists on open cursor when
+  possible (avoids an extra `List.of` copy).
+- **MULT → typed** — `parseBufferToTypedColumnar` decodes the first columnar v2
+  result-set payload directly (`peekFirstResultSetPayload`) instead of
+  rematerializing through `QueryResult` + `toTypedColumnar`.
+- **Bulk insert** — `asUint8List` keeps `BulkInsertBuilder.build()` payloads
+  zero-copy on `bulkInsert` / `bulkInsertParallel`.
+
 ## [4.4.0] - 2026-07-23
 
 ### Fixed

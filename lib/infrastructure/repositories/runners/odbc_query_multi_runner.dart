@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
@@ -19,6 +20,12 @@ import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser
 import 'package:result_dart/result_dart.dart';
 
 /// Multi-result queries and raw parameter-buffer execution.
+/// Runs multi-result query operations (`executeQueryMulti*`).
+///
+/// **Timeout note:** [ConnectionOptions.queryTimeout] wraps the isolate hop in
+/// `Future.timeout` only. Buffered multi has no native async start/poll/cancel
+/// path, so a timed-out Future does **not** cancel in-flight FFI work on the
+/// worker. Prefer `streamQueryMulti` when cancellation matters.
 class OdbcQueryMultiRunner {
   OdbcQueryMultiRunner({
     required this.ffi,
@@ -50,6 +57,8 @@ class OdbcQueryMultiRunner {
     Future<Result<QueryResult>> run() async {
       try {
         final maxBytes = opts?.maxResultBufferBytes;
+        final initialBytes =
+            opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
         final queryTimeout = opts?.queryTimeout;
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryParamBuffer(
@@ -57,6 +66,7 @@ class OdbcQueryMultiRunner {
                 sql,
                 paramBuffer,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 timeout: queryTimeout,
                 resultEncoding: resultEncoding,
               )
@@ -65,6 +75,7 @@ class OdbcQueryMultiRunner {
                 sql,
                 paramBuffer,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
                 resultEncoding: resultEncoding,
               );
 
@@ -165,6 +176,8 @@ class OdbcQueryMultiRunner {
 
     final opts = state.optionsFor(connectionId);
     final maxBytes = opts?.maxResultBufferBytes;
+    final initialBytes =
+        opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
     final lazyStrings = opts?.lazyStrings ?? false;
 
     Future<Result<QueryResultMulti>> run() async {
@@ -174,9 +187,14 @@ class OdbcQueryMultiRunner {
                 nativeId,
                 sql,
                 maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
               )
-            : ffi.sync
-                .executeQueryMulti(nativeId, sql, maxBufferBytes: maxBytes);
+            : ffi.sync.executeQueryMulti(
+                nativeId,
+                sql,
+                maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
+              );
 
         if (buf == null || buf.isEmpty) {
           return const Success(
@@ -237,6 +255,9 @@ class OdbcQueryMultiRunner {
     }
 
     final opts = state.optionsFor(connectionId);
+    final maxBytes = opts?.maxResultBufferBytes;
+    final initialBytes =
+        opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
 
     Future<Result<QueryResultMulti>> run() async {
       try {
@@ -246,13 +267,15 @@ class OdbcQueryMultiRunner {
                 nativeId,
                 sql,
                 paramsBuffer,
-                maxBufferBytes: opts?.maxResultBufferBytes,
+                maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
               )
             : ffi.sync.executeQueryMultiParams(
                 nativeId,
                 sql,
                 paramsBuffer,
-                maxBufferBytes: opts?.maxResultBufferBytes,
+                maxBufferBytes: maxBytes,
+                initialBufferBytes: initialBytes,
               );
 
         if (buf == null || buf.isEmpty) {

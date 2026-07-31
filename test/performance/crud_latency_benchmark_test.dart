@@ -239,6 +239,20 @@ Future<_BenchRow> _benchInsertBulkParallelColumnar(
   }
 
   try {
+    // Open physical connections before the timed window so the measurement
+    // reflects insert work, not first-checkout connect/health/reset costs.
+    final warmed = <int>[];
+    for (var i = 0; i < _poolSize; i++) {
+      final connId = pool.getConnection();
+      if (connId == 0) {
+        break;
+      }
+      warmed.add(connId);
+    }
+    for (final connId in warmed) {
+      pool.releaseConnection(connId);
+    }
+
     final payload = _columnarBulkBuilder('bulk-parallel').build();
     final sw = Stopwatch()..start();
     final inserted = pool.bulkInsertParallel(
@@ -274,36 +288,59 @@ Future<_BenchRow> _benchInsertBulkParallelColumnar(
   }
 }
 
+/// Timed SELECT samples: 1 warmup + [_selectTimedRuns], report median micros.
+const _selectTimedRuns = 3;
+
+Future<_BenchRow> _medianSelectBench({
+  required String method,
+  required Future<({int rows, int micros})?> Function() runOnce,
+}) async {
+  // Warm caches / plan before the timed window.
+  await runOnce();
+
+  final samples = <({int rows, int micros})>[];
+  for (var i = 0; i < _selectTimedRuns; i++) {
+    final sample = await runOnce();
+    if (sample == null) {
+      return _BenchRow(
+        'SELECT',
+        method,
+        _selectRowCount,
+        -1,
+        -1,
+        totalElapsedMs: -1,
+      );
+    }
+    samples.add(sample);
+  }
+  samples.sort((a, b) => a.micros.compareTo(b.micros));
+  final mid = samples[samples.length ~/ 2];
+  final ms = mid.micros / 1000.0;
+  return _BenchRow(
+    'SELECT',
+    method,
+    mid.rows,
+    ms,
+    mid.rows / (mid.micros / 1e6),
+    totalElapsedMs: ms,
+  );
+}
+
 Future<_BenchRow> _benchSelectBuffered(
   NativeOdbcConnection native,
   int connId,
 ) async {
   const sql = 'SELECT id, val FROM $_table ORDER BY id';
-  final sw = Stopwatch()..start();
-  final buf = native.executeQueryParams(connId, sql, []);
-  sw.stop();
-
-  if (buf == null) {
-    return const _BenchRow(
-      'SELECT',
-      'buffered row-major',
-      _selectRowCount,
-      -1,
-      -1,
-      totalElapsedMs: -1,
-    );
-  }
-
-  final decoded = BinaryProtocolParser.parse(buf);
-  final rows = decoded.rowCount;
-  final ms = sw.elapsedMicroseconds / 1000.0;
-  return _BenchRow(
-    'SELECT',
-    'buffered row-major',
-    rows,
-    ms,
-    rows / (sw.elapsedMicroseconds / 1e6),
-    totalElapsedMs: ms,
+  return _medianSelectBench(
+    method: 'buffered row-major',
+    runOnce: () async {
+      final sw = Stopwatch()..start();
+      final buf = native.executeQueryParams(connId, sql, []);
+      sw.stop();
+      if (buf == null) return null;
+      final rows = BinaryProtocolParser.parse(buf).rowCount;
+      return (rows: rows, micros: sw.elapsedMicroseconds);
+    },
   );
 }
 
@@ -312,24 +349,17 @@ Future<_BenchRow> _benchSelectStreaming(
   int connId,
 ) async {
   const sql = 'SELECT id, val FROM $_table ORDER BY id';
-  var rows = 0;
-  final sw = Stopwatch()..start();
-  await for (final chunk in native.streamQueryBatched(
-    connId,
-    sql,
-  )) {
-    rows += chunk.rowCount;
-  }
-  sw.stop();
-
-  final ms = sw.elapsedMicroseconds / 1000.0;
-  return _BenchRow(
-    'SELECT',
-    'streaming batched',
-    rows,
-    ms,
-    rows / (sw.elapsedMicroseconds / 1e6),
-    totalElapsedMs: ms,
+  return _medianSelectBench(
+    method: 'streaming batched',
+    runOnce: () async {
+      var rows = 0;
+      final sw = Stopwatch()..start();
+      await for (final chunk in native.streamQueryBatched(connId, sql)) {
+        rows += chunk.rowCount;
+      }
+      sw.stop();
+      return (rows: rows, micros: sw.elapsedMicroseconds);
+    },
   );
 }
 
@@ -338,36 +368,21 @@ Future<_BenchRow> _benchSelectColumnar(
   int connId,
 ) async {
   const sql = 'SELECT id, val FROM $_table ORDER BY id';
-  final sw = Stopwatch()..start();
-  final buf = native.executeQueryParams(
-    connId,
-    sql,
-    [],
-    resultEncoding: ResultEncoding.columnar,
-  );
-  sw.stop();
-
-  if (buf == null) {
-    return const _BenchRow(
-      'SELECT',
-      'columnar buffered',
-      _selectRowCount,
-      -1,
-      -1,
-      totalElapsedMs: -1,
-    );
-  }
-
-  final decoded = BinaryProtocolParser.parse(buf);
-  final rows = decoded.rowCount;
-  final ms = sw.elapsedMicroseconds / 1000.0;
-  return _BenchRow(
-    'SELECT',
-    'columnar buffered',
-    rows,
-    ms,
-    rows / (sw.elapsedMicroseconds / 1e6),
-    totalElapsedMs: ms,
+  return _medianSelectBench(
+    method: 'columnar buffered',
+    runOnce: () async {
+      final sw = Stopwatch()..start();
+      final buf = native.executeQueryParams(
+        connId,
+        sql,
+        [],
+        resultEncoding: ResultEncoding.columnar,
+      );
+      sw.stop();
+      if (buf == null) return null;
+      final rows = BinaryProtocolParser.parse(buf).rowCount;
+      return (rows: rows, micros: sw.elapsedMicroseconds);
+    },
   );
 }
 

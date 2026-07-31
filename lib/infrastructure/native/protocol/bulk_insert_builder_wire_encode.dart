@@ -386,7 +386,7 @@ Uint8List _encodeTextCellBytes(Object? value) {
     }
     return out;
   }
-  return Uint8List.fromList(utf8.encode(text));
+  return utf8.encode(text);
 }
 
 bool _isAsciiText(String value) {

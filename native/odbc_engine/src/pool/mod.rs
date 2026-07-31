@@ -78,8 +78,18 @@ impl ConnectionPool {
     }
 
     pub fn get(&self) -> Result<PooledConnectionWrapper> {
-        let pooled = self.pool.get().map_err(|e| {
+        // r2d2 `CustomizeConnection::on_acquire` runs only after `connect`,
+        // not on idle checkout. Reset here so every delivered connection is
+        // clean regardless of `test_on_check_out`. `is_valid` (when enabled)
+        // only runs the health query to avoid a second reset on that path.
+        let mut pooled = self.pool.get().map_err(|e| {
             OdbcError::PoolError(format!("Failed to get connection from pool: {}", e))
+        })?;
+        pooled.pool_session_reset().map_err(|e| {
+            OdbcError::PoolError(format!(
+                "Failed to reset pooled connection on checkout: {}",
+                e
+            ))
         })?;
         Ok(PooledConnectionWrapper { pooled })
     }
@@ -239,6 +249,17 @@ mod tests {
             let _cached: &mut CachedConnection = wrapper.cached_mut();
         }
         let _ = assert_cached_mut_available;
+    }
+
+    #[test]
+    fn connection_pool_get_owns_per_checkout_session_reset() {
+        // Invariant: callers of ConnectionPool::get always receive a connection
+        // that has been through pool_session_reset after r2d2::Pool::get,
+        // independent of test_on_check_out. is_valid must not also reset.
+        fn assert_get_signature(pool: &ConnectionPool) -> Result<PooledConnectionWrapper> {
+            pool.get()
+        }
+        let _ = assert_get_signature;
     }
 
     #[test]

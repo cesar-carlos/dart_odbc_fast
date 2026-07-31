@@ -1,19 +1,19 @@
 [
   {
     "scenario": "streamQuery",
-    "elapsedMs": 14,
+    "elapsedMs": 13.966,
     "rows": 1,
     "chunks": 1,
-    "rowsPerSecond": 71.42857142857143,
+    "rowsPerSecond": 71.6024631247315,
     "fetchSize": null,
     "chunkSize": 65536
   },
   {
     "scenario": "streamQueryBatched",
-    "elapsedMs": 1,
+    "elapsedMs": 1.424,
     "rows": 1,
     "chunks": 1,
-    "rowsPerSecond": 1000.0,
+    "rowsPerSecond": 702.2471910112359,
     "fetchSize": 1000,
     "chunkSize": 65536
   }
