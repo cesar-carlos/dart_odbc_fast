@@ -1,12 +1,14 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.4.0 (server profiles apply columnar wire by default
-> via `ServiceLocator` / `OdbcRepositoryImpl`, pooled checkouts reuse prepared
-> handles through `CachedConnection`; async XA + multi-stream knobs;
-> prior v4.1.0 server profile columnar
-> recommendation, CRUD columnar bulk benchmark baseline, harness `--crud` lane;
-> service surface, pool/transaction hardening, native engine perf
-> follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
+> **Last updated for:** v4.5.0 (binary float/bool wire + Dart dual-decode;
+> prepared cache with inferable NULLs; stream prepared reuse; pool
+> `sessionResetOnCheckout` opt-out + single checkout reset; FFI mid-size
+> transient from 32 KiB; additive `streamChunkSizeBytes` /
+> `blockFetchBatchSize`; server presets 1 MiB chunk + `lazyStrings`;
+> prior v4.4.0 async XA + multi-stream knobs; prior v4.1.0 server profile
+> columnar recommendation, CRUD columnar bulk benchmark baseline, harness
+> `--crud` lane; service surface, pool/transaction hardening, native engine
+> perf follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
 > default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
 > for the prepared cache, release/bench profiles tightened).
 

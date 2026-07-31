@@ -1,6 +1,6 @@
 # Driver Capabilities Matrix
 
-> **Last updated for:** v4.4.0 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
+> **Last updated for:** v4.5.0 — `doc/CAPABILITIES_v3.md` is the canonical reference for engine capabilities, plugin traits and the capability × engine matrix. For the FFI surface see [API_SURFACE.md](API_SURFACE.md); for type mapping see [notes/TYPE_MAPPING.md](notes/TYPE_MAPPING.md).
 
 **Owns:** delivered engine capability claims, plugin trait coverage and the
 capability x engine matrix. Wire/type details belong in

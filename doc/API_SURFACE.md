@@ -1,4 +1,4 @@
-# Superfície de API exposta — `odbc_engine` / `odbc_fast` v4.4.0
+# Superfície de API exposta — `odbc_engine` / `odbc_fast` v4.5.0
 
 Documento que cataloga **tudo** o que o crate Rust expõe, em três camadas:
 
@@ -550,10 +550,10 @@ ainda não expostos (ver matriz em [`example/README.md`](../example/README.md)).
 
 ---
 
-*Atualizado para **odbc_fast v4.4.0** (ABI **1.1**, `odbc_release_buffer`,
+*Atualizado para **odbc_fast v4.5.0** (ABI **1.1**, `odbc_release_buffer`,
 `odbc_stream_start_batched_options`, streaming batched default,
 `streamQueryBuffer`, `recommendedResultEncoding`, zero-copy **32 KiB**,
-**100** exports em `odbc_exports.def`). Para cada
-funcionalidade com "fix" há um teste de regressão correspondente em
+binary float/bool wire dual-support, **100** exports em `odbc_exports.def`).
+Para cada funcionalidade com "fix" há um teste de regressão correspondente em
 `native/odbc_engine/tests/regression/` e
 `test/infrastructure/native/bindings/ffi_exports_contract_test.dart`.*

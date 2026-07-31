@@ -9,7 +9,7 @@ Oracle ref-cursor wire details and columnar result protocol notes.
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-07-23 (`4.4.0`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 row + typed direct decode, `executeQueryColumnar` / `streamQueryColumnar`, certification table — wire format unchanged)
+**Last verified against code:** 2026-07-31 (`4.5.0`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 row + typed direct decode, `executeQueryColumnar` / `streamQueryColumnar`, binary float/bool dual-decode, certification table — wire additive with legacy UTF-8 still accepted)
 
 ---
 
@@ -79,9 +79,9 @@ with stable discriminants 1..19:
 | 10 | `datetimeOffset`   | `String` (ISO-8601)    | SQL Server `datetimeoffset`            |
 | 11 | `time`             | `String`               | `HH:MM:SS[.fff]`                       |
 | 12 | `smallInt`         | `String`               | encoded as text on the wire            |
-| 13 | `boolean`          | `String`               | `"true"` / `"false"`                   |
-| 14 | `float`            | `String`               | text-formatted                         |
-| 15 | `doublePrecision`  | `String`               | text-formatted                         |
+| 13 | `boolean`          | `bool` / `String`      | 1-byte `0\|1`, ASCII, or legacy text   |
+| 14 | `float`            | `double` / `String`    | 8-byte LE IEEE-754 or ASCII / text     |
+| 15 | `doublePrecision`  | `double` / `String`    | 8-byte LE IEEE-754 or ASCII / text     |
 | 16 | `json`             | `String`               | raw JSON text                          |
 | 17 | `uuid`             | `String`               | RFC 4122 hyphenated                    |
 | 18 | `money`            | `String`               | preserves precision                    |

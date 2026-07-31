@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-07-31
+
 ### Fixed
 
 - **Catalog buffer / lazy strings** — catalog runners seed FFI from
@@ -4263,7 +4265,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...HEAD
+[4.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.4...v4.4.0
 [4.3.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.3...v4.3.4
 [4.3.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.2...v4.3.3

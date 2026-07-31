@@ -6,36 +6,44 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 4.4.x
+## What's New in 4.5.x
 
-Current package version: **4.4.0**. The 4.4 line adds async XA on the
-isolate path, dialect helpers on `IOdbcService`, multi-stream tunables,
-and more FFI/stream performance work — still additive for typical
-service callers. Full history: [CHANGELOG.md](CHANGELOG.md).
+Current package version: **4.5.0**. The 4.5 line focuses on scan/pool
+hot paths and additive tuning knobs — still compatible for typical
+`IOdbcService` callers. Full history: [CHANGELOG.md](CHANGELOG.md).
 Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md).
 
 ### Highlights
 
-- **Async XA / 2PC** — full `odbc_xa_*` lifecycle on the isolate backend
-  with `xaId` worker affinity; `IOdbcService.xaRecover` /
-  `xaResumePrepared` on the service surface. Prefer
-  `runInXaTransaction` over manual handle chaining.
-- **`IDialectService`** — UPSERT / RETURNING / session-init builders on
-  `IOdbcService` (thin wrap over `OdbcDriverFeatures`).
-- **`streamQueryMulti` knobs** — optional `fetchSize` / `chunkSize`
-  (defaults 1000 / 64 KiB); async path uses `streamPollAndFetch`.
-  Demo: [`multi_result_stream_demo.dart`](example/multi_result_stream_demo.dart).
-- **Parameterized streaming** — `streamQueryNamed` batches when the
-  native params symbols are present (buffered fallback otherwise).
-- **Capability guards** — missing native symbols for columnar encoding,
-  non-default access mode, or per-txn `lockTimeout` throw
-  `UnsupportedFeatureError` instead of silent fallback.
-- **Native Assets resolution** — prefer newer local release over cache,
-  `ODBC_FAST_PREFER_LOCAL_BUILD`, SHA-256 sidecars when published.
-- **FFI / stream performance** — MULT writer, multi-stream framing,
-  sharded `ffi::state::*`, temporal/wide-text encode fast-paths, larger
-  default result buffer seed. Details:
-  [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md).
+- **Binary float / bool wire** — native `Float`/`Double`/`Boolean` cells
+  emit LE IEEE-754 (8 bytes) / single `0|1` byte; Dart dual-decodes
+  legacy UTF-8 text and the binary payloads (`double` / `bool` at the
+  cell boundary).
+- **Prepared cache + NULLs** — inferable NULL param lists hit the
+  prepared LRU (typed `SQL_NULL_DATA`) instead of always falling through
+  to null-aware prepare.
+- **Stream prepared reuse** — batched `streamQuery*` reuses the
+  per-connection prepared LRU when params are cache-eligible.
+- **Pool checkout reset opt-out** — `PoolOptions.sessionResetOnCheckout`
+  / DSN `Pool_Session_Reset` / env `ODBC_POOL_SESSION_RESET` (default
+  still reset). Checkin reset stays unconditional. Checkout no longer
+  double-resets when `test_on_check_out` is on.
+- **Stream / buffer knobs** — additive `ConnectionOptions.streamChunkSizeBytes`,
+  `blockFetchBatchSize`, and `StatementOptions.initialBufferSize`;
+  `streamQuery*` `chunkSize` defaults through connection → 64 KiB.
+  Server presets set 1 MiB chunk + `lazyStrings` (use `.value` or keep
+  `lazyStrings: false` if you rely on `is String`).
+- **FFI mid-size path** — `callWithBuffer` prefers transient allocation
+  from the 32 KiB zero-copy floor for medium frames.
+- **QueryResult encoding** — `executeQueryParam*` always requests
+  row-major wire (`forQueryResultWire`); use `executeQueryColumnar*` /
+  `streamQueryColumnar*` for columnar end-to-end.
+- **From 4.4.x** — async XA on the isolate path, `IDialectService`,
+  `streamQueryMulti` `fetchSize`/`chunkSize`, capability guards, Native
+  Assets prefer-local + SHA-256 sidecars. See the 4.4.0 section in the
+  changelog.
+
+Details: [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md).
 
 ### XA / 2PC engines
 
@@ -93,7 +101,12 @@ capabilities, testing, and performance. Examples:
   `runInXaTransaction<T>` orchestrate begin → action → commit/rollback
   (or end → prepare → commit_prepared for XA) with throw-safe cleanup
 - Connection pooling with **configurable eviction/timeouts**
-  (`PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`)
+  (`PoolOptions`: `idleTimeout`, `maxLifetime`, `connectionTimeout`,
+  optional `sessionResetOnCheckout` to skip per-checkout session reset
+  on trusted pools)
+- Streaming chunk / block-fetch knobs on `ConnectionOptions`
+  (`streamChunkSizeBytes`, `blockFetchBatchSize`) and optional
+  `StatementOptions.initialBufferSize` for prepared seeds
 - Transactions and savepoints (SQL-92 / SQL Server dialects); per-transaction
   `IsolationLevel`, `TransactionAccessMode.readOnly`, `LockTimeout`
 - **X/Open XA / 2PC**: typed `Xid` + `XaTransactionHandle`
@@ -150,10 +163,10 @@ protocol 1:1. Access via `ColumnMetadata` / typed views on parsed results
 | 9            | `timestampWithTz`  | `String` (ISO 8601 + offset) |
 | 10           | `datetimeOffset`   | `String`                     |
 | 11           | `time`             | `String`                     |
-| 12           | `smallInt`         | `String` (textual)           |
-| 13           | `boolean`          | `String` (`0`/`1`)           |
-| 14           | `float`            | `String` (textual)           |
-| 15           | `doublePrecision`  | `String`                     |
+| 12           | `smallInt`         | `int` / `String` (ASCII preferred) |
+| 13           | `boolean`          | `bool` (1-byte `0\|1` or ASCII)    |
+| 14           | `float`            | `double` (8-byte LE or ASCII)      |
+| 15           | `doublePrecision`  | `double` (8-byte LE or ASCII)      |
 | 16           | `json`             | `String` (raw JSON text)     |
 | 17           | `uuid`             | `String`                     |
 | 18           | `money`            | `String`                     |
@@ -377,6 +390,8 @@ final poolId = factory.createPool(
     idleTimeout: Duration(minutes: 5),
     maxLifetime: Duration(hours: 1),
     connectionTimeout: Duration(seconds: 10),
+    // Trusted pools only — skips checkout session reset (checkin still resets):
+    // sessionResetOnCheckout: false,
   ),
 );
 ```
@@ -388,8 +403,8 @@ Falls back to the legacy `poolCreate` (no options) when either:
 
 `poolSetSize(...)` preserves the resolved pool configuration when it
 recreates the pool: `idleTimeout`, `maxLifetime`,
-`connectionTimeout`, checkout validation, and any configured
-health-check query stay intact after resize.
+`connectionTimeout`, `sessionResetOnCheckout`, checkout validation, and any
+configured health-check query stay intact after resize.
 
 ## Requirements
 
@@ -402,7 +417,7 @@ health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^4.4.0
+  odbc_fast: ^4.5.0
 ```
 
 Then:
@@ -1027,7 +1042,8 @@ Fluent transaction helpers on top of `TransactionHandle`
 **[pool_with_options_demo.dart](example/pool_with_options_demo.dart)** -
 Configurable pool eviction/timeouts
 
-- ✅ `PoolOptions(idleTimeout, maxLifetime, connectionTimeout)`
+- ✅ `PoolOptions(idleTimeout, maxLifetime, connectionTimeout,
+  sessionResetOnCheckout?)`
 - ✅ `OdbcPoolFactory.createPool(...)` with automatic legacy fallback
 - ✅ Supports detection of `supportsApi` for old native libraries
 - ✅ JSON-encoded options sent through `odbc_pool_create_with_options`

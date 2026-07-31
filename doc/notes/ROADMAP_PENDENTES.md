@@ -17,4 +17,4 @@ aqui — atualize PENDING e o CHANGELOG quando um item fechar.
 **Entregue (nao listar como aberto):** sharding completo do `GlobalState`
 residual (`env` + BCP strings) — ver CHANGELOG Unreleased / PERFORMANCE.
 
-Ultima atualizacao: 2026-07-23 (pacote `4.4.0`).
+Ultima atualizacao: 2026-07-31 (pacote `4.5.0`).

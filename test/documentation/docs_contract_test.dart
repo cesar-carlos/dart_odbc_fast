@@ -77,12 +77,13 @@ void main() {
 
     test('should_keep_readme_on_current_package_line', () {
       final readme = _readRepoFile('README.md');
-      expect(readme, contains('**4.4.0**'));
-      expect(readme, contains('odbc_fast: ^4.4.0'));
+      expect(readme, contains('**4.5.0**'));
+      expect(readme, contains('odbc_fast: ^4.5.0'));
       expect(readme, contains('odbc_fast_native.dart'));
       expect(readme, contains('doc/README.md'));
       expect(readme, isNot(contains("What's New in 3.10.x")));
       expect(readme, isNot(contains('odbc_fast: ^3.10.1')));
+      expect(readme, isNot(contains('odbc_fast: ^4.4.0')));
       expect(readme, isNot(contains('92 functions')));
       expect(readme, isNot(contains('executeQueryMultiParams,')));
       expect(
@@ -163,10 +164,10 @@ void main() {
       }
     });
 
-    test('should_keep_api_surface_aligned_with_v4_4_abi', () {
+    test('should_keep_api_surface_aligned_with_v4_5_abi', () {
       final apiSurface = _readRepoFile('doc/API_SURFACE.md');
 
-      expect(apiSurface, contains('v4.4.0'));
+      expect(apiSurface, contains('v4.5.0'));
       expect(apiSurface, contains('ABI **1.1**'));
       expect(apiSurface, contains('odbc_release_buffer'));
       expect(apiSurface, contains('streamQueryBuffer'));
