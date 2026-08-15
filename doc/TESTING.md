@@ -1,6 +1,7 @@
 # Test Policy and Coverage Guide
 
-> **Last updated for:** v4.5.x (`4.5.0` — binary scalars, stream/pool hot
+> **Last updated for:** v4.5.x (`4.5.1` — Dart FFI dispatch cache and
+> protocol parse allocation; prior `4.5.0` binary scalars, stream/pool hot
 > paths, additive stream/buffer knobs; prior 4.4.0 async XA, dialect service,
 > multi-stream knobs, dual barrels, segregated repositories,
 > event bus, columnar service surface, FFI `GlobalState` sharding, CI unit +

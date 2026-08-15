@@ -36,32 +36,98 @@ mixin _OdbcBindingsXa on _OdbcBindingsState {
   }
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_start_func>>? _odbc_xa_start_ptr;
+  late final int Function(
+    int,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+  )? _odbc_xa_start_fn = _odbc_xa_start_ptr?.asFunction<
+      int Function(
+        int,
+        int,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+      )>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_end_func>>? _odbc_xa_end_ptr;
+  late final int Function(int)? _odbc_xa_end_fn =
+      _odbc_xa_end_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_prepare_func>>?
       _odbc_xa_prepare_ptr;
+  late final int Function(int)? _odbc_xa_prepare_fn =
+      _odbc_xa_prepare_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_commit_prepared_func>>?
       _odbc_xa_commit_prepared_ptr;
+  late final int Function(int)? _odbc_xa_commit_prepared_fn =
+      _odbc_xa_commit_prepared_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_rollback_prepared_func>>?
       _odbc_xa_rollback_prepared_ptr;
+  late final int Function(int)? _odbc_xa_rollback_prepared_fn =
+      _odbc_xa_rollback_prepared_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_commit_one_phase_func>>?
       _odbc_xa_commit_one_phase_ptr;
+  late final int Function(int)? _odbc_xa_commit_one_phase_fn =
+      _odbc_xa_commit_one_phase_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_rollback_active_func>>?
       _odbc_xa_rollback_active_ptr;
+  late final int Function(int)? _odbc_xa_rollback_active_fn =
+      _odbc_xa_rollback_active_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_recover_count_func>>?
       _odbc_xa_recover_count_ptr;
+  late final int Function(int)? _odbc_xa_recover_count_fn =
+      _odbc_xa_recover_count_ptr?.asFunction<int Function(int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_recover_get_func>>?
       _odbc_xa_recover_get_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<ffi.Int32>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_xa_recover_get_fn = _odbc_xa_recover_get_ptr?.asFunction<
+      int Function(
+        int,
+        ffi.Pointer<ffi.Int32>,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+      )>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_xa_resume_prepared_func>>?
       _odbc_xa_resume_prepared_ptr;
+  late final int Function(
+    int,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+  )? _odbc_xa_resume_prepared_fn = _odbc_xa_resume_prepared_ptr?.asFunction<
+      int Function(
+        int,
+        int,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+      )>();
 
   bool get supportsXa => _odbc_xa_start_ptr != null;
 
@@ -76,62 +142,51 @@ mixin _OdbcBindingsXa on _OdbcBindingsState {
     ffi.Pointer<ffi.Uint8> bqualPtr,
     int bqualLen,
   ) {
-    final ptr = _odbc_xa_start_ptr;
-    if (ptr == null) {
-      throw _xaUnsupported('odbc_xa_start');
-    }
-    final fn = ptr.asFunction<
-        int Function(
-          int,
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-        )>();
+    final fn = _odbc_xa_start_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_start');
     return fn(connId, formatId, gtridPtr, gtridLen, bqualPtr, bqualLen);
   }
 
   int odbc_xa_end(int xaId) {
-    final ptr = _odbc_xa_end_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_end');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_end_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_end');
+    return fn(xaId);
   }
 
   int odbc_xa_prepare(int xaId) {
-    final ptr = _odbc_xa_prepare_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_prepare');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_prepare_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_prepare');
+    return fn(xaId);
   }
 
   int odbc_xa_commit_prepared(int xaId) {
-    final ptr = _odbc_xa_commit_prepared_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_commit_prepared');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_commit_prepared_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_commit_prepared');
+    return fn(xaId);
   }
 
   int odbc_xa_rollback_prepared(int xaId) {
-    final ptr = _odbc_xa_rollback_prepared_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_rollback_prepared');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_rollback_prepared_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_rollback_prepared');
+    return fn(xaId);
   }
 
   int odbc_xa_commit_one_phase(int xaId) {
-    final ptr = _odbc_xa_commit_one_phase_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_commit_one_phase');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_commit_one_phase_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_commit_one_phase');
+    return fn(xaId);
   }
 
   int odbc_xa_rollback_active(int xaId) {
-    final ptr = _odbc_xa_rollback_active_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_rollback_active');
-    return ptr.asFunction<int Function(int)>()(xaId);
+    final fn = _odbc_xa_rollback_active_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_rollback_active');
+    return fn(xaId);
   }
 
   int odbc_xa_recover_count(int connId) {
-    final ptr = _odbc_xa_recover_count_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_recover_count');
-    return ptr.asFunction<int Function(int)>()(connId);
+    final fn = _odbc_xa_recover_count_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_recover_count');
+    return fn(connId);
   }
 
   int odbc_xa_recover_get(
@@ -144,19 +199,9 @@ mixin _OdbcBindingsXa on _OdbcBindingsState {
     int bqualBufLen,
     ffi.Pointer<ffi.Uint32> outBqualLen,
   ) {
-    final ptr = _odbc_xa_recover_get_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_recover_get');
-    return ptr.asFunction<
-        int Function(
-          int,
-          ffi.Pointer<ffi.Int32>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(
+    final fn = _odbc_xa_recover_get_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_recover_get');
+    return fn(
       index,
       outFormatId,
       gtridBuf,
@@ -176,17 +221,8 @@ mixin _OdbcBindingsXa on _OdbcBindingsState {
     ffi.Pointer<ffi.Uint8> bqualPtr,
     int bqualLen,
   ) {
-    final ptr = _odbc_xa_resume_prepared_ptr;
-    if (ptr == null) throw _xaUnsupported('odbc_xa_resume_prepared');
-    final fn = ptr.asFunction<
-        int Function(
-          int,
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-        )>();
+    final fn = _odbc_xa_resume_prepared_fn;
+    if (fn == null) throw _xaUnsupported('odbc_xa_resume_prepared');
     return fn(connId, formatId, gtridPtr, gtridLen, bqualPtr, bqualLen);
   }
 

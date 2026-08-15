@@ -28,10 +28,11 @@ void _writeAsciiString(Uint8List out, int offset, String value) {
 Uint8List serializeParams(List<ParamValue> params) {
   if (params.isEmpty) return Uint8List(0);
 
-  // Phase 1: size payloads. `encodedText[i] == null` means ASCII (or unused);
-  // non-null holds a one-shot UTF-8 encoding for non-ASCII text.
+  // Phase 1: size payloads. `encodedText?[i] == null` means ASCII (or unused);
+  // non-null holds a one-shot UTF-8 encoding for non-ASCII text. The list is
+  // allocated lazily — skipped entirely when all params are integers/nulls.
   var totalBytes = 0;
-  final encodedText = List<List<int>?>.filled(params.length, null);
+  List<List<int>?>? encodedText;
   for (var i = 0; i < params.length; i++) {
     switch (params[i]) {
       case ParamValueNull():
@@ -41,7 +42,8 @@ Uint8List serializeParams(List<ParamValue> params) {
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          encodedText[i] = b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
+              b;
           totalBytes += 5 + b.length;
         }
       case ParamValueInt32():
@@ -53,7 +55,8 @@ Uint8List serializeParams(List<ParamValue> params) {
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          encodedText[i] = b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
+              b;
           totalBytes += 5 + b.length;
         }
       case ParamValueBinary(:final value):
@@ -74,7 +77,7 @@ Uint8List serializeParams(List<ParamValue> params) {
         bd.setUint32(off + 1, 0, _littleEndian);
         off += 5;
       case ParamValueString(:final value):
-        final encoded = encodedText[i];
+        final encoded = encodedText?[i];
         if (encoded != null) {
           out[off] = _tagString;
           bd.setUint32(off + 1, encoded.length, _littleEndian);
@@ -88,16 +91,18 @@ Uint8List serializeParams(List<ParamValue> params) {
         }
       case ParamValueInt32(:final value):
         out[off] = _tagInteger;
-        bd.setUint32(off + 1, 4, _littleEndian);
-        bd.setInt32(off + 5, value, _littleEndian);
+        bd
+          ..setUint32(off + 1, 4, _littleEndian)
+          ..setInt32(off + 5, value, _littleEndian);
         off += 9;
       case ParamValueInt64(:final value):
         out[off] = _tagBigInt;
-        bd.setUint32(off + 1, 8, _littleEndian);
-        bd.setInt64(off + 5, value, _littleEndian);
+        bd
+          ..setUint32(off + 1, 8, _littleEndian)
+          ..setInt64(off + 5, value, _littleEndian);
         off += 13;
       case ParamValueDecimal(:final value):
-        final encoded = encodedText[i];
+        final encoded = encodedText?[i];
         if (encoded != null) {
           out[off] = _tagDecimal;
           bd.setUint32(off + 1, encoded.length, _littleEndian);
@@ -149,7 +154,7 @@ Uint8List serializeDirectedParamList(
   }
 
   var totalBytes = 8; // magic(4) + count(4)
-  final encodedText = List<List<int>?>.filled(params.length, null);
+  List<List<int>?>? encodedText;
   for (var i = 0; i < params.length; i++) {
     totalBytes += 1; // direction
     switch (params[i]) {
@@ -160,7 +165,8 @@ Uint8List serializeDirectedParamList(
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          encodedText[i] = b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
+              b;
           totalBytes += 5 + b.length;
         }
       case ParamValueInt32():
@@ -172,7 +178,8 @@ Uint8List serializeDirectedParamList(
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          encodedText[i] = b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
+              b;
           totalBytes += 5 + b.length;
         }
       case ParamValueBinary(:final value):
@@ -198,7 +205,7 @@ Uint8List serializeDirectedParamList(
         bd.setUint32(off + 1, 0, _littleEndian);
         off += 5;
       case ParamValueString(:final value):
-        final encoded = encodedText[i];
+        final encoded = encodedText?[i];
         if (encoded != null) {
           out[off] = _tagString;
           bd.setUint32(off + 1, encoded.length, _littleEndian);
@@ -212,16 +219,18 @@ Uint8List serializeDirectedParamList(
         }
       case ParamValueInt32(:final value):
         out[off] = _tagInteger;
-        bd.setUint32(off + 1, 4, _littleEndian);
-        bd.setInt32(off + 5, value, _littleEndian);
+        bd
+          ..setUint32(off + 1, 4, _littleEndian)
+          ..setInt32(off + 5, value, _littleEndian);
         off += 9;
       case ParamValueInt64(:final value):
         out[off] = _tagBigInt;
-        bd.setUint32(off + 1, 8, _littleEndian);
-        bd.setInt64(off + 5, value, _littleEndian);
+        bd
+          ..setUint32(off + 1, 8, _littleEndian)
+          ..setInt64(off + 5, value, _littleEndian);
         off += 13;
       case ParamValueDecimal(:final value):
-        final encoded = encodedText[i];
+        final encoded = encodedText?[i];
         if (encoded != null) {
           out[off] = _tagDecimal;
           bd.setUint32(off + 1, encoded.length, _littleEndian);

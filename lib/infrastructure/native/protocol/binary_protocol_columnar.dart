@@ -16,21 +16,10 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2) {
     throw const FormatException('Columnar v2: buffer too small');
   }
-  final colCount = ByteData.sublistView(
-    data,
-    8,
-    10,
-  ).getUint16(0, _littleEndian);
-  final rowCount = ByteData.sublistView(
-    data,
-    10,
-    14,
-  ).getUint32(0, _littleEndian);
-  final paySize = ByteData.sublistView(
-    data,
-    15,
-    19,
-  ).getUint32(0, _littleEndian);
+  final bd = ByteData.sublistView(data);
+  final colCount = bd.getUint16(8, _littleEndian);
+  final rowCount = bd.getUint32(10, _littleEndian);
+  final paySize = bd.getUint32(15, _littleEndian);
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2 + paySize) {
     throw const FormatException('Columnar v2: truncated payload');
   }
@@ -66,17 +55,9 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
     if (off + 4 > end) {
       throw const FormatException('Columnar v2: metadata truncated');
     }
-    final odbcType = ByteData.sublistView(
-      data,
-      off,
-      off + 2,
-    ).getUint16(0, _littleEndian);
+    final odbcType = bd.getUint16(off, _littleEndian);
     off += 2;
-    final nameLen = ByteData.sublistView(
-      data,
-      off,
-      off + 2,
-    ).getUint16(0, _littleEndian);
+    final nameLen = bd.getUint16(off, _littleEndian);
     off += 2;
     if (off + nameLen > end) {
       throw const FormatException('Columnar v2: name truncated');
@@ -94,6 +75,7 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
     final isCompressed = data[off++];
     final raw = _readColumnarColumnPayload(
       data: data,
+      bd: bd,
       off: off,
       end: end,
       isCompressed: isCompressed,
@@ -123,24 +105,21 @@ TypedColumnarResult parseColumnarV2ToTyped(Uint8List data) {
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2) {
     throw const FormatException('Columnar v2: buffer too small');
   }
-  final readMagic =
-      ByteData.sublistView(data, 0, 4).getUint32(0, _littleEndian);
+  final bd = ByteData.sublistView(data);
+  final readMagic = bd.getUint32(0, _littleEndian);
   if (readMagic != BinaryProtocolConstants.magic) {
     throw FormatException(
       'Invalid magic number: 0x${readMagic.toRadixString(16)}',
     );
   }
-  final version = ByteData.sublistView(data, 4, 6).getUint16(0, _littleEndian);
+  final version = bd.getUint16(4, _littleEndian);
   if (version != BinaryProtocolConstants.protocolVersionColumnarV2) {
     throw FormatException('Not a columnar v2 buffer: version=$version');
   }
 
-  final colCount =
-      ByteData.sublistView(data, 8, 10).getUint16(0, _littleEndian);
-  final rowCount =
-      ByteData.sublistView(data, 10, 14).getUint32(0, _littleEndian);
-  final paySize =
-      ByteData.sublistView(data, 15, 19).getUint32(0, _littleEndian);
+  final colCount = bd.getUint16(8, _littleEndian);
+  final rowCount = bd.getUint32(10, _littleEndian);
+  final paySize = bd.getUint32(15, _littleEndian);
   final end = BinaryProtocolConstants.headerSizeColumnarV2 + paySize;
   if (data.length < end) {
     throw const FormatException('Columnar v2: truncated payload');
@@ -168,17 +147,9 @@ TypedColumnarResult parseColumnarV2ToTyped(Uint8List data) {
     if (off + 4 > end) {
       throw const FormatException('Columnar v2: metadata truncated');
     }
-    final odbcType = ByteData.sublistView(
-      data,
-      off,
-      off + 2,
-    ).getUint16(0, _littleEndian);
+    final odbcType = bd.getUint16(off, _littleEndian);
     off += 2;
-    final nameLen = ByteData.sublistView(
-      data,
-      off,
-      off + 2,
-    ).getUint16(0, _littleEndian);
+    final nameLen = bd.getUint16(off, _littleEndian);
     off += 2;
     if (off + nameLen > end) {
       throw const FormatException('Columnar v2: name truncated');
@@ -195,6 +166,7 @@ TypedColumnarResult parseColumnarV2ToTyped(Uint8List data) {
     final isCompressed = data[off++];
     final raw = _readColumnarColumnPayload(
       data: data,
+      bd: bd,
       off: off,
       end: end,
       isCompressed: isCompressed,
@@ -225,6 +197,7 @@ class _ColumnarRawColumn {
 
 _ColumnarRawColumn _readColumnarColumnPayload({
   required Uint8List data,
+  required ByteData bd,
   required int off,
   required int end,
   required int isCompressed,
@@ -238,11 +211,7 @@ _ColumnarRawColumn _readColumnarColumnPayload({
     if (offset + 4 > end) {
       throw const FormatException('Columnar v2: compressed size truncated');
     }
-    final compLen = ByteData.sublistView(
-      data,
-      offset,
-      offset + 4,
-    ).getUint32(0, _littleEndian);
+    final compLen = bd.getUint32(offset, _littleEndian);
     offset += 4;
     if (offset + compLen > end) {
       throw const FormatException('Columnar v2: compressed data truncated');
@@ -268,11 +237,7 @@ _ColumnarRawColumn _readColumnarColumnPayload({
   if (offset + 4 > end) {
     throw const FormatException('Columnar v2: raw size truncated');
   }
-  final rawLen = ByteData.sublistView(
-    data,
-    offset,
-    offset + 4,
-  ).getUint32(0, _littleEndian);
+  final rawLen = bd.getUint32(offset, _littleEndian);
   offset += 4;
   if (offset + rawLen > end) {
     throw const FormatException('Columnar v2: raw data truncated');

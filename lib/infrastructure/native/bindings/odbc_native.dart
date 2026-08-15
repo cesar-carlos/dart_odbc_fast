@@ -83,10 +83,9 @@ class OdbcNative extends _OdbcNativeState
   /// Automatically loads the ODBC engine library and initializes bindings.
   /// [sqlPointerCacheMaxSize] overrides the SQL UTF-8 pointer cache capacity
   /// (default 256).
-  OdbcNative({int? sqlPointerCacheMaxSize})
+  OdbcNative({super.sqlPointerCacheMaxSize})
       : super(
           bindings.OdbcBindings(loadOdbcLibrary()),
-          sqlPointerCacheMaxSize: sqlPointerCacheMaxSize,
         );
 
   /// Creates an instance backed by injected [bindings] (unit tests only).

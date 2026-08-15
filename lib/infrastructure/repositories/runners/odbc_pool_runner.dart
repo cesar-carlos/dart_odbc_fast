@@ -115,7 +115,7 @@ class OdbcPoolRunner {
           : ffi.sync.poolGetConnection(poolId);
 
       if (connId == 0) {
-        return ffi.convertNativeErrorToFailure<Connection>(
+        return await ffi.convertNativeErrorToFailure<Connection>(
           errorFactory: odbcConnectionErrorFactory,
           fallbackMessage: 'Failed to get connection from pool',
         );
@@ -176,7 +176,7 @@ class OdbcPoolRunner {
           : ffi.sync.poolHealthCheck(poolId);
 
       if (result) return const Success(true);
-      return ffi.convertNativeErrorToFailure<bool>(
+      return await ffi.convertNativeErrorToFailure<bool>(
         errorFactory: odbcConnectionErrorFactory,
         fallbackMessage: 'Pool health check failed or pool does not exist',
       );
@@ -199,7 +199,7 @@ class OdbcPoolRunner {
           : ffi.sync.poolGetState(poolId);
 
       if (s == null) {
-        return ffi.convertNativeErrorToFailure<PoolState>(
+        return await ffi.convertNativeErrorToFailure<PoolState>(
           errorFactory: odbcConnectionErrorFactory,
           fallbackMessage: 'Failed to get pool state',
         );
@@ -244,7 +244,7 @@ class OdbcPoolRunner {
       if (ffi.isAsync) {
         final payload = await ffi.async.poolGetStateJson(poolId);
         if (payload == null || payload.isEmpty) {
-          return ffi.convertNativeErrorToFailure<Map<String, Object?>>(
+          return await ffi.convertNativeErrorToFailure<Map<String, Object?>>(
             errorFactory: odbcQueryErrorFactory,
             fallbackMessage: 'Failed to get detailed pool state',
           );
@@ -253,7 +253,7 @@ class OdbcPoolRunner {
       } else {
         final payload = ffi.sync.poolGetStateJson(poolId);
         if (payload == null || payload.isEmpty) {
-          return ffi.convertNativeErrorToFailure<Map<String, Object?>>(
+          return await ffi.convertNativeErrorToFailure<Map<String, Object?>>(
             errorFactory: odbcQueryErrorFactory,
             fallbackMessage: 'Failed to get detailed pool state',
           );

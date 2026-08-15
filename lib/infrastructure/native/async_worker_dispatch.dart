@@ -35,7 +35,6 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         ? _resolveWorker(request)
         : worker;
     final stopwatch = Stopwatch()..start();
-    final executionStopwatch = Stopwatch()..start();
     Completer<WorkerResponse>? completer;
     var slotReleased = false;
     try {
@@ -83,13 +82,13 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       targetWorker.failedRequests++;
       rethrow;
     } finally {
-      executionStopwatch.stop();
+      final elapsedMicros = stopwatch.elapsedMicroseconds;
       if (reservedSlot && !slotReleased && completer == null) {
         _releaseReservedBackpressureSlot();
       }
       targetWorker
-        ..recordLatency(stopwatch.elapsedMicroseconds)
-        ..recordExecution(executionStopwatch.elapsedMicroseconds)
+        ..recordLatency(elapsedMicros)
+        ..recordExecution(elapsedMicros)
         ..finishRequest();
       _drainBackpressureWaiters();
     }

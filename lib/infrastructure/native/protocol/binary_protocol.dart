@@ -112,21 +112,14 @@ class BinaryProtocolParser {
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
-    final readMagic = ByteData.sublistView(
-      data,
-      0,
-      4,
-    ).getUint32(0, Endian.little);
+    final bd = ByteData.sublistView(data);
+    final readMagic = bd.getUint32(0, Endian.little);
     if (readMagic != magic) {
       throw FormatException(
         'Invalid magic number: 0x${readMagic.toRadixString(16)}',
       );
     }
-    final version = ByteData.sublistView(
-      data,
-      4,
-      6,
-    ).getUint16(0, Endian.little);
+    final version = bd.getUint16(4, Endian.little);
 
     late final ParsedRowBuffer buffer;
     late final int mainEnd;
@@ -143,8 +136,7 @@ class BinaryProtocolParser {
       if (data.length < headerSizeColumnarV2) {
         throw const FormatException('Buffer too small for columnar v2 header');
       }
-      final payloadSize =
-          ByteData.sublistView(data, 15, 19).getUint32(0, Endian.little);
+      final payloadSize = bd.getUint32(15, Endian.little);
       mainEnd = headerSizeColumnarV2 + payloadSize;
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for columnar payload');
@@ -182,21 +174,14 @@ class BinaryProtocolParser {
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
-    final readMagic = ByteData.sublistView(
-      data,
-      0,
-      4,
-    ).getUint32(0, Endian.little);
+    final bd = ByteData.sublistView(data);
+    final readMagic = bd.getUint32(0, Endian.little);
     if (readMagic != magic) {
       throw FormatException(
         'Invalid magic number: 0x${readMagic.toRadixString(16)}',
       );
     }
-    final version = ByteData.sublistView(
-      data,
-      4,
-      6,
-    ).getUint16(0, Endian.little);
+    final version = bd.getUint16(4, Endian.little);
 
     late final TypedColumnarResult columnar;
     late final int mainEnd;
@@ -204,8 +189,7 @@ class BinaryProtocolParser {
       if (data.length < headerSizeColumnarV2) {
         throw const FormatException('Buffer too small for columnar v2 header');
       }
-      final payloadSize =
-          ByteData.sublistView(data, 15, 19).getUint32(0, Endian.little);
+      final payloadSize = bd.getUint32(15, Endian.little);
       mainEnd = headerSizeColumnarV2 + payloadSize;
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for columnar payload');

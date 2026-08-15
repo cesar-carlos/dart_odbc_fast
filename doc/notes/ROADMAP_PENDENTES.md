@@ -15,6 +15,6 @@ aqui — atualize PENDING e o CHANGELOG quando um item fechar.
 | - | E2E host-side | Testes opt-in | [`TESTING.md`](../TESTING.md) |
 
 **Entregue (nao listar como aberto):** sharding completo do `GlobalState`
-residual (`env` + BCP strings) — ver CHANGELOG Unreleased / PERFORMANCE.
+residual (`env` + BCP strings) — ver CHANGELOG 4.5.0 / PERFORMANCE.
 
-Ultima atualizacao: 2026-07-31 (pacote `4.5.0`).
+Ultima atualizacao: 2026-08-15 (pacote `4.5.1`).

@@ -33,27 +33,49 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_func>>
       _odbc_transaction_begin_ptr;
+  late final int Function(int, int, int) _odbc_transaction_begin_fn =
+      _odbc_transaction_begin_ptr.asFunction<int Function(int, int, int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_v2_func>>?
       _odbc_transaction_begin_v2_ptr;
+  late final int Function(int, int, int, int)? _odbc_transaction_begin_v2_fn =
+      _odbc_transaction_begin_v2_ptr
+          ?.asFunction<int Function(int, int, int, int)>();
 
   late ffi.Pointer<ffi.NativeFunction<odbc_transaction_begin_v3_func>>?
       _odbc_transaction_begin_v3_ptr;
+  late final int Function(int, int, int, int, int)?
+      _odbc_transaction_begin_v3_fn = _odbc_transaction_begin_v3_ptr
+          ?.asFunction<int Function(int, int, int, int, int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_commit_func>>
       _odbc_transaction_commit_ptr;
+  late final int Function(int) _odbc_transaction_commit_fn =
+      _odbc_transaction_commit_ptr.asFunction<int Function(int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_transaction_rollback_func>>
       _odbc_transaction_rollback_ptr;
+  late final int Function(int) _odbc_transaction_rollback_fn =
+      _odbc_transaction_rollback_ptr.asFunction<int Function(int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_savepoint_create_func>>
       _odbc_savepoint_create_ptr;
+  late final int Function(int, ffi.Pointer<Utf8>) _odbc_savepoint_create_fn =
+      _odbc_savepoint_create_ptr
+          .asFunction<int Function(int, ffi.Pointer<Utf8>)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_savepoint_rollback_func>>
       _odbc_savepoint_rollback_ptr;
+  late final int Function(int, ffi.Pointer<Utf8>) _odbc_savepoint_rollback_fn =
+      _odbc_savepoint_rollback_ptr
+          .asFunction<int Function(int, ffi.Pointer<Utf8>)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_savepoint_release_func>>
       _odbc_savepoint_release_ptr;
+  late final int Function(int, ffi.Pointer<Utf8>) _odbc_savepoint_release_fn =
+      _odbc_savepoint_release_ptr
+          .asFunction<int Function(int, ffi.Pointer<Utf8>)>();
+
   // Sprint 4.3 — XA / 2PC. All ten pointers are optional (look-up
   // wrapped in a single try block above); a missing ABI surfaces via
   // `supportsXa` as `false` so callers can degrade gracefully.
@@ -84,11 +106,7 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
     int isolationLevel, [
     int savepointDialect = 0,
   ]) =>
-      _odbc_transaction_begin_ptr.asFunction<int Function(int, int, int)>()(
-        connId,
-        isolationLevel,
-        savepointDialect,
-      );
+      _odbc_transaction_begin_fn(connId, isolationLevel, savepointDialect);
 
   /// Sprint 4.1 — begin a transaction with the access-mode hint
   /// (`READ ONLY` / `READ WRITE`).
@@ -106,8 +124,8 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
     int savepointDialect,
     int accessMode,
   ) {
-    final ptr = _odbc_transaction_begin_v2_ptr;
-    if (ptr == null) {
+    final fn = _odbc_transaction_begin_v2_fn;
+    if (fn == null) {
       // Graceful degradation: fall back to v1 so existing tooling that
       // bundles an older `.so`/`.dll` keeps working. The caller loses
       // READ ONLY semantics but never the transaction itself.
@@ -117,12 +135,7 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
         savepointDialect,
       );
     }
-    return ptr.asFunction<int Function(int, int, int, int)>()(
-      connId,
-      isolationLevel,
-      savepointDialect,
-      accessMode,
-    );
+    return fn(connId, isolationLevel, savepointDialect, accessMode);
   }
 
   /// Sprint 4.2 — begin a transaction with full control over isolation,
@@ -145,8 +158,8 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
     int accessMode,
     int lockTimeoutMs,
   ) {
-    final ptr = _odbc_transaction_begin_v3_ptr;
-    if (ptr == null) {
+    final fn = _odbc_transaction_begin_v3_fn;
+    if (fn == null) {
       return odbc_transaction_begin_v2(
         connId,
         isolationLevel,
@@ -154,7 +167,7 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
         accessMode,
       );
     }
-    return ptr.asFunction<int Function(int, int, int, int, int)>()(
+    return fn(
       connId,
       isolationLevel,
       savepointDialect,
@@ -163,23 +176,19 @@ mixin _OdbcBindingsTransaction on _OdbcBindingsState {
     );
   }
 
-  int odbc_transaction_commit(int txnId) =>
-      _odbc_transaction_commit_ptr.asFunction<int Function(int)>()(txnId);
+  int odbc_transaction_commit(int txnId) => _odbc_transaction_commit_fn(txnId);
 
   int odbc_transaction_rollback(int txnId) =>
-      _odbc_transaction_rollback_ptr.asFunction<int Function(int)>()(txnId);
+      _odbc_transaction_rollback_fn(txnId);
 
   int odbc_savepoint_create(int txnId, ffi.Pointer<Utf8> name) =>
-      _odbc_savepoint_create_ptr
-          .asFunction<int Function(int, ffi.Pointer<Utf8>)>()(txnId, name);
+      _odbc_savepoint_create_fn(txnId, name);
 
   int odbc_savepoint_rollback(int txnId, ffi.Pointer<Utf8> name) =>
-      _odbc_savepoint_rollback_ptr
-          .asFunction<int Function(int, ffi.Pointer<Utf8>)>()(txnId, name);
+      _odbc_savepoint_rollback_fn(txnId, name);
 
   int odbc_savepoint_release(int txnId, ffi.Pointer<Utf8> name) =>
-      _odbc_savepoint_release_ptr
-          .asFunction<int Function(int, ffi.Pointer<Utf8>)>()(txnId, name);
+      _odbc_savepoint_release_fn(txnId, name);
 
   // -----------------------------------------------------------------
   // Sprint 4.3 — XA / 2PC. Each wrapper throws UnsupportedError when

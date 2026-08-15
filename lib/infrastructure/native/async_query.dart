@@ -91,7 +91,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         paramNames: paramOrder,
       );
       final paramValues = paramValuesFromObjects(positional);
-      return executePrepared(
+      return await executePrepared(
         stmtId,
         paramValues,
         timeoutOverrideMs,
@@ -218,7 +218,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         paramNames: extract.paramNames,
       );
       final paramValues = paramValuesFromObjects(positional);
-      return executeQueryParams(
+      return await executeQueryParams(
         connectionId,
         extract.cleanedSql,
         paramValues,

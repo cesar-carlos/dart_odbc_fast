@@ -9,7 +9,7 @@ Oracle ref-cursor wire details and columnar result protocol notes.
 > next to each section. When in doubt, the source of truth is the code
 > referenced inline.
 
-**Last verified against code:** 2026-07-31 (`4.5.0`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 row + typed direct decode, `executeQueryColumnar` / `streamQueryColumnar`, binary float/bool dual-decode, certification table — wire additive with legacy UTF-8 still accepted)
+**Last verified against code:** 2026-08-15 (`4.5.1`; DRT1 / `OUT1` / `MULT`, Oracle `REF CURSOR`, `ResultEncoding.columnar` / `columnarCompressed`, columnar v2 row + typed direct decode, `executeQueryColumnar` / `streamQueryColumnar`, binary float/bool dual-decode, certification table — wire additive with legacy UTF-8 still accepted)
 
 ---
 

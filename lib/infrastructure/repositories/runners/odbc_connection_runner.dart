@@ -72,7 +72,7 @@ class OdbcConnectionRunner {
               : ffi.sync.connect(connectionString));
 
       if (connId == 0) {
-        return ffi.convertNativeErrorToFailure<Connection>(
+        return await ffi.convertNativeErrorToFailure<Connection>(
           errorFactory: odbcConnectionErrorFactory,
           fallbackMessage: 'Failed to connect to database',
         );
@@ -127,7 +127,7 @@ class OdbcConnectionRunner {
       if (success) {
         return const Success(unit);
       }
-      return ffi.convertNativeErrorToFailure<Unit>(
+      return await ffi.convertNativeErrorToFailure<Unit>(
         errorFactory: odbcConnectionErrorFactory,
         fallbackMessage: 'Failed to disconnect from database',
         nativeConnectionId: nativeId,

@@ -111,7 +111,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
 
         switch (status) {
           case 1: // ready
-            return asyncGetResult(
+            return await asyncGetResult(
               requestId,
               maxBufferBytes: maxBufferBytes,
               initialBufferBytes: initialBufferBytes,

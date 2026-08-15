@@ -204,15 +204,17 @@ DateTime? tryParseAsciiDateTime(Uint8List data) {
     }
     return DateTime(y, mo, d);
   }
-  // Build a temporary ASCII string; replace space with T for DateTime.tryParse.
-  final buf = List<int>.generate(len, (i) {
-    final b = data[start + i];
-    if (i == 10 && b == 0x20) {
-      return 0x54; // 'T'
-    }
-    return b;
-  });
-  return DateTime.tryParse(String.fromCharCodes(buf));
+  // Build the string without allocating a List<int> intermediate buffer.
+  // When the separator at position 10 is a space, split around it; otherwise
+  // convert the slice directly. DateTime.tryParse accepts ISO-8601 with 'T'.
+  if (data[start + 10] == 0x20) {
+    return DateTime.tryParse(
+      '${String.fromCharCodes(data, start, start + 10)}'
+      'T'
+      '${String.fromCharCodes(data, start + 11, start + len)}',
+    );
+  }
+  return DateTime.tryParse(String.fromCharCodes(data, start, start + len));
 }
 
 bool _looksLikeAsciiDatePrefix(Uint8List data, int start) {

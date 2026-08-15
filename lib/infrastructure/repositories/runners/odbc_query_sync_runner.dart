@@ -252,7 +252,7 @@ class OdbcQuerySyncRunner {
         namedParams: namedParams,
         paramNames: extract.paramNames,
       );
-      return executeQueryParamValues(
+      return await executeQueryParamValues(
         connectionId,
         extract.cleanedSql,
         paramValuesFromObjects(positional),

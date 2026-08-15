@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.1] - 2026-08-15
+
+### Performance
+
+- **FFI binding dispatch** — all six `odbc_bindings_*.dart` part files cache
+  `asFunction` results as `late final` function fields. Every FFI entry point
+  (query, stream, transaction, pool, XA, and connection) now calls the stored
+  Dart trampoline directly instead of reconstructing it on each invocation,
+  removing per-call closure-allocation overhead from every hot dispatch path.
+- **Protocol parser ByteData views** — `binary_protocol.dart` and
+  `binary_protocol_columnar.dart` now create a single `ByteData.sublistView`
+  per parse call and reuse it for every header and per-column field read. The
+  previous code allocated a new view object for each individual read (up to
+  8 per query result, 2 per column in columnar results); both functions and
+  `_readColumnarColumnPayload` now share the single view throughout.
+- **Worker dispatch Stopwatch** — `_sendRequestOnWorker` in
+  `async_worker_dispatch.dart` previously created two `Stopwatch` objects per
+  request (`stopwatch` and `executionStopwatch`) starting at the same instant.
+  Both are now replaced by a single stopwatch whose elapsed value is captured
+  once in the `finally` block, halving Stopwatch allocation on every dispatched
+  request.
+- **Param serializer lazy allocation** — `serializeParams` and
+  `serializeDirectedParamList` in `param_value_wire.dart` no longer allocate
+  the `encodedText` list when all parameters are integers, nulls, or binary
+  blobs. The list is created on-demand only when the first non-ASCII string or
+  decimal value is encountered.
+- **DateTime parse allocation** — `tryParseAsciiDateTime` in
+  `protocol_ascii_parse.dart` replaced a `List<int>.generate` + copy approach
+  (one list + one string per non-date cell) with direct `String.fromCharCodes`
+  slice calls. The space→T separator normalisation now splits into two substring
+  calls instead of materialising a full `List<int>` buffer.
+
+### Fixed
+
+- **`unawaited_return_in_try_block`** — async FFI runner methods in
+  `AsyncQuery`, `AsyncQueryAsync`, `OdbcConnectionRunner`,
+  `OdbcFfiDispatch`, `OdbcPoolRunner`, `OdbcQueryPreparedRunner`,
+  `OdbcQuerySyncRunner`, and `OdbcTransactionRunner` now `await` the returned
+  futures inside `try` blocks, ensuring exceptions are captured by the
+  enclosing handler rather than escaping as unhandled.
+- **`cascade_invocations`** — consecutive `ByteData` setter calls in
+  `param_value_wire.dart` (`serializeParams` / `serializeDirectedParamList`)
+  use cascade notation.
+- **`use_super_parameters`** — `OdbcNative` constructor forwards
+  `sqlPointerCacheMaxSize` via `super.` syntax.
+
 ## [4.5.0] - 2026-07-31
 
 ### Fixed
@@ -4265,7 +4311,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.1...HEAD
+[4.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...v4.5.1
 [4.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.4...v4.4.0
 [4.3.4]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.3...v4.3.4

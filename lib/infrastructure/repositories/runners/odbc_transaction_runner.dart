@@ -57,7 +57,7 @@ class OdbcTransactionRunner {
             );
 
       if (txnId == 0) {
-        return ffi.convertNativeErrorToFailure<int>(
+        return await ffi.convertNativeErrorToFailure<int>(
           errorFactory: odbcQueryErrorFactory,
           fallbackMessage: 'Failed to begin transaction',
         );

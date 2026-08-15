@@ -44,7 +44,7 @@ class OdbcFfiDispatch {
         AsyncBackend(:final connection) => await async(connection),
       };
       if (ok) return const Success(unit);
-      return convertNativeErrorToFailure<Unit>(
+      return await convertNativeErrorToFailure<Unit>(
         errorFactory: errorFactory,
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
@@ -71,7 +71,7 @@ class OdbcFfiDispatch {
         onSuccess();
         return const Success(unit);
       }
-      return convertNativeErrorToFailure<Unit>(
+      return await convertNativeErrorToFailure<Unit>(
         errorFactory: errorFactory,
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
@@ -95,7 +95,7 @@ class OdbcFfiDispatch {
         AsyncBackend(:final connection) => await async(connection),
       };
       if (isSuccess(code)) return Success(code);
-      return convertNativeErrorToFailure<int>(
+      return await convertNativeErrorToFailure<int>(
         errorFactory: errorFactory,
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,

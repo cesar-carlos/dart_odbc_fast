@@ -206,7 +206,7 @@ class OdbcQueryPreparedRunner {
         namedParams: namedParams,
         paramNames: paramOrder,
       );
-      return executePreparedParamValues(
+      return await executePreparedParamValues(
         connectionId,
         stmtId,
         paramValuesFromObjects(positional),

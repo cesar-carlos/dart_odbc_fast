@@ -77,73 +77,231 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
   }
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_init_func>> _odbc_init_ptr;
+  late final int Function() _odbc_init_fn =
+      _odbc_init_ptr.asFunction<int Function()>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_set_log_level_func>>
       _odbc_set_log_level_ptr;
+  late final int Function(int) _odbc_set_log_level_fn =
+      _odbc_set_log_level_ptr.asFunction<int Function(int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_version_func>>
       _odbc_get_version_ptr;
+  late final int Function(
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  ) _odbc_get_version_fn = _odbc_get_version_ptr.asFunction<
+      int Function(ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint32>)>();
 
   late final ffi
       .Pointer<ffi.NativeFunction<odbc_validate_connection_string_func>>
       _odbc_validate_connection_string_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+  ) _odbc_validate_connection_string_fn =
+      _odbc_validate_connection_string_ptr.asFunction<
+          int Function(ffi.Pointer<Utf8>, ffi.Pointer<ffi.Uint8>, int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_connect_func>>
       _odbc_connect_ptr;
+  late final int Function(ffi.Pointer<Utf8>) _odbc_connect_fn =
+      _odbc_connect_ptr.asFunction<int Function(ffi.Pointer<Utf8>)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_connect_with_timeout_func>>?
       _odbc_connect_with_timeout_ptr;
+  late final int Function(ffi.Pointer<Utf8>, int)?
+      _odbc_connect_with_timeout_fn = _odbc_connect_with_timeout_ptr
+          ?.asFunction<int Function(ffi.Pointer<Utf8>, int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_disconnect_func>>
       _odbc_disconnect_ptr;
+  late final int Function(int) _odbc_disconnect_fn =
+      _odbc_disconnect_ptr.asFunction<int Function(int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_error_func>>
       _odbc_get_error_ptr;
+  late final int Function(ffi.Pointer<ffi.Int8>, int) _odbc_get_error_fn =
+      _odbc_get_error_ptr
+          .asFunction<int Function(ffi.Pointer<ffi.Int8>, int)>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_get_structured_error_func>>
       _odbc_get_structured_error_ptr;
+  late final int Function(
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  ) _odbc_get_structured_error_fn = _odbc_get_structured_error_ptr.asFunction<
+      int Function(ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint32>)>();
 
   ffi.Pointer<
           ffi.NativeFunction<odbc_get_structured_error_for_connection_func>>?
       _odbc_get_structured_error_for_connection_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_get_structured_error_for_connection_fn =
+      _odbc_get_structured_error_for_connection_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_detect_driver_func>>
       _odbc_detect_driver_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Int8>,
+    int,
+  ) _odbc_detect_driver_fn = _odbc_detect_driver_ptr.asFunction<
+      int Function(ffi.Pointer<Utf8>, ffi.Pointer<ffi.Int8>, int)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_audit_enable_func>>?
       _odbc_audit_enable_ptr;
+  late final int Function(int)? _odbc_audit_enable_fn =
+      _odbc_audit_enable_ptr?.asFunction<int Function(int)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_audit_get_events_func>>?
       _odbc_audit_get_events_ptr;
+  late final int Function(
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+    int,
+  )? _odbc_audit_get_events_fn = _odbc_audit_get_events_ptr?.asFunction<
+      int Function(
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+        int,
+      )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_audit_clear_func>>? _odbc_audit_clear_ptr;
+  late final int Function()? _odbc_audit_clear_fn =
+      _odbc_audit_clear_ptr?.asFunction<int Function()>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_audit_get_status_func>>?
       _odbc_audit_get_status_ptr;
+  late final int Function(
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_audit_get_status_fn = _odbc_audit_get_status_ptr?.asFunction<
+      int Function(ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint32>)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_get_driver_capabilities_func>>?
       _odbc_get_driver_capabilities_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_get_driver_capabilities_fn =
+      _odbc_get_driver_capabilities_ptr?.asFunction<
+          int Function(
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_get_connection_dbms_info_func>>?
       _odbc_get_connection_dbms_info_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_get_connection_dbms_info_fn =
+      _odbc_get_connection_dbms_info_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_build_upsert_sql_func>>?
       _odbc_build_upsert_sql_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_build_upsert_sql_fn = _odbc_build_upsert_sql_ptr?.asFunction<
+      int Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+      )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_append_returning_sql_func>>?
       _odbc_append_returning_sql_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<Utf8>,
+    int,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_append_returning_sql_fn = _odbc_append_returning_sql_ptr?.asFunction<
+      int Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        int,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+      )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_get_session_init_sql_func>>?
       _odbc_get_session_init_sql_ptr;
+  late final int Function(
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_get_session_init_sql_fn = _odbc_get_session_init_sql_ptr?.asFunction<
+      int Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+      )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_enable_func>>?
       _odbc_metadata_cache_enable_ptr;
+  late final int Function(int, int)? _odbc_metadata_cache_enable_fn =
+      _odbc_metadata_cache_enable_ptr?.asFunction<int Function(int, int)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_stats_func>>?
       _odbc_metadata_cache_stats_ptr;
+  late final int Function(
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_metadata_cache_stats_fn = _odbc_metadata_cache_stats_ptr?.asFunction<
+      int Function(ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint32>)>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_metadata_cache_clear_func>>?
       _odbc_metadata_cache_clear_ptr;
+  late final int Function()? _odbc_metadata_cache_clear_fn =
+      _odbc_metadata_cache_clear_ptr?.asFunction<int Function()>();
 
   bool get supportsAuditApi =>
       _odbc_audit_enable_ptr != null &&
@@ -176,75 +334,43 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
   bool get supportsStructuredErrorForConnection =>
       _odbc_get_structured_error_for_connection_ptr != null;
 
-  int odbc_init() => _odbc_init_ptr.asFunction<int Function()>()();
+  int odbc_init() => _odbc_init_fn();
 
-  int odbc_set_log_level(int level) =>
-      _odbc_set_log_level_ptr.asFunction<int Function(int)>()(level);
+  int odbc_set_log_level(int level) => _odbc_set_log_level_fn(level);
 
   int odbc_get_version(
     ffi.Pointer<ffi.Uint8> buffer,
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) =>
-      _odbc_get_version_ptr.asFunction<
-          int Function(
-            ffi.Pointer<ffi.Uint8>,
-            int,
-            ffi.Pointer<ffi.Uint32>,
-          )>()(buffer, bufferLen, outWritten);
+      _odbc_get_version_fn(buffer, bufferLen, outWritten);
 
   int odbc_validate_connection_string(
     ffi.Pointer<Utf8> connStr,
     ffi.Pointer<ffi.Uint8> errorBuffer,
     int errorBufferLen,
   ) =>
-      _odbc_validate_connection_string_ptr.asFunction<
-          int Function(
-            ffi.Pointer<Utf8>,
-            ffi.Pointer<ffi.Uint8>,
-            int,
-          )>()(
-        connStr,
-        errorBuffer,
-        errorBufferLen,
-      );
+      _odbc_validate_connection_string_fn(connStr, errorBuffer, errorBufferLen);
 
-  int odbc_connect(ffi.Pointer<Utf8> connStr) =>
-      _odbc_connect_ptr.asFunction<int Function(ffi.Pointer<Utf8>)>()(connStr);
+  int odbc_connect(ffi.Pointer<Utf8> connStr) => _odbc_connect_fn(connStr);
 
   int odbc_connect_with_timeout(ffi.Pointer<Utf8> connStr, int timeoutMs) {
-    final ptr = _odbc_connect_with_timeout_ptr;
-    if (ptr == null) {
-      return _odbc_connect_ptr
-          .asFunction<int Function(ffi.Pointer<Utf8>)>()(connStr);
-    }
-    return ptr.asFunction<int Function(ffi.Pointer<Utf8>, int)>()(
-      connStr,
-      timeoutMs,
-    );
+    final fn = _odbc_connect_with_timeout_fn;
+    if (fn == null) return _odbc_connect_fn(connStr);
+    return fn(connStr, timeoutMs);
   }
 
-  int odbc_disconnect(int connId) =>
-      _odbc_disconnect_ptr.asFunction<int Function(int)>()(connId);
+  int odbc_disconnect(int connId) => _odbc_disconnect_fn(connId);
 
   int odbc_get_error(ffi.Pointer<ffi.Int8> buffer, int bufferLen) =>
-      _odbc_get_error_ptr
-          .asFunction<int Function(ffi.Pointer<ffi.Int8>, int)>()(
-        buffer,
-        bufferLen,
-      );
+      _odbc_get_error_fn(buffer, bufferLen);
 
   int odbc_get_structured_error(
     ffi.Pointer<ffi.Uint8> buffer,
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) =>
-      _odbc_get_structured_error_ptr.asFunction<
-          int Function(
-            ffi.Pointer<ffi.Uint8>,
-            int,
-            ffi.Pointer<ffi.Uint32>,
-          )>()(buffer, bufferLen, outWritten);
+      _odbc_get_structured_error_fn(buffer, bufferLen, outWritten);
 
   int? odbc_get_structured_error_for_connection(
     int connId,
@@ -252,15 +378,9 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_get_structured_error_for_connection_ptr;
-    if (ptr == null) return null;
-    return ptr.asFunction<
-        int Function(
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connId, buffer, bufferLen, outWritten);
+    final fn = _odbc_get_structured_error_for_connection_fn;
+    if (fn == null) return null;
+    return fn(connId, buffer, bufferLen, outWritten);
   }
 
   int odbc_detect_driver(
@@ -268,12 +388,7 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     ffi.Pointer<ffi.Int8> outBuf,
     int bufferLen,
   ) =>
-      _odbc_detect_driver_ptr.asFunction<
-          int Function(ffi.Pointer<Utf8>, ffi.Pointer<ffi.Int8>, int)>()(
-        connStr,
-        outBuf,
-        bufferLen,
-      );
+      _odbc_detect_driver_fn(connStr, outBuf, bufferLen);
 
   int odbc_get_driver_capabilities(
     ffi.Pointer<Utf8> connStr,
@@ -281,15 +396,9 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_get_driver_capabilities_ptr;
-    if (ptr == null) return -1;
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connStr, buffer, bufferLen, outWritten);
+    final fn = _odbc_get_driver_capabilities_fn;
+    if (fn == null) return -1;
+    return fn(connStr, buffer, bufferLen, outWritten);
   }
 
   int odbc_get_connection_dbms_info(
@@ -298,15 +407,9 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_get_connection_dbms_info_ptr;
-    if (ptr == null) return -1;
-    return ptr.asFunction<
-        int Function(
-          int,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connId, buffer, bufferLen, outWritten);
+    final fn = _odbc_get_connection_dbms_info_fn;
+    if (fn == null) return -1;
+    return fn(connId, buffer, bufferLen, outWritten);
   }
 
   int odbc_build_upsert_sql(
@@ -317,17 +420,9 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_build_upsert_sql_ptr;
-    if (ptr == null) return -1;
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connStr, table, payloadJson, outBuf, bufLen, outWritten);
+    final fn = _odbc_build_upsert_sql_fn;
+    if (fn == null) return -1;
+    return fn(connStr, table, payloadJson, outBuf, bufLen, outWritten);
   }
 
   int odbc_append_returning_sql(
@@ -339,18 +434,9 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_append_returning_sql_ptr;
-    if (ptr == null) return -1;
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          int,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connStr, sql, verb, columnsCsv, outBuf, bufLen, outWritten);
+    final fn = _odbc_append_returning_sql_fn;
+    if (fn == null) return -1;
+    return fn(connStr, sql, verb, columnsCsv, outBuf, bufLen, outWritten);
   }
 
   int odbc_get_session_init_sql(
@@ -360,25 +446,16 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_get_session_init_sql_ptr;
-    if (ptr == null) return -1;
+    final fn = _odbc_get_session_init_sql_fn;
+    if (fn == null) return -1;
     final optsPtr = optionsJson ?? ffi.Pointer<Utf8>.fromAddress(0);
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(connStr, optsPtr, outBuf, bufLen, outWritten);
+    return fn(connStr, optsPtr, outBuf, bufLen, outWritten);
   }
 
   int odbc_audit_enable(int enabled) {
-    final ptr = _odbc_audit_enable_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<int Function(int)>()(enabled);
+    final fn = _odbc_audit_enable_fn;
+    if (fn == null) return -1;
+    return fn(enabled);
   }
 
   int odbc_audit_get_events(
@@ -387,30 +464,15 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     ffi.Pointer<ffi.Uint32> outWritten,
     int limit,
   ) {
-    final ptr = _odbc_audit_get_events_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-          int,
-        )>()(
-      buffer,
-      bufferLen,
-      outWritten,
-      limit,
-    );
+    final fn = _odbc_audit_get_events_fn;
+    if (fn == null) return -1;
+    return fn(buffer, bufferLen, outWritten, limit);
   }
 
   int odbc_audit_clear() {
-    final ptr = _odbc_audit_clear_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<int Function()>()();
+    final fn = _odbc_audit_clear_fn;
+    if (fn == null) return -1;
+    return fn();
   }
 
   int odbc_audit_get_status(
@@ -418,28 +480,15 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_audit_get_status_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(
-      buffer,
-      bufferLen,
-      outWritten,
-    );
+    final fn = _odbc_audit_get_status_fn;
+    if (fn == null) return -1;
+    return fn(buffer, bufferLen, outWritten);
   }
 
   int odbc_metadata_cache_enable(int maxEntries, int ttlSeconds) {
-    final ptr = _odbc_metadata_cache_enable_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<int Function(int, int)>()(maxEntries, ttlSeconds);
+    final fn = _odbc_metadata_cache_enable_fn;
+    if (fn == null) return -1;
+    return fn(maxEntries, ttlSeconds);
   }
 
   int odbc_metadata_cache_stats(
@@ -447,27 +496,14 @@ mixin _OdbcBindingsConnection on _OdbcBindingsState {
     int bufferLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   ) {
-    final ptr = _odbc_metadata_cache_stats_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<
-        int Function(
-          ffi.Pointer<ffi.Uint8>,
-          int,
-          ffi.Pointer<ffi.Uint32>,
-        )>()(
-      buffer,
-      bufferLen,
-      outWritten,
-    );
+    final fn = _odbc_metadata_cache_stats_fn;
+    if (fn == null) return -1;
+    return fn(buffer, bufferLen, outWritten);
   }
 
   int odbc_metadata_cache_clear() {
-    final ptr = _odbc_metadata_cache_clear_ptr;
-    if (ptr == null) {
-      return -1;
-    }
-    return ptr.asFunction<int Function()>()();
+    final fn = _odbc_metadata_cache_clear_fn;
+    if (fn == null) return -1;
+    return fn();
   }
 }

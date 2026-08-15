@@ -1,6 +1,8 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.5.0 (binary float/bool wire + Dart dual-decode;
+> **Last updated for:** v4.5.1 (Dart FFI `asFunction` trampoline cache;
+> shared protocol `ByteData` views; param serialize / DateTime parse
+> allocation cuts; prior v4.5.0 binary float/bool wire + Dart dual-decode;
 > prepared cache with inferable NULLs; stream prepared reuse; pool
 > `sessionResetOnCheckout` opt-out + single checkout reset; FFI mid-size
 > transient from 32 KiB; additive `streamChunkSizeBytes` /
