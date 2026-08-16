@@ -23,6 +23,7 @@ class FakeOdbcBindings {
         capabilities: const TestOdbcBindingsCapabilities(
           supportsAuditApi: false,
           supportsDriverCapabilitiesApi: false,
+          supportsConnectionDbmsInfoApi: false,
           supportsAsyncExecuteApi: false,
           supportsAsyncExecuteParamsApi: false,
           supportsAsyncExecuteParamsOptionsApi: false,

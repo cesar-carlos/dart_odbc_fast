@@ -425,18 +425,14 @@ class OdbcAdminRunner {
         );
       }
 
-      final decoded = jsonDecode(payload);
-      if (decoded is! Map<String, dynamic>) {
+      final decoded = _decodeJsonMap(payload);
+      if (decoded == null) {
         return const Failure<Map<String, Object?>, OdbcError>(
           QueryError(message: 'Invalid metadata cache stats payload format'),
         );
       }
 
-      return Success(
-        decoded.map<String, Object?>(
-          MapEntry<String, Object?>.new,
-        ),
-      );
+      return Success(decoded);
     } on FormatException catch (e) {
       return Failure<Map<String, Object?>, OdbcError>(
         QueryError(message: 'Invalid metadata cache stats JSON: ${e.message}'),
@@ -492,30 +488,21 @@ class OdbcAdminRunner {
   }
 
   Map<String, Object?>? _decodeJsonMap(String payload) {
-    final decoded = jsonDecode(payload);
-    if (decoded is! Map<String, dynamic>) {
-      return null;
-    }
-    return decoded.map<String, Object?>(
-      MapEntry<String, Object?>.new,
-    );
+    return DriverCapabilitiesMapper.asJsonMap(jsonDecode(payload));
   }
 
   List<Map<String, Object?>>? _decodeJsonMapList(String payload) {
     final decoded = jsonDecode(payload);
-    if (decoded is! List<dynamic>) {
+    if (decoded is! List) {
       return null;
     }
     final items = <Map<String, Object?>>[];
     for (final item in decoded) {
-      if (item is! Map<String, dynamic>) {
+      final map = DriverCapabilitiesMapper.asJsonMap(item);
+      if (map == null) {
         return null;
       }
-      items.add(
-        item.map<String, Object?>(
-          MapEntry<String, Object?>.new,
-        ),
-      );
+      items.add(map);
     }
     return items;
   }

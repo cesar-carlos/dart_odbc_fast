@@ -218,12 +218,11 @@ void main() {
       );
 
       expect(bufferTotalLength, equals(legacyTotalLength));
-      // Allow up to 15% noise on the buffer >= legacy invariant.
-      // Under concurrent CI load the absolute timings vary widely;
-      // what we want to pin is that the buffer path is not
-      // *materially* faster than direct interpolation, which would
-      // be a strong reason to prefer it.
-      const noiseTolerance = 1.15;
+      // Pin that StringBuffer is not *materially* faster than interpolation.
+      // Absolute micros swing a lot when this file shares the VM with
+      // isolate stress tests under `dart test`; 30% matches the project
+      // benchmark regression band in `doc/PERFORMANCE.md`.
+      const noiseTolerance = 1.30;
       final maxAllowedLegacy =
           (bufferWatch.elapsedMicroseconds * noiseTolerance).round();
       expect(

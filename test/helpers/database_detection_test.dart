@@ -34,6 +34,30 @@ void main() {
       expect(detectDatabaseType(dsn2), DatabaseType.mysql);
     });
 
+    test('should_prefer_driver_token_over_database_name', () {
+      expect(
+        detectDatabaseType(
+          'Driver={MySQL ODBC};Database=postgres_mirror;',
+        ),
+        DatabaseType.mysql,
+      );
+    });
+
+    test('should_fall_back_to_full_string_when_dsn_only', () {
+      expect(
+        detectDatabaseType('DSN=postgres_prod;UID=app;PWD=x'),
+        DatabaseType.postgresql,
+      );
+    });
+
+    test('should_treat_empty_or_unclosed_driver_braces_as_unknown', () {
+      expect(detectDatabaseType('Driver={};Server=h'), DatabaseType.unknown);
+      expect(detectDatabaseType('Driver='), DatabaseType.unknown);
+      expect(
+        detectDatabaseType('Driver={MySQL ODBC'),
+        DatabaseType.mysql,
+      );
+    });
     test('detectDatabaseType identifies Oracle', () {
       const dsn1 = 'Driver={Oracle ODBC Driver};Server=localhost';
       expect(detectDatabaseType(dsn1), DatabaseType.oracle);

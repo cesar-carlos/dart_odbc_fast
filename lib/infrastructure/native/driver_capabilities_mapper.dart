@@ -7,13 +7,35 @@ import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 class DriverCapabilitiesMapper {
   DriverCapabilitiesMapper._();
 
+  /// Normalizes `jsonDecode` maps (`Map<String, dynamic>`) into
+  /// `Map<String, Object?>`, including nested objects.
+  static Map<String, Object?>? asJsonMap(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    return value.map<String, Object?>(
+      (key, nested) => MapEntry(key.toString(), _normalizeJsonValue(nested)),
+    );
+  }
+
+  static Object? _normalizeJsonValue(Object? value) {
+    if (value is Map) {
+      return asJsonMap(value);
+    }
+    if (value is List) {
+      return value.map(_normalizeJsonValue).toList();
+    }
+    return value;
+  }
+
   /// Parses a driver-capabilities JSON map from the native layer.
+  ///
+  /// [DatabaseType] is taken only from the canonical `engine` field. An
+  /// unknown engine stays [DatabaseType.unknown] even if `driver_name` would
+  /// match the legacy heuristic.
   static DriverCapabilities fromJson(Map<String, Object?> json) {
     final driverName = json['driver_name'] as String? ?? 'Unknown';
     final engineId = json['engine'] as String? ?? DatabaseEngineIds.unknown;
-    final databaseType = engineId == DatabaseEngineIds.unknown
-        ? DatabaseType.fromDriverName(driverName)
-        : DatabaseType.fromEngineId(engineId);
     return DriverCapabilities(
       supportsPreparedStatements:
           json['supports_prepared_statements'] as bool? ?? true,
@@ -23,7 +45,7 @@ class DriverCapabilitiesMapper {
       maxRowArraySize: (json['max_row_array_size'] as num?)?.toInt() ?? 1000,
       driverName: driverName,
       driverVersion: json['driver_version'] as String? ?? 'Unknown',
-      databaseType: databaseType,
+      databaseType: DatabaseType.fromEngineId(engineId),
       engineId: engineId,
       supportsNativeBcp: json['supports_native_bcp'] as bool? ?? false,
     );
@@ -33,9 +55,9 @@ class DriverCapabilitiesMapper {
   static DbmsInfo dbmsInfoFromJson(Map<String, Object?> json) {
     final dbmsName = json['dbms_name'] as String? ?? 'Unknown';
     final engineId = json['engine'] as String? ?? DatabaseEngineIds.unknown;
-    final caps = json['capabilities'];
-    final capabilities = caps is Map<String, Object?>
-        ? fromJson(caps)
+    final capsMap = asJsonMap(json['capabilities']);
+    final capabilities = capsMap != null
+        ? fromJson(capsMap)
         : DriverCapabilities(
             supportsPreparedStatements: true,
             supportsBatchOperations: true,
@@ -49,6 +71,7 @@ class DriverCapabilitiesMapper {
           );
     return DbmsInfo(
       dbmsName: dbmsName,
+      dbmsVersion: json['dbms_version'] as String? ?? '',
       engineId: engineId,
       databaseType: DatabaseType.fromEngineId(engineId),
       maxCatalogNameLen: (json['max_catalog_name_len'] as num?)?.toInt() ?? 0,

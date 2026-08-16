@@ -9,9 +9,8 @@ use crate::engine::core::{
 };
 
 /// Map a server-reported DBMS name (`SQL_DBMS_NAME`) to the *registry*
-/// plugin id (`"sqlserver"`, `"postgres"`, ...). MariaDB falls back to
-/// the MySQL plugin since they share the wire protocol and most ODBC
-/// optimisations.  Returns `None` for unknown engines.
+/// plugin id (`"sqlserver"`, `"postgres"`, `"mariadb"`, ...). Returns
+/// `None` for unknown engines (and for engines without a dedicated plugin).
 pub fn plugin_id_for_dbms_name(dbms_name: &str) -> Option<&'static str> {
     let caps = DriverCapabilities::from_driver_name(dbms_name);
     match caps.engine.as_str() {
@@ -57,5 +56,28 @@ mod tests {
     fn plugin_id_from_postgres_connection_string() {
         let id = plugin_id_from_connection_string("Driver={PostgreSQL};Server=localhost;");
         assert_eq!(id.as_deref(), Some("postgres"));
+    }
+
+    #[test]
+    fn plugin_id_from_connection_string_ignores_uid_and_dsn_only() {
+        assert_eq!(
+            plugin_id_from_connection_string("Driver={MySQL ODBC};UID=postgres;"),
+            Some("mysql".to_string())
+        );
+        assert_eq!(
+            plugin_id_from_connection_string("DSN=prod;UID=postgres;PWD=x"),
+            None
+        );
+    }
+
+    #[test]
+    fn plugin_id_for_mariadb_sybase_and_unknown_dbms_names() {
+        assert_eq!(plugin_id_for_dbms_name("MariaDB"), Some("mariadb"));
+        assert_eq!(
+            plugin_id_for_dbms_name("Adaptive Server Anywhere"),
+            Some("sybase")
+        );
+        assert_eq!(plugin_id_for_dbms_name("FantasyDB"), None);
+        assert_eq!(plugin_id_for_dbms_name("Amazon Redshift"), None);
     }
 }

@@ -22,11 +22,12 @@ class OdbcDriverCapabilities {
     if (payload == null || payload.isEmpty) {
       return null;
     }
-    final dynamic decoded = jsonDecode(payload);
-    if (decoded is! Map<String, Object?>) {
+    final decoded = jsonDecode(payload);
+    final map = DriverCapabilitiesMapper.asJsonMap(decoded);
+    if (map == null) {
       return null;
     }
-    return DriverCapabilitiesMapper.fromJson(decoded);
+    return DriverCapabilitiesMapper.fromJson(map);
   }
 
   /// Live DBMS introspection (v2.1). Returns [DbmsInfo] for the open
@@ -37,10 +38,11 @@ class OdbcDriverCapabilities {
     if (payload == null || payload.isEmpty) {
       return null;
     }
-    final dynamic decoded = jsonDecode(payload);
-    if (decoded is! Map<String, Object?>) {
+    final decoded = jsonDecode(payload);
+    final map = DriverCapabilitiesMapper.asJsonMap(decoded);
+    if (map == null) {
       return null;
     }
-    return DriverCapabilitiesMapper.dbmsInfoFromJson(decoded);
+    return DriverCapabilitiesMapper.dbmsInfoFromJson(map);
   }
 }

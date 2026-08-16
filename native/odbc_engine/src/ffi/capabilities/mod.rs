@@ -233,6 +233,7 @@ pub extern "C" fn odbc_get_driver_capabilities(
 /// ```json
 /// {
 ///   "dbms_name": "Microsoft SQL Server",
+///   "dbms_version": "16.00.1000",
 ///   "engine": "sqlserver",
 ///   "max_catalog_name_len": 128,
 ///   "max_schema_name_len": 128,

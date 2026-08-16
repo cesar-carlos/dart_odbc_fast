@@ -23,6 +23,7 @@ class TestOdbcBindingsOverrides {
     this.poolCreate,
     this.poolCreateWithOptions,
     this.getDriverCapabilities,
+    this.getConnectionDbmsInfo,
     this.execQueryMultiParams,
     this.executeAsync,
     this.auditEnable,
@@ -144,6 +145,13 @@ class TestOdbcBindingsOverrides {
 
   final int Function(
     int connId,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  )? getConnectionDbmsInfo;
+
+  final int Function(
+    int connId,
     ffi.Pointer<Utf8> sql,
     ffi.Pointer<ffi.Uint8>? paramsBuffer,
     int paramsLen,
@@ -245,6 +253,7 @@ class TestOdbcBindingsCapabilities {
   const TestOdbcBindingsCapabilities({
     this.supportsAuditApi,
     this.supportsDriverCapabilitiesApi,
+    this.supportsConnectionDbmsInfoApi,
     this.supportsAsyncExecuteApi,
     this.supportsAsyncExecuteParamsApi,
     this.supportsAsyncExecuteParamsOptionsApi,
@@ -265,6 +274,7 @@ class TestOdbcBindingsCapabilities {
 
   final bool? supportsAuditApi;
   final bool? supportsDriverCapabilitiesApi;
+  final bool? supportsConnectionDbmsInfoApi;
   final bool? supportsAsyncExecuteApi;
   final bool? supportsAsyncExecuteParamsApi;
   final bool? supportsAsyncExecuteParamsOptionsApi;
@@ -308,6 +318,11 @@ class TestOdbcBindings extends OdbcBindings {
   bool get supportsDriverCapabilitiesApi =>
       _capabilities.supportsDriverCapabilitiesApi ??
       super.supportsDriverCapabilitiesApi;
+
+  @override
+  bool get supportsConnectionDbmsInfoApi =>
+      _capabilities.supportsConnectionDbmsInfoApi ??
+      super.supportsConnectionDbmsInfoApi;
 
   @override
   bool get supportsAsyncExecuteApi =>
@@ -611,6 +626,28 @@ class TestOdbcBindings extends OdbcBindings {
           ? -1
           : super.odbc_get_driver_capabilities(
               connStr,
+              buffer,
+              bufferLen,
+              outWritten,
+            ));
+
+  @override
+  int odbc_get_connection_dbms_info(
+    int connId,
+    ffi.Pointer<ffi.Uint8> buffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _overrides.getConnectionDbmsInfo?.call(
+        connId,
+        buffer,
+        bufferLen,
+        outWritten,
+      ) ??
+      (_capabilities.supportsConnectionDbmsInfoApi == false
+          ? -1
+          : super.odbc_get_connection_dbms_info(
+              connId,
               buffer,
               bufferLen,
               outWritten,

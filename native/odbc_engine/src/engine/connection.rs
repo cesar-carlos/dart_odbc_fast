@@ -144,14 +144,16 @@ impl OdbcConnection {
         DbmsInfo::detect_for_conn_id(&self.handles, self.conn_id)
     }
 
-    /// Capabilities derived from the live DBMS name (uses `SQLGetInfo`).
-    /// Equivalent to `self.dbms_info()?.capabilities`.
+    /// Capabilities derived from the live DBMS (`SQLGetInfo`).
+    /// Equivalent to `self.dbms_info()?.capabilities`. Warms the per-connection
+    /// engine-id cache.
     pub fn driver_capabilities(&self) -> Result<DriverCapabilities> {
         let conn_arc = {
             let h = crate::error::lock_mutex(self.handles.as_ref())?;
             h.get_connection(self.conn_id)?
         };
         let cached = crate::error::lock_mutex(conn_arc.as_ref())?;
+        let _ = cached.engine_id();
         DriverCapabilities::detect(cached.connection())
     }
 }

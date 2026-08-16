@@ -1,4 +1,6 @@
 [toolchain]
 channel = "1.93.0"
 profile = "minimal"
-components = ["rustfmt", "clippy"]
+# rust-analyzer: toolchain-matched binary for the IDE (Cursor ships a newer
+# analyzer that rejects older channels without this component).
+components = ["rustfmt", "clippy", "rust-analyzer"]

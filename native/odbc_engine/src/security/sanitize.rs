@@ -2,6 +2,8 @@
 //!
 //! Redacts credentials from ODBC connection strings before logging/audit.
 
+use super::connection_string::for_each_connection_string_pair;
+
 /// Keys whose values must be redacted (case-insensitive).
 ///
 /// Includes the canonical ODBC password keys plus common API/token keys
@@ -47,70 +49,23 @@ fn is_secret_key(key: &str) -> bool {
 /// ```
 pub fn sanitize_connection_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
     let mut first = true;
-
-    while i < len {
-        // Read key (until '=' or ';').
-        let key_start = i;
-        while i < len && bytes[i] != b'=' && bytes[i] != b';' {
-            i += 1;
-        }
-        let key_end = i;
-
-        // Append separator now so empty values still emit the key.
+    for_each_connection_string_pair(s, |key, value| {
         if !first {
             out.push(';');
         }
         first = false;
-        out.push_str(&s[key_start..key_end]);
-
-        // No '=' → bare token.
-        if i >= len || bytes[i] == b';' {
-            if i < len {
-                i += 1; // skip ';'
-            }
-            continue;
-        }
-
-        // Consume '='.
+        out.push_str(key);
+        let Some(raw) = value else {
+            return;
+        };
         out.push('=');
-        i += 1;
-
-        // Read value, honouring `{...}` escaping (value may contain ';' inside braces).
-        let value_start = i;
-        if i < len && bytes[i] == b'{' {
-            i += 1;
-            while i < len && bytes[i] != b'}' {
-                i += 1;
-            }
-            if i < len {
-                i += 1; // include closing '}'
-            }
-            // Trailing chars up to ';' are part of the value too.
-            while i < len && bytes[i] != b';' {
-                i += 1;
-            }
-        } else {
-            while i < len && bytes[i] != b';' {
-                i += 1;
-            }
-        }
-        let value_end = i;
-
-        if is_secret_key(&s[key_start..key_end]) {
+        if is_secret_key(key) {
             out.push_str("***");
         } else {
-            out.push_str(&s[value_start..value_end]);
+            out.push_str(raw);
         }
-
-        if i < len && bytes[i] == b';' {
-            i += 1;
-        }
-    }
-
+    });
     out
 }
 

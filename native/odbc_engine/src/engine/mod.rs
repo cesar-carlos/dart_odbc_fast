@@ -6,6 +6,7 @@ pub mod dbms_info;
 pub mod environment;
 pub(crate) mod fetch;
 pub mod identifier;
+pub(crate) mod odbc_get_info;
 pub mod query;
 pub(crate) mod session_defaults;
 pub mod sqlserver_json;

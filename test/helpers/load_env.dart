@@ -124,9 +124,39 @@ DatabaseType detectDatabaseType(String? connectionString) {
     return DatabaseType.unknown;
   }
 
-  final lower = connectionString.toLowerCase();
+  final driverToken = _driverTokenFromConnectionString(connectionString);
+  if (driverToken != null) {
+    return _matchTestDatabaseType(driverToken);
+  }
+  // DSN-only strings have no Driver= token; keep a full-string fallback so
+  // live e2e gating still works when ODBC_TEST_DSN is a DSN name.
+  return _matchTestDatabaseType(connectionString);
+}
 
-  // Check driver name patterns
+String? _driverTokenFromConnectionString(String source) {
+  final lower = source.toLowerCase();
+  const key = 'driver=';
+  final index = lower.indexOf(key);
+  if (index < 0) {
+    return null;
+  }
+  final i = index + key.length;
+  if (i < source.length && source[i] == '{') {
+    final end = source.indexOf('}', i + 1);
+    if (end < 0) {
+      return source.substring(i + 1).trim();
+    }
+    final token = source.substring(i + 1, end).trim();
+    return token.isEmpty ? null : token;
+  }
+  final end = source.indexOf(';', i);
+  final raw = (end < 0 ? source.substring(i) : source.substring(i, end)).trim();
+  return raw.isEmpty ? null : raw;
+}
+
+DatabaseType _matchTestDatabaseType(String haystack) {
+  final lower = haystack.toLowerCase();
+
   if (lower.contains('sql server') || lower.contains('sqlserver')) {
     return DatabaseType.sqlServer;
   }

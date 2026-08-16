@@ -140,23 +140,12 @@ pub(crate) unsafe fn write_fixed_metrics_buffer(
 }
 
 /// Introspects DBMS metadata on a runnable connection without pool bookkeeping.
+/// Warms [`CachedConnection::engine_id`] so XA / transaction / plugin lookup
+/// reuse the same `SQL_DBMS_NAME` cache.
 pub(crate) fn detect_dbms_info_on_runnable(
     target: &RunnableConnection,
 ) -> std::result::Result<DbmsInfo, OdbcError> {
-    match target {
-        RunnableConnection::Regular(conn_arc) => {
-            let conn_guard = conn_arc
-                .lock()
-                .map_err(|_| OdbcError::InternalError("Failed to lock connection".to_string()))?;
-            DbmsInfo::detect(conn_guard.connection())
-        }
-        RunnableConnection::Pooled { pooled, .. } => {
-            let conn_guard = pooled.lock().map_err(|_| {
-                OdbcError::InternalError("Failed to lock pooled connection".to_string())
-            })?;
-            DbmsInfo::detect(conn_guard.get_connection())
-        }
-    }
+    target.with_cached(DbmsInfo::detect_from_cached)
 }
 
 #[derive(serde::Deserialize)]

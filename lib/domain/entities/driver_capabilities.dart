@@ -77,50 +77,59 @@ enum DatabaseType {
 
   /// Heuristic mapping from a driver / DBMS name. Less accurate than
   /// [fromEngineId]; kept for backwards compatibility.
+  ///
+  /// Keep in sync with Rust `DriverCapabilities::engine_from_name`.
   static DatabaseType fromDriverName(String driverName) {
-    final normalized = driverName.toLowerCase();
-    if (normalized.contains('mariadb')) {
-      return DatabaseType.mariadb;
-    }
-    if (normalized.contains('microsoft sql server') ||
-        normalized.contains('sql server') ||
-        normalized.contains('sqlserver') ||
-        normalized.contains('mssql')) {
-      return DatabaseType.sqlServer;
-    }
-    if (normalized.contains('postgres') || normalized.contains('postgresql')) {
-      return DatabaseType.postgresql;
-    }
-    if (normalized.contains('mysql')) {
-      return DatabaseType.mysql;
-    }
-    if (normalized.contains('sqlite')) {
-      return DatabaseType.sqlite;
-    }
-    if (normalized.contains('oracle')) {
-      return DatabaseType.oracle;
-    }
-    if (normalized.contains('adaptive server anywhere') ||
-        normalized.contains('sql anywhere')) {
+    final lower = driverName.trim().toLowerCase();
+    if (lower.contains('sql anywhere') ||
+        lower.contains('adaptive server anywhere') ||
+        (lower.contains('asa') &&
+            (lower.contains('sybase') || lower.contains('sql anywhere')))) {
       return DatabaseType.sybaseAsa;
     }
-    if (normalized.contains('adaptive server enterprise') ||
-        normalized.contains('sybase')) {
+    if (lower.contains('adaptive server enterprise') ||
+        (lower.contains('ase') &&
+            (lower.contains('sybase') || lower.contains('adaptive')))) {
       return DatabaseType.sybaseAse;
     }
-    if (normalized.contains('db2')) {
+    if (lower.contains('sybase')) {
+      return DatabaseType.sybaseAse;
+    }
+    if (lower.contains('mariadb')) {
+      return DatabaseType.mariadb;
+    }
+    if (lower.contains('microsoft sql server') ||
+        lower.contains('sql server') ||
+        lower.contains('mssql') ||
+        lower == 'sqlserver' ||
+        lower.contains('sqlsrv32')) {
+      return DatabaseType.sqlServer;
+    }
+    if (lower.contains('postgresql') || lower.contains('postgres')) {
+      return DatabaseType.postgresql;
+    }
+    if (lower.contains('mysql')) {
+      return DatabaseType.mysql;
+    }
+    if (lower.contains('oracle')) {
+      return DatabaseType.oracle;
+    }
+    if (lower.contains('sqlite')) {
+      return DatabaseType.sqlite;
+    }
+    if (lower.contains('db2')) {
       return DatabaseType.db2;
     }
-    if (normalized.contains('snowflake')) {
+    if (lower.contains('snowflake')) {
       return DatabaseType.snowflake;
     }
-    if (normalized.contains('redshift')) {
+    if (lower.contains('redshift')) {
       return DatabaseType.redshift;
     }
-    if (normalized.contains('bigquery')) {
+    if (lower.contains('bigquery')) {
       return DatabaseType.bigquery;
     }
-    if (normalized.contains('mongodb')) {
+    if (lower.contains('mongodb')) {
       return DatabaseType.mongodb;
     }
     return DatabaseType.unknown;
@@ -128,6 +137,10 @@ enum DatabaseType {
 }
 
 /// Typed driver capabilities parsed from native JSON payload.
+///
+/// Boolean flags and [maxRowArraySize] are a canonical table per engine, not
+/// live `SQLGetInfo` probes. On the live path, [driverName] / [driverVersion]
+/// come from `SQL_DRIVER_NAME` / `SQL_DRIVER_VER`.
 class DriverCapabilities {
   const DriverCapabilities({
     required this.supportsPreparedStatements,
@@ -168,11 +181,15 @@ class DbmsInfo {
     required this.maxColumnNameLen,
     required this.currentCatalog,
     required this.capabilities,
+    this.dbmsVersion = '',
   });
 
   /// Server-reported `SQL_DBMS_NAME` (e.g. `"Microsoft SQL Server"`,
   /// `"PostgreSQL"`, `"MariaDB"`, `"Adaptive Server Anywhere"`).
   final String dbmsName;
+
+  /// Server-reported `SQL_DBMS_VER` (empty when the driver omits it).
+  final String dbmsVersion;
 
   /// Canonical engine id (one of [DatabaseEngineIds]).
   final String engineId;
@@ -188,6 +205,7 @@ class DbmsInfo {
   /// Currently selected catalog/database (empty if not applicable).
   final String currentCatalog;
 
-  /// Capabilities derived from the live DBMS name.
+  /// Capabilities for this engine. Flags / [DriverCapabilities.maxRowArraySize]
+  /// are canonical; driver name/version are live on this path.
   final DriverCapabilities capabilities;
 }

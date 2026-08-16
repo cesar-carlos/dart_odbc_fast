@@ -19,13 +19,20 @@ pub const ENGINE_BIGQUERY: &str = "bigquery";
 pub const ENGINE_MONGODB: &str = "mongodb";
 pub const ENGINE_UNKNOWN: &str = "unknown";
 
+/// Typed driver capability snapshot.
+///
+/// Boolean flags and [`Self::max_row_array_size`] are a canonical table per
+/// engine (not live `SQLGetInfo` probes). Live [`Self::detect`] fills
+/// [`Self::driver_name`] / [`Self::driver_version`] from the driver.
 #[derive(Debug, Clone, Serialize)]
 pub struct DriverCapabilities {
     pub supports_prepared_statements: bool,
     pub supports_batch_operations: bool,
     pub supports_streaming: bool,
     pub max_row_array_size: u32,
+    /// Display label (heuristic) or `SQL_DRIVER_NAME` (live [`detect`]).
     pub driver_name: String,
+    /// `"Unknown"` on the heuristic path; `SQL_DRIVER_VER` after live [`detect`].
     pub driver_version: String,
     /// Canonical engine identifier (one of the `ENGINE_*` constants).
     /// Populated by [`from_driver_name`] / [`detect_from_connection_string`] /
@@ -146,11 +153,7 @@ impl DriverCapabilities {
         if lower.contains("sqlite") {
             return ENGINE_SQLITE;
         }
-        if lower == "db2"
-            || lower.contains(" db2")
-            || lower.contains("ibm db2")
-            || lower.contains("db2/")
-        {
+        if lower.contains("db2") {
             return ENGINE_DB2;
         }
         if lower.contains("snowflake") {
@@ -169,32 +172,50 @@ impl DriverCapabilities {
     }
 
     /// Heuristic detection from a connection string. Conservative: never
-    /// connects, only inspects driver / DSN tokens.
+    /// connects. Inspects only the `Driver=` token (brace-aware).
     ///
-    /// Use [`detect`] when you have an open connection — it is far more
-    /// accurate because it queries the live driver via `SQLGetInfo`.
+    /// DSN-only strings (no `Driver=`) return [`ENGINE_UNKNOWN`]. Use
+    /// [`detect`] when you have an open connection — it queries the live
+    /// driver via `SQLGetInfo` and is far more accurate.
+    ///
+    /// Boolean flags and `max_row_array_size` are a canonical table per
+    /// engine, not live probes.
     pub fn detect_from_connection_string(connection_string: &str) -> Self {
-        let engine = Self::canonical_engine_id(connection_string);
+        let Some(driver) = crate::security::driver_token_from_connection_string(connection_string)
+        else {
+            return Self::default();
+        };
+        let engine = Self::canonical_engine_id(&driver);
         if engine == ENGINE_UNKNOWN {
             return Self::default();
         }
         Self::from_driver_name(engine)
     }
 
-    /// Live detection via `SQLGetInfo(SQL_DBMS_NAME)`. The returned
-    /// `driver_name` is the **server-reported** name (e.g.
-    /// `"Microsoft SQL Server"`, `"PostgreSQL"`, `"MariaDB"`,
-    /// `"Adaptive Server Anywhere"`, `"SQLite"`).
+    /// Live detection via `SQLGetInfo`.
     ///
-    /// `engine` is set to the canonical id for plugin lookup.
+    /// - `engine` is resolved from `SQL_DBMS_NAME`.
+    /// - `driver_name` is `SQL_DRIVER_NAME` when the driver reports it,
+    ///   otherwise the DBMS name.
+    /// - `driver_version` is `SQL_DRIVER_VER` when reported, otherwise
+    ///   `"Unknown"`.
+    ///
+    /// Boolean flags and `max_row_array_size` remain the canonical table
+    /// for the resolved engine.
     pub fn detect(conn: &Connection<'static>) -> Result<Self> {
         let dbms_name = conn
             .database_management_system_name()
             .map_err(OdbcError::from)?;
         let mut caps = Self::from_driver_name(&dbms_name);
-        // Always preserve the *exact* DBMS string the server returned,
-        // even after `from_driver_name` mapped it to its canonical display label.
-        caps.driver_name = dbms_name;
+        let driver_name = crate::engine::odbc_get_info::driver_name(conn)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(dbms_name);
+        caps.driver_name = driver_name;
+        if let Some(version) = crate::engine::odbc_get_info::driver_ver(conn) {
+            if !version.is_empty() {
+                caps.driver_version = version;
+            }
+        }
         Ok(caps)
     }
 
@@ -504,6 +525,31 @@ mod tests {
     }
 
     #[test]
+    fn detect_from_connection_string_uses_driver_token_not_database_or_uid() {
+        let mysql = DriverCapabilities::detect_from_connection_string(
+            "Driver={MySQL ODBC};Database=postgres_mirror;",
+        );
+        assert_eq!(mysql.engine, ENGINE_MYSQL);
+
+        let dsn_only =
+            DriverCapabilities::detect_from_connection_string("DSN=prod;UID=postgres;PWD=x");
+        assert_eq!(dsn_only.engine, ENGINE_UNKNOWN);
+
+        let db2 = DriverCapabilities::detect_from_connection_string("Driver={DB2};");
+        assert_eq!(db2.engine, ENGINE_DB2);
+
+        let ibm_db2 = DriverCapabilities::detect_from_connection_string(
+            "Driver={IBM DB2 ODBC};Database=test;",
+        );
+        assert_eq!(ibm_db2.engine, ENGINE_DB2);
+
+        let sqlserver = DriverCapabilities::detect_from_connection_string(
+            "Driver={ODBC Driver 18 for SQL Server};Database=mysql;",
+        );
+        assert_eq!(sqlserver.engine, ENGINE_SQLSERVER);
+    }
+
+    #[test]
     fn should_apply_oracle_max_array_size_when_detected() {
         let caps = DriverCapabilities::from_driver_name("Oracle");
         assert_eq!(caps.max_row_array_size, 5000);
@@ -531,5 +577,40 @@ mod tests {
             DriverCapabilities::canonical_engine_id("postgres"),
             ENGINE_POSTGRES
         );
+    }
+
+    #[test]
+    fn should_map_sqlsrv32_and_exact_sqlserver_token() {
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("sqlsrv32"),
+            ENGINE_SQLSERVER
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("sqlserver"),
+            ENGINE_SQLSERVER
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("mysqlserver"),
+            ENGINE_MYSQL
+        );
+    }
+
+    #[test]
+    fn should_map_sybase_asa_via_asa_plus_sybase_and_adaptive_ase() {
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("Sybase ASA"),
+            ENGINE_SYBASE_ASA
+        );
+        assert_eq!(
+            DriverCapabilities::canonical_engine_id("Adaptive ASE"),
+            ENGINE_SYBASE_ASE
+        );
+    }
+
+    #[test]
+    fn detect_from_connection_string_returns_unknown_for_empty_driver_token() {
+        let caps = DriverCapabilities::detect_from_connection_string("Driver={};Server=h");
+        assert_eq!(caps.engine, ENGINE_UNKNOWN);
+        assert_eq!(caps.driver_name, "Unknown");
     }
 }

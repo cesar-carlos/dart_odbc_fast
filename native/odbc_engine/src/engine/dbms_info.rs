@@ -14,19 +14,24 @@
 
 use crate::engine::core::DriverCapabilities;
 use crate::error::{OdbcError, Result};
-use crate::handles::SharedHandleManager;
+use crate::handles::{CachedConnection, SharedHandleManager};
 use odbc_api::Connection;
 use serde::Serialize;
 
 /// Snapshot of `SQLGetInfo` properties relevant to a Dart consumer.
 ///
-/// All fields are **strings as reported by the driver** plus the canonical
-/// `engine` id used internally for plugin lookup.
+/// Identification fields (`dbms_name`, `dbms_version`, `engine`) come from
+/// live `SQLGetInfo`. Nested [`DriverCapabilities`] boolean flags and
+/// `max_row_array_size` remain a canonical table per engine; live
+/// `driver_name` / `driver_version` are `SQL_DRIVER_NAME` / `SQL_DRIVER_VER`.
 #[derive(Debug, Clone, Serialize)]
 pub struct DbmsInfo {
     /// `SQL_DBMS_NAME` — server-reported product name
     /// (e.g. `"Microsoft SQL Server"`, `"PostgreSQL"`, `"MariaDB"`).
     pub dbms_name: String,
+    /// `SQL_DBMS_VER` — server-reported product version (empty when unknown).
+    #[serde(default)]
+    pub dbms_version: String,
     /// Canonical engine identifier (one of `engine::core::ENGINE_*`).
     pub engine: String,
     /// Maximum length of a catalog identifier (0 if unknown).
@@ -58,15 +63,36 @@ pub fn detect_engine_id(conn: &Connection<'static>) -> Result<&'static str> {
 
 impl DbmsInfo {
     /// Query the live connection and assemble a [`DbmsInfo`] snapshot.
-    /// All `max_*_name_len` calls are best-effort: if the driver fails, the
-    /// corresponding field stays at `0` and the overall call still succeeds.
+    /// All `max_*_name_len` and version calls are best-effort: if the driver
+    /// fails, length fields stay at `0`, version strings stay empty /
+    /// `"Unknown"`, and the overall call still succeeds when `SQL_DBMS_NAME`
+    /// is available.
     pub fn detect(conn: &Connection<'static>) -> Result<Self> {
+        Self::detect_with_engine(conn, None)
+    }
+
+    /// Like [`Self::detect`], using a pre-resolved canonical engine id
+    /// (typically [`CachedConnection::engine_id`]) so the `OnceLock` stays
+    /// warm for XA / transaction / plugin lookup.
+    pub fn detect_from_cached(cached: &CachedConnection) -> Result<Self> {
+        let engine = cached.engine_id()?;
+        Self::detect_with_engine(cached.connection(), Some(engine))
+    }
+
+    fn detect_with_engine(
+        conn: &Connection<'static>,
+        engine_id: Option<&'static str>,
+    ) -> Result<Self> {
         let dbms_name = conn
             .database_management_system_name()
             .map_err(OdbcError::from)?;
 
-        let mut capabilities = DriverCapabilities::from_driver_name(&dbms_name);
-        capabilities.driver_name = dbms_name.clone();
+        let engine = engine_id
+            .unwrap_or_else(|| DriverCapabilities::canonical_engine_id(&dbms_name))
+            .to_string();
+
+        let capabilities = DriverCapabilities::detect(conn)?;
+        let dbms_version = crate::engine::odbc_get_info::dbms_ver(conn).unwrap_or_default();
 
         let max_catalog_name_len = conn.max_catalog_name_len().map(u32::from).unwrap_or(0);
         let max_schema_name_len = conn.max_schema_name_len().map(u32::from).unwrap_or(0);
@@ -75,8 +101,9 @@ impl DbmsInfo {
         let current_catalog = conn.current_catalog().unwrap_or_default();
 
         Ok(Self {
-            engine: capabilities.engine.clone(),
+            engine,
             dbms_name,
+            dbms_version,
             max_catalog_name_len,
             max_schema_name_len,
             max_table_name_len,
@@ -93,7 +120,7 @@ impl DbmsInfo {
             h.get_connection(conn_id)?
         };
         let cached = crate::error::lock_mutex(conn_arc.as_ref())?;
-        Self::detect(cached.connection())
+        Self::detect_from_cached(&cached)
     }
 
     pub fn to_json(&self) -> Result<String> {
@@ -115,6 +142,7 @@ mod tests {
         DbmsInfo {
             engine: caps.engine.clone(),
             dbms_name: dbms_name.to_string(),
+            dbms_version: "15.0".to_string(),
             max_catalog_name_len: 128,
             max_schema_name_len: 128,
             max_table_name_len: 128,
@@ -183,6 +211,7 @@ mod tests {
         let json = info.to_json().expect("json");
         assert!(json.contains("\"dbms_name\":\"PostgreSQL\""));
         assert!(json.contains("\"engine\":\"postgres\""));
+        assert!(json.contains("\"dbms_version\":\"15.0\""));
         assert!(json.contains("\"current_catalog\":\"main\""));
     }
 

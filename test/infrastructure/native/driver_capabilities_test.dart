@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
 import 'package:odbc_fast/infrastructure/native/native_bcp_runtime.dart';
 import 'package:test/test.dart';
+
+import 'bindings/fake_odbc_bindings.dart';
+import 'bindings/test_odbc_bindings.dart';
 
 void main() {
   group('DatabaseType.fromDriverName (heuristic)', () {
@@ -81,6 +86,37 @@ void main() {
       expect(DatabaseType.fromDriverName('FantasyDB'), DatabaseType.unknown);
       expect(DatabaseType.fromDriverName(''), DatabaseType.unknown);
     });
+
+    test('should_align_with_rust_engine_from_name_edge_cases', () {
+      expect(
+        DatabaseType.fromDriverName('mysqlserver'),
+        DatabaseType.mysql,
+      );
+      expect(
+        DatabaseType.fromDriverName('sqlsrv32'),
+        DatabaseType.sqlServer,
+      );
+      expect(
+        DatabaseType.fromDriverName('  PostgreSQL  '),
+        DatabaseType.postgresql,
+      );
+      expect(DatabaseType.fromDriverName('DB2'), DatabaseType.db2);
+    });
+
+    test('should_map_sybase_asa_via_asa_plus_sybase_token', () {
+      expect(
+        DatabaseType.fromDriverName('Sybase ASA'),
+        DatabaseType.sybaseAsa,
+      );
+    });
+
+    test('should_map_unqualified_sybase_and_ase_plus_adaptive_to_ase', () {
+      expect(DatabaseType.fromDriverName('Sybase'), DatabaseType.sybaseAse);
+      expect(
+        DatabaseType.fromDriverName('Adaptive ASE'),
+        DatabaseType.sybaseAse,
+      );
+    });
   });
 
   group('DatabaseType.fromEngineId (canonical)', () {
@@ -142,11 +178,11 @@ void main() {
       expect(caps.supportsNativeBcp, isFalse);
     });
 
-    test('falls back to driver-name heuristic when engine missing', () {
+    test('should_keep_unknown_type_when_engine_missing', () {
       final caps = DriverCapabilitiesMapper.fromJson(<String, Object?>{
         'driver_name': 'Microsoft SQL Server',
       });
-      expect(caps.databaseType, DatabaseType.sqlServer);
+      expect(caps.databaseType, DatabaseType.unknown);
       expect(caps.engineId, DatabaseEngineIds.unknown);
     });
 
@@ -176,6 +212,44 @@ void main() {
       expect(caps.databaseType, DatabaseType.unknown);
       expect(caps.engineId, DatabaseEngineIds.unknown);
       expect(caps.supportsNativeBcp, isFalse);
+    });
+
+    test('should_parse_jsonDecode_map_via_asJsonMap', () {
+      final decoded = jsonDecode(
+        '{"engine":"sqlite","driver_name":"SQLite","max_row_array_size":1000}',
+      );
+      final map = DriverCapabilitiesMapper.asJsonMap(decoded);
+      expect(map, isNotNull);
+      final caps = DriverCapabilitiesMapper.fromJson(map!);
+      expect(caps.engineId, DatabaseEngineIds.sqlite);
+      expect(caps.databaseType, DatabaseType.sqlite);
+    });
+  });
+
+  group('DriverCapabilitiesMapper.asJsonMap', () {
+    test('should_return_null_when_value_is_not_a_map', () {
+      expect(DriverCapabilitiesMapper.asJsonMap(null), isNull);
+      expect(DriverCapabilitiesMapper.asJsonMap('{"a":1}'), isNull);
+      expect(DriverCapabilitiesMapper.asJsonMap(<Object?>[1, 2]), isNull);
+    });
+
+    test('should_normalize_nested_lists_and_non_string_keys', () {
+      final map = DriverCapabilitiesMapper.asJsonMap(<Object?, Object?>{
+        1: <Object?>[
+          <String, Object?>{'engine': 'sqlite'},
+          2,
+        ],
+      });
+      expect(map, isNotNull);
+      expect(map!.containsKey('1'), isTrue);
+      final nested = map['1']! as List<Object?>;
+      expect(nested, hasLength(2));
+      expect(nested.first, isA<Map<String, Object?>>());
+      expect(
+        (nested.first! as Map<String, Object?>)['engine'],
+        'sqlite',
+      );
+      expect(nested[1], 2);
     });
   });
 
@@ -215,6 +289,7 @@ void main() {
     test('parses live introspection JSON with engine id', () {
       final info = DriverCapabilitiesMapper.dbmsInfoFromJson(<String, Object?>{
         'dbms_name': 'PostgreSQL',
+        'dbms_version': '16.1',
         'engine': DatabaseEngineIds.postgres,
         'max_catalog_name_len': 63,
         'max_schema_name_len': 63,
@@ -233,6 +308,7 @@ void main() {
       });
 
       expect(info.dbmsName, 'PostgreSQL');
+      expect(info.dbmsVersion, '16.1');
       expect(info.engineId, DatabaseEngineIds.postgres);
       expect(info.databaseType, DatabaseType.postgresql);
       expect(info.maxCatalogNameLen, 63);
@@ -252,6 +328,45 @@ void main() {
       expect(info.databaseType, DatabaseType.mariadb);
       expect(info.capabilities.driverName, 'MariaDB');
       expect(info.maxCatalogNameLen, 0);
+      expect(info.dbmsVersion, isEmpty);
+    });
+
+    test('should_synthesise_capabilities_when_nested_value_is_not_a_map', () {
+      final info = DriverCapabilitiesMapper.dbmsInfoFromJson(<String, Object?>{
+        'dbms_name': 'PostgreSQL',
+        'engine': DatabaseEngineIds.postgres,
+        'capabilities': 'not-a-map',
+      });
+      expect(info.databaseType, DatabaseType.postgresql);
+      expect(info.capabilities.driverName, 'PostgreSQL');
+      expect(info.capabilities.engineId, DatabaseEngineIds.postgres);
+      expect(info.capabilities.driverVersion, 'Unknown');
+    });
+
+    test('should_parse_nested_capabilities_from_jsonDecode_maps', () {
+      final decoded = jsonDecode('''
+{
+  "dbms_name": "PostgreSQL",
+  "dbms_version": "16.2",
+  "engine": "postgres",
+  "max_catalog_name_len": 63,
+  "current_catalog": "app",
+  "capabilities": {
+    "driver_name": "psqlodbcw.so",
+    "driver_version": "16.00.0000",
+    "engine": "postgres",
+    "max_row_array_size": 2000
+  }
+}
+''');
+      final map = DriverCapabilitiesMapper.asJsonMap(decoded);
+      expect(map, isNotNull);
+      final info = DriverCapabilitiesMapper.dbmsInfoFromJson(map!);
+      expect(info.dbmsVersion, '16.2');
+      expect(info.databaseType, DatabaseType.postgresql);
+      expect(info.capabilities.driverName, 'psqlodbcw.so');
+      expect(info.capabilities.driverVersion, '16.00.0000');
+      expect(info.capabilities.maxRowArraySize, 2000);
     });
   });
 
@@ -293,6 +408,115 @@ void main() {
       expect(caps.engineId, DatabaseEngineIds.unknown);
       expect(caps.supportsPreparedStatements, isTrue);
       expect(caps.maxRowArraySize, 1000);
+    });
+  });
+
+  group('OdbcDriverCapabilities (stubbed FFI)', () {
+    test('should_return_null_capabilities_when_api_unsupported', () {
+      final native = OdbcNative.withBindings(FakeOdbcBindings.legacyMinimal());
+      addTearDown(native.dispose);
+      final wrapper = OdbcDriverCapabilities(native);
+      expect(wrapper.supportsApi, isFalse);
+      expect(wrapper.getCapabilities('DSN=x'), isNull);
+    });
+
+    test('should_return_null_capabilities_for_non_object_json', () {
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.custom(
+          capabilities: const TestOdbcBindingsCapabilities(
+            supportsDriverCapabilitiesApi: true,
+          ),
+          overrides: TestOdbcBindingsOverrides(
+            getDriverCapabilities: (_, buf, bufLen, outWritten) {
+              FakeOdbcBindings.writePayload(
+                buf,
+                bufLen,
+                outWritten,
+                utf8.encode('[1,2]'),
+              );
+              return 0;
+            },
+          ),
+        ),
+      );
+      addTearDown(native.dispose);
+      expect(
+        OdbcDriverCapabilities(native).getCapabilities('DSN=x'),
+        isNull,
+      );
+    });
+
+    test('should_return_null_dbms_info_when_api_unsupported', () {
+      final native = OdbcNative.withBindings(FakeOdbcBindings.legacyMinimal());
+      addTearDown(native.dispose);
+      expect(native.supportsConnectionDbmsInfoApi, isFalse);
+      expect(
+        OdbcDriverCapabilities(native).getDbmsInfoForConnection(1),
+        isNull,
+      );
+    });
+
+    test('should_parse_stubbed_dbms_info_json_including_version', () {
+      const payload = '{"dbms_name":"PostgreSQL","dbms_version":"16.1",'
+          '"engine":"postgres","max_catalog_name_len":63,'
+          '"current_catalog":"app","capabilities":{"engine":"postgres",'
+          '"driver_name":"psqlodbcw.so","driver_version":"16.00.0000",'
+          '"max_row_array_size":2000}}';
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.custom(
+          capabilities: const TestOdbcBindingsCapabilities(
+            supportsConnectionDbmsInfoApi: true,
+          ),
+          overrides: TestOdbcBindingsOverrides(
+            getConnectionDbmsInfo: (connId, buf, bufLen, outWritten) {
+              expect(connId, 7);
+              FakeOdbcBindings.writePayload(
+                buf,
+                bufLen,
+                outWritten,
+                utf8.encode(payload),
+              );
+              return 0;
+            },
+          ),
+        ),
+      );
+      addTearDown(native.dispose);
+
+      final info = OdbcDriverCapabilities(native).getDbmsInfoForConnection(7);
+      expect(info, isNotNull);
+      expect(info!.dbmsName, 'PostgreSQL');
+      expect(info.dbmsVersion, '16.1');
+      expect(info.databaseType, DatabaseType.postgresql);
+      expect(info.currentCatalog, 'app');
+      expect(info.capabilities.driverName, 'psqlodbcw.so');
+      expect(info.capabilities.driverVersion, '16.00.0000');
+    });
+
+    test('should_return_null_dbms_info_for_non_object_json', () {
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.custom(
+          capabilities: const TestOdbcBindingsCapabilities(
+            supportsConnectionDbmsInfoApi: true,
+          ),
+          overrides: TestOdbcBindingsOverrides(
+            getConnectionDbmsInfo: (_, buf, bufLen, outWritten) {
+              FakeOdbcBindings.writePayload(
+                buf,
+                bufLen,
+                outWritten,
+                utf8.encode('[]'),
+              );
+              return 0;
+            },
+          ),
+        ),
+      );
+      addTearDown(native.dispose);
+      expect(
+        OdbcDriverCapabilities(native).getDbmsInfoForConnection(1),
+        isNull,
+      );
     });
   });
 }

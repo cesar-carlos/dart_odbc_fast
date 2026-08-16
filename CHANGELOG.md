@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Live DBMS version fields** — `odbc_get_connection_dbms_info` now
+  includes `dbms_version` (`SQL_DBMS_VER`). Live `DriverCapabilities`
+  fill `driver_name` / `driver_version` from `SQL_DRIVER_NAME` /
+  `SQL_DRIVER_VER` when the driver reports them. Dart `DbmsInfo.dbmsVersion`
+  mirrors the new JSON field. Boolean flags and `max_row_array_size` remain
+  a canonical table per engine.
+- **Connection engine-id cache on DBMS info** — `getConnectionDbmsInfo`
+  warms `CachedConnection.engine_id` so XA, transactions, and plugin lookup
+  reuse the same `SQL_DBMS_NAME` result.
+
+### Changed
+
+- **Live `capabilities.driver_name`** — on an open connection this is now
+  `SQL_DRIVER_NAME` (for example the ODBC driver DLL/so name). The server
+  product name stays in `DbmsInfo.dbms_name` / `dbmsName`.
+
+### Fixed
+
+- **Connection-string engine heuristic** — `detect_from_connection_string`
+  inspects only the brace-aware `Driver=` token. Values such as
+  `UID=postgres` or `Database=mysql` no longer mis-identify the engine.
+  DSN-only strings (no `Driver=`) resolve to `unknown`; use live
+  `getConnectionDbmsInfo` after connect.
+- **Dart JSON maps from `jsonDecode`** — nested `capabilities` objects and
+  `OdbcDriverCapabilities` payloads are normalized from `Map<String, dynamic>`
+  instead of being dropped by an `is Map<String, Object?>` check.
+- **Unknown engine mapping** — Dart no longer re-runs `fromDriverName` when
+  the native `engine` field is `unknown`, so `databaseType` stays aligned
+  with the Rust id.
+
+### Tests
+
+- Expanded identification coverage: brace-aware `Driver=` tokens (empty,
+  unclosed, first-wins), Sybase ASA/ASE heuristic edges, `asJsonMap` list
+  and non-map inputs, admin-runner DBMS-info JSON success/failure paths,
+  and `SQLGetInfo` string decoding without a live driver.
+- Stubbed FFI coverage for `OdbcDriverCapabilities.getDbmsInfoForConnection`
+  and admin-runner audit / metadata-cache / detect-driver JSON paths.
+
 ## [4.5.1] - 2026-08-15
 
 ### Performance

@@ -72,14 +72,14 @@ fn test_driver_capabilities_detect() {
         caps.max_row_array_size, 2000,
         "SQL Server canonical max_row_array_size is 2000"
     );
-    assert_eq!(
-        caps.driver_name, "Microsoft SQL Server",
-        "detect() preserves SQLGetInfo(SQL_DBMS_NAME) verbatim"
+    assert!(
+        !caps.driver_name.is_empty(),
+        "detect() should surface SQL_DRIVER_NAME (or DBMS name fallback)"
     );
     assert_eq!(caps.engine, "sqlserver");
-    assert_eq!(
-        caps.driver_version, "Unknown",
-        "Driver ODBC version not surfaced in DriverCapabilities yet"
+    assert!(
+        !caps.driver_version.is_empty(),
+        "detect() should surface SQL_DRIVER_VER when the driver reports it"
     );
 
     drop(handles_guard);

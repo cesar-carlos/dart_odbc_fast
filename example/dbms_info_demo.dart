@@ -48,6 +48,7 @@ void main() async {
 
     AppLogger.info('--- DbmsInfo from live SQLGetInfo ----------------');
     AppLogger.info('dbmsName            : ${info.dbmsName}');
+    AppLogger.info('dbmsVersion         : ${info.dbmsVersion}');
     AppLogger.info('engineId (canonical): ${info.engineId}');
     AppLogger.info('databaseType (Dart) : ${info.databaseType}');
     AppLogger.info('maxCatalogNameLen   : ${info.maxCatalogNameLen}');
