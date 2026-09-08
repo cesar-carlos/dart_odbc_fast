@@ -130,6 +130,18 @@ class _FakeQueryService implements IQueryService {
   }
 
   @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
+    capturedConnectionId = connectionId;
+    capturedSql = sql;
+    return const Stream<Result<QueryResultMultiBatchItem>>.empty();
+  }
+
+  @override
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
     String connectionId,
     String sql, {

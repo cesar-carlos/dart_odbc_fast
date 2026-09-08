@@ -123,6 +123,15 @@ abstract interface class IQueryRepository {
     int? chunkSize,
   });
 
+  /// Streams each multi-result fetch batch without coalescing continuation
+  /// rows. Use this bounded-memory variant for large result sets.
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
   Future<Result<QueryResult>> catalogTables(
     String connectionId, {
     String catalog = '',

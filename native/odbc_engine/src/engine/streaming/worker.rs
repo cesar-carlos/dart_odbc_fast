@@ -48,7 +48,7 @@ impl StreamingExecutor {
             cursor,
             &column_types,
             &mut row_buffer,
-            crate::engine::core::block_fetch::configured_batch_size(),
+            crate::engine::fetch::configured_fetch_batch_size(),
             None,
         )?;
         // FOR JSON normalisation — buffer-mode materialises the full result
@@ -101,7 +101,7 @@ impl StreamingExecutor {
             cursor,
             &column_types,
             &mut row_buffer,
-            crate::engine::core::block_fetch::configured_batch_size(),
+            crate::engine::fetch::configured_fetch_batch_size(),
             None,
         )?;
         coalesce_for_json_rows(&mut row_buffer);
@@ -261,7 +261,7 @@ impl StreamingExecutor {
         sql: &str,
         params: &[crate::protocol::ParamValue],
         fetch_size: usize,
-        mut on_batch: F,
+        #[cfg_attr(not(feature = "statement-handle-reuse"), allow(unused_mut))] mut on_batch: F,
         cancel_requested: Option<Arc<AtomicBool>>,
         result_encoding: ResultEncoding,
     ) -> Result<()>

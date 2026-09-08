@@ -189,6 +189,23 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
       );
 
   @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _ops.wrapStream(
+        'ODBC.streamQueryMultiBatches',
+        () => _queries.streamQueryMultiBatches(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
+      );
+
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,

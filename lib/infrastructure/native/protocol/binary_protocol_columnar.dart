@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_cell_decode.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_constants.dart';
@@ -12,7 +13,11 @@ import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.da
 
 const Endian _littleEndian = Endian.little;
 
-ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
+ParsedRowBuffer parseColumnarV2ToRowBuffer(
+  Uint8List data, {
+  NativeByteView? nativeBytes,
+}) {
+  final source = nativeBytes ?? NativeByteView.fromBytes(data);
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2) {
     throw const FormatException('Columnar v2: buffer too small');
   }
@@ -75,6 +80,7 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
     final isCompressed = data[off++];
     final raw = _readColumnarColumnPayload(
       data: data,
+      source: source,
       bd: bd,
       off: off,
       end: end,
@@ -101,7 +107,11 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(Uint8List data) {
 
 /// Decodes a columnar v2 wire message directly into [TypedColumnarResult]
 /// without materializing row-major `List<List<dynamic>>`.
-TypedColumnarResult parseColumnarV2ToTyped(Uint8List data) {
+TypedColumnarResult parseColumnarV2ToTyped(
+  Uint8List data, {
+  NativeByteView? nativeBytes,
+}) {
+  final source = nativeBytes ?? NativeByteView.fromBytes(data);
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2) {
     throw const FormatException('Columnar v2: buffer too small');
   }
@@ -166,6 +176,7 @@ TypedColumnarResult parseColumnarV2ToTyped(Uint8List data) {
     final isCompressed = data[off++];
     final raw = _readColumnarColumnPayload(
       data: data,
+      source: source,
       bd: bd,
       off: off,
       end: end,
@@ -197,6 +208,7 @@ class _ColumnarRawColumn {
 
 _ColumnarRawColumn _readColumnarColumnPayload({
   required Uint8List data,
+  required NativeByteView source,
   required ByteData bd,
   required int off,
   required int end,
@@ -216,9 +228,12 @@ _ColumnarRawColumn _readColumnarColumnPayload({
     if (offset + compLen > end) {
       throw const FormatException('Columnar v2: compressed data truncated');
     }
-    final comp = Uint8List.sublistView(data, offset, offset + compLen);
+    final comp = source.slice(offset, offset + compLen);
     offset += compLen;
-    final decomp = columnarDecompressWithNative(comp, algorithm);
+    final nativeInput = compLen == 0 ? null : comp.pointerAt(0);
+    final decomp = nativeInput == null
+        ? columnarDecompressWithNative(comp.bytes, algorithm)
+        : columnarDecompressNativeInput(nativeInput, compLen, algorithm);
     if (decomp == null) {
       final haveApi = isColumnarNativeDecompressAvailable;
       final hint = haveApi
@@ -242,8 +257,8 @@ _ColumnarRawColumn _readColumnarColumnPayload({
   if (offset + rawLen > end) {
     throw const FormatException('Columnar v2: raw data truncated');
   }
-  final raw = Uint8List.sublistView(data, offset, offset + rawLen);
-  return _ColumnarRawColumn(bytes: raw, nextOffset: offset + rawLen);
+  final raw = source.slice(offset, offset + rawLen);
+  return _ColumnarRawColumn(bytes: raw.bytes, nextOffset: offset + rawLen);
 }
 
 TypedColumn _buildTypedColumn({

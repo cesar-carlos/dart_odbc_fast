@@ -69,6 +69,20 @@ void main() {
       expect(frame, equals([1, 2, 3, 4]));
     });
 
+    test('should_take_payload_after_prefix_without_copying_it', () {
+      final acc = ProtocolByteAccumulator(initialCapacity: 16)
+        ..add(Uint8List.fromList([99, 100, 1, 2, 3, 4, 5]));
+
+      final payload = acc.takeAfterPrefix(2, 3);
+
+      expect(payload, equals([1, 2, 3]));
+      expect(payload.offsetInBytes, equals(2));
+      expect(acc.length, equals(2));
+      acc.add(Uint8List.fromList([6]));
+      expect(acc.take(3), equals([4, 5, 6]));
+      expect(payload, equals([1, 2, 3]));
+    });
+
     test('should_reuse_offered_default_backing_when_constructing', () {
       final recycled = Uint8List(64 * 1024);
       ProtocolByteAccumulator.offerDefaultBacking(recycled);

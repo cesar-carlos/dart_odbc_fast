@@ -166,6 +166,29 @@ void main() {
       decoder.assertExhausted();
     });
 
+    test('decodes complete frames before buffering a trailing partial frame',
+        () {
+      final decoder = MultiResultStreamDecoder();
+      final first = _buildRowCountFrame(7);
+      final second = _buildRowCountFrame(13);
+      final combined = BytesBuilder()
+        ..add(first)
+        ..add(Uint8List.sublistView(second, 0, 3));
+
+      final firstItems = decoder.feed(combined.toBytes());
+      expect(firstItems, hasLength(1));
+      expect((firstItems.single as MultiResultItemRowCount).value, equals(7));
+      expect(decoder.pendingBytes, equals(3));
+
+      final secondItems = decoder.feed(Uint8List.sublistView(second, 3));
+      expect(secondItems, hasLength(1));
+      expect(
+        (secondItems.single as MultiResultItemRowCount).value,
+        equals(13),
+      );
+      decoder.assertExhausted();
+    });
+
     test('handles a frame split across multiple feed() calls', () {
       final decoder = MultiResultStreamDecoder();
       final frame = _buildRowCountFrame(99);

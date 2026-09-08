@@ -282,6 +282,19 @@ abstract class IOdbcService
     int? chunkSize,
   });
 
+  /// Streams individual native fetch batches for a multi-result query.
+  ///
+  /// Unlike [streamQueryMulti], this method never joins continuation batches
+  /// into a full cursor-sized [QueryResult]. It is therefore the preferred
+  /// multi-result API when peak memory must stay bounded by [fetchSize].
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
   @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,

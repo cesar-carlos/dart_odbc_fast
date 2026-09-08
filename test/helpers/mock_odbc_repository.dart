@@ -533,6 +533,35 @@ class MockOdbcRepository implements IOdbcRepository {
   }
 
   @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) async* {
+    await for (final item in streamQueryMulti(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    )) {
+      yield item.fold(
+        (value) {
+          final resultSet = value.resultSet;
+          return Success<QueryResultMultiBatchItem, OdbcError>(
+            resultSet == null
+                ? QueryResultMultiBatchItem.rowCount(value.rowCount ?? 0)
+                : QueryResultMultiBatchItem.resultSet(resultSet),
+          );
+        },
+        (error) => Failure<QueryResultMultiBatchItem, OdbcError>(
+          error as OdbcError,
+        ),
+      );
+    }
+  }
+
+  @override
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,

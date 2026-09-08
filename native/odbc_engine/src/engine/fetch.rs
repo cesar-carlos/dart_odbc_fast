@@ -22,6 +22,19 @@ use crate::engine::core::block_fetch;
 #[cfg(feature = "block-cursor-fetch")]
 use odbc_api::ResultSetMetadata;
 
+/// Returns the configured block-fetch batch size when that capability is
+/// enabled. With block fetching disabled, callers still pass this value to the
+/// legacy dispatcher, which intentionally ignores it.
+pub(crate) fn configured_fetch_batch_size() -> usize {
+    #[cfg(feature = "block-cursor-fetch")]
+    {
+        block_fetch::configured_batch_size()
+    }
+
+    #[cfg(not(feature = "block-cursor-fetch"))]
+    1
+}
+
 /// Drain `cursor` into `row_buffer` using the fastest path that is safe for
 /// the cursor's schema.
 ///

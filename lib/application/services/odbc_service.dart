@@ -317,6 +317,20 @@ class OdbcService implements IOdbcService {
       );
 
   @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQueryMultiBatches(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
   Future<Result<QueryResult>> executeQueryNamed(
     String connectionId,
     String sql,

@@ -205,6 +205,64 @@ void main() {
     );
 
     test(
+      'streamQueryMultiBatches yields continuation batches without coalescing',
+      () async {
+        final frames = BytesBuilder()
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['1'],
+              ],
+            ),
+          )
+          ..add(
+            resultSetMultiStreamFrame(
+              ['id'],
+              [
+                ['2'],
+              ],
+              tag: multiStreamItemTagResultSetBatch,
+            ),
+          )
+          ..add(rowCountMultiStreamFrame(99));
+        native
+          ..streamMultiStartBatchedResult = 551
+          ..streamFetchResponses = [
+            StreamFetchResponse(
+              0,
+              success: true,
+              data: frames.toBytes(),
+            ),
+          ];
+
+        final chunks = await repository
+            .streamQueryMultiBatches(connectionId, 'SELECT 1')
+            .toList();
+
+        expect(chunks, hasLength(3));
+        final first = chunks[0].getOrNull()!;
+        final second = chunks[1].getOrNull()!;
+        final third = chunks[2].getOrNull()!;
+        expect(
+          first.resultSet!.rows,
+          equals(<List<dynamic>>[
+            <dynamic>['1'],
+          ]),
+        );
+        expect(first.isContinuationBatch, isFalse);
+        expect(
+          second.resultSet!.rows,
+          equals(<List<dynamic>>[
+            <dynamic>['2'],
+          ]),
+        );
+        expect(second.isContinuationBatch, isTrue);
+        expect(third.rowCount, equals(99));
+      },
+    );
+
+    test(
       'streamQueryMulti does not merge consecutive tag0 result sets',
       () async {
         final frames = BytesBuilder()

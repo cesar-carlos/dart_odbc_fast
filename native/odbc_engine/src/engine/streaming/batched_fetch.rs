@@ -3,7 +3,7 @@
 use super::columns::{describe_streaming_columns, encode_row_buffer_with_encoding};
 use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
-use crate::protocol::{ColumnarEncoder, RowBuffer};
+use crate::protocol::RowBuffer;
 use odbc_api::{Cursor, ResultSetMetadata};
 
 #[cfg(feature = "block-cursor-fetch")]
@@ -12,6 +12,8 @@ use crate::engine::core::block_fetch::{plan_buffer_descs, RowMajorBlockSession};
 use crate::engine::core::columnar_fetch::ColumnarStreamingSession;
 #[cfg(feature = "block-cursor-fetch")]
 use crate::protocol::columnar::ColumnMetadata;
+#[cfg(feature = "block-cursor-fetch")]
+use crate::protocol::ColumnarEncoder;
 
 /// Drain `cursor` in fetch-sized batches, invoking `on_batch` for each
 /// encoded payload. Returns the cursor for callers that need
@@ -30,7 +32,10 @@ where
     let batch_size = fetch_size.max(1);
     let mut row_buffer = RowBuffer::new();
     let column_types = describe_streaming_columns(&mut cursor, &mut row_buffer)?;
+    #[cfg(feature = "block-cursor-fetch")]
     let mut first_batch = true;
+    #[cfg(not(feature = "block-cursor-fetch"))]
+    let first_batch = true;
 
     #[cfg(feature = "block-cursor-fetch")]
     {

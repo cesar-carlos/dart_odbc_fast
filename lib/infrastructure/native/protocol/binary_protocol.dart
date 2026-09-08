@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_cell_decode.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_columnar.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol_constants.dart';
@@ -109,6 +110,7 @@ class BinaryProtocolParser {
   }
 
   static ParsedQueryMessage _parseWithOutputsInternal(Uint8List data) {
+    final nativeBytes = NativeByteView.fromBytes(data);
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
@@ -141,8 +143,10 @@ class BinaryProtocolParser {
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for columnar payload');
       }
-      buffer =
-          parseColumnarV2ToRowBuffer(Uint8List.sublistView(data, 0, mainEnd));
+      buffer = parseColumnarV2ToRowBuffer(
+        Uint8List.sublistView(data, 0, mainEnd),
+        nativeBytes: nativeBytes.slice(0, mainEnd),
+      );
     } else {
       throw FormatException('Unsupported protocol version: $version');
     }
@@ -171,6 +175,7 @@ class BinaryProtocolParser {
   static ParsedColumnarQueryMessage _parseColumnarWithOutputsInternal(
     Uint8List data,
   ) {
+    final nativeBytes = NativeByteView.fromBytes(data);
     if (data.length < 6) {
       throw const FormatException('Buffer too small for version');
     }
@@ -194,8 +199,10 @@ class BinaryProtocolParser {
       if (data.length < mainEnd) {
         throw const FormatException('Buffer too small for columnar payload');
       }
-      columnar =
-          parseColumnarV2ToTyped(Uint8List.sublistView(data, 0, mainEnd));
+      columnar = parseColumnarV2ToTyped(
+        Uint8List.sublistView(data, 0, mainEnd),
+        nativeBytes: nativeBytes.slice(0, mainEnd),
+      );
     } else if (version == protocolVersionRowMajor) {
       final msg = _parseWithOutputsInternal(data);
       return ParsedColumnarQueryMessage(

@@ -84,6 +84,40 @@ class ProtocolByteAccumulator {
     return Uint8List.sublistView(old, 0, count);
   }
 
+  /// Returns [count] bytes after a consumed leading [prefix] without moving
+  /// the returned payload. Only bytes after the returned range are copied into
+  /// the next accumulator backing.
+  ///
+  /// Streaming multi-result frames use this to discard their five-byte header
+  /// while preserving the payload as a view of the previous backing store.
+  Uint8List takeAfterPrefix(int prefix, int count) {
+    if (prefix < 0 || count < 0 || prefix + count > _length) {
+      throw RangeError.range(prefix + count, 0, _length, 'prefix + count');
+    }
+    final old = _data;
+    final consumed = prefix + count;
+    final payload = Uint8List.sublistView(old, prefix, consumed);
+
+    if (consumed == _length) {
+      _data = _acquireBacking(_defaultInitialCapacity);
+      _length = 0;
+      if (consumed == old.length) {
+        _recycleFinalizer.attach(payload, old);
+      }
+      return payload;
+    }
+
+    final remaining = _length - consumed;
+    final nextCapacity = remaining < _defaultInitialCapacity
+        ? _defaultInitialCapacity
+        : remaining;
+    final next = _acquireBacking(nextCapacity)
+      ..setRange(0, remaining, old, consumed);
+    _data = next;
+    _length = remaining;
+    return payload;
+  }
+
   void drop(int count) => _dropLeading(count);
 
   void _checkRange(int count) {

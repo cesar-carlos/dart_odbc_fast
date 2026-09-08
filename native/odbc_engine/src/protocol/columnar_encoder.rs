@@ -6,6 +6,12 @@ use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION_V2: u16 = 2;
+const HEADER_SIZE: usize = 19;
+
+/// Avoid reserving an entire raw payload before attempting compression. The
+/// output vector grows normally when the compressed payload needs more space,
+/// while compressible result sets no longer retain raw-sized capacity.
+const COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES: usize = 8 * 1024;
 
 /// Minimum raw column payload size in bytes required to attempt zstd compression.
 ///
@@ -15,15 +21,35 @@ pub const COMPRESSION_THRESHOLD_BYTES: usize = 1024;
 
 pub struct ColumnarEncoder;
 
+/// Precomputed sizes for one encoded column.
+///
+/// Planning validates every size that is written to the wire and lets the
+/// encoder reuse the raw payload length without walking the cells again.
+struct ColumnEncodingPlan {
+    raw_payload_size: usize,
+}
+
+struct EncodingPlan {
+    columns: Vec<ColumnEncodingPlan>,
+    uncompressed_capacity: usize,
+    compressed_initial_capacity: usize,
+}
+
 impl ColumnarEncoder {
     pub fn encode(buffer: &RowBufferV2, use_compression: bool) -> Result<Vec<u8>> {
-        let mut output = Vec::with_capacity(Self::estimate_encoded_size(buffer)?);
+        let column_count = checked_u16(buffer.column_count(), "column count")?;
+        let plan = Self::plan_encoding(buffer)?;
+        let initial_capacity = if use_compression {
+            plan.compressed_initial_capacity
+        } else {
+            plan.uncompressed_capacity
+        };
+        let mut output = Vec::with_capacity(initial_capacity);
 
         output.extend_from_slice(&MAGIC.to_le_bytes());
         output.extend_from_slice(&VERSION_V2.to_le_bytes());
         output.extend_from_slice(&buffer.flags.to_le_bytes());
-        output
-            .extend_from_slice(&checked_u16(buffer.column_count(), "column count")?.to_le_bytes());
+        output.extend_from_slice(&column_count.to_le_bytes());
         output.extend_from_slice(&checked_u32(buffer.row_count, "row count")?.to_le_bytes());
 
         let compression_flag = if use_compression { 1u8 } else { 0u8 };
@@ -34,8 +60,13 @@ impl ColumnarEncoder {
 
         let payload_start = output.len();
 
-        for col_block in &buffer.columns {
-            Self::encode_column_block(&mut output, col_block, use_compression)?;
+        for (col_block, column_plan) in buffer.columns.iter().zip(&plan.columns) {
+            Self::encode_column_block(
+                &mut output,
+                col_block,
+                column_plan.raw_payload_size,
+                use_compression,
+            )?;
         }
 
         let payload_size = checked_u32(output.len() - payload_start, "payload size")?;
@@ -48,6 +79,7 @@ impl ColumnarEncoder {
     fn encode_column_block(
         output: &mut Vec<u8>,
         col_block: &ColumnBlock,
+        raw_payload_size: usize,
         use_compression: bool,
     ) -> Result<()> {
         let col_name_bytes = col_block.metadata.name.as_bytes();
@@ -57,7 +89,6 @@ impl ColumnarEncoder {
         );
         output.extend_from_slice(col_name_bytes);
 
-        let raw_payload_size = Self::estimate_column_payload_size(col_block)?;
         // Skip compression for small payloads where zstd overhead exceeds transfer savings.
         if !use_compression || raw_payload_size <= COMPRESSION_THRESHOLD_BYTES {
             output.push(0);
@@ -68,18 +99,22 @@ impl ColumnarEncoder {
             return Ok(());
         }
 
-        let compress_attempt_start = output.len();
-        output.push(1);
-        output.push(CompressionType::Zstd as u8);
-        let payload_len_pos = output.len();
-        output.extend_from_slice(&0u32.to_le_bytes());
-        let compressed_data_start = output.len();
+        // Serialize the raw payload once. Incompressible binary columns used
+        // to be serialized into zstd and then serialized again after the
+        // fallback decision. Retaining this temporary buffer prioritizes CPU
+        // for the large payloads that reach this branch.
+        let mut raw_payload = Vec::with_capacity(raw_payload_size);
+        Self::encode_column_payload(&mut raw_payload, col_block)?;
 
+        let mut compressed = Vec::with_capacity(
+            raw_payload
+                .len()
+                .min(COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES),
+        );
         let compression_result = (|| -> std::io::Result<()> {
-            let mut encoder = zstd::Encoder::new(&mut *output, 3)
+            let mut encoder = zstd::Encoder::new(&mut compressed, 3)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
-            Self::encode_column_payload(&mut encoder, col_block)
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            encoder.write_all(&raw_payload)?;
             encoder
                 .finish()
                 .map(|_| ())
@@ -87,27 +122,21 @@ impl ColumnarEncoder {
             Ok(())
         })();
 
-        match compression_result {
-            Ok(()) => {
-                let compressed_len = output.len() - compressed_data_start;
-                if compressed_len < raw_payload_size {
-                    let len_bytes =
-                        checked_u32(compressed_len, "column payload length")?.to_le_bytes();
-                    output[payload_len_pos..payload_len_pos + 4].copy_from_slice(&len_bytes);
-                    return Ok(());
-                }
-                output.truncate(compress_attempt_start);
-            }
-            Err(_) => {
-                output.truncate(compress_attempt_start);
-            }
+        if compression_result.is_ok() && compressed.len() < raw_payload.len() {
+            output.push(1);
+            output.push(CompressionType::Zstd as u8);
+            output.extend_from_slice(
+                &checked_u32(compressed.len(), "column payload length")?.to_le_bytes(),
+            );
+            output.extend_from_slice(&compressed);
+            return Ok(());
         }
 
         output.push(0);
         output.extend_from_slice(
             &checked_u32(raw_payload_size, "column payload length")?.to_le_bytes(),
         );
-        Self::encode_column_payload(output, col_block)?;
+        output.extend_from_slice(&raw_payload);
 
         Ok(())
     }
@@ -168,23 +197,57 @@ impl ColumnarEncoder {
         Ok(())
     }
 
-    fn estimate_encoded_size(buffer: &RowBufferV2) -> Result<usize> {
-        const HEADER_SIZE: usize = 19;
-        let mut size = HEADER_SIZE;
+    fn plan_encoding(buffer: &RowBufferV2) -> Result<EncodingPlan> {
+        let mut uncompressed_capacity = HEADER_SIZE;
+        let mut compressed_header_capacity = HEADER_SIZE;
+        let mut raw_payload_total = 0usize;
+        let mut columns = Vec::with_capacity(buffer.columns.len());
+
         for col_block in &buffer.columns {
-            size = checked_add(size, 2, "column type")?;
-            size = checked_add(size, 2, "column name length")?;
-            size = checked_add(size, col_block.metadata.name.len(), "column name")?;
-            size = checked_add(size, 1, "compression flag")?;
-            size = checked_add(size, 1, "compression algorithm")?;
-            size = checked_add(size, 4, "column payload length")?;
-            size = checked_add(
-                size,
-                Self::estimate_column_payload_size(col_block)?,
-                "column payload",
+            let name_len = col_block.metadata.name.len();
+            checked_u16(name_len, "column name length")?;
+            let raw_payload_size = Self::estimate_column_payload_size(col_block)?;
+
+            // type + name length + name + compression flag + payload length
+            let column_header_size = checked_add(2, 2, "column header")?;
+            let column_header_size = checked_add(column_header_size, name_len, "column name")?;
+            let uncompressed_column_header =
+                checked_add(column_header_size, 1 + 4, "column payload header")?;
+            // A compressed column also carries the compression-algorithm byte.
+            let compressed_column_header = checked_add(
+                column_header_size,
+                1 + 1 + 4,
+                "compressed column payload header",
             )?;
+
+            uncompressed_capacity = checked_add(
+                uncompressed_capacity,
+                uncompressed_column_header,
+                "column header",
+            )?;
+            uncompressed_capacity =
+                checked_add(uncompressed_capacity, raw_payload_size, "column payload")?;
+            compressed_header_capacity = checked_add(
+                compressed_header_capacity,
+                compressed_column_header,
+                "compressed column header",
+            )?;
+            raw_payload_total = checked_add(raw_payload_total, raw_payload_size, "column payload")?;
+            columns.push(ColumnEncodingPlan { raw_payload_size });
         }
-        Ok(size)
+
+        let compressed_seed = raw_payload_total.min(COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES);
+        let compressed_initial_capacity = checked_add(
+            compressed_header_capacity,
+            compressed_seed,
+            "compressed payload reserve",
+        )?;
+
+        Ok(EncodingPlan {
+            columns,
+            uncompressed_capacity,
+            compressed_initial_capacity,
+        })
     }
 
     fn estimate_column_payload_size(col_block: &ColumnBlock) -> Result<usize> {
@@ -545,6 +608,39 @@ mod tests {
     }
 
     #[test]
+    fn incompressible_binary_column_falls_back_to_the_single_raw_payload() {
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(1);
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut cell = vec![0u8; 64 * 1024];
+        for byte in &mut cell {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            *byte = state.wrapping_mul(0x2545_F491_4F6C_DD1D) as u8;
+        }
+        buffer.add_column(
+            ColumnMetadata {
+                name: "blob".to_string(),
+                odbc_type: OdbcType::Binary,
+            },
+            ColumnData::Binary(vec![Some(cell)]),
+        );
+
+        let encoded = ColumnarEncoder::encode(&buffer, true).expect("encode");
+        let compression_flag_offset = HEADER_SIZE + 2 + 2 + "blob".len();
+        assert_eq!(encoded[compression_flag_offset], 0);
+
+        let raw_len_offset = compression_flag_offset + 1;
+        let raw_len = u32::from_le_bytes(
+            encoded[raw_len_offset..raw_len_offset + 4]
+                .try_into()
+                .expect("raw length bytes"),
+        ) as usize;
+        assert_eq!(encoded.len(), raw_len_offset + 4 + raw_len);
+    }
+
+    #[test]
     fn test_encode_with_flags() {
         let mut buffer = RowBufferV2::new();
         buffer.flags = 0x1234;
@@ -684,6 +780,32 @@ mod tests {
         let encoded2 = ColumnarEncoder::encode(&buffer, true).expect("encode 2");
         assert_eq!(encoded1, encoded2);
         assert_eq!(encoded1[14], 1, "global compression flag should be set");
+    }
+
+    #[test]
+    fn compressed_output_does_not_retain_raw_payload_capacity() {
+        let mut buffer = RowBufferV2::new();
+        let raw_data = vec![0u8; 1024 * 1024];
+        buffer.set_row_count(1);
+        buffer.add_column(
+            ColumnMetadata {
+                name: "repetitive".to_string(),
+                odbc_type: OdbcType::Varchar,
+            },
+            ColumnData::Varchar(vec![Some(raw_data)]),
+        );
+
+        let encoded = ColumnarEncoder::encode(&buffer, true).expect("compressed encode");
+        let raw_payload_size = 1 + 4 + 1024 * 1024;
+
+        assert!(
+            encoded.capacity() < raw_payload_size,
+            "compressed output must not retain raw-sized capacity"
+        );
+        assert!(
+            encoded.len() < raw_payload_size,
+            "repetitive input should compress before capacity is checked"
+        );
     }
 
     #[test]

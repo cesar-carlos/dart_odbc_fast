@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
 /// Initial buffer size for FFI buffer allocations (256 KB).
 ///
@@ -45,7 +46,6 @@ typedef _OdbcReleaseBufferDart = void Function(
 
 _OdbcReleaseBufferDart? _releaseBufferNative;
 ffi.NativeFinalizer? _zeroCopyFinalizer;
-final Expando<ffi.Finalizable> _zeroCopyOwners = Expando<ffi.Finalizable>();
 var _releaseBindingAttempted = false;
 
 final class _ZeroCopyFfiOwner implements ffi.Finalizable {}
@@ -283,13 +283,13 @@ Uint8List _materializeFfiBytes(
       _zeroCopyFinalizer != null) {
     final view = buf.asTypedList(length);
     final owner = _ZeroCopyFfiOwner();
-    _zeroCopyOwners[view] = owner;
     _zeroCopyFinalizer!.attach(
       owner,
       buf.cast(),
       detach: owner,
       externalSize: length,
     );
+    registerNativeByteBacking(view, buf, owner);
     return view;
   }
   try {

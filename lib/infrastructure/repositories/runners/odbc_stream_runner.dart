@@ -8,6 +8,8 @@ import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
+import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
+    show MultiResultItem;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart'
     show MultiResultStreamDecoder;
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
@@ -82,11 +84,54 @@ class OdbcStreamRunner {
     String sql, {
     int fetchSize = 1000,
     int? chunkSize,
+  }) {
+    final coalescer = MultiStreamCoalescer(_parser);
+    return _streamQueryMulti<QueryResultMultiItem>(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      mapItems: coalescer.take,
+      finish: coalescer.finish,
+      fromFullItem: (item) => item,
+    );
+  }
+
+  /// Streams one domain item per native fetch batch without accumulating rows
+  /// from continuation frames. Use this for large multi-result cursors when
+  /// bounded memory is more important than receiving one fully coalesced item
+  /// per SQL cursor.
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
+    final mapper = MultiStreamBatchMapper(_parser);
+    return _streamQueryMulti<QueryResultMultiBatchItem>(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      mapItems: mapper.take,
+      finish: mapper.finish,
+      fromFullItem: _batchItemFromFull,
+    );
+  }
+
+  Stream<Result<T>> _streamQueryMulti<T extends Object>(
+    String connectionId,
+    String sql, {
+    required int fetchSize,
+    required int? chunkSize,
+    required List<T> Function(Iterable<MultiResultItem> items) mapItems,
+    required List<T> Function() finish,
+    required T Function(QueryResultMultiItem item) fromFullItem,
   }) async* {
     final nativeId = _state.connectionIds[connectionId];
     if (nativeId == null) {
-      yield const Failure<QueryResultMultiItem, OdbcError>(
-        ValidationError(message: 'Invalid connection ID'),
+      yield Failure<T, OdbcError>(
+        const ValidationError(message: 'Invalid connection ID'),
       );
       return;
     }
@@ -97,8 +142,8 @@ class OdbcStreamRunner {
       options: opts,
     );
     final lazyStrings = opts?.lazyStrings ?? false;
-    // Multi-result items are row-shaped QueryResultMultiItem values; keep
-    // row-major wire and use streamQueryColumnar* for typed columnar.
+    // Multi-result item and batch APIs are row-shaped; keep row-major wire
+    // and use streamQueryColumnar* for typed columnar streams.
     const resultEncoding = ResultEncoding.rowMajor;
 
     final supportsStreaming = _capability.supportsStreamQueryMulti;
@@ -106,14 +151,14 @@ class OdbcStreamRunner {
       final fallback = await _query.executeQueryMultiFull(connectionId, sql);
       if (fallback.isError()) {
         final err = fallback.exceptionOrNull();
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           err is OdbcError ? err : QueryError(message: err.toString()),
         );
         return;
       }
       final items = fallback.getOrNull()!.items;
       for (final item in items) {
-        yield Success<QueryResultMultiItem, OdbcError>(item);
+        yield Success<T, OdbcError>(fromFullItem(item));
       }
       return;
     }
@@ -141,7 +186,7 @@ class OdbcStreamRunner {
         final fallback = await _query.executeQueryMultiFull(connectionId, sql);
         if (fallback.isSuccess()) {
           for (final item in fallback.getOrNull()!.items) {
-            yield Success<QueryResultMultiItem, OdbcError>(item);
+            yield Success<T, OdbcError>(fromFullItem(item));
           }
           return;
         }
@@ -154,7 +199,7 @@ class OdbcStreamRunner {
         final message = nativeErr.isNotEmpty && nativeErr != 'No error'
             ? nativeErr
             : (fallbackErr?.toString() ?? 'Streaming unavailable');
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           QueryError(
             message: 'Failed to start streaming multi-result: $message',
             sqlState: structuredError?.sqlStateString,
@@ -165,21 +210,20 @@ class OdbcStreamRunner {
       }
 
       final decoder = MultiResultStreamDecoder(lazyStrings: lazyStrings);
-      final coalescer = MultiStreamCoalescer(_parser);
       var streamFailed = false;
 
       final drive = _ffi.isAsync
-          ? _driveAsyncMultiStream(
+          ? _driveAsyncMultiStream<T>(
               streamId: streamId,
               decoder: decoder,
-              coalescer: coalescer,
               chunkSize: effectiveChunk,
+              mapItems: mapItems,
             )
-          : _driveSyncMultiStream(
+          : _driveSyncMultiStream<T>(
               streamId: streamId,
               decoder: decoder,
-              coalescer: coalescer,
               chunkSize: effectiveChunk,
+              mapItems: mapItems,
             );
       await for (final chunk in drive) {
         yield chunk;
@@ -195,18 +239,18 @@ class OdbcStreamRunner {
       try {
         decoder.assertExhausted();
       } on FormatException catch (e) {
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           MalformedPayloadError(message: e.message),
         );
         return;
       }
 
-      for (final item in coalescer.finish()) {
-        yield Success<QueryResultMultiItem, OdbcError>(item);
+      for (final item in finish()) {
+        yield Success<T, OdbcError>(item);
       }
       completed = true;
     } on Exception catch (e) {
-      yield Failure<QueryResultMultiItem, OdbcError>(
+      yield Failure<T, OdbcError>(
         QueryError(message: e.toString()),
       );
     } finally {
@@ -231,24 +275,34 @@ class OdbcStreamRunner {
     }
   }
 
-  Stream<Result<QueryResultMultiItem>> _driveSyncMultiStream({
+  static QueryResultMultiBatchItem _batchItemFromFull(
+    QueryResultMultiItem item,
+  ) {
+    final resultSet = item.resultSet;
+    if (resultSet != null) {
+      return QueryResultMultiBatchItem.resultSet(resultSet);
+    }
+    return QueryResultMultiBatchItem.rowCount(item.rowCount ?? 0);
+  }
+
+  Stream<Result<T>> _driveSyncMultiStream<T extends Object>({
     required int streamId,
     required MultiResultStreamDecoder decoder,
-    required MultiStreamCoalescer coalescer,
     required int chunkSize,
+    required List<T> Function(Iterable<MultiResultItem> items) mapItems,
   }) async* {
     while (true) {
       final fetched = _ffi.sync.streamFetch(streamId, bufferSize: chunkSize);
       if (!fetched.success) {
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           QueryError(message: _ffi.sync.getError()),
         );
         return;
       }
       final data = fetched.data;
       if (data != null && data.isNotEmpty) {
-        for (final item in coalescer.take(decoder.feed(data))) {
-          yield Success<QueryResultMultiItem, OdbcError>(item);
+        for (final item in mapItems(decoder.feed(data))) {
+          yield Success<T, OdbcError>(item);
         }
       }
       if (!fetched.hasMore) {
@@ -257,11 +311,11 @@ class OdbcStreamRunner {
     }
   }
 
-  Stream<Result<QueryResultMultiItem>> _driveAsyncMultiStream({
+  Stream<Result<T>> _driveAsyncMultiStream<T extends Object>({
     required int streamId,
     required MultiResultStreamDecoder decoder,
-    required MultiStreamCoalescer coalescer,
     required int chunkSize,
+    required List<T> Function(Iterable<MultiResultItem> items) mapItems,
   }) async* {
     var streamDelay = _pollBackoffMin;
     while (true) {
@@ -287,7 +341,7 @@ class OdbcStreamRunner {
       if (status == _streamAsyncStatusError ||
           status == _streamAsyncStatusCancelled) {
         final errMsg = await _ffi.async.getError();
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           QueryError(
             message: errMsg.isNotEmpty && errMsg != 'No error'
                 ? errMsg
@@ -297,22 +351,22 @@ class OdbcStreamRunner {
         return;
       }
       if (status != _streamAsyncStatusReady) {
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           QueryError(message: 'Unexpected async stream status: $status'),
         );
         return;
       }
 
       if (!polled.success) {
-        yield Failure<QueryResultMultiItem, OdbcError>(
+        yield Failure<T, OdbcError>(
           QueryError(message: polled.error ?? 'Stream fetch failed'),
         );
         return;
       }
       final data = polled.data;
       if (data != null && data.isNotEmpty) {
-        for (final item in coalescer.take(decoder.feed(data))) {
-          yield Success<QueryResultMultiItem, OdbcError>(item);
+        for (final item in mapItems(decoder.feed(data))) {
+          yield Success<T, OdbcError>(item);
         }
       }
     }

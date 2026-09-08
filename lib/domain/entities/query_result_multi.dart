@@ -66,3 +66,37 @@ class QueryResultMultiItem {
   /// Returns true if this item is a row count.
   bool get isRowCount => rowCount != null;
 }
+
+/// One fetch batch from a streaming multi-result query.
+///
+/// Unlike [QueryResultMultiItem], a result-set item here represents only the
+/// rows from one native fetch batch. This keeps consumption bounded by the
+/// configured fetch size. [isContinuationBatch] identifies batches after the
+/// first one for the same SQL cursor.
+class QueryResultMultiBatchItem {
+  /// Creates a result-set batch.
+  const QueryResultMultiBatchItem.resultSet(
+    this.resultSet, {
+    this.isContinuationBatch = false,
+  }) : rowCount = null;
+
+  /// Creates an affected-row-count item.
+  const QueryResultMultiBatchItem.rowCount(this.rowCount)
+      : resultSet = null,
+        isContinuationBatch = false;
+
+  /// Rows decoded for this fetch batch, when the item represents a cursor.
+  final QueryResult? resultSet;
+
+  /// Affected rows, when the item represents a DML result.
+  final int? rowCount;
+
+  /// Whether this result-set batch continues the preceding cursor.
+  final bool isContinuationBatch;
+
+  /// Returns true when this item contains a result-set batch.
+  bool get isResultSet => resultSet != null;
+
+  /// Returns true when this item contains a row count.
+  bool get isRowCount => rowCount != null;
+}

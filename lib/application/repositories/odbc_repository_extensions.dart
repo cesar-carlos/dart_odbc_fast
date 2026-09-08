@@ -183,6 +183,20 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
         fetchSize: fetchSize,
         chunkSize: chunkSize,
       );
+
+  /// `streamQueryMultiBatches` overload that accepts a [Connection].
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesFor(
+    Connection conn,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMultiBatches(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 }
 
 /// Typed positional helpers that convert plain Dart values to wire tags.

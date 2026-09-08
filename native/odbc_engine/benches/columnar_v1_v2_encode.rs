@@ -27,6 +27,29 @@ fn make_fixture(rows: usize, cols: usize) -> RowBuffer {
     rb
 }
 
+fn make_incompressible_binary_fixture(rows: usize, cols: usize) -> RowBuffer {
+    let mut rb = RowBuffer::new();
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    for c in 0..cols {
+        rb.add_column(format!("blob{c}"), OdbcType::Binary);
+    }
+    for _ in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        for _ in 0..cols {
+            let mut cell = vec![0u8; 128 * 1024];
+            for byte in &mut cell {
+                state ^= state >> 12;
+                state ^= state << 25;
+                state ^= state >> 27;
+                *byte = state.wrapping_mul(0x2545_F491_4F6C_DD1D) as u8;
+            }
+            row.push(Some(cell));
+        }
+        rb.add_row_vecs(row);
+    }
+    rb
+}
+
 fn columnar_v1_v2_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_row_vs_columnar");
     for (rows, cols) in [(256usize, 16usize), (1024, 32)] {
@@ -55,6 +78,14 @@ fn columnar_v1_v2_benches(c: &mut Criterion) {
             });
         });
     }
+    let rb = make_incompressible_binary_fixture(1, 1);
+    let colbuf = row_buffer_to_columnar(rb).expect("valid bench fixture");
+    group.bench_function("v2_columnar_zstd_incompressible_binary", |b| {
+        b.iter(|| {
+            let out = ColumnarEncoder::encode(black_box(&colbuf), true).expect("encode");
+            black_box(out);
+        });
+    });
     group.finish();
 }
 

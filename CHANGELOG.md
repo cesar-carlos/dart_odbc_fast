@@ -18,12 +18,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Connection engine-id cache on DBMS info** — `getConnectionDbmsInfo`
   warms `CachedConnection.engine_id` so XA, transactions, and plugin lookup
   reuse the same `SQL_DBMS_NAME` result.
+- **Bounded-memory multi-result streaming** — `streamQueryMultiBatches`
+  emits `QueryResultMultiBatchItem` values for each native fetch batch.
+  Result-set batches carry `isContinuationBatch`, allowing callers to process
+  a large cursor without retaining all of its previous rows. Connection
+  overloads and telemetry forwards are included. The existing
+  `streamQueryMulti` API remains coalesced and fully compatible.
 
 ### Changed
 
 - **Live `capabilities.driver_name`** — on an open connection this is now
   `SQL_DRIVER_NAME` (for example the ODBC driver DLL/so name). The server
   product name stays in `DbmsInfo.dbms_name` / `dbmsName`.
+
+### Performance
+
+- **Columnar encoder planning** — `ColumnarEncoder` now validates and plans
+  column payload sizes once, then reuses that plan while encoding. Normal
+  columnar output avoids a redundant full-cell traversal. Compressed output
+  reserves only headers plus a small bounded seed instead of retaining raw
+  payload-sized capacity when zstd is effective.
+- **Multi-result frame decoding** — complete frames now decode directly from
+  each stream chunk, and buffered frames extract their payload after the
+  framing header without moving the payload bytes.
+- **Columnar compression fallback** — incompressible column payloads are
+  serialized once and reused as the raw fallback after zstd declines to reduce
+  their size.
+- **Native columnar decompression input** — columnar payloads still backed by
+  a native FFI buffer pass their pointer directly to the decompressor; Dart,
+  isolate, and fragmented buffers retain the safe copying fallback.
 
 ### Fixed
 
@@ -38,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unknown engine mapping** — Dart no longer re-runs `fromDriverName` when
   the native `engine` field is `unknown`, so `databaseType` stays aligned
   with the Rust id.
+- **Minimal native feature builds** — `odbc_engine` again compiles with
+  `--no-default-features`, including the documented `observability`
+  combination. Block-fetch-only references now remain behind their feature
+  gate.
 
 ### Tests
 
@@ -47,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `SQLGetInfo` string decoding without a live driver.
 - Stubbed FFI coverage for `OdbcDriverCapabilities.getDbmsInfoForConnection`
   and admin-runner audit / metadata-cache / detect-driver JSON paths.
+- Added regressions for uncoalesced multi-result continuation batches and for
+  compressed columnar output retaining less capacity than its raw payload.
 
 ## [4.5.1] - 2026-08-15
 

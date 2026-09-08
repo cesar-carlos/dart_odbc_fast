@@ -14,7 +14,7 @@ use odbc_api::{Cursor, ResultSetMetadata};
 pub(crate) fn resolve_batch_size(fetch_size: Option<u32>) -> usize {
     fetch_size
         .map(|n| n.max(1) as usize)
-        .unwrap_or_else(crate::engine::core::block_fetch::configured_batch_size)
+        .unwrap_or_else(crate::engine::fetch::configured_fetch_batch_size)
 }
 
 /// Shared cursor drain + encode used by [`CachedConnection`] and
@@ -39,11 +39,18 @@ where
         return encode_query_result_payload(row_buffer, use_columnar, use_compression);
     };
 
+    #[cfg(feature = "block-cursor-fetch")]
     let (column_types, buffer_descs) = crate::engine::core::block_fetch::describe_and_plan_columns(
         &mut cursor,
         &mut row_buffer,
         plugin,
     )?;
+
+    #[cfg(not(feature = "block-cursor-fetch"))]
+    let (column_types, buffer_descs) = (
+        describe_columns_for_encode(&mut cursor, &mut row_buffer, plugin)?,
+        None,
+    );
 
     #[cfg(feature = "block-cursor-fetch")]
     {
@@ -87,9 +94,34 @@ fn describe_columns_for_encode<C: ResultSetMetadata>(
     row_buffer: &mut RowBuffer,
     plugin: Option<&dyn DriverPlugin>,
 ) -> Result<Vec<OdbcType>> {
-    let (column_types, _) =
-        crate::engine::core::block_fetch::describe_and_plan_columns(cursor, row_buffer, plugin)?;
-    Ok(column_types)
+    #[cfg(feature = "block-cursor-fetch")]
+    {
+        let (column_types, _) = crate::engine::core::block_fetch::describe_and_plan_columns(
+            cursor, row_buffer, plugin,
+        )?;
+        Ok(column_types)
+    }
+
+    #[cfg(not(feature = "block-cursor-fetch"))]
+    {
+        let cols_i16 = cursor.num_result_cols().map_err(OdbcError::from)?;
+        let cols_u16: u16 = cols_i16
+            .try_into()
+            .map_err(|_| OdbcError::InternalError("Invalid column count".to_string()))?;
+        let mut column_types = Vec::with_capacity(usize::from(cols_u16));
+        for col_idx in 1..=cols_u16 {
+            let col_name = cursor.col_name(col_idx).map_err(OdbcError::from)?;
+            let data_type = cursor.col_data_type(col_idx).map_err(OdbcError::from)?;
+            let sql_type_code = OdbcType::sql_type_code_from_data_type(&data_type);
+            let odbc_type = match plugin {
+                Some(plugin) => plugin.map_type(sql_type_code),
+                None => OdbcType::from_odbc_sql_type(sql_type_code),
+            };
+            row_buffer.add_column(col_name.to_string(), odbc_type);
+            column_types.push(odbc_type);
+        }
+        Ok(column_types)
+    }
 }
 
 /// Encodes a row buffer for query / optional-cursor paths (row-major or columnar).
@@ -211,7 +243,7 @@ impl ExecutionEngine {
                         column_metas,
                         &column_types,
                         descs,
-                        crate::engine::core::block_fetch::configured_batch_size(),
+                        crate::engine::fetch::configured_fetch_batch_size(),
                     )?;
                     let encoded =
                         crate::protocol::ColumnarEncoder::encode(&v2, self.use_compression)?;

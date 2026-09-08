@@ -13,6 +13,7 @@ import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show zeroCopyResultThresholdBytes;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
 // ---------------------------------------------------------------------------
 // Native (C) signatures — `NativeFunction<…>` and `asFunction<…>` differ.
@@ -70,23 +71,54 @@ Uint8List? columnarDecompressWithNative(
   Uint8List compressed,
   int algorithm,
 ) {
+  final inLen = compressed.lengthInBytes;
+  if (inLen > 0x7fffffff) {
+    return null;
+  }
+  if (inLen == 0) return null;
+  final inP = malloc<ffi.Uint8>(inLen);
+  inP.asTypedList(inLen).setAll(0, compressed);
+  try {
+    return _columnarDecompressNativeInput(inP, inLen, algorithm);
+  } finally {
+    malloc.free(inP);
+  }
+}
+
+/// Decompresses a columnar payload already owned by native memory.
+///
+/// The pointer must remain readable for [compressedLength] bytes until this
+/// synchronous call returns. Callers use this only for FFI result buffers;
+/// Dart- and isolate-owned bytes must use [columnarDecompressWithNative].
+Uint8List? columnarDecompressNativeInput(
+  ffi.Pointer<ffi.Uint8> compressed,
+  int compressedLength,
+  int algorithm,
+) {
+  if (compressed.address == 0 ||
+      compressedLength <= 0 ||
+      compressedLength > 0x7fffffff) {
+    return null;
+  }
+  return _columnarDecompressNativeInput(
+    compressed,
+    compressedLength,
+    algorithm,
+  );
+}
+
+Uint8List? _columnarDecompressNativeInput(
+  ffi.Pointer<ffi.Uint8> inP,
+  int inLen,
+  int algorithm,
+) {
   _bindOnce();
   final d = _decomp;
   final freeFn = _decompFree;
   if (d == null || freeFn == null) {
     return null;
   }
-  final inLen = compressed.lengthInBytes;
-  if (inLen > 0x7fffffff) {
-    return null;
-  }
-  var inP = ffi.Pointer<ffi.Uint8>.fromAddress(0);
-  var inOwned = false;
-  if (inLen > 0) {
-    inP = malloc<ffi.Uint8>(inLen);
-    inOwned = true;
-    inP.asTypedList(inLen).setAll(0, compressed);
-  }
+
   final outP = malloc<ffi.Pointer<ffi.Uint8>>();
   outP.value = ffi.Pointer<ffi.Uint8>.fromAddress(0);
   final oLen = malloc<ffi.Uint32>();
@@ -113,6 +145,7 @@ Uint8List? columnarDecompressWithNative(
           detach: owner,
           externalSize: len,
         );
+        registerNativeByteBacking(view, ptr, owner);
       } on Object {
         freeFn(ptr, len, cap);
         rethrow;
@@ -124,9 +157,6 @@ Uint8List? columnarDecompressWithNative(
     freeFn(ptr, len, cap);
     return out;
   } finally {
-    if (inOwned) {
-      malloc.free(inP);
-    }
     malloc.free(outP);
     malloc.free(oLen);
     malloc.free(oCap);

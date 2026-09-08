@@ -70,6 +70,16 @@ abstract interface class IQueryService {
     int? chunkSize,
   });
 
+  /// Streams each native multi-result fetch batch without accumulating prior
+  /// continuation rows. [QueryResultMultiBatchItem.isContinuationBatch]
+  /// identifies batches after the first one for the same SQL cursor.
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
+    String connectionId,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
   /// Column-major opt-in variant of [executeQueryParamValues].
   ///
   /// Same FFI path as the row-major call (with `ResultEncoding.columnar`
@@ -177,6 +187,20 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     int? chunkSize,
   }) =>
       streamQueryColumnar(
+        conn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  /// `streamQueryMultiBatches` overload that accepts a [Connection].
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesFor(
+    Connection conn,
+    String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMultiBatches(
         conn.id,
         sql,
         fetchSize: fetchSize,

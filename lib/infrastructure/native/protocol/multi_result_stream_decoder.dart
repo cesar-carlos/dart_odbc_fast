@@ -74,8 +74,39 @@ class MultiResultStreamDecoder {
   /// Throws [FormatException] if a frame declares an unknown tag.
   List<MultiResultItem> feed(Uint8List chunk) {
     if (chunk.isEmpty) return const [];
-    _buffer.add(chunk);
-    return _drainCompleteFrames();
+    final items = <MultiResultItem>[];
+
+    // Most native stream chunks contain one or more complete frames. Decode
+    // those directly to avoid copying the chunk into the accumulator. Only a
+    // trailing partial frame needs buffered assembly.
+    if (_buffer.length == 0) {
+      var offset = 0;
+      while (chunk.length - offset >= _frameHeaderSize) {
+        final tag = chunk[offset];
+        final len = ByteData.sublistView(
+          chunk,
+          offset + 1,
+          offset + _frameHeaderSize,
+        ).getUint32(0, _littleEndian);
+        final frameEnd = offset + _frameHeaderSize + len;
+        if (frameEnd > chunk.length) break;
+
+        final payload = len == 0
+            ? Uint8List(0)
+            : Uint8List.sublistView(chunk, offset + _frameHeaderSize, frameEnd);
+        _decodeItem(items, tag, payload);
+        offset = frameEnd;
+      }
+      if (offset < chunk.length) {
+        _buffer.add(Uint8List.sublistView(chunk, offset));
+      }
+    } else {
+      _buffer.add(chunk);
+    }
+
+    items.addAll(_drainCompleteFrames());
+    _itemsDecoded += items.length;
+    return items;
   }
 
   /// Verifies that no partial frame remains buffered. Call after the engine
@@ -101,41 +132,53 @@ class MultiResultStreamDecoder {
       final frameBytes = _frameHeaderSize + len;
       if (_buffer.length < frameBytes) break;
 
-      _buffer.drop(_frameHeaderSize);
-      final payload = len == 0 ? Uint8List(0) : _buffer.take(len);
-
-      switch (tag) {
-        case multiStreamItemTagResultSet:
-        case multiStreamItemTagResultSetBatch:
-          final rs = decodeBatchedStreamFrame(
-            payload,
-            lazyStrings: lazyStrings,
-          );
-          items.add(
-            MultiResultItemResultSet(
-              rs,
-              isContinuationBatch: tag == multiStreamItemTagResultSetBatch,
-            ),
-          );
-
-        case multiStreamItemTagRowCount:
-          if (len != 8) {
-            throw FormatException(
-              'Streaming multi-result: RowCount frame expected 8-byte '
-              'payload, got $len',
-            );
-          }
-          final rc = ByteData.sublistView(payload).getInt64(0, _littleEndian);
-          items.add(MultiResultItemRowCount(rc));
-
-        default:
-          throw FormatException(
-            'Streaming multi-result: unknown frame tag $tag',
-          );
+      final Uint8List payload;
+      if (len == 0) {
+        _buffer.drop(_frameHeaderSize);
+        payload = Uint8List(0);
+      } else {
+        payload = _buffer.takeAfterPrefix(_frameHeaderSize, len);
       }
+
+      _decodeItem(items, tag, payload);
     }
 
-    _itemsDecoded += items.length;
     return items;
+  }
+
+  void _decodeItem(
+    List<MultiResultItem> items,
+    int tag,
+    Uint8List payload,
+  ) {
+    switch (tag) {
+      case multiStreamItemTagResultSet:
+      case multiStreamItemTagResultSetBatch:
+        final rs = decodeBatchedStreamFrame(
+          payload,
+          lazyStrings: lazyStrings,
+        );
+        items.add(
+          MultiResultItemResultSet(
+            rs,
+            isContinuationBatch: tag == multiStreamItemTagResultSetBatch,
+          ),
+        );
+
+      case multiStreamItemTagRowCount:
+        if (payload.length != 8) {
+          throw FormatException(
+            'Streaming multi-result: RowCount frame expected 8-byte '
+            'payload, got ${payload.length}',
+          );
+        }
+        final rc = ByteData.sublistView(payload).getInt64(0, _littleEndian);
+        items.add(MultiResultItemRowCount(rc));
+
+      default:
+        throw FormatException(
+          'Streaming multi-result: unknown frame tag $tag',
+        );
+    }
   }
 }

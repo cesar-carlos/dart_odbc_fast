@@ -131,7 +131,7 @@ mod tests {
     }
 
     fn ascii_byte_len(chars: &[SqlChar]) -> i16 {
-        i16::try_from(chars.len() * size_of::<SqlChar>()).expect("test buffer fits i16")
+        i16::try_from(size_of_val(chars)).expect("test buffer fits i16")
     }
 
     #[test]

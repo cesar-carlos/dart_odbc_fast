@@ -102,3 +102,36 @@ class MultiStreamCoalescer {
     return QueryResultMultiItem.resultSet(_parser.toQueryResult(buffer));
   }
 }
+
+/// Maps streaming multi-result wire frames directly to per-fetch-batch domain
+/// items. It deliberately keeps no open-row list, so a consumer can process a
+/// large cursor with memory bounded by the native fetch batch.
+class MultiStreamBatchMapper {
+  MultiStreamBatchMapper(this._parser);
+
+  final OdbcResultParser _parser;
+
+  List<QueryResultMultiBatchItem> take(Iterable<MultiResultItem> items) {
+    final out = <QueryResultMultiBatchItem>[];
+    for (final item in items) {
+      switch (item) {
+        case MultiResultItemResultSet(
+            :final value,
+            :final isContinuationBatch,
+          ):
+          out.add(
+            QueryResultMultiBatchItem.resultSet(
+              _parser.toQueryResult(value),
+              isContinuationBatch: isContinuationBatch,
+            ),
+          );
+        case MultiResultItemRowCount(:final value):
+          out.add(QueryResultMultiBatchItem.rowCount(value));
+      }
+    }
+    return out;
+  }
+
+  List<QueryResultMultiBatchItem> finish() =>
+      const <QueryResultMultiBatchItem>[];
+}

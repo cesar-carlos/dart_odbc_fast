@@ -1,6 +1,8 @@
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show zeroCopyResultThresholdBytes;
 import 'package:odbc_fast/infrastructure/native/columnar_decompress_ffi.dart';
@@ -71,6 +73,25 @@ void main() {
       expect(decompressed.first, equals(0x74)); // 't' from repeated phrase
       expect(isColumnarDecompressZeroCopyViewForTest(decompressed), isTrue);
       releaseColumnarDecompressZeroCopyViewForTest(decompressed);
+    },
+  );
+
+  test(
+    'should_decompress_from_existing_native_input_without_a_dart_copy',
+    skip: skipNative,
+    () {
+      final input = malloc<ffi.Uint8>(_smallZstdHello.length);
+      try {
+        input.asTypedList(_smallZstdHello.length).setAll(0, _smallZstdHello);
+        final decompressed = columnarDecompressNativeInput(
+          input,
+          _smallZstdHello.length,
+          1,
+        );
+        expect(decompressed, equals([104, 101, 108, 108, 111]));
+      } finally {
+        malloc.free(input);
+      }
     },
   );
 }
