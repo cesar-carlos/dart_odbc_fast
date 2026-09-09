@@ -16,6 +16,7 @@ exists.
 | Goal | Pattern | Starting point |
 | ---- | ------- | -------------- |
 | High-level service API (recommended) | `ServiceLocator` + `OdbcUsageProfile` | [`quick_start_balanced_demo.dart`](quick_start_balanced_demo.dart) (async balanced) or [`main.dart`](main.dart) (sync legacy) |
+| Large multi-result cursor | `streamQueryMultiBatches` | [`multi_result_batches_demo.dart`](multi_result_batches_demo.dart) |
 | Raw FFI / worker pool / native pool | `odbc_fast_native.dart` types | [`simple_demo.dart`](simple_demo.dart) or [`async_demo.dart`](async_demo.dart) |
 | Manual `OdbcService(OdbcRepositoryImpl(...))` wiring | Rare; prefer `ServiceLocator` | Prefer repository getters on `ServiceLocator` (`queryRepository`, …) when demonstrating repository-level seams |
 
@@ -40,6 +41,7 @@ exists.
 [`event_bus_demo.dart`](event_bus_demo.dart),
 [`stream_query_named_demo.dart`](stream_query_named_demo.dart),
 [`savepoint_demo.dart`](savepoint_demo.dart),
+[`multi_result_batches_demo.dart`](multi_result_batches_demo.dart),
 [`multi_result_stream_demo.dart`](multi_result_stream_demo.dart),
 [`multi_result_demo.dart`](multi_result_demo.dart),
 [`named_parameters_demo.dart`](named_parameters_demo.dart),
@@ -108,6 +110,7 @@ These files overlap in topic but serve different roles — keep the one that mat
 | [`high_concurrency_pool_demo.dart`](high_concurrency_pool_demo.dart) | **Demo** | `ServiceLocator` + `highThroughput` native pool checkout pattern |
 | [`async_concurrency_benchmark.dart`](async_concurrency_benchmark.dart) | **Benchmark** | Multi-scenario Stopwatch matrix: worker pools, columnar encodings, native pool, prepared reuse, streaming; JSON/CSV export |
 | [`streaming_performance_benchmark.dart`](streaming_performance_benchmark.dart) | **Benchmark** | Focused `streamQuery` vs `streamQueryBatched` only (chunk/fetch-size tunables) |
+| [`multi_result_performance_benchmark.dart`](multi_result_performance_benchmark.dart) | **Benchmark** | Buffered, coalesced, and bounded-memory multi-result streaming comparison |
 | [`backpressure_modes_demo.dart`](backpressure_modes_demo.dart) | **Demo** | Backpressure modes and worker-recovery callback (not a throughput benchmark) |
 | [`bulk_insert_parallel_demo.dart`](bulk_insert_parallel_demo.dart) | **Demo** | Native pool `bulkInsertParallel` at 2k+ rows (complements single-connection [`bulk_insert_demo.dart`](bulk_insert_demo.dart)) |
 
@@ -121,6 +124,7 @@ dart run example/high_concurrency_worker_pool_demo.dart
 dart run example/high_concurrency_pool_demo.dart
 dart run example/async_concurrency_benchmark.dart
 dart run example/streaming_performance_benchmark.dart
+dart run example/multi_result_performance_benchmark.dart
 ```
 
 `workerCount` / `asyncWorkerCount` is the supported way to open background
@@ -175,11 +179,12 @@ accumulation with small chunks, and streaming multi-result decoding.
 - **[stream_query_named_demo.dart](stream_query_named_demo.dart)**: `IOdbcService.streamQueryNamed` — named params as `Stream<Result<QueryResult>>` with batched chunks on current natives (older binaries fall back to one buffered chunk); typed failure stream item for missing named params.
 - **[param_value_migration_demo.dart](param_value_migration_demo.dart)**: DSN-free side-by-side `executeQueryParamValuesFromObjects` (bridge) vs explicit `executeQueryParamValues` (`List<ParamValue>`).
 - [multi_result_demo.dart](multi_result_demo.dart): service-level multi-result via `executeQueryMultiFull` and parameterized `executeQueryMultiParamValues` (portable SELECT batches).
-- [multi_result_stream_demo.dart](multi_result_stream_demo.dart): streaming multi-result with `streamQueryMulti` (tag-2 fetch batches coalesced per SQL cursor; optional `fetchSize` / `chunkSize`, defaults 1000 / 64 KiB).
-- [multi_result_performance_benchmark.dart](multi_result_performance_benchmark.dart): live timing of `executeQueryMultiFull` vs `streamQueryMulti` (sync/async); tunables `ODBC_MULTI_BENCH_ROWS` / `SETS` / `ITERS` / `WARMUP` / `FETCH` / `CHUNK` (defaults to `Produto`).
+- [multi_result_stream_demo.dart](multi_result_stream_demo.dart): convenient streaming multi-result with `streamQueryMulti`; tag-2 fetch batches are coalesced per SQL cursor to match buffered result-set semantics.
+- **[multi_result_batches_demo.dart](multi_result_batches_demo.dart)**: recommended bounded-memory path for a large multi-result cursor. `streamQueryMultiBatches` exposes every fetch batch and marks continuation batches instead of retaining prior rows.
+- [multi_result_performance_benchmark.dart](multi_result_performance_benchmark.dart): live timing of `executeQueryMultiFull`, coalesced `streamQueryMulti`, and bounded `streamQueryMultiBatches`; tunables `ODBC_MULTI_BENCH_ROWS` / `SETS` / `ITERS` / `WARMUP` / `FETCH` / `CHUNK` (defaults to `Produto`, 1 MiB chunks).
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.
 - [oracle_ref_cursor_demo.dart](oracle_ref_cursor_demo.dart): opt-in Oracle `ParamValueRefCursorOut` call that surfaces cursor row sets through `QueryResult.refCursorResults`.
-- [streaming_demo.dart](streaming_demo.dart): batched streaming and custom chunk streaming.
+- [streaming_demo.dart](streaming_demo.dart): native `streamQueryBatched` with a conservative and a throughput-tuned (`fetchSize=1000`, 1 MiB chunk) configuration.
 
 ### Connection / pool
 

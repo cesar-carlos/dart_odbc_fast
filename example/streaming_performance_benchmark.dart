@@ -1,4 +1,6 @@
-// Streaming performance benchmark for streamQuery and streamQueryBatched.
+// Streaming performance benchmark for legacy streamQuery and preferred
+// streamQueryBatched. The default chunk size is 1 MiB to avoid measuring a
+// small-frame configuration as the recommended production setting.
 // Run: dart run example/streaming_performance_benchmark.dart
 
 import 'dart:convert';
@@ -17,7 +19,7 @@ Future<void> main() async {
 
   final query = _envOr('ODBC_STREAM_BENCH_QUERY', 'SELECT 1 AS value');
   final fetchSize = _envInt('ODBC_STREAM_BENCH_FETCH_SIZE', 1000);
-  final chunkSize = _envInt('ODBC_STREAM_BENCH_CHUNK_SIZE', 64 * 1024);
+  final chunkSize = _envInt('ODBC_STREAM_BENCH_CHUNK_SIZE', 1024 * 1024);
 
   final native = NativeOdbcConnection();
   if (!native.initialize()) {

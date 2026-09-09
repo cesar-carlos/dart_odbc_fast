@@ -33,8 +33,13 @@ Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPL
   `streamQuery*` `chunkSize` defaults through connection → 64 KiB.
   Server presets set 1 MiB chunk + `lazyStrings` (use `.value` or keep
   `lazyStrings: false` if you rely on `is String`).
+- **Streaming MULT hot path** — frames are encoded directly into their final
+  prefix buffer, columnar state is reused between cursor fetches, and the
+  compressed path avoids a second full-cell scan. `streamQueryMultiBatches`
+  exposes those fetches without retaining earlier continuation rows.
 - **FFI mid-size path** — `callWithBuffer` prefers transient allocation
-  from the 32 KiB zero-copy floor for medium frames.
+  from the 32 KiB zero-copy floor for medium frames; Dart-owned zero-copy
+  buffers no longer require an optional native release symbol.
 - **QueryResult encoding** — `executeQueryParam*` always requests
   row-major wire (`forQueryResultWire`); use `executeQueryColumnar*` /
   `streamQueryColumnar*` for columnar end-to-end.
@@ -78,7 +83,8 @@ capabilities, testing, and performance. Examples:
 - Sync and async database access (async via worker isolate)
 - Prepared statements and named parameters (`@name`, `:name`)
 - Multi-result queries (`executeQueryMulti`, `executeQueryMultiFull`,
-  `executeQueryMultiParamValues`, streaming `streamQueryMulti`)
+  `executeQueryMultiParamValues`, streaming `streamQueryMulti` and
+  `streamQueryMultiBatches`)
 - Streaming queries (`streamQueryBatched`, `streamQuery`, `streamQueryNamed`)
 - **Sub-interfaces of `IOdbcService`**: `IQueryService`,
   `ITransactionService`, `IPoolService`, `IAdminService` — depend on the
@@ -270,7 +276,8 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
   `executePreparedNamed`, `cancelStatement` (experimental), `closeStatement`,
   `clearAllStatements`
 - Incremental streaming: `streamQuery`, `streamQueryNamed`,
-  `streamQueryColumnar`, `streamQueryMulti` (per-item multi-result stream)
+  `streamQueryColumnar`, `streamQueryMulti` (coalesced per-item multi-result
+  stream), `streamQueryMultiBatches` (one item per fetch batch)
 - Multi-result: `executeQueryMulti`, `executeQueryMultiFull`,
   `executeQueryMultiParamValues` / `executeQueryMultiParamValuesFromObjects`
 - Metadata/catalog: `catalogTables`, `catalogColumns`, `catalogTypeInfo`,
@@ -499,6 +506,7 @@ Future<void> main() async {
 | Scenario | Prefer |
 | -------- | ------ |
 | Large SELECT (many rows, stable types) | `ResultEncoding.columnar` or `streamQueryBatched` / streaming APIs |
+| Large multi-result cursor | `streamQueryMultiBatches`; handle each fetch batch and use `isContinuationBatch` to group it when needed |
 | INSERT &lt; ~100 rows | Prepared `INSERT` in a loop |
 | INSERT 100–1k rows | `bulkInsert` / `bulkInsertArray` on one connection |
 | INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) |
@@ -506,6 +514,14 @@ Future<void> main() async {
 
 Rationale, benchmarks, and opt-in perf test flags:
 [doc/PERFORMANCE.md](doc/PERFORMANCE.md).
+
+For a large multi-result cursor, use `streamQueryMultiBatches` when rows can
+be processed per fetch. It keeps decoded memory bounded by `fetchSize` and
+marks follow-up batches for the same result set with `isContinuationBatch`.
+Use `streamQueryMulti` when its convenient coalesced result-set semantics are
+more valuable than retaining prior continuation rows. Let the usage profile
+choose `chunkSize` unless measurement shows a need to override it; server
+profiles start at 1 MiB while the base default remains 64 KiB.
 
 ## Async API (non-blocking)
 
@@ -754,7 +770,8 @@ dart run example/recommended_performance_patterns_demo.dart
 | Workload | Prefer | Example |
 | --- | --- | --- |
 | Small query | `executeQuery` / `executeQueryParamValues` | `recommended_performance_patterns_demo.dart` |
-| Large read | `streamQuery` (batched) / `streamQueryNamed` / `streamQueryColumnar` | `streaming_demo.dart`, `stream_query_named_demo.dart` |
+| Large read | `streamQueryBatched` / `streamQueryNamed` / `streamQueryColumnar` | `streaming_demo.dart`, `stream_query_named_demo.dart` |
+| Large multi-result cursor | `streamQueryMultiBatches` | `multi_result_batches_demo.dart` |
 | Medium insert (~hundreds) | `bulkInsert` | `bulk_insert_demo.dart` |
 | Large insert (>1k) | `bulkInsertParallel` | `bulk_insert_parallel_demo.dart` |
 | App default / async | `OdbcUsageProfile.balanced` | `quick_start_balanced_demo.dart` |
@@ -793,7 +810,9 @@ ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_wor
 dart run example/named_parameters_demo.dart
 dart run example/stream_query_named_demo.dart          # streamQueryNamed
 dart run example/multi_result_demo.dart
-dart run example/multi_result_stream_demo.dart         # streamQueryMulti per-item
+dart run example/multi_result_stream_demo.dart         # streamQueryMulti (coalesced result sets)
+dart run example/multi_result_batches_demo.dart        # streamQueryMultiBatches (bounded memory)
+dart run example/multi_result_performance_benchmark.dart # buffered vs coalesced vs batched MULT
 dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
 dart run example/oracle_ref_cursor_demo.dart           # ParamValueRefCursorOut (opt-in)
 dart run example/columnar_result_encoding_demo.dart    # QueryResult clamp vs executeQueryColumnar*
@@ -860,7 +879,13 @@ Coverage-oriented examples:
   `example/streaming_performance_benchmark.dart`: QueryResult wire-clamp vs
   typed columnar APIs, plus streaming throughput benchmark.
 - `example/multi_result_stream_demo.dart`: per-item multi-result streaming
-  via `streamQueryMulti`.
+  via `streamQueryMulti`, which coalesces continuation fetches for each
+  logical result set.
+- `example/multi_result_batches_demo.dart`: bounded-memory multi-result
+  streaming via `streamQueryMultiBatches`; continuation batches stay separate
+  and are identified by `isContinuationBatch`.
+- `example/multi_result_performance_benchmark.dart`: compares buffered,
+  coalesced, and bounded-batch MULT consumption under the same workload.
 - `example/output_param_directions_demo.dart` and
   `example/oracle_ref_cursor_demo.dart`: DRT1 directed parameters and
   Oracle `REF CURSOR` materialization.
@@ -962,8 +987,10 @@ Primary keys, foreign keys, and indexes via `ServiceLocator`
 - ✅ Portable multi-`SELECT` batches
 - ✅ `executeQueryMultiFull` + `executeQueryMultiParamValues`
 - ✅ Ordered result sets and row-counts via `QueryResultMulti`
-- ✅ Streaming alternative: `streamQueryMulti` /
+- ✅ Coalesced streaming alternative: `streamQueryMulti` /
   [`multi_result_stream_demo.dart`](example/multi_result_stream_demo.dart)
+- ✅ Bounded-memory streaming alternative: `streamQueryMultiBatches` /
+  [`multi_result_batches_demo.dart`](example/multi_result_batches_demo.dart)
 
 **Advantages**:
 
@@ -999,7 +1026,8 @@ the connection is reused.
 **[streaming_demo.dart](example/streaming_demo.dart)** - Incremental data streaming
 
 - ✅ Batched streaming (`streamQueryBatched`) with configurable fetch size
-- ✅ Custom chunk streaming (`streamQuery`) with flexible chunk sizes
+- ✅ Preferred demo path uses `streamQueryBatched`; `streamQuery` remains
+  available when its raw chunk semantics are specifically required
 - ✅ Process large datasets without loading all into memory
 - ✅ Low-memory footprint for big tables
 
@@ -1160,6 +1188,10 @@ QueryResult clamp vs typed columnar
 - ✅ Streams `QueryResultMultiItem` (result set OR row count) one item
   at a time
 - ✅ Lower peak memory than `executeQueryMultiFull` for big batches
+- ✅ Coalesces continuation fetches into each logical result set
+- ✅ For a cursor whose fetch batches can be processed independently, use
+  [`multi_result_batches_demo.dart`](example/multi_result_batches_demo.dart)
+  and `streamQueryMultiBatches` to bound decoded memory by `fetchSize`
 
 ## Build from source
 

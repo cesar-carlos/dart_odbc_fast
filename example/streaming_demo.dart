@@ -1,5 +1,5 @@
-// Streaming demo: prefers `streamQueryBatched`, contrasts with legacy
-// `streamQuery` (buffer-mode cursor).
+// Streaming demo: native `streamQueryBatched` with default and throughput
+// tuning. It intentionally does not use the older buffer-mode `streamQuery`.
 //
 // Recommendation: use batched streaming for large result sets. The high-level
 // `IOdbcService.streamQuery` path already defaults to batched. Prefer service
@@ -37,7 +37,7 @@ void main() async {
   try {
     await _createStreamingTestTable(native, connId, rows: 2000);
     await _runBatchedStreaming(native, connId);
-    await _runCustomChunkStreaming(native, connId);
+    await _runThroughputTunedBatchedStreaming(native, connId);
   } finally {
     native.disconnect(connId);
     AppLogger.info('Disconnected');
@@ -135,12 +135,16 @@ Future<void> _runBatchedStreaming(
   );
 }
 
-Future<void> _runCustomChunkStreaming(
+Future<void> _runThroughputTunedBatchedStreaming(
   NativeOdbcConnection native,
   int connId,
 ) async {
   const sql = 'SELECT id, name, value FROM streaming_test_table ORDER BY id';
-  final stream = native.streamQuery(connId, sql, chunkSize: 500);
+  final stream = native.streamQueryBatched(
+    connId,
+    sql,
+    chunkSize: 1024 * 1024,
+  );
 
   var chunks = 0;
   var totalRows = 0;
@@ -151,7 +155,7 @@ Future<void> _runCustomChunkStreaming(
   }
 
   AppLogger.info(
-    'Legacy streamQuery (buffer-mode contrast): '
-    'chunks=$chunks rows=$totalRows',
+    'Throughput-tuned batched stream: chunks=$chunks rows=$totalRows '
+    '(fetchSize=1000, chunkSize=1 MiB)',
   );
 }

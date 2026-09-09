@@ -3,9 +3,10 @@
 // Shows how `IOdbcService.streamQueryMulti` surfaces every logical result set
 // and row-count from a batch one-by-one. Fetch batches that continue the same
 // SQL cursor (wire tag 2) are coalesced into a single `QueryResultMultiItem`
-// so the stream matches `executeQueryMultiFull` item counts. Row-major wire is
-// always used; optional `fetchSize` / `chunkSize` (defaults 1000 / 64 KiB)
-// forward to native when `*_options` exists and seed each `streamFetch`.
+// so the stream matches `executeQueryMultiFull` item counts. Use this
+// convenience API for small-to-medium result sets; for bounded memory on a
+// large cursor, use `multi_result_batches_demo.dart` instead. Optional
+// `fetchSize` / `chunkSize` forward to native when `*_options` exists.
 //
 // Run: dart run example/multi_result_stream_demo.dart
 
@@ -27,6 +28,7 @@ void main() async {
   final init = await service.initialize();
   if (init.isError()) {
     init.fold((_) {}, (e) => AppLogger.severe('Init failed: $e'));
+    locator.shutdown();
     return;
   }
 
@@ -34,6 +36,7 @@ void main() async {
   final conn = connResult.getOrNull();
   if (conn == null) {
     connResult.fold((_) {}, (e) => AppLogger.severe('Connect failed: $e'));
+    locator.shutdown();
     return;
   }
 
@@ -48,7 +51,8 @@ void main() async {
 
     AppLogger.info('Streaming multi-result for: ${sql.trim()}');
     var index = 0;
-    // Defaults: fetchSize=1000, chunkSize=64 KiB. Override for large scans.
+    // Coalescing favors a simple logical result-set view. For a large cursor,
+    // switch to streamQueryMultiBatches and process each continuation batch.
     await for (final result in service.streamQueryMulti(conn.id, sql)) {
       result.fold(
         (item) {
@@ -72,5 +76,6 @@ void main() async {
       (_) => AppLogger.info('Disconnected'),
       (e) => AppLogger.warning('Disconnect failed: $e'),
     );
+    locator.shutdown();
   }
 }

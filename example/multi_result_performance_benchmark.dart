@@ -1,4 +1,5 @@
-// Live multi-result performance sample (buffered + streaming).
+// Live multi-result performance sample (buffered + coalesced and batched
+// streaming).
 // Run: dart run example/multi_result_performance_benchmark.dart
 //
 // Requires ODBC_TEST_DSN or ODBC_DSN. Optional:
@@ -6,12 +7,13 @@
 //   ODBC_MULTI_BENCH_SETS      — SELECT statements in the batch (default 3)
 //   ODBC_MULTI_BENCH_WARMUP    — warmup iterations (default 1)
 //   ODBC_MULTI_BENCH_ITERS     — timed iterations (default 5)
-//   ODBC_MULTI_BENCH_FETCH     — streamQueryMulti fetchSize (default 1000)
-//   ODBC_MULTI_BENCH_CHUNK     — streamQueryMulti chunkSize (default 65536)
+//   ODBC_MULTI_BENCH_FETCH     — streaming fetchSize (default 1000)
+//   ODBC_MULTI_BENCH_CHUNK     — streaming chunkSize (default 1048576)
 
 import 'dart:io';
 
 import 'package:odbc_fast/odbc_fast.dart';
+import 'package:result_dart/result_dart.dart';
 
 import 'common.dart';
 
@@ -28,7 +30,7 @@ Future<void> main() async {
   final warmup = _envInt('ODBC_MULTI_BENCH_WARMUP', 1);
   final iters = _envInt('ODBC_MULTI_BENCH_ITERS', 5);
   final fetchSize = _envInt('ODBC_MULTI_BENCH_FETCH', 1000);
-  final chunkSize = _envInt('ODBC_MULTI_BENCH_CHUNK', 64 * 1024);
+  final chunkSize = _envInt('ODBC_MULTI_BENCH_CHUNK', 1024 * 1024);
   final sql = _buildBatchSql(rows: rows, sets: sets);
 
   final locator = ServiceLocator()..initialize(useAsync: true);
@@ -80,26 +82,44 @@ Future<void> main() async {
     stdout.writeln('warmup done');
 
     final buffered = await _timeBuffered(sync, syncConn.id, sql, iters);
-    final streamSync = await _timeStream(
-      sync,
-      syncConn.id,
-      sql,
+    final streamSync = await _timeResultStream<QueryResultMultiItem>(
       iters,
-      fetchSize: fetchSize,
-      chunkSize: chunkSize,
+      createStream: () => sync.streamQueryMulti(
+        syncConn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+      resultSetRows: (item) => item.resultSet?.rowCount ?? 0,
     );
-    final streamAsync = await _timeStream(
-      asyncSvc,
-      asyncConn.id,
-      sql,
+    final streamAsync = await _timeResultStream<QueryResultMultiItem>(
       iters,
-      fetchSize: fetchSize,
-      chunkSize: chunkSize,
+      createStream: () => asyncSvc.streamQueryMulti(
+        asyncConn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+      resultSetRows: (item) => item.resultSet?.rowCount ?? 0,
+    );
+    final streamBatches = await _timeResultStream<QueryResultMultiBatchItem>(
+      iters,
+      createStream: () => asyncSvc.streamQueryMultiBatches(
+        asyncConn.id,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      ),
+      resultSetRows: (item) => item.resultSet?.rowCount ?? 0,
     );
 
     _printResult('executeQueryMultiFull (sync)', buffered);
     _printResult('streamQueryMulti (sync)', streamSync);
     _printResult('streamQueryMulti (async)', streamAsync);
+    _printResult(
+      'streamQueryMultiBatches (async, bounded memory)',
+      streamBatches,
+    );
   } finally {
     await sync.disconnect(syncConn.id);
     await asyncSvc.disconnect(asyncConn.id);
@@ -142,6 +162,12 @@ Future<void> _warmup(
       fetchSize: fetchSize,
       chunkSize: chunkSize,
     )) {}
+    await for (final _ in asyncSvc.streamQueryMultiBatches(
+      asyncId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+    )) {}
   }
 }
 
@@ -173,13 +199,10 @@ Future<_Timed> _timeBuffered(
   return _Timed(samples: samples, items: lastItems, rows: lastRows);
 }
 
-Future<_Timed> _timeStream(
-  IOdbcService service,
-  String connectionId,
-  String sql,
+Future<_Timed> _timeResultStream<T extends Object>(
   int iters, {
-  required int fetchSize,
-  required int chunkSize,
+  required Stream<Result<T>> Function() createStream,
+  required int Function(T item) resultSetRows,
 }) async {
   final samples = <int>[];
   var lastItems = 0;
@@ -189,18 +212,11 @@ Future<_Timed> _timeStream(
     var items = 0;
     var rows = 0;
     var failed = false;
-    await for (final chunk in service.streamQueryMulti(
-      connectionId,
-      sql,
-      fetchSize: fetchSize,
-      chunkSize: chunkSize,
-    )) {
+    await for (final chunk in createStream()) {
       chunk.fold(
         (item) {
           items++;
-          if (item.isResultSet) {
-            rows += item.resultSet?.rowCount ?? 0;
-          }
+          rows += resultSetRows(item);
         },
         (e) {
           failed = true;

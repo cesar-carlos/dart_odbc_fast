@@ -4,6 +4,8 @@
 //   small query     → executeQuery / executeQueryParamValues
 //   large read      → streamQuery / streamQueryNamed / streamQueryColumnar
 //                     Prefer chunkSize ≥ batch wire (often 1–4 MiB).
+//   large MULT      → streamQueryMultiBatches (no continuation coalescing)
+//                     when each result-set batch can be handled independently.
 //                     Columnar helps typed analytics paths; full SELECT *
 //                     text materialize may stay faster on row-major — see
 //                     doc/PERFORMANCE.md "Streaming SELECT headroom".
@@ -63,7 +65,7 @@ Future<void> main() async {
   AppLogger.info(
     'Pointers: streaming_demo / stream_query_columnar_demo / '
     'bulk_insert_parallel_demo / high_concurrency_pool_demo / '
-    'named_parameters_demo (prepared reuse)',
+    'multi_result_batches_demo / named_parameters_demo (prepared reuse)',
   );
 
   final init = await service.initialize();

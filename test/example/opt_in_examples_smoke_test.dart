@@ -200,6 +200,22 @@ void main() {
     );
 
     test(
+      'should_skip_multi_result_batches_demo_when_dsn_is_disabled',
+      () async {
+        final result = await _runExampleWithoutDsn(
+          'example/multi_result_batches_demo.dart',
+        );
+
+        expect(result.exitCode, equals(0));
+        expect(
+          '${result.stdout}\n${result.stderr}',
+          contains('Skipping DB-dependent example.'),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
       'should_skip_multi_result_performance_benchmark_when_dsn_is_disabled',
       () async {
         final result = await _runExampleWithoutDsn(
