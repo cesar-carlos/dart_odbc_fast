@@ -14,7 +14,7 @@
 > default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
 > for the prepared cache, release/bench profiles tightened).
 
-This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload.
+This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload. Consumer-facing typical numbers live in the README **Performance quick reference**; native Criterion snapshots live in [`native/doc/performance_comparison.md`](../native/doc/performance_comparison.md).
 
 ---
 

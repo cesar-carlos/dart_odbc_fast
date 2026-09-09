@@ -7,6 +7,8 @@ cargo bench --bench comparative_bench
 ```
 
 Requires `ODBC_TEST_DSN` or `SQLSERVER_TEST_*` environment variables.
+Dart-side typical numbers (CRUD / streaming / smoke) live in the README
+**Typical local numbers** subsection.
 
 ---
 
@@ -25,17 +27,17 @@ Use for low-volume, transactional inserts. Each row incurs a full round-trip.
 
 | Rows | Array Binding | Parallel (4 workers) | Speedup |
 |------|---------------|----------------------|---------|
-| 1,000 | ~100 ms | ~29 ms | ~3.4x |
-| 5,000 | ~475 ms | ~132 ms | ~3.6x |
-| 10,000 | ~930 ms | ~275 ms | ~3.4x |
+| 1,000 | ~80–100 ms | ~30 ms | ~3.4x |
+| 5,000 | ~430 ms | ~140 ms | ~3.1x |
+| 10,000 | ~830 ms | ~280 ms | ~3.0x |
 
 ```mermaid
 xychart-beta
     title "Bulk Insert: Array vs Parallel (4 workers)"
     x-axis [1k, 5k, 10k]
     y-axis "Time (ms)" 0 --> 1000
-    bar [100, 475, 930]
-    bar [29, 132, 275]
+    bar [90, 430, 830]
+    bar [30, 140, 280]
 ```
 
 **Recommendations:**
@@ -123,16 +125,17 @@ cargo bench --bench metadata_cache_bench
 
 | Strategy | Typical Time (5,000 rows) | Notes |
 |----------|---------------------------|-------|
-| Cold (first query) | ~3.3 ms | Full prepare + execute + fetch |
-| Warm (repeated) | ~3.6 ms | Metadata may be cached |
-| Streaming | ~2.8 ms | Chunked fetch, lower memory |
+| Cold (first query) | ~1.8–2.0 ms | Full prepare + execute + fetch |
+| Warm (repeated) | ~1.7 ms | Metadata may be cached |
+| Streaming | ~1.3–1.4 ms | Chunked fetch, lower memory |
+| Streaming batched drain | ~1.3 ms | Bounded-memory batched path |
 
 ```mermaid
 xychart-beta
     title "SELECT: Cold vs Warm vs Streaming (5k rows)"
-    x-axis ["Cold", "Warm", "Streaming"]
+    x-axis ["Cold", "Warm", "Streaming", "Batched drain"]
     y-axis "Time (ms)" 0 --> 4
-    bar [3.3, 3.6, 2.8]
+    bar [1.9, 1.7, 1.35, 1.3]
 ```
 
 **Recommendations:**

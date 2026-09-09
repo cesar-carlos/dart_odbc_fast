@@ -12,7 +12,7 @@ topic; avoid duplicating matrices across files.
 | [CAPABILITIES_v3.md](CAPABILITIES_v3.md) | Engine × capability matrix (XA, BCP, upsert, …) |
 | [BUILD.md](BUILD.md) | Build prerequisites, scripts, related-doc links |
 | [TESTING.md](TESTING.md) | Test scopes and canonical opt-in env flags |
-| [PERFORMANCE.md](PERFORMANCE.md) | Defaults, concurrency, BCP notes, open perf work |
+| [PERFORMANCE.md](PERFORMANCE.md) | Defaults, concurrency, BCP notes, bench how-to (typical numbers: README) |
 
 ## Features & backlog
 

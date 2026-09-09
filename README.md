@@ -512,8 +512,40 @@ Future<void> main() async {
 | INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) |
 | Concurrency / worker tuning | [`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart) via `ServiceLocator.initialize(profile: ...)` |
 
-Rationale, benchmarks, and opt-in perf test flags:
-[doc/PERFORMANCE.md](doc/PERFORMANCE.md).
+Rationale, how to reproduce, and opt-in perf flags:
+[doc/PERFORMANCE.md](doc/PERFORMANCE.md). Native snapshots:
+[native/doc/performance_comparison.md](native/doc/performance_comparison.md).
+
+### Typical local numbers
+
+Order-of-magnitude snapshots on a local SQL Server DSN (driver, schema, and
+hardware dominate). **Not** a portable contract or CI gate. Reproduce with
+`python scripts/run_dart_benchmarks.py --crud --heavy` and
+`cargo bench --features test-helpers --bench comparative_bench`.
+
+Native engine (`comparative_bench`):
+
+| Workload | Typical |
+| -------- | ------- |
+| Single-row `INSERT` (INT) | ~290–300 µs (~3.4k rows/s) |
+| Bulk array 1k / 5k / 10k | ~80–100 / ~430 / ~830 ms |
+| Bulk parallel ×4 (same sizes) | ~30 / ~140 / ~280 ms (~3× vs array) |
+| `SELECT` 5k INT, streaming | ~1.3 ms |
+
+Dart (same DSN):
+
+| Workload | Typical |
+| -------- | ------- |
+| `INSERT` 5k columnar + pool ×4 | ~20–40k ops/s |
+| `SELECT` 5k narrow table, `streamQueryBatched` | ~300–650k rows/s |
+| `SELECT TOP 5000 * FROM Produto`, `streamQueryBatched` | ~19k rows/s |
+| `SELECT 1` prepared reuse (smoke) | ~3.5k q/s |
+
+Wide `SELECT *` is the honest scan number; the 300–650k rows/s lane is a
+two-column bench table. Optional native BCP (`sqlserver-bcp` + `sqlncli11.dll`)
+is a separate ~75× path — see the native comparison doc. Async p95 on the
+heavy `Produto` lane is noisy across runs; prefer throughput and
+`fallbacksToBlocking` over a single p95 sample.
 
 For a large multi-result cursor, use `streamQueryMultiBatches` when rows can
 be processed per fetch. It keeps decoded memory bounded by `fetchSize` and
@@ -1304,6 +1336,7 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 - [doc/BUILD.md](doc/BUILD.md) — build, library resolution, scripts
 - [doc/TESTING.md](doc/TESTING.md) — test policy, CI scope, environment variables
 - [doc/PERFORMANCE.md](doc/PERFORMANCE.md) — architectural performance notes and bench guide
+- [native/doc/performance_comparison.md](native/doc/performance_comparison.md) — native benchmark snapshots vs SQL Server
 - [doc/notes/TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) — canonical Dart/native type mapping contract
 - [doc/Features/PENDING_IMPLEMENTATIONS.md](doc/Features/PENDING_IMPLEMENTATIONS.md) — open work and non-goals
 
