@@ -77,6 +77,20 @@ fn columnar_v1_v2_benches(c: &mut Criterion) {
                 black_box(out);
             });
         });
+        group.bench_function(
+            BenchmarkId::new("v2_columnar_zstd_streaming_mult_prefix", &id),
+            |b| {
+                b.iter(|| {
+                    let mut frame = vec![0; 5];
+                    ColumnarEncoder::encode_into(&mut frame, black_box(&colbuf), true)
+                        .expect("encode");
+                    let payload_len = (frame.len() - 5) as u32;
+                    frame[0] = 0;
+                    frame[1..5].copy_from_slice(&payload_len.to_le_bytes());
+                    black_box(frame);
+                });
+            },
+        );
     }
     let rb = make_incompressible_binary_fixture(1, 1);
     let colbuf = row_buffer_to_columnar(rb).expect("valid bench fixture");

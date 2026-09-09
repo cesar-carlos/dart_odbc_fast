@@ -239,6 +239,7 @@ impl StreamingExecutor {
             batch_size,
             result_encoding,
             &mut |batch| on_batch(batch),
+            &mut || None,
             || {
                 cancel_requested
                     .as_ref()
@@ -309,6 +310,7 @@ impl StreamingExecutor {
                         batch_size,
                         result_encoding,
                         &mut on_batch,
+                        &mut || None,
                         cancel_check,
                     )?;
                     Ok(())

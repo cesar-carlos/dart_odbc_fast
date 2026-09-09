@@ -2,7 +2,6 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
 /// Initial buffer size for FFI buffer allocations (256 KB).
@@ -39,22 +38,16 @@ typedef BufferCallback = int Function(
   ffi.Pointer<ffi.Uint32> outWritten,
 );
 
-typedef _OdbcReleaseBufferDart = void Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-);
-
-_OdbcReleaseBufferDart? _releaseBufferNative;
-ffi.NativeFinalizer? _zeroCopyFinalizer;
-var _releaseBindingAttempted = false;
+/// All transient FFI buffers in this file are allocated by `package:ffi`
+/// `malloc`, so `nativeFree` is the matching allocator on every supported
+/// host. This deliberately does not depend on an optional native symbol.
+final ffi.NativeFinalizer _zeroCopyFinalizer =
+    ffi.NativeFinalizer(malloc.nativeFree);
 
 final class _ZeroCopyFfiOwner implements ffi.Finalizable {}
 
-/// True when the native engine exports `odbc_release_buffer` (ABI 1.1+).
-bool get isZeroCopyResultBufferAvailable {
-  _bindReleaseBufferOnce();
-  return _releaseBufferNative != null;
-}
+/// True because result buffers are owned by Dart-side `malloc`.
+bool get isZeroCopyResultBufferAvailable => true;
 
 /// When true, skip the reusable scratch pool so large sync param queries can
 /// return zero-copy result views without an extra scratch→owned copy.
@@ -279,11 +272,10 @@ Uint8List _materializeFfiBytes(
   }
   if (transferOwnership &&
       allowZeroCopy &&
-      length >= zeroCopyResultThresholdBytes &&
-      _zeroCopyFinalizer != null) {
+      length >= zeroCopyResultThresholdBytes) {
     final view = buf.asTypedList(length);
     final owner = _ZeroCopyFfiOwner();
-    _zeroCopyFinalizer!.attach(
+    _zeroCopyFinalizer.attach(
       owner,
       buf.cast(),
       detach: owner,
@@ -398,34 +390,6 @@ final class _ReusableFfiScratch {
   }
 }
 
-void _bindReleaseBufferOnce() {
-  if (_releaseBindingAttempted) {
-    return;
-  }
-  _releaseBindingAttempted = true;
-  try {
-    final lib = loadOdbcLibrary();
-    _releaseBufferNative = lib
-        .lookup<
-            ffi.NativeFunction<
-                ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.Uint32)>>(
-          'odbc_release_buffer',
-        )
-        .asFunction<_OdbcReleaseBufferDart>();
-    // Buffers are allocated with `package:ffi` `malloc`; `nativeFree` pairs
-    // with that allocator on every supported host. `odbc_release_buffer` is
-    // exported for ABI symmetry and non-Dart callers.
-    _zeroCopyFinalizer = ffi.NativeFinalizer(malloc.nativeFree);
-  } on Object {
-    _releaseBufferNative = null;
-    _zeroCopyFinalizer = null;
-  }
-}
-
-/// Clears cached zero-copy bindings (tests only).
-void resetZeroCopyResultBufferBindingForTest() {
-  _releaseBindingAttempted = false;
-  _releaseBufferNative = null;
-  _zeroCopyFinalizer = null;
-  // Expando has no clear(); tests only use sub-threshold copies today.
-}
+/// Retained for source-compatible tests. Zero-copy availability is no longer
+/// tied to a dynamically resolved native symbol.
+void resetZeroCopyResultBufferBindingForTest() {}

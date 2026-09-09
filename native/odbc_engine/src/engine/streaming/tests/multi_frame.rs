@@ -1,3 +1,4 @@
+use super::super::batched_fetch::{begin_batch_output, finish_batch_frame};
 use super::super::chunk::StreamCopyResult;
 use super::super::multi_result::{
     frame_item, MULTI_STREAM_ITEM_TAG_RESULT_SET, MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH,
@@ -109,4 +110,30 @@ fn test_frame_item_capacity_is_tag_plus_len_plus_payload() {
     let framed = frame_item(MULTI_STREAM_ITEM_TAG_RESULT_SET, payload.clone()).unwrap();
     assert_eq!(framed.len(), 5 + payload.len());
     assert_eq!(framed.capacity(), framed.len());
+}
+
+#[test]
+fn test_reserved_multi_prefix_encodes_row_payload_without_reallocation() {
+    let mut rows = RowBuffer::new();
+    rows.add_column("id".to_string(), OdbcType::Integer);
+    rows.add_row_vecs(vec![Some(7i32.to_le_bytes().to_vec())]);
+    let payload = RowBufferEncoder::encode_result(&rows).expect("payload");
+
+    let mut framed = begin_batch_output(Some(MULTI_STREAM_ITEM_TAG_RESULT_SET));
+    framed.reserve(payload.len());
+    let allocation = framed.as_ptr();
+    RowBufferEncoder::encode_result_into(&rows, &mut framed).expect("direct encode");
+    assert_eq!(
+        framed.as_ptr(),
+        allocation,
+        "payload must stay in the frame allocation"
+    );
+    finish_batch_frame(&mut framed, Some(MULTI_STREAM_ITEM_TAG_RESULT_SET)).expect("frame");
+
+    assert_eq!(framed[0], MULTI_STREAM_ITEM_TAG_RESULT_SET);
+    assert_eq!(
+        u32::from_le_bytes(framed[1..5].try_into().unwrap()) as usize,
+        payload.len()
+    );
+    assert_eq!(&framed[5..], payload.as_slice());
 }

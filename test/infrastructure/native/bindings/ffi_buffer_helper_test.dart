@@ -5,6 +5,12 @@ import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
 import 'package:test/test.dart';
 
 void main() {
+  test('zero-copy result buffers do not require a native release symbol', () {
+    resetZeroCopyResultBufferBindingForTest();
+
+    expect(isZeroCopyResultBufferAvailable, isTrue);
+  });
+
   group('callWithBuffer', () {
     test('should invoke callback again when buffer is too small', () {
       var calls = 0;

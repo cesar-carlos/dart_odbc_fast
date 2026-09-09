@@ -2,8 +2,11 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+/// Exports retained for ABI compatibility but not resolved by the Dart client.
+const _optionalDartLookupSymbols = {'odbc_release_buffer'};
+
 /// Parses `native/odbc_engine/odbc_exports.def` and verifies every exported
-/// symbol has a matching `lookup` in Dart FFI sources.
+/// symbol required by Dart has a matching `lookup` in Dart FFI sources.
 void main() {
   group('FFI exports contract', () {
     late List<String> exportedSymbols;
@@ -43,8 +46,11 @@ void main() {
     });
 
     test('should_map_every_odbc_symbol_to_dart_lookup', () {
-      final odbcSymbols =
-          exportedSymbols.where((symbol) => symbol.startsWith('odbc_'));
+      final odbcSymbols = exportedSymbols.where(
+        (symbol) =>
+            symbol.startsWith('odbc_') &&
+            !_optionalDartLookupSymbols.contains(symbol),
+      );
 
       expect(odbcSymbols, isNotEmpty);
       for (final symbol in odbcSymbols) {
@@ -74,22 +80,9 @@ void main() {
       }
     });
 
-    test('should_resolve_release_buffer_outside_odbc_bindings', () {
+    test('should_not_require_release_buffer_for_dart_zero_copy', () {
       expect(exportedSymbols, contains('odbc_release_buffer'));
-      expect(dartLookups, contains('odbc_release_buffer'));
-
-      final bindingsOnly = Directory(
-        'lib${Platform.pathSeparator}infrastructure'
-        '${Platform.pathSeparator}native'
-        '${Platform.pathSeparator}bindings',
-      )
-          .listSync(recursive: true)
-          .whereType<File>()
-          .where((file) => file.path.endsWith('.dart'))
-          .map((file) => file.readAsStringSync())
-          .join('\n');
-
-      expect(bindingsOnly, isNot(contains("lookup('odbc_release_buffer'")));
+      expect(dartLookups, isNot(contains('odbc_release_buffer')));
       expect(
         File(
           'lib${Platform.pathSeparator}infrastructure'
@@ -97,7 +90,7 @@ void main() {
           '${Platform.pathSeparator}bindings'
           '${Platform.pathSeparator}ffi_buffer_helper.dart',
         ).readAsStringSync(),
-        contains('odbc_release_buffer'),
+        contains('malloc.nativeFree'),
       );
     });
   });

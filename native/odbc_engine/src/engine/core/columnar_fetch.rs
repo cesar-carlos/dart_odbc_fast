@@ -93,8 +93,7 @@ where
 /// Long-lived block-cursor session for columnar batched streaming.
 pub(crate) struct ColumnarStreamingSession<C: Cursor> {
     block_cursor: odbc_api::BlockCursor<C, ColumnarAnyBuffer>,
-    column_metas: Vec<ColumnMetadata>,
-    column_types: Vec<OdbcType>,
+    batch: RowBufferV2,
     exhausted: bool,
 }
 
@@ -114,17 +113,24 @@ impl<C: Cursor> ColumnarStreamingSession<C> {
             OdbcError::InternalError(format!("ColumnarAnyBuffer allocation failed: {e}"))
         })?;
         let block_cursor = cursor.bind_buffer(buffer).map_err(OdbcError::from)?;
+        let mut batch = RowBufferV2::with_capacity(column_metas.len());
+        for (metadata, column_type) in column_metas.into_iter().zip(column_types) {
+            batch.add_column(
+                metadata,
+                ColumnAccumulator::new(column_type).into_column_data(),
+            );
+        }
         Ok(Self {
             block_cursor,
-            column_metas,
-            column_types,
+            batch,
             exhausted: false,
         })
     }
 
-    /// Fetches the next ODBC batch into a fresh `RowBufferV2`, or `None`
-    /// when the cursor is exhausted.
-    pub(crate) fn fetch_next_batch_v2(&mut self) -> Result<Option<RowBufferV2>> {
+    /// Fetches the next ODBC batch into reusable column vectors, or `None`
+    /// when the cursor is exhausted. The reference stays valid until the next
+    /// fetch, which is sufficient for immediate streaming encoding.
+    pub(crate) fn fetch_next_batch_v2(&mut self) -> Result<Option<&RowBufferV2>> {
         if self.exhausted {
             return Ok(None);
         }
@@ -144,27 +150,16 @@ impl<C: Cursor> ColumnarStreamingSession<C> {
             return Ok(None);
         }
 
-        let mut accumulators: Vec<ColumnAccumulator> = self
-            .column_types
-            .iter()
-            .copied()
-            .map(ColumnAccumulator::new)
-            .collect();
-
-        for (col_idx, accumulator) in accumulators.iter_mut().enumerate() {
-            accumulator.append_from_slice(batch.column(col_idx), col_idx)?;
+        self.batch.set_row_count(0);
+        for col_block in &mut self.batch.columns {
+            clear_column_data(&mut col_block.data);
         }
+        for (col_idx, col_block) in self.batch.columns.iter_mut().enumerate() {
+            append_column_data(&mut col_block.data, batch.column(col_idx), col_idx)?;
+        }
+        self.batch.set_row_count(batch_rows);
 
-        let metas = self
-            .column_metas
-            .iter()
-            .map(|m| ColumnMetadata {
-                name: m.name.clone(),
-                odbc_type: m.odbc_type,
-            })
-            .collect();
-
-        Ok(Some(accumulators_into_v2(metas, accumulators, batch_rows)?))
+        Ok(Some(&self.batch))
     }
 
     pub(crate) fn into_cursor(self) -> Result<C> {
@@ -187,132 +182,141 @@ fn accumulators_into_v2(
 }
 
 /// Per-column accumulator typed by the destination `ColumnData` variant.
-enum ColumnAccumulator {
-    Integer(Vec<Option<i32>>),
-    BigInt(Vec<Option<i64>>),
-    Varchar(Vec<Option<Vec<u8>>>),
-    Binary(Vec<Option<Vec<u8>>>),
+struct ColumnAccumulator {
+    data: ColumnData,
 }
 
 impl ColumnAccumulator {
     fn new(odbc_type: OdbcType) -> Self {
-        match odbc_type {
-            OdbcType::Integer => Self::Integer(Vec::new()),
-            OdbcType::BigInt => Self::BigInt(Vec::new()),
-            OdbcType::Binary => Self::Binary(Vec::new()),
-            OdbcType::Date | OdbcType::Time | OdbcType::Timestamp => Self::Varchar(Vec::new()),
-            _ => Self::Varchar(Vec::new()),
+        Self {
+            data: match odbc_type {
+                OdbcType::Integer => ColumnData::Integer(Vec::new()),
+                OdbcType::BigInt => ColumnData::BigInt(Vec::new()),
+                OdbcType::Binary => ColumnData::Binary(Vec::new()),
+                OdbcType::Date | OdbcType::Time | OdbcType::Timestamp => {
+                    ColumnData::Varchar(Vec::new())
+                }
+                _ => ColumnData::Varchar(Vec::new()),
+            },
         }
     }
 
     fn append_from_slice(&mut self, slice: AnySlice<'_>, col_idx: usize) -> Result<()> {
-        match self {
-            Self::Integer(values) => {
-                let view = slice.as_nullable_slice::<i32>().ok_or_else(|| {
-                    OdbcError::InternalError(format!(
-                        "Columnar fetch: column {col_idx} expected nullable i32 slice"
-                    ))
-                })?;
-                values.reserve(view.len());
-                for cell in view.into_iter() {
-                    values.push(cell.copied());
-                }
-            }
-            Self::BigInt(values) => {
-                let view = slice.as_nullable_slice::<i64>().ok_or_else(|| {
-                    OdbcError::InternalError(format!(
-                        "Columnar fetch: column {col_idx} expected nullable i64 slice"
-                    ))
-                })?;
-                values.reserve(view.len());
-                for cell in view.into_iter() {
-                    values.push(cell.copied());
-                }
-            }
-            Self::Varchar(values) => {
-                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Date>() {
-                    values.reserve(view.len());
-                    for cell in view.into_iter() {
-                        match cell {
-                            Some(date) => {
-                                let mut bytes = Vec::with_capacity(10);
-                                format_date_into(&mut bytes, date);
-                                values.push(Some(bytes));
-                            }
-                            None => values.push(None),
-                        }
-                    }
-                    return Ok(());
-                }
-                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Time>() {
-                    values.reserve(view.len());
-                    for cell in view.into_iter() {
-                        match cell {
-                            Some(time) => {
-                                let mut bytes = Vec::with_capacity(8);
-                                format_time_into(&mut bytes, time);
-                                values.push(Some(bytes));
-                            }
-                            None => values.push(None),
-                        }
-                    }
-                    return Ok(());
-                }
-                if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Timestamp>() {
-                    values.reserve(view.len());
-                    for cell in view.into_iter() {
-                        match cell {
-                            Some(ts) => {
-                                let mut bytes = Vec::with_capacity(26);
-                                format_timestamp_into(&mut bytes, ts);
-                                values.push(Some(bytes));
-                            }
-                            None => values.push(None),
-                        }
-                    }
-                    return Ok(());
-                }
-                let view = slice.as_w_text_view().ok_or_else(|| {
-                    OdbcError::InternalError(format!(
-                        "Columnar fetch: column {col_idx} expected wide text or temporal view"
-                    ))
-                })?;
-                for cell in view.iter() {
-                    match cell {
-                        Some(wide) => {
-                            values.push(Some(wide_text_to_utf8_vec(wide.as_slice())));
-                        }
-                        None => values.push(None),
-                    }
-                }
-            }
-            Self::Binary(values) => {
-                let view = slice.as_bin_view().ok_or_else(|| {
-                    OdbcError::InternalError(format!(
-                        "Columnar fetch: column {col_idx} expected binary view"
-                    ))
-                })?;
-                for cell in view.iter() {
-                    match cell {
-                        Some(bytes) => {
-                            values.push(Some(bytes.to_vec()));
-                        }
-                        None => values.push(None),
-                    }
-                }
-            }
-        }
-        Ok(())
+        append_column_data(&mut self.data, slice, col_idx)
     }
 
     fn into_column_data(self) -> ColumnData {
-        match self {
-            Self::Integer(v) => ColumnData::Integer(v),
-            Self::BigInt(v) => ColumnData::BigInt(v),
-            Self::Varchar(v) => ColumnData::Varchar(v),
-            Self::Binary(v) => ColumnData::Binary(v),
+        self.data
+    }
+}
+
+fn clear_column_data(data: &mut ColumnData) {
+    match data {
+        ColumnData::Integer(values) => values.clear(),
+        ColumnData::BigInt(values) => values.clear(),
+        ColumnData::Varchar(values) => values.clear(),
+        ColumnData::Binary(values) => values.clear(),
+    }
+}
+
+fn append_column_data(data: &mut ColumnData, slice: AnySlice<'_>, col_idx: usize) -> Result<()> {
+    match data {
+        ColumnData::Integer(values) => {
+            let view = slice.as_nullable_slice::<i32>().ok_or_else(|| {
+                OdbcError::InternalError(format!(
+                    "Columnar fetch: column {col_idx} expected nullable i32 slice"
+                ))
+            })?;
+            values.reserve(view.len());
+            for cell in view.into_iter() {
+                values.push(cell.copied());
+            }
+        }
+        ColumnData::BigInt(values) => {
+            let view = slice.as_nullable_slice::<i64>().ok_or_else(|| {
+                OdbcError::InternalError(format!(
+                    "Columnar fetch: column {col_idx} expected nullable i64 slice"
+                ))
+            })?;
+            values.reserve(view.len());
+            for cell in view.into_iter() {
+                values.push(cell.copied());
+            }
+        }
+        ColumnData::Varchar(values) => {
+            if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Date>() {
+                values.reserve(view.len());
+                for cell in view.into_iter() {
+                    match cell {
+                        Some(date) => {
+                            let mut bytes = Vec::with_capacity(10);
+                            format_date_into(&mut bytes, date);
+                            values.push(Some(bytes));
+                        }
+                        None => values.push(None),
+                    }
+                }
+                return Ok(());
+            }
+            if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Time>() {
+                values.reserve(view.len());
+                for cell in view.into_iter() {
+                    match cell {
+                        Some(time) => {
+                            let mut bytes = Vec::with_capacity(8);
+                            format_time_into(&mut bytes, time);
+                            values.push(Some(bytes));
+                        }
+                        None => values.push(None),
+                    }
+                }
+                return Ok(());
+            }
+            if let Some(view) = slice.as_nullable_slice::<odbc_api::sys::Timestamp>() {
+                values.reserve(view.len());
+                for cell in view.into_iter() {
+                    match cell {
+                        Some(ts) => {
+                            let mut bytes = Vec::with_capacity(26);
+                            format_timestamp_into(&mut bytes, ts);
+                            values.push(Some(bytes));
+                        }
+                        None => values.push(None),
+                    }
+                }
+                return Ok(());
+            }
+            let view = slice.as_w_text_view().ok_or_else(|| {
+                OdbcError::InternalError(format!(
+                    "Columnar fetch: column {col_idx} expected wide text or temporal view"
+                ))
+            })?;
+            for cell in view.iter() {
+                match cell {
+                    Some(wide) => {
+                        values.push(Some(wide_text_to_utf8_vec(wide.as_slice())));
+                    }
+                    None => values.push(None),
+                }
+            }
+        }
+        ColumnData::Binary(values) => {
+            let view = slice.as_bin_view().ok_or_else(|| {
+                OdbcError::InternalError(format!(
+                    "Columnar fetch: column {col_idx} expected binary view"
+                ))
+            })?;
+            for cell in view.iter() {
+                match cell {
+                    Some(bytes) => {
+                        values.push(Some(bytes.to_vec()));
+                    }
+                    None => values.push(None),
+                }
+            }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -323,8 +327,8 @@ mod tests {
     #[test]
     fn column_accumulator_integer_collects_options_in_order() {
         let mut acc = ColumnAccumulator::new(OdbcType::Integer);
-        match &mut acc {
-            ColumnAccumulator::Integer(v) => {
+        match &mut acc.data {
+            ColumnData::Integer(v) => {
                 v.push(Some(1));
                 v.push(None);
                 v.push(Some(2));
@@ -362,8 +366,8 @@ mod tests {
     #[test]
     fn column_accumulator_into_column_data_preserves_data_for_varchar() {
         let mut acc = ColumnAccumulator::new(OdbcType::Varchar);
-        match &mut acc {
-            ColumnAccumulator::Varchar(v) => {
+        match &mut acc.data {
+            ColumnData::Varchar(v) => {
                 v.push(Some(b"alpha".to_vec()));
                 v.push(None);
                 v.push(Some(b"beta".to_vec()));
@@ -386,5 +390,49 @@ mod tests {
         let v2 = RowBufferV2::with_capacity(3);
         assert_eq!(v2.column_count(), 0);
         assert_eq!(v2.row_count, 0);
+    }
+
+    #[test]
+    fn reusable_column_data_keeps_capacity_and_columnar_bytes_across_batches() {
+        let mut first_data = ColumnData::Integer(Vec::with_capacity(4));
+        let values = match &mut first_data {
+            ColumnData::Integer(values) => values,
+            _ => unreachable!(),
+        };
+        values.extend([Some(7), None]);
+        let capacity = values.capacity();
+
+        let mut first = RowBufferV2::new();
+        first.set_row_count(2);
+        first.add_column(
+            ColumnMetadata {
+                name: "id".to_string(),
+                odbc_type: OdbcType::Integer,
+            },
+            first_data,
+        );
+        let first_bytes = crate::protocol::ColumnarEncoder::encode(&first, true).expect("first");
+
+        let mut data = first.columns.remove(0).data;
+        clear_column_data(&mut data);
+        match &mut data {
+            ColumnData::Integer(values) => {
+                assert_eq!(values.capacity(), capacity);
+                values.extend([Some(7), None]);
+            }
+            _ => unreachable!(),
+        }
+        let mut second = RowBufferV2::new();
+        second.set_row_count(2);
+        second.add_column(
+            ColumnMetadata {
+                name: "id".to_string(),
+                odbc_type: OdbcType::Integer,
+            },
+            data,
+        );
+        let second_bytes = crate::protocol::ColumnarEncoder::encode(&second, true).expect("second");
+
+        assert_eq!(first_bytes, second_bytes);
     }
 }

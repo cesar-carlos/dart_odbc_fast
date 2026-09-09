@@ -93,6 +93,21 @@ void main() {
       decoder.assertExhausted();
     });
 
+    test('decodes small little-endian MULT frames without ByteData views', () {
+      final decoder = MultiResultStreamDecoder();
+      final frames = BytesBuilder()
+        ..add(_buildRowCountFrame(-1))
+        ..add(_buildRowCountFrame(0))
+        ..add(_buildRowCountFrame(0x010203040506));
+
+      final items = decoder.feed(frames.toBytes());
+      expect(
+        items.map((item) => (item as MultiResultItemRowCount).value),
+        equals([-1, 0, 0x010203040506]),
+      );
+      decoder.assertExhausted();
+    });
+
     test('decodes a single result-set frame fed in one shot', () {
       final decoder = MultiResultStreamDecoder();
       final frame = _buildResultSetFrame(

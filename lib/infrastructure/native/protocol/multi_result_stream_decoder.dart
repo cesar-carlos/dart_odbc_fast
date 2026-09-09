@@ -9,8 +9,6 @@ import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dar
 import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dart';
 
-const Endian _littleEndian = Endian.little;
-
 /// Item-frame tag for a result set payload (v3.3.0 streaming wire format).
 const int multiStreamItemTagResultSet = MultiResultParser.tagResultSet;
 
@@ -83,11 +81,7 @@ class MultiResultStreamDecoder {
       var offset = 0;
       while (chunk.length - offset >= _frameHeaderSize) {
         final tag = chunk[offset];
-        final len = ByteData.sublistView(
-          chunk,
-          offset + 1,
-          offset + _frameHeaderSize,
-        ).getUint32(0, _littleEndian);
+        final len = _readUint32Le(chunk, offset + 1);
         final frameEnd = offset + _frameHeaderSize + len;
         if (frameEnd > chunk.length) break;
 
@@ -127,8 +121,7 @@ class MultiResultStreamDecoder {
     while (_buffer.length >= _frameHeaderSize) {
       final headerView = _buffer.peek(_frameHeaderSize);
       final tag = headerView[0];
-      final len = ByteData.sublistView(headerView, 1, _frameHeaderSize)
-          .getUint32(0, _littleEndian);
+      final len = _readUint32Le(headerView, 1);
       final frameBytes = _frameHeaderSize + len;
       if (_buffer.length < frameBytes) break;
 
@@ -172,7 +165,7 @@ class MultiResultStreamDecoder {
             'payload, got ${payload.length}',
           );
         }
-        final rc = ByteData.sublistView(payload).getInt64(0, _littleEndian);
+        final rc = _readInt64Le(payload, 0);
         items.add(MultiResultItemRowCount(rc));
 
       default:
@@ -181,4 +174,16 @@ class MultiResultStreamDecoder {
         );
     }
   }
+}
+
+int _readUint32Le(Uint8List bytes, int offset) =>
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24);
+
+int _readInt64Le(Uint8List bytes, int offset) {
+  final low = _readUint32Le(bytes, offset);
+  final high = _readUint32Le(bytes, offset + 4);
+  return (high.toSigned(32) << 32) | low;
 }

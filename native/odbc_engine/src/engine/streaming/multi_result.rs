@@ -163,19 +163,21 @@ where
         cursor,
         fetch_size,
         result_encoding,
-        &mut |encoded| {
+        on_item,
+        &mut || {
             let tag = if first_batch {
                 MULTI_STREAM_ITEM_TAG_RESULT_SET
             } else {
                 MULTI_STREAM_ITEM_TAG_RESULT_SET_BATCH
             };
             first_batch = false;
-            on_item(frame_item(tag, encoded)?)
+            Some(tag)
         },
         cancel_check,
     )
 }
 
+#[cfg(test)]
 pub(crate) fn frame_item(tag: u8, mut payload: Vec<u8>) -> Result<Vec<u8>> {
     let payload_len: u32 = payload.len().try_into().map_err(|_| {
         OdbcError::ResourceLimitReached(format!(

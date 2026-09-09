@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **MULT streaming and columnar batches** — encoders now write directly after
+  the reserved five-byte MULT prefix, then patch the tag and little-endian
+  payload length in place. Columnar streaming sessions retain their metadata
+  and typed vectors across block-cursor batches; compressed columns serialize
+  raw cells once before selecting zstd or the raw fallback.
+- **MULT decoder primitive readers** — framing lengths and row counts are now
+  decoded with private little-endian byte readers, avoiding transient
+  `ByteData.sublistView` objects for every streamed frame.
 - **Columnar encoder planning** — `ColumnarEncoder` now validates and plans
   column payload sizes once, then reuses that plan while encoding. Normal
   columnar output avoids a redundant full-cell traversal. Compressed output
@@ -50,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dart FFI zero-copy compatibility** — Dart-owned transient result buffers
+  now use `malloc.nativeFree` directly through `NativeFinalizer`; zero-copy no
+  longer depends on the optional `odbc_release_buffer` export from the native
+  library.
 - **Connection-string engine heuristic** — `detect_from_connection_string`
   inspects only the brace-aware `Driver=` token. Values such as
   `UID=postgres` or `Database=mysql` no longer mis-identify the engine.
@@ -68,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Added direct-prefix MULT framing, compressed/raw columnar fallback,
+  reusable-column-buffer parity, little-endian decoder, and zero-copy
+  compatibility regressions. Criterion benchmarks now include repeated
+  columnar MULT-prefix encoding.
 - Expanded identification coverage: brace-aware `Driver=` tokens (empty,
   unclosed, first-wins), Sybase ASA/ASE heuristic edges, `asJsonMap` list
   and non-map inputs, admin-runner DBMS-info JSON success/failure paths,

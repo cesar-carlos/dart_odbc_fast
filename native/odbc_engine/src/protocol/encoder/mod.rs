@@ -53,6 +53,16 @@ impl RowBufferEncoder {
         Self::try_encode(buffer).map_err(Self::map_encode_error)
     }
 
+    /// Appends an encoded result to an existing buffer. Streaming MULT frames
+    /// reserve their five-byte prefix before calling this, so the payload is
+    /// produced in its final allocation.
+    pub(crate) fn encode_result_into(buffer: &RowBuffer, output: &mut Vec<u8>) -> Result<()> {
+        let shape = measure_buffer(buffer).map_err(Self::map_encode_error)?;
+        output.reserve(shape.total_len);
+        Self::encode_to_vec_with_shape(buffer, output, shape);
+        Ok(())
+    }
+
     /// Fallible encoding; identical to [`Self::encode_result`].
     pub fn encode(buffer: &RowBuffer) -> Result<Vec<u8>> {
         Self::encode_result(buffer)
