@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-09-24
+
 ### Added
 
 - **Live DBMS version fields** — `odbc_get_connection_dbms_info` now
@@ -4487,7 +4489,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.1...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.6.0...HEAD
+[4.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.1...v4.6.0
 [4.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...v4.5.1
 [4.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.3.4...v4.4.0

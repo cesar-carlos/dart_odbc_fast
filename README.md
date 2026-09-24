@@ -6,10 +6,11 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 4.5.x
+## What's New in 4.6.x
 
-Current package version: **4.5.1**. The 4.5 line focuses on scan/pool
-hot paths and additive tuning knobs — still compatible for typical
+Current package version: **4.6.0**. The 4.6 line adds bounded and
+parameterized multi-result streaming, optional prepared wire encoding,
+and faster pool/stream paths — still compatible for typical
 `IOdbcService` callers. Full history: [CHANGELOG.md](CHANGELOG.md).
 Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md).
 
@@ -424,7 +425,7 @@ configured health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^4.5.1
+  odbc_fast: ^4.6.0
 ```
 
 Then:
