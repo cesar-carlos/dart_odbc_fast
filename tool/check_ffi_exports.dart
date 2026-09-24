@@ -6,6 +6,16 @@ const _cbindgenPath = 'native/odbc_engine/cbindgen.toml';
 const _headerPath = 'native/odbc_engine/include/odbc_engine.h';
 const _dartNativeRoot = 'lib/infrastructure/native';
 
+/// Native exports kept for ABI compatibility. Dart does not resolve them.
+/// Keep in sync with `_optionalDartLookupSymbols` in
+/// `test/infrastructure/native/bindings/ffi_exports_contract_test.dart`.
+const _optionalDartLookupSymbols = {
+  'odbc_exec_query_multi_fetch',
+  'odbc_exec_query_multi_params_fetch',
+  'odbc_execute_options',
+  'odbc_release_buffer',
+};
+
 void main() {
   final missing = <String>[];
   final rustSymbols = _collectRustExportSymbols();
@@ -45,10 +55,14 @@ void main() {
     );
   }
 
+  final dartLookups = _collectDartLookups();
+  final requiredDartLookups = rustSymbols.difference(
+    _optionalDartLookupSymbols.difference(dartLookups),
+  );
   _compareExact(
     'Dart native lookups under $_dartNativeRoot',
-    rustSymbols,
-    _collectDartLookups(),
+    requiredDartLookups,
+    dartLookups,
     missing,
   );
 
