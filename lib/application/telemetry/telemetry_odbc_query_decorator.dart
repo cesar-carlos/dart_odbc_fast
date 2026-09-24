@@ -103,8 +103,9 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) =>
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) =>
       _ops.inOperation(
         'ODBC.executePreparedParamValues',
         () => _service.executePreparedParamValues(
@@ -112,6 +113,7 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
           stmtId,
           params,
           options,
+          resultEncoding: resultEncoding,
         ),
       );
 
@@ -183,6 +185,44 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
         () => _queries.streamQueryMulti(
           connectionId,
           sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
+      );
+
+  @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _ops.wrapStream(
+        'ODBC.streamQueryMultiParamValues',
+        () => _queries.streamQueryMultiParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
+      );
+
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _ops.wrapStream(
+        'ODBC.streamQueryMultiBatchesParamValues',
+        () => _queries.streamQueryMultiBatchesParamValues(
+          connectionId,
+          sql,
+          params,
           fetchSize: fetchSize,
           chunkSize: chunkSize,
         ),

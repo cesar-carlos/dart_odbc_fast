@@ -25,11 +25,6 @@ pub extern "C" fn odbc_exec_query(
             None => return -1,
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-
         state::ffi_audit_logger().log_query(conn_id, sql_str);
 
         let metrics = state::ffi_metrics();
@@ -43,6 +38,11 @@ pub extern "C" fn odbc_exec_query(
         {
             return code;
         }
+
+        let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
+            return -1;
+        };
 
         let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -60,15 +60,9 @@ pub extern "C" fn odbc_exec_query(
                 let mut conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
                     Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
-                            set_out_written_zero(out_written);
-                            return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
+                        let error = "Failed to lock connection".to_string();
+                        state::set_connection_error(conn_id, error.clone());
+                        state::set_legacy_global_error(error);
                         set_out_written_zero(out_written);
                         return -1;
                     }
@@ -85,23 +79,11 @@ pub extern "C" fn odbc_exec_query(
             },
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
-
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let status = write_connection_output_buffer(
-                    &mut state,
-                    conn_id,
-                    &data,
-                    out_buf,
-                    buf_len,
-                    out_written,
-                );
+                let status =
+                    write_connection_output_buffer(conn_id, &data, out_buf, buf_len, out_written);
                 if status == FFI_OK {
                     metrics.record_query(elapsed);
                 } else {
@@ -112,7 +94,8 @@ pub extern "C" fn odbc_exec_query(
             Err(e) => {
                 metrics.record_error();
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut state, conn_id, structured);
+                state::set_connection_structured_error(conn_id, structured.clone());
+                state::set_legacy_global_structured_error(structured);
                 let error_message = state::get_connection_error_message(conn_id)
                     .unwrap_or_else(|| "Query execution failed".to_string());
                 state::ffi_audit_logger().log_error(Some(conn_id), &error_message);

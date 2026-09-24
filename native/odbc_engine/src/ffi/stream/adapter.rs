@@ -67,32 +67,26 @@ pub(crate) fn stream_start(conn_id: u32, sql: *const c_char, chunk_size: u32) ->
                     return 0;
                 }
             };
-            if let Some(threshold) = spill_threshold_mb {
-                executor.execute_streaming_with_spill(
-                    conn_guard.connection(),
-                    sql_str,
-                    Some(threshold),
-                )
-            } else {
-                executor
-                    .execute_streaming(conn_guard.connection(), sql_str)
-                    .map(StreamState::InMemory)
-            }
-        }
-        RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-            Ok(conn_guard) => {
+            conn_guard.checked_connection().and_then(|conn| {
                 if let Some(threshold) = spill_threshold_mb {
-                    executor.execute_streaming_with_spill(
-                        conn_guard.get_connection(),
-                        sql_str,
-                        Some(threshold),
-                    )
+                    executor.execute_streaming_with_spill(conn, sql_str, Some(threshold))
                 } else {
                     executor
-                        .execute_streaming(conn_guard.get_connection(), sql_str)
+                        .execute_streaming(conn, sql_str)
                         .map(StreamState::InMemory)
                 }
-            }
+            })
+        }
+        RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
+            Ok(conn_guard) => conn_guard.checked_connection().and_then(|conn| {
+                if let Some(threshold) = spill_threshold_mb {
+                    executor.execute_streaming_with_spill(conn, sql_str, Some(threshold))
+                } else {
+                    executor
+                        .execute_streaming(conn, sql_str)
+                        .map(StreamState::InMemory)
+                }
+            }),
             Err(_) => Err(OdbcError::InternalError(
                 "Failed to lock pooled connection".to_string(),
             )),
@@ -167,17 +161,22 @@ fn start_batched_stream_common_with_params(
         return 0;
     };
 
-    let params = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
-        Ok(bytes) => match crate::protocol::input_params_from_buffer(&bytes) {
-            Ok(params) => params,
-            Err(e) => {
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+    // SAFETY: the FFI buffer is borrowed only while decoding owned values.
+    let params = match unsafe {
+        with_optional_param_buffer(
+            params_buffer,
+            params_len,
+            crate::protocol::input_params_from_buffer,
+        )
+    } {
+        Ok(Ok(params)) => params,
+        Ok(Err(e)) => {
+            let Some(mut state) = try_lock_global_state() else {
                 return 0;
-            }
-        },
+            };
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            return 0;
+        }
         Err(message) => {
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
@@ -381,17 +380,22 @@ fn start_async_stream_common_with_params(
         return 0;
     };
 
-    let params = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
-        Ok(bytes) => match crate::protocol::input_params_from_buffer(&bytes) {
-            Ok(params) => params,
-            Err(e) => {
-                let Some(mut state) = try_lock_global_state() else {
-                    return 0;
-                };
-                set_connection_structured_error(&mut state, conn_id, e.to_structured());
+    // SAFETY: the FFI buffer is borrowed only while decoding owned values.
+    let params = match unsafe {
+        with_optional_param_buffer(
+            params_buffer,
+            params_len,
+            crate::protocol::input_params_from_buffer,
+        )
+    } {
+        Ok(Ok(params)) => params,
+        Ok(Err(e)) => {
+            let Some(mut state) = try_lock_global_state() else {
                 return 0;
-            }
-        },
+            };
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            return 0;
+        }
         Err(message) => {
             let Some(mut state) = try_lock_global_state() else {
                 return 0;
@@ -704,6 +708,181 @@ pub(crate) fn stream_multi_start_async(conn_id: u32, sql: *const c_char, chunk_s
     )
 }
 
+fn copy_param_bytes(params_buffer: *const u8, params_len: u32) -> Vec<u8> {
+    if params_buffer.is_null() || params_len == 0 {
+        return Vec::new();
+    }
+    // SAFETY: caller keeps the buffer readable for this call; bytes are copied.
+    unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) }.to_vec()
+}
+
+pub(crate) fn stream_multi_start_batched_params_options(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    result_encoding: u32,
+) -> u32 {
+    start_multi_with_params(
+        conn_id,
+        MultiParamStart {
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            async_mode: false,
+            result_encoding,
+        },
+        "odbc_stream_multi_start_batched_params_options",
+    )
+}
+
+pub(crate) fn stream_multi_start_async_params_options(
+    conn_id: u32,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    result_encoding: u32,
+) -> u32 {
+    start_multi_with_params(
+        conn_id,
+        MultiParamStart {
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            async_mode: true,
+            result_encoding,
+        },
+        "odbc_stream_multi_start_async_params_options",
+    )
+}
+
+struct MultiParamStart {
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: u32,
+    fetch_size: u32,
+    chunk_size: u32,
+    async_mode: bool,
+    result_encoding: u32,
+}
+
+fn start_multi_with_params(conn_id: u32, start: MultiParamStart, error_prefix: &str) -> u32 {
+    let MultiParamStart {
+        sql,
+        params_buffer,
+        params_len,
+        fetch_size,
+        chunk_size,
+        async_mode,
+        result_encoding,
+    } = start;
+    let Some(encoding) = parse_result_encoding(conn_id, result_encoding) else {
+        return 0;
+    };
+    let params = copy_param_bytes(params_buffer, params_len);
+    let Some(sql_str) = parse_stream_sql(sql) else {
+        return 0;
+    };
+    let Some(mut state) = try_lock_global_state() else {
+        return 0;
+    };
+    state::ffi_audit_logger().log_query(conn_id, sql_str);
+    let reservation = match reserve_stream_start(&mut state, conn_id) {
+        Ok(reservation) => reservation,
+        Err(e) => {
+            set_connection_structured_error(&mut state, conn_id, e.to_structured());
+            return 0;
+        }
+    };
+    let fetch_size = resolve_fetch_size(fetch_size);
+    let chunk_size = resolve_chunk_size(chunk_size);
+    let sql_owned = sql_str.to_string();
+    drop(state);
+    let start_result = if async_mode {
+        match &reservation.target {
+            StreamStartTarget::Regular { handles } => {
+                crate::engine::start_multi_async_stream_with_params(
+                    handles.clone(),
+                    conn_id,
+                    sql_owned,
+                    chunk_size,
+                    fetch_size,
+                    encoding,
+                    params,
+                )
+                .map(StreamKind::AsyncBatched)
+            }
+            StreamStartTarget::Pooled { pool_id, pooled } => {
+                crate::engine::start_multi_async_stream_pooled_with_params(
+                    Arc::clone(pooled),
+                    sql_owned,
+                    chunk_size,
+                    fetch_size,
+                    encoding,
+                    Some(pooled_stream_completion(conn_id, *pool_id)),
+                    params,
+                )
+                .map(StreamKind::AsyncBatched)
+            }
+        }
+    } else {
+        match &reservation.target {
+            StreamStartTarget::Regular { handles } => {
+                crate::engine::start_multi_batched_stream_with_params(
+                    handles.clone(),
+                    conn_id,
+                    sql_owned,
+                    chunk_size,
+                    fetch_size,
+                    encoding,
+                    params,
+                )
+                .map(StreamKind::Batched)
+            }
+            StreamStartTarget::Pooled { pool_id, pooled } => {
+                crate::engine::start_multi_batched_stream_pooled_with_params(
+                    Arc::clone(pooled),
+                    sql_owned,
+                    chunk_size,
+                    fetch_size,
+                    encoding,
+                    Some(pooled_stream_completion(conn_id, *pool_id)),
+                    params,
+                )
+                .map(StreamKind::Batched)
+            }
+        }
+    };
+    match start_result {
+        Ok(kind) => {
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            insert_stream(&mut state, reservation.stream_id, conn_id, kind)
+        }
+        Err(e) => {
+            release_pooled_stream_reservation(conn_id, &reservation.target);
+            let Some(mut state) = try_lock_global_state() else {
+                return 0;
+            };
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("{} failed: {}", error_prefix, e),
+            );
+            0
+        }
+    }
+}
+
 /// Multi-result async batched streaming with explicit wire encoding.
 pub(crate) fn stream_multi_start_async_options(
     conn_id: u32,
@@ -757,5 +936,31 @@ mod tests {
     #[test]
     fn resolve_chunk_size_uses_default_when_zero() {
         assert_eq!(resolve_chunk_size(0), DEFAULT_CHUNK_SIZE as usize);
+    }
+
+    #[test]
+    fn streaming_params_decode_from_borrowed_ffi_bytes_and_own_values() {
+        use crate::protocol::{serialize_params, ParamValue};
+
+        let expected = vec![
+            ParamValue::String("ação".to_string()),
+            ParamValue::Binary(vec![9; 1024 * 1024]),
+            ParamValue::Null,
+        ];
+        let wire = serialize_params(&expected);
+        let source = wire.as_ptr();
+        // SAFETY: the wire allocation remains live for the scoped callback.
+        let (borrowed, decoded) = unsafe {
+            with_optional_param_buffer(wire.as_ptr(), wire.len() as u32, |bytes| {
+                (
+                    bytes.as_ptr(),
+                    crate::protocol::input_params_from_buffer(bytes),
+                )
+            })
+        }
+        .expect("valid FFI shape");
+        assert_eq!(borrowed, source);
+        drop(wire);
+        assert_eq!(decoded.expect("valid parameters"), expected);
     }
 }

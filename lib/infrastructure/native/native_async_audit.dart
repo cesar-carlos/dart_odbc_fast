@@ -58,12 +58,14 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
     String sql,
     Uint8List? serializedParams, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) =>
       _native.executeAsyncStartParams(
         connectionId,
         sql,
         serializedParams,
         resultEncoding: resultEncoding,
+        fetchSize: fetchSize,
       );
 
   /// Polls async request status:

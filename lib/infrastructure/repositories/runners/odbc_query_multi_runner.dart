@@ -188,12 +188,14 @@ class OdbcQueryMultiRunner {
                 sql,
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               )
             : ffi.sync.executeQueryMulti(
                 nativeId,
                 sql,
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
         if (buf == null || buf.isEmpty) {
@@ -269,6 +271,7 @@ class OdbcQueryMultiRunner {
                 paramsBuffer,
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               )
             : ffi.sync.executeQueryMultiParams(
                 nativeId,
@@ -276,6 +279,7 @@ class OdbcQueryMultiRunner {
                 paramsBuffer,
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
         if (buf == null || buf.isEmpty) {

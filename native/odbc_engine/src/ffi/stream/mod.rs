@@ -231,6 +231,54 @@ pub extern "C" fn odbc_stream_multi_start_async_options(
     })
 }
 
+/// Multi-result batched streaming with parameters and wire encoding.
+#[no_mangle]
+pub extern "C" fn odbc_stream_multi_start_batched_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_multi_start_batched_params_options(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
+    })
+}
+
+/// Async multi-result streaming with parameters and wire encoding.
+#[no_mangle]
+pub extern "C" fn odbc_stream_multi_start_async_params_options(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    chunk_size: c_uint,
+    result_encoding: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        adapter::stream_multi_start_async_params_options(
+            conn_id,
+            sql,
+            params_buffer,
+            params_len,
+            fetch_size,
+            chunk_size,
+            result_encoding,
+        )
+    })
+}
+
 /// Poll async stream status.
 #[no_mangle]
 pub extern "C" fn odbc_stream_poll_async(stream_id: c_uint, out_status: *mut c_int) -> c_int {

@@ -53,14 +53,34 @@ impl r2d2::ManageConnection for OdbcConnectionManager {
         // Per-checkout `pool_session_reset` lives in `ConnectionPool::get` so
         // we do not pay rollback/autocommit twice when validation is on.
         // Checkin still resets before return to the idle set.
+        conn.ensure_usable()?;
         conn.connection()
             .execute(&self.health_check_query, (), None)
             .map(|_| ())
-            .map_err(OdbcError::from)
+            .map_err(OdbcError::from)?;
+        conn.mark_validated_on_checkout();
+        Ok(())
     }
 
     fn has_broken(&self, conn: &mut Self::Connection) -> bool {
-        self.is_valid(conn).is_err()
+        conn.clear_checkout_validation();
+        if conn.is_unusable() {
+            return true;
+        }
+        match conn.connection().is_dead() {
+            Ok(dead) => dead,
+            Err(odbc_api::Error::Diagnostics { record, .. })
+                if matches!(record.state.as_str(), "HYC00" | "HY092" | "IM001") =>
+            {
+                let broken = self.is_valid(conn).is_err();
+                conn.clear_checkout_validation();
+                broken
+            }
+            Err(e) => {
+                log::warn!("Cannot inspect pooled connection liveness: {e}");
+                true
+            }
+        }
     }
 }
 

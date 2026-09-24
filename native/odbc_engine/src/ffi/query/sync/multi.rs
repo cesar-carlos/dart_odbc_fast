@@ -23,6 +23,38 @@ pub extern "C" fn odbc_exec_query_multi(
     buffer_len: c_uint,
     out_written: *mut c_uint,
 ) -> c_int {
+    exec_query_multi_ffi(conn_id, sql, None, out_buffer, buffer_len, out_written)
+}
+
+/// Same as [`odbc_exec_query_multi`] with a per-call block-fetch batch.
+/// `fetch_size` of 0 keeps the process default. Wire encoding stays row-major.
+#[no_mangle]
+pub extern "C" fn odbc_exec_query_multi_fetch(
+    conn_id: c_uint,
+    sql: *const c_char,
+    fetch_size: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    exec_query_multi_ffi(
+        conn_id,
+        sql,
+        crate::engine::core::execution::result_encoding::fetch_size_from_wire(fetch_size),
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+fn exec_query_multi_ffi(
+    conn_id: c_uint,
+    sql: *const c_char,
+    fetch_size: Option<u32>,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
     crate::ffi_guard_int!({
         if !require_query_output_ptrs(sql, out_buffer, out_written) {
             return -1;
@@ -33,11 +65,6 @@ pub extern "C" fn odbc_exec_query_multi(
         let sql_str = match unsafe { parse_sql_ptr(sql) } {
             Some(s) => s,
             None => return -1,
-        };
-
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
         };
 
         state::ffi_audit_logger().log_query(conn_id, sql_str);
@@ -53,6 +80,11 @@ pub extern "C" fn odbc_exec_query_multi(
         {
             return code;
         }
+
+        let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
+            return -1;
+        };
 
         let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -70,40 +102,31 @@ pub extern "C" fn odbc_exec_query_multi(
                 let conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
                     Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
-                            set_out_written_zero(out_written);
-                            return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
+                        let error = "Failed to lock connection".to_string();
+                        state::set_connection_error(conn_id, error.clone());
+                        state::set_legacy_global_error(error);
                         set_out_written_zero(out_written);
                         return -1;
                     }
                 };
-                execute_multi_result(conn_guard.connection(), sql_str)
+                conn_guard
+                    .checked_connection()
+                    .and_then(|conn| execute_multi_result_with_fetch(conn, sql_str, fetch_size))
             }
             RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => execute_multi_result(conn_guard.get_connection(), sql_str),
+                Ok(conn_guard) => conn_guard
+                    .checked_connection()
+                    .and_then(|conn| execute_multi_result_with_fetch(conn, sql_str, fetch_size)),
                 Err(_) => Err(OdbcError::InternalError(
                     "Failed to lock pooled connection".to_string(),
                 )),
             },
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
-
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
                 let status = write_connection_output_buffer(
-                    &mut state,
                     conn_id,
                     &data,
                     out_buffer,
@@ -120,7 +143,8 @@ pub extern "C" fn odbc_exec_query_multi(
             Err(e) => {
                 metrics.record_error();
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut state, conn_id, structured);
+                state::set_connection_structured_error(conn_id, structured.clone());
+                state::set_legacy_global_structured_error(structured);
                 set_out_written_zero(out_written);
                 -1
             }
@@ -142,6 +166,56 @@ pub extern "C" fn odbc_exec_query_multi_params(
     sql: *const c_char,
     params_buffer: *const u8,
     params_len: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    exec_query_multi_params_ffi(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        None,
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+/// Same as [`odbc_exec_query_multi_params`] with a per-call block-fetch batch.
+#[no_mangle]
+pub extern "C" fn odbc_exec_query_multi_params_fetch(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    exec_query_multi_params_ffi(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        crate::engine::core::execution::result_encoding::fetch_size_from_wire(fetch_size),
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Private adapter mirrors the fixed FFI argument list"
+)]
+fn exec_query_multi_params_ffi(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    fetch_size: Option<u32>,
     out_buffer: *mut u8,
     buffer_len: c_uint,
     out_written: *mut c_uint,
@@ -211,11 +285,6 @@ pub extern "C" fn odbc_exec_query_multi_params(
             }
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-
         state::ffi_audit_logger().log_query(conn_id, sql_str);
 
         let metrics = state::ffi_metrics();
@@ -229,6 +298,11 @@ pub extern "C" fn odbc_exec_query_multi_params(
         {
             return code;
         }
+
+        let Some(mut state) = try_lock_global_state() else {
+            set_out_written_zero(out_written);
+            return -1;
+        };
 
         let target = match take_runnable_connection(&mut state, conn_id) {
             Ok(target) => target,
@@ -246,42 +320,31 @@ pub extern "C" fn odbc_exec_query_multi_params(
                 let conn_guard = match conn_arc.lock() {
                     Ok(g) => g,
                     Err(_) => {
-                        let Some(mut state) = try_lock_global_state() else {
-                            set_out_written_zero(out_written);
-                            return -1;
-                        };
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            "Failed to lock connection".to_string(),
-                        );
+                        let error = "Failed to lock connection".to_string();
+                        state::set_connection_error(conn_id, error.clone());
+                        state::set_legacy_global_error(error);
                         set_out_written_zero(out_written);
                         return -1;
                     }
                 };
-                execute_multi_result_with_params(conn_guard.connection(), sql_str, &params)
+                conn_guard.checked_connection().and_then(|conn| {
+                    execute_multi_result_with_params_and_fetch(conn, sql_str, &params, fetch_size)
+                })
             }
             RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => {
-                    execute_multi_result_with_params(conn_guard.get_connection(), sql_str, &params)
-                }
+                Ok(conn_guard) => conn_guard.checked_connection().and_then(|conn| {
+                    execute_multi_result_with_params_and_fetch(conn, sql_str, &params, fetch_size)
+                }),
                 Err(_) => Err(OdbcError::InternalError(
                     "Failed to lock pooled connection".to_string(),
                 )),
             },
         };
 
-        let Some(mut state) = try_lock_global_state() else {
-            set_out_written_zero(out_written);
-            return -1;
-        };
-        restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
-
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
                 let status = write_connection_output_buffer(
-                    &mut state,
                     conn_id,
                     &data,
                     out_buffer,
@@ -298,7 +361,8 @@ pub extern "C" fn odbc_exec_query_multi_params(
             Err(e) => {
                 metrics.record_error();
                 let structured = e.to_structured();
-                set_connection_structured_error(&mut state, conn_id, structured);
+                state::set_connection_structured_error(conn_id, structured.clone());
+                state::set_legacy_global_structured_error(structured);
                 set_out_written_zero(out_written);
                 -1
             }

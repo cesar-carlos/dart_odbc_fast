@@ -503,6 +503,33 @@ fn should_plan_inference_query_for_homogeneous_nullable_integers() {
 }
 
 #[test]
+fn production_query_plan_retains_inferred_bindings() {
+    let params = vec![ParamValue::Null, ParamValue::Integer(7)];
+    match plan_query_input(&params).expect("query plan") {
+        QueryInputPlan::Inferred(inputs) => assert_eq!(inputs.len(), 2),
+        _ => panic!("expected cached inferred inputs"),
+    }
+}
+
+#[test]
+fn production_multi_plan_retains_inferred_bindings_and_describes_mixed_nulls() {
+    let homogeneous = vec![ParamValue::Null, ParamValue::Binary(vec![1, 2])];
+    match param_binding::plan_multi_input(&homogeneous).expect("multi plan") {
+        param_binding::MultiInputPlan::Inferred(inputs) => assert_eq!(inputs.len(), 2),
+        _ => panic!("expected inferred inputs"),
+    }
+    let mixed = vec![
+        ParamValue::Null,
+        ParamValue::Integer(1),
+        ParamValue::String("x".into()),
+    ];
+    assert!(matches!(
+        param_binding::plan_multi_input(&mixed).expect("mixed plan"),
+        param_binding::MultiInputPlan::PreparedNullAware
+    ));
+}
+
+#[test]
 fn should_plan_null_aware_query_when_null_types_are_mixed() {
     let params = vec![
         ParamValue::String("a".to_string()),

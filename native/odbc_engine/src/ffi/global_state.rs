@@ -135,7 +135,6 @@ pub(crate) fn write_ffi_output_buffer(
 }
 
 pub(crate) fn write_connection_output_buffer(
-    state: &mut GlobalState,
     conn_id: u32,
     data: &[u8],
     out_buffer: *mut u8,
@@ -143,15 +142,13 @@ pub(crate) fn write_connection_output_buffer(
     out_written: *mut c_uint,
 ) -> c_int {
     if data.len() > buffer_len as usize {
-        set_connection_error(
-            state,
-            conn_id,
-            format!(
-                "Buffer too small: need {} bytes, got {}",
-                data.len(),
-                buffer_len
-            ),
+        let error = format!(
+            "Buffer too small: need {} bytes, got {}",
+            data.len(),
+            buffer_len
         );
+        state::set_connection_error(conn_id, error.clone());
+        state::set_legacy_global_error(error);
     }
     write_ffi_output_buffer(data, out_buffer, buffer_len, out_written)
 }
@@ -344,18 +341,9 @@ pub(crate) fn with_disconnect_cleanup(
     state: &mut GlobalState,
     conn_id: u32,
 ) -> std::result::Result<DisconnectCleanup, DisconnectCleanupError> {
-    #[cfg(feature = "sqlserver-bcp")]
-    {
-        let _ = state.connection_strings.remove(&conn_id);
-    }
-    #[cfg(not(feature = "sqlserver-bcp"))]
-    {
-        let _ = state;
-    }
-
     // Lock order: transactions → connections → statements → streams.
     let result = state::with_transaction_maps_mut(|maps| {
-        if maps.begin_in_progress(conn_id) {
+        if maps.operation_in_progress(conn_id) {
             return Err(DisconnectCleanupError::BeginInProgress);
         }
         let Some(connection) = state::remove_connection(conn_id) else {
@@ -373,5 +361,12 @@ pub(crate) fn with_disconnect_cleanup(
             transactions,
         })
     });
-    result.unwrap_or(Err(DisconnectCleanupError::InvalidConnection))
+    let cleanup = result.unwrap_or(Err(DisconnectCleanupError::InvalidConnection));
+    #[cfg(feature = "sqlserver-bcp")]
+    if cleanup.is_ok() {
+        state.connection_strings.remove(&conn_id);
+    }
+    #[cfg(not(feature = "sqlserver-bcp"))]
+    let _ = state;
+    cleanup
 }

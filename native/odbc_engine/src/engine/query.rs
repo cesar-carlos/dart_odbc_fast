@@ -123,6 +123,27 @@ fn dispatch_param_buffer(
     encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
     let list = deserialize_param_buffer(param_bytes)?;
+    dispatch_parsed_params(conn, sql, list, timeout_sec, fetch_size, encoding)
+}
+
+pub(crate) fn execute_query_with_parsed_params_encoding(
+    conn: &Connection<'static>,
+    sql: &str,
+    list: ParamList,
+    encoding: ResultEncoding,
+    fetch_size: Option<u32>,
+) -> Result<Vec<u8>> {
+    dispatch_parsed_params(conn, sql, list, None, fetch_size, encoding)
+}
+
+fn dispatch_parsed_params(
+    conn: &Connection<'static>,
+    sql: &str,
+    list: ParamList,
+    timeout_sec: Option<usize>,
+    fetch_size: Option<u32>,
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>> {
     let pipeline = encoding.pipeline();
     match list {
         ParamList::Legacy(p) => {
@@ -130,7 +151,7 @@ fn dispatch_param_buffer(
         }
         ParamList::Directed(b) => {
             if b.iter().all(|x| x.direction == ParamDirection::Input) {
-                let p: Vec<ParamValue> = b.iter().map(|x| x.value.clone()).collect();
+                let p: Vec<ParamValue> = b.into_iter().map(|x| x.value).collect();
                 pipeline.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
             } else {
                 pipeline.execute_with_bound_params_and_timeout(
@@ -169,7 +190,7 @@ pub fn execute_query_with_param_buffer_and_timeout(
     timeout_sec: Option<usize>,
     fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
-    dispatch_param_buffer(
+    execute_query_with_param_buffer_timeout_encoding(
         conn,
         sql,
         param_bytes,
@@ -179,8 +200,27 @@ pub fn execute_query_with_param_buffer_and_timeout(
     )
 }
 
+pub fn execute_query_with_param_buffer_timeout_encoding(
+    conn: &Connection<'static>,
+    sql: &str,
+    param_bytes: &[u8],
+    timeout_sec: Option<usize>,
+    fetch_size: Option<u32>,
+    encoding: ResultEncoding,
+) -> Result<Vec<u8>> {
+    dispatch_param_buffer(conn, sql, param_bytes, timeout_sec, fetch_size, encoding)
+}
+
 pub fn execute_multi_result(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
-    shared_row_major_pipeline().execute_multi(conn, sql)
+    execute_multi_result_with_fetch(conn, sql, None)
+}
+
+pub fn execute_multi_result_with_fetch(
+    conn: &Connection<'static>,
+    sql: &str,
+    fetch_size: Option<u32>,
+) -> Result<Vec<u8>> {
+    shared_row_major_pipeline().execute_multi_with_fetch(conn, sql, fetch_size)
 }
 
 pub fn execute_multi_result_with_params(
@@ -188,7 +228,16 @@ pub fn execute_multi_result_with_params(
     sql: &str,
     params: &[ParamValue],
 ) -> Result<Vec<u8>> {
-    shared_row_major_pipeline().execute_multi_with_params(conn, sql, params)
+    execute_multi_result_with_params_and_fetch(conn, sql, params, None)
+}
+
+pub fn execute_multi_result_with_params_and_fetch(
+    conn: &Connection<'static>,
+    sql: &str,
+    params: &[ParamValue],
+    fetch_size: Option<u32>,
+) -> Result<Vec<u8>> {
+    shared_row_major_pipeline().execute_multi_with_params_and_fetch(conn, sql, params, fetch_size)
 }
 
 #[cfg(test)]

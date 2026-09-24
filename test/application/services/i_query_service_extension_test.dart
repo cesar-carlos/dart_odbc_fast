@@ -130,6 +130,36 @@ class _FakeQueryService implements IQueryService {
   }
 
   @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMultiBatches(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
     String connectionId,
     String sql, {

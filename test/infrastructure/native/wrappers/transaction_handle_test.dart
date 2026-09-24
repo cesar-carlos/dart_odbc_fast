@@ -1,6 +1,7 @@
 /// Unit tests for [TransactionHandle] wrapper.
 library;
 
+import 'package:odbc_fast/infrastructure/native/wrappers/transaction_completion_status.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart';
 import 'package:test/test.dart';
 
@@ -34,6 +35,38 @@ void main() {
 
       backend.rollbackTransactionResult = false;
       expect(handle.rollback(), false);
+    });
+
+    test('should_keep_handle_active_when_native_commit_is_busy', () {
+      final statusBackend = _StatusBackend()..commitStatuses.addAll([2, 0]);
+      final txn = TransactionHandle(statusBackend, 21);
+
+      expect(txn.commit(), isFalse);
+      expect(txn.isActive, isTrue);
+      expect(txn.commit(), isTrue);
+      expect(txn.isActive, isFalse);
+      expect(statusBackend.commitCalls, 2);
+    });
+
+    test('should_keep_handle_active_when_native_rollback_is_busy', () {
+      final statusBackend = _StatusBackend()..rollbackStatuses.addAll([2, 0]);
+      final txn = TransactionHandle(statusBackend, 22);
+
+      expect(txn.rollback(), isFalse);
+      expect(txn.isActive, isTrue);
+      expect(txn.rollback(), isTrue);
+      expect(txn.isActive, isFalse);
+      expect(statusBackend.rollbackCalls, 2);
+    });
+
+    test('should_end_handle_when_native_completion_fails_terminally', () {
+      final statusBackend = _StatusBackend()..commitStatuses.add(1);
+      final txn = TransactionHandle(statusBackend, 23);
+
+      expect(txn.commit(), isFalse);
+      expect(txn.isActive, isFalse);
+      expect(txn.commit(), isFalse);
+      expect(statusBackend.commitCalls, 1);
     });
 
     test('savepoint methods delegate to backend while active', () {
@@ -133,6 +166,25 @@ void main() {
       expect(txn.isActive, isFalse);
     });
 
+    test('should_preserve_retryable_handle_when_commit_and_cleanup_are_busy',
+        () async {
+      final statusBackend = _StatusBackend()
+        ..commitStatuses.add(2)
+        ..rollbackStatuses.add(2);
+      final txn = TransactionHandle(statusBackend, 24);
+
+      await expectLater(
+        TransactionHandle.runWithBegin<int>(() => txn, (_) async => 7),
+        throwsA(isA<StateError>()),
+      );
+      expect(txn.isActive, isTrue);
+      expect(statusBackend.rollbackCalls, 1);
+
+      statusBackend.rollbackStatuses.add(0);
+      expect(txn.rollback(), isTrue);
+      expect(txn.isActive, isFalse);
+    });
+
     test('runWithBegin rolls back active transaction and rethrows', () async {
       final countingBackend = _CountingBackend();
       final txn = TransactionHandle(countingBackend, 10);
@@ -167,6 +219,26 @@ void main() {
       );
     });
   });
+}
+
+class _StatusBackend extends FakeOdbcConnectionBackend
+    implements TransactionCompletionStatus {
+  final List<int> commitStatuses = [];
+  final List<int> rollbackStatuses = [];
+  int commitCalls = 0;
+  int rollbackCalls = 0;
+
+  @override
+  int commitTransactionStatus(int txnId) {
+    commitCalls++;
+    return commitStatuses.removeAt(0);
+  }
+
+  @override
+  int rollbackTransactionStatus(int txnId) {
+    rollbackCalls++;
+    return rollbackStatuses.removeAt(0);
+  }
 }
 
 class _CountingBackend extends FakeOdbcConnectionBackend {

@@ -5,8 +5,8 @@
 //!
 //! 1. Today: cursor → `RowBuffer` (row-major, every cell as
 //!    `Vec<u8>`) → `row_buffer_to_columnar` → `ColumnarEncoder::encode`.
-//!    The transposition `.clone()`s every Binary/Varchar cell, so the
-//!    full result set is materialised in memory twice.
+//!    The transposition moves Binary/Varchar payloads into typed columns,
+//!    but still materialises a row-major intermediate and walks it again.
 //! 2. Here: cursor → `ColumnarAnyBuffer` → `RowBufferV2` directly. The
 //!    column views from `odbc-api` are copied into the typed
 //!    `ColumnData` variants once; no row-major intermediate exists.

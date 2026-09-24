@@ -60,12 +60,8 @@ pub extern "C" fn odbc_prepare(conn_id: c_uint, sql: *const c_char, timeout_ms: 
     })
 }
 
-/// Execute a prepared statement.
-/// stmt_id: from odbc_prepare
-/// params_buffer: serialized ParamValue array, or NULL for no params
-/// params_len: length of params_buffer
-/// out_buffer, buffer_len, out_written: same contract as odbc_exec_query
-/// Returns: 0 on success, -1 on error, -2 if buffer too small
+/// Execute a prepared statement. Encoding stays row-major.
+/// [`odbc_execute_options`] selects the wire encoding.
 #[no_mangle]
 pub extern "C" fn odbc_execute(
     stmt_id: c_uint,
@@ -73,6 +69,65 @@ pub extern "C" fn odbc_execute(
     params_len: c_uint,
     timeout_override_ms: c_uint,
     fetch_size: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    execute_prepared_ffi(
+        stmt_id,
+        params_buffer,
+        params_len,
+        timeout_override_ms,
+        fetch_size,
+        ResultEncoding::RowMajor,
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+/// Same contract as [`odbc_execute`] plus `result_encoding`.
+/// Invalid codes return -1.
+#[no_mangle]
+pub extern "C" fn odbc_execute_options(
+    stmt_id: c_uint,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    timeout_override_ms: c_uint,
+    fetch_size: c_uint,
+    result_encoding: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    let Some(encoding) = ResultEncoding::from_wire(result_encoding) else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
+    execute_prepared_ffi(
+        stmt_id,
+        params_buffer,
+        params_len,
+        timeout_override_ms,
+        fetch_size,
+        encoding,
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Private adapter mirrors the fixed FFI argument list"
+)]
+fn execute_prepared_ffi(
+    stmt_id: c_uint,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    timeout_override_ms: c_uint,
+    fetch_size: c_uint,
+    encoding: ResultEncoding,
     out_buffer: *mut u8,
     buffer_len: c_uint,
     out_written: *mut c_uint,
@@ -164,22 +219,28 @@ pub extern "C" fn odbc_execute(
                             return -1;
                         }
                     };
-                    execute_query_with_param_buffer_and_timeout(
-                        conn_guard.connection(),
-                        &sql_str,
-                        params_slice,
-                        timeout_sec,
-                        fetch_size_opt,
-                    )
+                    conn_guard.checked_connection().and_then(|conn| {
+                        execute_query_with_param_buffer_timeout_encoding(
+                            conn,
+                            &sql_str,
+                            params_slice,
+                            timeout_sec,
+                            fetch_size_opt,
+                            encoding,
+                        )
+                    })
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                    Ok(conn_guard) => execute_query_with_param_buffer_and_timeout(
-                        conn_guard.get_connection(),
-                        &sql_str,
-                        params_slice,
-                        timeout_sec,
-                        fetch_size_opt,
-                    ),
+                    Ok(conn_guard) => conn_guard.checked_connection().and_then(|conn| {
+                        execute_query_with_param_buffer_timeout_encoding(
+                            conn,
+                            &sql_str,
+                            params_slice,
+                            timeout_sec,
+                            fetch_size_opt,
+                            encoding,
+                        )
+                    }),
                     Err(_) => Err(OdbcError::InternalError(
                         "Failed to lock pooled connection".to_string(),
                     )),
@@ -196,7 +257,6 @@ pub extern "C" fn odbc_execute(
                 Ok(data) => {
                     let elapsed = start.elapsed();
                     let status = write_connection_output_buffer(
-                        &mut state,
                         conn_id,
                         &data,
                         out_buffer,

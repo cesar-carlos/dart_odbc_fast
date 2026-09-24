@@ -108,6 +108,7 @@ mixin _AsyncStreaming
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamMultiStartBatchedRequest(
@@ -117,6 +118,7 @@ mixin _AsyncStreaming
         fetchSize: fetchSize,
         chunkSize: chunkSize,
         resultEncodingWire: resultEncodingWire,
+        serializedParams: serializedParams,
       ),
     );
     return r.value;
@@ -130,6 +132,7 @@ mixin _AsyncStreaming
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async {
     final r = await _sendRequest<IntResponse>(
       StreamMultiStartAsyncRequest(
@@ -139,6 +142,7 @@ mixin _AsyncStreaming
         fetchSize: fetchSize,
         chunkSize: chunkSize,
         resultEncodingWire: resultEncodingWire,
+        serializedParams: serializedParams,
       ),
     );
     return r.value;

@@ -5,12 +5,14 @@ use super::super::prelude::*;
 use crate::ffi::state;
 
 pub(super) fn pool_health_check(pool_id: c_uint) -> c_int {
-    let Some(pool) = state::get_pool(pool_id) else {
+    let Some(pool) = state::with_pool_maps_mut(|maps| maps.reserve_checkout(pool_id)).flatten()
+    else {
         if let Some(mut gs) = try_lock_global_state() {
             set_error(&mut gs, format!("Invalid pool ID: {}", pool_id));
         }
         return -1;
     };
+    let _checkout = super::checkout_checkin::PendingCheckoutGuard(pool_id);
 
     if pool.health_check() {
         1
@@ -119,8 +121,19 @@ pub(super) fn pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c_int {
                 if maps.pool_busy_count(pool_id) > 0 {
                     return Err("busy");
                 }
-                if maps.has_begin_in_progress(pool_id, &begins) {
+                if maps.has_pending_checkout(pool_id) || maps.has_pending_release(pool_id) {
+                    return Err("busy");
+                }
+                if maps.has_begin_in_progress(pool_id, &begins)
+                    || maps
+                        .pooled_connection_ids_for_pool(pool_id)
+                        .iter()
+                        .any(|&cid| txn_maps.operation_in_progress(cid))
+                {
                     return Err("begin");
+                }
+                if !maps.reserve_resize(pool_id) {
+                    return Err("busy");
                 }
                 Ok(pool)
             })
@@ -165,8 +178,9 @@ pub(super) fn pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c_int {
             }
         }
     };
+    let _resize = super::checkout_checkin::ResizeGuard(pool_id);
 
-    let pool = match pool.recreate_with_max_size(new_max_size) {
+    let replacement = match pool.recreate_with_max_size(new_max_size) {
         Ok(pool) => pool,
         Err(e) => {
             if let Some(mut gs) = try_lock_global_state() {
@@ -180,24 +194,38 @@ pub(super) fn pool_set_size(pool_id: c_uint, new_max_size: c_uint) -> c_int {
     let Some(result) = state::with_transaction_maps_mut(|txn_maps| {
         let begins = txn_maps.begins_snapshot();
         state::with_pool_maps_mut(|maps| {
-            if maps.has_checked_out(pool_id) || maps.pool_busy_count(pool_id) > 0 {
+            if maps.has_checked_out(pool_id)
+                || maps.pool_busy_count(pool_id) > 0
+                || maps.has_pending_checkout(pool_id)
+                || maps.has_pending_release(pool_id)
+            {
                 return Err("busy");
             }
-            if maps.has_begin_in_progress(pool_id, &begins) {
+            if maps.has_begin_in_progress(pool_id, &begins)
+                || maps
+                    .pooled_connection_ids_for_pool(pool_id)
+                    .iter()
+                    .any(|&cid| txn_maps.operation_in_progress(cid))
+            {
                 return Err("begin");
             }
-            if !maps.contains_pool(pool_id) {
+            if !maps
+                .get_pool(pool_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &pool))
+            {
                 return Err("closed");
             }
-            maps.insert_pool(pool_id, Arc::new(pool));
-            Ok(())
+            Ok(maps.insert_pool(pool_id, Arc::new(replacement)))
         })
         .unwrap_or(Err("gone"))
     }) else {
         return -1;
     };
     match result {
-        Ok(()) => 0,
+        Ok(previous) => {
+            drop(previous);
+            0
+        }
         Err("busy") => {
             if let Some(mut gs) = try_lock_global_state() {
                 set_error(

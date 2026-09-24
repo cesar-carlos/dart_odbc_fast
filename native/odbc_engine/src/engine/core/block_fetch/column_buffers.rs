@@ -21,6 +21,15 @@ pub(super) fn append_batch_to_row_buffer(
     column_types: &[OdbcType],
     row_buffer: &mut RowBuffer,
 ) -> Result<()> {
+    append_batch_to_row_buffer_with_reuse(batch, column_types, row_buffer, &mut Vec::new())
+}
+
+pub(super) fn append_batch_to_row_buffer_with_reuse(
+    batch: &odbc_api::buffers::ColumnarBuffer<odbc_api::buffers::AnyBuffer>,
+    column_types: &[OdbcType],
+    row_buffer: &mut RowBuffer,
+    recycled_rows: &mut Vec<Vec<Option<CellBytes>>>,
+) -> Result<()> {
     let num_rows = batch.num_rows();
     if num_rows == 0 {
         return Ok(());
@@ -29,7 +38,10 @@ pub(super) fn append_batch_to_row_buffer(
     let starting_row = row_buffer.rows.len();
     row_buffer.rows.reserve(num_rows);
     for _ in 0..num_rows {
-        let mut row = Vec::with_capacity(num_cols);
+        let mut row = recycled_rows
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(num_cols));
+        row.clear();
         row.resize_with(num_cols, || None);
         row_buffer.rows.push(row);
     }

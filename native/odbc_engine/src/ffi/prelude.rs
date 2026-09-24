@@ -12,6 +12,10 @@
     reason = "FFI prelude glob: per-submodule explicit imports are not mechanical across fourteen consumers and feature gates."
 )]
 
+pub use crate::engine::query::{
+    execute_multi_result_with_fetch, execute_multi_result_with_params_and_fetch,
+    execute_query_with_param_buffer_timeout_encoding,
+};
 #[cfg(not(feature = "sqlserver-bcp"))]
 pub use crate::engine::ArrayBinding;
 #[cfg(feature = "sqlserver-bcp")]

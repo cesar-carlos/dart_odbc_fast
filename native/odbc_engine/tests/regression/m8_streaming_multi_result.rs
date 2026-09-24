@@ -64,6 +64,91 @@ fn parse_frames(buf: &[u8]) -> Vec<(u8, Vec<u8>)> {
     out
 }
 
+#[cfg(feature = "statement-handle-reuse")]
+#[test]
+fn repeated_multi_stream_reuses_prepared_statement() {
+    let Some(dsn_str) = dsn() else {
+        eprintln!("Skipping prepared MULT E2E: DSN/gate unavailable");
+        return;
+    };
+    let env = OdbcEnvironment::new();
+    env.init().expect("init env");
+    let handles = env.get_handles();
+    let conn = OdbcConnection::connect(handles.clone(), &dsn_str).expect("connect");
+    let conn_id = conn.get_connection_id();
+    let sql = "SELECT 1 AS a; SELECT 2 AS b";
+
+    let first = drain_items(
+        start_multi_batched_stream(
+            handles.clone(),
+            conn_id,
+            sql.to_string(),
+            4096,
+            1,
+            ResultEncoding::RowMajor,
+        )
+        .expect("first stream"),
+    );
+    let second = drain_items(
+        start_multi_batched_stream(
+            handles.clone(),
+            conn_id,
+            sql.to_string(),
+            4096,
+            1,
+            ResultEncoding::RowMajor,
+        )
+        .expect("second stream"),
+    );
+    assert_eq!(first, second);
+    let conn_arc = handles
+        .lock()
+        .expect("handles")
+        .get_connection(conn_id)
+        .expect("connection");
+    let cached = conn_arc.lock().expect("connection lock");
+    assert!(cached.cache_misses() >= 1);
+    assert!(
+        cached.cache_hits() >= 1,
+        "second MULT stream should hit prepared cache"
+    );
+    drop(cached);
+
+    let long_sql = "SELECT 1 AS a; ".repeat(16);
+    let completed = drain_items(
+        start_multi_batched_stream(
+            handles.clone(),
+            conn_id,
+            long_sql.clone(),
+            4096,
+            1,
+            ResultEncoding::RowMajor,
+        )
+        .expect("prime cancellable statement"),
+    );
+    assert_eq!(completed.len(), 16);
+    let mut abandoned = start_multi_batched_stream(
+        handles.clone(),
+        conn_id,
+        long_sql,
+        4096,
+        1,
+        ResultEncoding::RowMajor,
+    )
+    .expect("start cache-hit stream");
+    assert!(abandoned.fetch_next_chunk().expect("first chunk").is_some());
+    abandoned.request_cancel();
+    drop(abandoned);
+    let cached = conn_arc.lock().expect("connection lock after abandon");
+    assert_eq!(
+        cached.tracked_sql_entries(),
+        1,
+        "abandoned MULT entry must be evicted"
+    );
+    drop(cached);
+    conn.disconnect().expect("disconnect");
+}
+
 #[test]
 fn streaming_shape_1_three_cursors() {
     let Some(dsn_str) = dsn() else {

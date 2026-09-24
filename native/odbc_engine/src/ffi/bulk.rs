@@ -94,12 +94,14 @@ pub extern "C" fn odbc_bulk_insert_array(
                         return -1;
                     }
                 };
-                bulk_insert_payload(conn_guard.connection(), &payload, conn_str)
+                conn_guard
+                    .checked_connection()
+                    .and_then(|conn| bulk_insert_payload(conn, &payload, conn_str))
             }
             RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
-                Ok(conn_guard) => {
-                    bulk_insert_payload(conn_guard.get_connection(), &payload, conn_str)
-                }
+                Ok(conn_guard) => conn_guard
+                    .checked_connection()
+                    .and_then(|conn| bulk_insert_payload(conn, &payload, conn_str)),
                 Err(_) => Err(OdbcError::InternalError(
                     "Failed to lock pooled connection".to_string(),
                 )),

@@ -25,6 +25,7 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
     String sql,
     Uint8List? params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) {
     if (!_bindings.supportsAsyncExecuteParamsApi) {
       return null;
@@ -34,9 +35,35 @@ mixin _OdbcNativeQueryAsync on _OdbcNativeState, _OdbcNativeHelpers {
       supported: _bindings.supportsAsyncExecuteParamsOptionsApi,
       symbol: 'odbc_execute_async_params_options',
     );
+    final useFetch =
+        fetchSize > 0 && _bindings.supportsAsyncExecuteParamsFetchApi;
     return _withSql(
       sql,
       (sqlPtr) {
+        if (useFetch) {
+          final wire = resultEncoding.wireCode;
+          if (params == null || params.isEmpty) {
+            return _bindings.odbc_execute_async_params_fetch(
+              connectionId,
+              sqlPtr,
+              ffi.nullptr.cast<ffi.Uint8>(),
+              0,
+              wire,
+              fetchSize,
+            );
+          }
+          return _withParamsBuffer(
+            params,
+            (paramsPtr) => _bindings.odbc_execute_async_params_fetch(
+              connectionId,
+              sqlPtr,
+              paramsPtr,
+              params.length,
+              wire,
+              fetchSize,
+            ),
+          );
+        }
         if (_bindings.supportsAsyncExecuteParamsOptionsApi) {
           final wire = resultEncoding.wireCode;
           if (params == null || params.isEmpty) {

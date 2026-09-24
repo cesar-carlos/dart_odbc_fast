@@ -327,8 +327,9 @@ class MockOdbcRepository implements IOdbcRepository {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) async {
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) async {
     executePreparedParamValuesCalled = true;
     return const Success(
       QueryResult(
@@ -511,6 +512,37 @@ class MockOdbcRepository implements IOdbcRepository {
     executeQueryMultiFullCalled = true;
     return executeQueryMultiFull(connectionId, sql);
   }
+
+  @override
+  @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMulti(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      streamQueryMultiBatches(
+        connectionId,
+        sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
 
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(

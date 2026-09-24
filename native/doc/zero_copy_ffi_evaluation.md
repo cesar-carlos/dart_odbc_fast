@@ -2,17 +2,18 @@
 
 ## Status
 
-**Shipped (v4.1+).** Successful FFI payloads at or above 32 KiB can return a
-zero-copy `Uint8List` view backed by a native buffer, with release via
-`odbc_release_buffer` and a Dart `NativeFinalizer`. Smaller payloads still use
-`Uint8List.fromList` (copy) because the copy cost is small relative to
-finalizer overhead.
+**Shipped (v4.1+; compatibility expanded in v4.5.1).** Successful FFI payloads
+at or above 32 KiB can return a zero-copy `Uint8List` view backed by a
+Dart-allocated native buffer. A Dart `NativeFinalizer(malloc.nativeFree)`
+releases that buffer. Smaller payloads still use `Uint8List.fromList` (copy)
+because the copy cost is small relative to finalizer overhead.
 
 Implementation lives in:
 
 - Dart: `lib/infrastructure/native/bindings/ffi_buffer_helper.dart`
   (`zeroCopyResultThresholdBytes`, `isZeroCopyResultBufferAvailable`)
-- Rust: `odbc_release_buffer` export
+- Rust: `odbc_release_buffer` remains an ABI 1.1 export for C consumers, but
+  Dart does not require it for this path
 
 ## Current behavior
 
@@ -22,8 +23,9 @@ Implementation lives in:
    (`preferTransient`), so large payloads are not forced through the reusable
    scratch pool (scratch reuse would require an extra scratch→owned copy before
    attaching a finalizer).
-2. On success with `n >= 32 KiB` and `odbc_release_buffer` available: return a
-   view over the owned native buffer and attach `NativeFinalizer(malloc.nativeFree)`.
+2. On success with `n >= 32 KiB`: return a view over the Dart-owned transient
+   buffer and attach `NativeFinalizer(malloc.nativeFree)`. The finalizer owner
+   is retained alongside the view and inherited by internal slices.
 3. Otherwise: `Uint8List.fromList` copy, then free the native buffer immediately.
 
 ## Historical notes (pre-zero-copy)
@@ -42,15 +44,14 @@ shipped design.
 
 ## Risks (still apply)
 
-- **Use-after-free** if a consumer retains a zero-copy view incorrectly across
-  native free (mitigated by keeping the `Finalizable` token alive with the
-  list).
+- **Lifetime coupling**: the returned `Uint8List` retains its finalizer owner;
+  callers may retain the view normally, but internal code must preserve backing
+  provenance when creating native-backed slices.
 - **Allocator pairing**: Dart `package:ffi` `malloc` / `nativeFree` must match
   the allocator used for the owned buffer on the success path.
 
-## Follow-ups
+## Scope
 
-- Prefer transient allocation more aggressively for large results even when the
-  caller did not pass large params (see performance plan hot-path work).
-- Document consumer guidance: decode promptly; do not stash zero-copy views
-  across long async gaps without retaining the owning object.
+This ownership model applies only to buffers allocated by Dart with
+`package:ffi` `malloc`. It does not replace the release contract for buffers
+returned by native APIs such as columnar decompression.

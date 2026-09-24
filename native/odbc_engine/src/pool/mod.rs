@@ -105,7 +105,20 @@ impl ConnectionPool {
     }
 
     pub fn health_check(&self) -> bool {
-        self.pool.get().is_ok()
+        let Ok(pooled) = self.get() else { return false };
+        if pooled.cached().was_validated_on_checkout() {
+            return true;
+        }
+        let ok = pooled
+            .get_connection()
+            .execute(&self.config.health_check_query, (), None)
+            .is_ok();
+        if ok {
+            pooled.cached().mark_validated_on_checkout();
+        } else {
+            pooled.cached().mark_unusable();
+        }
+        ok
     }
 
     pub fn max_size(&self) -> u32 {
@@ -180,6 +193,10 @@ impl PooledConnectionWrapper {
         self.pooled.connection()
     }
 
+    pub(crate) fn checked_connection(&self) -> Result<&Connection<'static>> {
+        self.pooled.checked_connection()
+    }
+
     pub fn get_connection_mut(&mut self) -> &mut Connection<'static> {
         self.pooled.connection_mut()
     }
@@ -209,6 +226,33 @@ mod tests {
         let s = "Driver={SQL Server};Server=localhost;Port=1433;Database=myDb;UID=sa;PWD=secret;";
         let id = ConnectionPool::extract_pool_components(s);
         assert_eq!(id, "localhost:1433:sa");
+    }
+
+    #[test]
+    #[cfg(feature = "test-helpers")]
+    fn should_validate_explicit_health_check_even_when_checkout_validation_is_disabled() {
+        crate::test_helpers::load_dotenv();
+        let Ok(dsn) = std::env::var("ODBC_TEST_DSN") else {
+            eprintln!("Skipping: ODBC_TEST_DSN not set");
+            return;
+        };
+        if dsn.is_empty() {
+            eprintln!("Skipping: ODBC_TEST_DSN empty");
+            return;
+        }
+        let configured = format!(
+            "{dsn};Pool_Test_On_Checkout=false;Pool_Health_Check_Query=SELECT * FROM __odbc_fast_missing_health_table__"
+        );
+        let pool = ConnectionPool::new(&configured, 1).expect("pool should connect");
+        assert!(!pool.test_on_check_out());
+        assert!(
+            pool.get().is_ok(),
+            "checkout should not run the configured health query"
+        );
+        assert!(
+            !pool.health_check(),
+            "explicit health check must execute the query"
+        );
     }
 
     #[test]

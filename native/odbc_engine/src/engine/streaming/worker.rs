@@ -1,4 +1,5 @@
 use super::batched_fetch::drain_cursor_in_batches;
+use super::chunk::BatchBufferPool;
 use super::columns::describe_streaming_columns;
 use super::state::{
     AsyncStreamingState, BatchedMessage, BatchedStreamingState, StreamState, StreamingState,
@@ -17,11 +18,20 @@ use std::sync::mpsc;
 use std::sync::Arc;
 pub struct StreamingExecutor {
     chunk_size: usize,
+    buffer_pool: Option<Arc<BatchBufferPool>>,
 }
 
 impl StreamingExecutor {
     pub fn new(chunk_size: usize) -> Self {
-        Self { chunk_size }
+        Self {
+            chunk_size,
+            buffer_pool: None,
+        }
+    }
+
+    fn with_buffer_pool(mut self, pool: Arc<BatchBufferPool>) -> Self {
+        self.buffer_pool = Some(pool);
+        self
     }
 
     #[cfg(test)]
@@ -191,9 +201,39 @@ impl StreamingExecutor {
         sql: &str,
         params: &[crate::protocol::ParamValue],
         fetch_size: usize,
+        on_batch: F,
+        cancel_requested: Option<Arc<AtomicBool>>,
+        result_encoding: ResultEncoding,
+    ) -> Result<()>
+    where
+        F: FnMut(Vec<u8>) -> Result<()>,
+    {
+        self.execute_streaming_batched_with_params_inner(
+            conn,
+            sql,
+            params,
+            fetch_size,
+            on_batch,
+            cancel_requested,
+            result_encoding,
+            false,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Carries the already-known NULL inference result"
+    )]
+    fn execute_streaming_batched_with_params_inner<F>(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[crate::protocol::ParamValue],
+        fetch_size: usize,
         mut on_batch: F,
         cancel_requested: Option<Arc<AtomicBool>>,
         result_encoding: ResultEncoding,
+        inference_unavailable: bool,
     ) -> Result<()>
     where
         F: FnMut(Vec<u8>) -> Result<()>,
@@ -209,7 +249,12 @@ impl StreamingExecutor {
         let cursor = if params.is_empty() {
             stmt.execute(()).map_err(OdbcError::from)?
         } else if has_null_param(params) {
-            if let Some(parameters) = param_values_to_input_params_with_inference(params)? {
+            let inferred = if inference_unavailable {
+                None
+            } else {
+                param_values_to_input_params_with_inference(params)?
+            };
+            if let Some(parameters) = inferred {
                 stmt.execute(parameters.as_slice())
                     .map_err(OdbcError::from)?
             } else {
@@ -245,6 +290,7 @@ impl StreamingExecutor {
                     .as_ref()
                     .is_some_and(|c| c.load(Ordering::Relaxed))
             },
+            self.buffer_pool.as_deref(),
         )?;
 
         Ok(())
@@ -271,11 +317,8 @@ impl StreamingExecutor {
     {
         #[cfg(feature = "statement-handle-reuse")]
         {
-            if cached.can_reuse_prepared_for_params(params) {
-                use crate::protocol::{
-                    has_null_param, param_values_to_input_params,
-                    param_values_to_input_params_with_inference,
-                };
+            let prepared_params = crate::handles::prepared_params_for_cache(params)?;
+            if let Some(parameters) = prepared_params {
                 let batch_size = fetch_size.max(1);
                 let cancel_check = || {
                     cancel_requested
@@ -285,20 +328,7 @@ impl StreamingExecutor {
                 return cached.with_prepared_mut(sql, |stmt| {
                     let cursor = if params.is_empty() {
                         stmt.execute(()).map_err(OdbcError::from)?
-                    } else if has_null_param(params) {
-                        let parameters =
-                            param_values_to_input_params_with_inference(params)?.ok_or_else(
-                                || {
-                                    OdbcError::InternalError(
-                                        "NULL params reached stream prepared reuse without inferable type"
-                                            .to_string(),
-                                    )
-                                },
-                            )?;
-                        stmt.execute(parameters.as_slice())
-                            .map_err(OdbcError::from)?
                     } else {
-                        let parameters = param_values_to_input_params(params)?;
                         stmt.execute(parameters.as_slice())
                             .map_err(OdbcError::from)?
                     };
@@ -312,19 +342,21 @@ impl StreamingExecutor {
                         &mut on_batch,
                         &mut || None,
                         cancel_check,
+                        self.buffer_pool.as_deref(),
                     )?;
                     Ok(())
                 });
             }
         }
-        self.execute_streaming_batched_with_params(
-            cached.connection(),
+        self.execute_streaming_batched_with_params_inner(
+            cached.checked_connection()?,
             sql,
             params,
             fetch_size,
             on_batch,
             cancel_requested,
             result_encoding,
+            cfg!(feature = "statement-handle-reuse"),
         )
     }
 
@@ -372,6 +404,7 @@ impl StreamingExecutor {
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
         let cancel_requested = Arc::new(AtomicBool::new(false));
+        let buffer_pool = Arc::new(BatchBufferPool::default());
 
         let conn_arc = {
             let Ok(guard) = handles.lock() else {
@@ -385,6 +418,7 @@ impl StreamingExecutor {
         };
 
         let cancel = Arc::clone(&cancel_requested);
+        let worker_pool = Arc::clone(&buffer_pool);
         let join = std::thread::spawn(move || {
             let Ok(mut conn_guard) = conn_arc.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
@@ -392,7 +426,7 @@ impl StreamingExecutor {
                 ));
                 return;
             };
-            let executor = StreamingExecutor::new(chunk_size);
+            let executor = StreamingExecutor::new(chunk_size).with_buffer_pool(worker_pool);
             match executor.execute_streaming_batched_with_cached_params(
                 &mut conn_guard,
                 &sql,
@@ -419,12 +453,10 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(BatchedStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        ))
+        Ok(
+            BatchedStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        )
     }
 
     /// Starts async cursor-based streaming with explicit poll support.
@@ -470,6 +502,7 @@ impl StreamingExecutor {
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
         let cancel_requested = Arc::new(AtomicBool::new(false));
+        let buffer_pool = Arc::new(BatchBufferPool::default());
 
         let conn_arc = {
             let Ok(guard) = handles.lock() else {
@@ -483,6 +516,7 @@ impl StreamingExecutor {
         };
 
         let cancel = Arc::clone(&cancel_requested);
+        let worker_pool = Arc::clone(&buffer_pool);
         let join = std::thread::spawn(move || {
             let Ok(mut conn_guard) = conn_arc.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
@@ -490,7 +524,7 @@ impl StreamingExecutor {
                 ));
                 return;
             };
-            let executor = StreamingExecutor::new(chunk_size);
+            let executor = StreamingExecutor::new(chunk_size).with_buffer_pool(worker_pool);
             match executor.execute_streaming_batched_with_cached_params(
                 &mut conn_guard,
                 &sql,
@@ -517,12 +551,10 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(AsyncStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        ))
+        Ok(
+            AsyncStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        )
     }
 
     /// Pooled-connection variant of [`Self::start_batched_stream`]. The
@@ -568,9 +600,11 @@ impl StreamingExecutor {
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
         let cancel_requested = Arc::new(AtomicBool::new(false));
+        let buffer_pool = Arc::new(BatchBufferPool::default());
 
         let join = std::thread::spawn({
             let cancel = Arc::clone(&cancel_requested);
+            let worker_pool = Arc::clone(&buffer_pool);
             move || {
                 let _completion = WorkerCompletion::new(on_complete);
                 let Ok(mut conn_guard) = pooled.lock() else {
@@ -579,7 +613,7 @@ impl StreamingExecutor {
                     ));
                     return;
                 };
-                let executor = StreamingExecutor::new(chunk_size);
+                let executor = StreamingExecutor::new(chunk_size).with_buffer_pool(worker_pool);
                 match executor.execute_streaming_batched_with_cached_params(
                     conn_guard.cached_mut(),
                     &sql,
@@ -607,12 +641,10 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(BatchedStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        ))
+        Ok(
+            BatchedStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        )
     }
 
     /// Pooled-connection variant of [`Self::start_async_stream`].
@@ -655,9 +687,11 @@ impl StreamingExecutor {
         let chunk_size = chunk_size.max(1);
         let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(1);
         let cancel_requested = Arc::new(AtomicBool::new(false));
+        let buffer_pool = Arc::new(BatchBufferPool::default());
 
         let join = std::thread::spawn({
             let cancel = Arc::clone(&cancel_requested);
+            let worker_pool = Arc::clone(&buffer_pool);
             move || {
                 let _completion = WorkerCompletion::new(on_complete);
                 let Ok(mut conn_guard) = pooled.lock() else {
@@ -666,7 +700,7 @@ impl StreamingExecutor {
                     ));
                     return;
                 };
-                let executor = StreamingExecutor::new(chunk_size);
+                let executor = StreamingExecutor::new(chunk_size).with_buffer_pool(worker_pool);
                 match executor.execute_streaming_batched_with_cached_params(
                     conn_guard.cached_mut(),
                     &sql,
@@ -694,11 +728,9 @@ impl StreamingExecutor {
             }
         });
 
-        Ok(AsyncStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        ))
+        Ok(
+            AsyncStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        )
     }
 }

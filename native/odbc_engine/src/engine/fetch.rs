@@ -120,6 +120,7 @@ pub(crate) fn fetch_batch_into_row_buffer<C>(
     column_types: &[OdbcType],
     batch_size: usize,
     row_buffer: &mut RowBuffer,
+    recycled_rows: &mut Vec<Vec<Option<crate::protocol::CellBytes>>>,
 ) -> Result<usize>
 where
     C: Cursor,
@@ -130,7 +131,10 @@ where
         let Some(mut row) = cursor.next_row().map_err(OdbcError::from)? else {
             break;
         };
-        let mut row_data = Vec::with_capacity(column_types.len());
+        let mut row_data = recycled_rows
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(column_types.len()));
+        row_data.clear();
         for (col_idx, &odbc_type) in column_types.iter().enumerate() {
             let col_number: u16 = (col_idx + 1)
                 .try_into()

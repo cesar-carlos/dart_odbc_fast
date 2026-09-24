@@ -206,7 +206,7 @@ impl IsolationLevel {
 
 /// Vendor-aware isolation-level setter.
 pub(crate) fn apply_isolation(
-    conn: &mut odbc_api::Connection<'static>,
+    conn: &odbc_api::Connection<'static>,
     engine_id: &str,
     level: IsolationLevel,
 ) -> Result<()> {
@@ -244,7 +244,7 @@ pub(crate) fn apply_isolation(
 /// clean and avoids spurious failures on engines that reject the
 /// keyword.
 pub(crate) fn apply_access_mode(
-    conn: &mut odbc_api::Connection<'static>,
+    conn: &odbc_api::Connection<'static>,
     engine_id: &str,
     access_mode: TransactionAccessMode,
 ) -> Result<()> {
@@ -278,7 +278,7 @@ pub(crate) fn apply_access_mode(
 /// Returns `true` when a SET/PRAGMA was executed (caller may need to
 /// mark session-scoped overrides dirty for later reset).
 pub(crate) fn apply_lock_timeout(
-    conn: &mut odbc_api::Connection<'static>,
+    conn: &odbc_api::Connection<'static>,
     engine_id: &str,
     lock_timeout: LockTimeout,
 ) -> Result<bool> {

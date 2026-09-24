@@ -32,12 +32,14 @@ impl RunnableConnection {
                 let conn = conn_arc.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock connection".to_string())
                 })?;
+                conn.ensure_usable()?;
                 f(&conn)
             }
             Self::Pooled { pooled, .. } => {
                 let conn = pooled.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock pooled connection".to_string())
                 })?;
+                conn.cached().ensure_usable()?;
                 f(conn.cached())
             }
         }
@@ -246,14 +248,8 @@ where
 
     match result {
         Ok(data) => {
-            let status = write_connection_output_buffer(
-                &mut state,
-                conn_id,
-                &data,
-                out_buffer,
-                buffer_len,
-                out_written,
-            );
+            let status =
+                write_connection_output_buffer(conn_id, &data, out_buffer, buffer_len, out_written);
             if status == FFI_OK {
                 metrics.record_query(start.elapsed());
             } else {
@@ -275,6 +271,7 @@ pub(crate) fn run_async_query(
     sql: &str,
     params: Option<&[u8]>,
     result_encoding: u32,
+    fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
     let Some(mut state) = try_lock_global_state() else {
         return Err(OdbcError::InternalError(
@@ -296,9 +293,15 @@ pub(crate) fn run_async_query(
         RunnableConnection::Regular(conn_arc) => match conn_arc.lock() {
             Ok(mut conn_guard) => {
                 if params_slice.is_empty() {
-                    conn_guard.execute_with_encoding(sql, encoding)
+                    conn_guard.execute_with_encoding(sql, encoding, fetch_size)
                 } else {
-                    try_cached_params_with_encoding(&mut conn_guard, sql, params_slice, encoding)
+                    try_cached_params_with_encoding(
+                        &mut conn_guard,
+                        sql,
+                        params_slice,
+                        encoding,
+                        fetch_size,
+                    )
                 }
             }
             Err(_) => Err(OdbcError::InternalError(
@@ -310,13 +313,16 @@ pub(crate) fn run_async_query(
                 OdbcError::InternalError("Failed to lock pooled connection".to_string())
             })?;
             if params_slice.is_empty() {
-                conn_guard.cached_mut().execute_with_encoding(sql, encoding)
+                conn_guard
+                    .cached_mut()
+                    .execute_with_encoding(sql, encoding, fetch_size)
             } else {
                 try_cached_params_with_encoding(
                     conn_guard.cached_mut(),
                     sql,
                     params_slice,
                     encoding,
+                    fetch_size,
                 )
             }
         }

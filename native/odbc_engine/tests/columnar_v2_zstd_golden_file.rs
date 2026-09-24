@@ -1,7 +1,6 @@
-//! Keeps `test/fixtures/columnar_v2_int32_zstd.golden` in sync with
-//! [ColumnarEncoder] zstd output (one integer column, 30 rows) for Dart
-//! integration tests. Regenerate: `UPDATE_GOLDEN=1 cargo test -p odbc_engine
-//! columnar_v2_zstd_golden_matches_rust_encoder -- --ignored`.
+//! Checks that the committed Dart fixture and the current Rust encoder carry
+//! the same wire metadata and decompressed cells. zstd frames need not be
+//! byte-identical when the compression context is reused.
 
 use odbc_engine::protocol::{
     columnar_encoder::COMPRESSION_THRESHOLD_BYTES, ColumnData, ColumnMetadata, ColumnarEncoder,
@@ -38,8 +37,28 @@ fn columnar_v2_zstd_golden_encodes() {
     assert_eq!(magic, 0x4F44_4243);
 }
 
-/// Fails if the committed-on-disk bytes drift from the encoder. Regenerate:
-/// `UPDATE_GOLDEN=1 cargo test -p odbc_engine columnar_v2_zstd_golden_matches_rust_encoder -- --exact`
+fn decoded_column_payload(encoded: &[u8]) -> Vec<u8> {
+    assert_eq!(&encoded[..4], &0x4F44_4243u32.to_le_bytes());
+    assert_eq!(encoded[14], 1, "columnar compression enabled");
+    let payload_size = u32::from_le_bytes(encoded[15..19].try_into().expect("payload size"));
+    assert_eq!(payload_size as usize, encoded.len() - 19);
+    let name_len = u16::from_le_bytes(encoded[21..23].try_into().expect("name length")) as usize;
+    let flag_pos = 23 + name_len;
+    assert_eq!(encoded[flag_pos], 1, "column compressed");
+    assert_eq!(encoded[flag_pos + 1], 1, "zstd algorithm");
+    let len_pos = flag_pos + 2;
+    let compressed_len = u32::from_le_bytes(
+        encoded[len_pos..len_pos + 4]
+            .try_into()
+            .expect("column size"),
+    ) as usize;
+    let data_start = len_pos + 4;
+    assert_eq!(data_start + compressed_len, encoded.len());
+    zstd::decode_all(&encoded[data_start..]).expect("valid zstd frame")
+}
+
+/// A different valid zstd frame is compatible: compare protocol metadata and
+/// the exact decompressed cells rather than the compressor's byte choices.
 #[test]
 fn columnar_v2_zstd_golden_matches_rust_encoder() {
     let actual = build_v2_int_zstd();
@@ -59,8 +78,10 @@ fn columnar_v2_zstd_golden_matches_rust_encoder() {
             fixture.display()
         )
     });
+    assert_eq!(&on_disk[..15], &actual[..15], "wire header changed");
+    assert_eq!(&on_disk[19..25], &actual[19..25], "column metadata changed");
     assert_eq!(
-        on_disk, actual,
-        "golden out of date; run with UPDATE_GOLDEN=1 from native/odbc_engine"
+        decoded_column_payload(&on_disk),
+        decoded_column_payload(&actual)
     );
 }

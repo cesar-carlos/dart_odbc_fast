@@ -13,6 +13,7 @@ odbc_exec_query
 odbc_execute_async
 odbc_execute_async_params
 odbc_execute_async_params_options
+odbc_execute_async_params_fetch
 odbc_async_poll
 odbc_async_get_result
 odbc_async_cancel
@@ -30,6 +31,8 @@ odbc_stream_multi_start_batched
 odbc_stream_multi_start_async
 odbc_stream_multi_start_batched_options
 odbc_stream_multi_start_async_options
+odbc_stream_multi_start_batched_params_options
+odbc_stream_multi_start_async_params_options
 odbc_stream_poll_async
 odbc_stream_fetch
 odbc_stream_cancel
@@ -57,8 +60,11 @@ odbc_get_cache_metrics
 odbc_clear_statement_cache
 odbc_exec_query_params
 odbc_exec_query_params_options
+odbc_exec_query_params_fetch
 odbc_exec_query_multi
+odbc_exec_query_multi_fetch
 odbc_exec_query_multi_params
+odbc_exec_query_multi_params_fetch
 odbc_catalog_tables
 odbc_catalog_columns
 odbc_catalog_type_info
@@ -67,6 +73,7 @@ odbc_catalog_foreign_keys
 odbc_catalog_indexes
 odbc_prepare
 odbc_execute
+odbc_execute_options
 odbc_cancel
 odbc_close_statement
 odbc_clear_all_statements

@@ -88,8 +88,9 @@ pub(crate) use streams::{
 #[cfg(test)]
 pub(crate) use transactions::{contains_transaction_for_test, get_transaction_for_test};
 pub(crate) use transactions::{
-    get_transaction, insert_transaction, remove_begin_in_progress, remove_transaction,
-    rollback_transactions_best_effort, with_transaction_maps_mut,
+    finish_transaction, get_transaction, remove_begin_in_progress,
+    rollback_transactions_best_effort, take_transaction_for_finish, transaction_is_finishing,
+    with_transaction_maps_mut, FinishError,
 };
 pub(crate) use xa::{
     allocate_and_insert_active, allocate_and_insert_prepared, insert_active, insert_prepared,

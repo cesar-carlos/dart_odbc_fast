@@ -2,6 +2,8 @@ mod cached_connection;
 #[cfg(feature = "statement-handle-reuse")]
 mod owned_prepared;
 
+#[cfg(feature = "statement-handle-reuse")]
+pub(crate) use cached_connection::prepared_params_for_cache;
 pub use cached_connection::CachedConnection;
 
 use crate::error::{OdbcError, Result};

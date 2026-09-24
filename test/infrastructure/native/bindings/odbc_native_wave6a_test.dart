@@ -218,6 +218,92 @@ void main() {
       );
     });
 
+    test('should_use_fetch_export_when_block_batch_is_set', () {
+      var sawFetch = 0;
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.stub(
+          handlers: StubOdbcBindingsHandlers(
+            forceSupportsExecQueryParamsFetch: true,
+            execQueryParamsFetch: (
+              _,
+              __,
+              ___,
+              ____,
+              encoding,
+              fetchSize,
+              outBuf,
+              bufLen,
+              outWritten,
+            ) {
+              sawFetch = fetchSize;
+              expect(encoding, equals(0));
+              FakeOdbcBindings.writePayload(
+                outBuf,
+                bufLen,
+                outWritten,
+                Uint8List.fromList([7]),
+              );
+              return 0;
+            },
+            execQueryParams: (_, __, ___, ____, _____, ______, _______) {
+              fail('row-major path should not run when fetch export exists');
+            },
+          ),
+        ),
+      );
+
+      expect(
+        native.execQueryParams(
+          2,
+          'SELECT 1',
+          Uint8List(0),
+          fetchSize: 64,
+        ),
+        equals([7]),
+      );
+      expect(sawFetch, equals(64));
+    });
+
+    test('should_keep_legacy_exec_when_fetch_export_is_missing', () {
+      var legacyCalls = 0;
+      final native = OdbcNative.withBindings(
+        FakeOdbcBindings.stub(
+          handlers: StubOdbcBindingsHandlers(
+            forceSupportsExecQueryParamsFetch: false,
+            execQueryParams: (
+              _,
+              __,
+              ___,
+              ____,
+              outBuf,
+              bufLen,
+              outWritten,
+            ) {
+              legacyCalls++;
+              FakeOdbcBindings.writePayload(
+                outBuf,
+                bufLen,
+                outWritten,
+                Uint8List.fromList([8]),
+              );
+              return 0;
+            },
+          ),
+        ),
+      );
+
+      expect(
+        native.execQueryParams(
+          2,
+          'SELECT 1',
+          Uint8List(0),
+          fetchSize: 64,
+        ),
+        equals([8]),
+      );
+      expect(legacyCalls, equals(1));
+    });
+
     test('should_grow_buffer_when_exec_query_returns_minus_two', () {
       var calls = 0;
       final native = OdbcNative.withBindings(

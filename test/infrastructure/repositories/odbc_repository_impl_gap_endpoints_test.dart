@@ -86,6 +86,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async =>
       null;
 
@@ -98,6 +99,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async =>
       null;
 
@@ -321,6 +323,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     String sql, {
     int? initialBufferBytes,
     int? maxBufferBytes,
+    int fetchSize = 0,
   }) async =>
       executeQueryMultiResult;
 
@@ -331,6 +334,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async =>
       streamMultiStartBatchedResult;
 
@@ -341,6 +345,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async =>
       streamMultiStartBatchedResult;
 
@@ -351,6 +356,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     Uint8List? paramsBuffer, {
     int? initialBufferBytes,
     int? maxBufferBytes,
+    int fetchSize = 0,
   }) async =>
       null;
 

@@ -284,6 +284,8 @@ class StubOdbcBindingsHandlers {
     this.structuredErrorForConnection,
     this.execQuery,
     this.execQueryParams,
+    this.execQueryParamsFetch,
+    this.forceSupportsExecQueryParamsFetch,
     this.execQueryMulti,
     this.execute,
     this.disconnect,
@@ -345,6 +347,20 @@ class StubOdbcBindingsHandlers {
     int bufLen,
     ffi.Pointer<ffi.Uint32> outWritten,
   )? execQueryParams;
+
+  final int Function(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    int resultEncoding,
+    int fetchSize,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  )? execQueryParamsFetch;
+
+  final bool? forceSupportsExecQueryParamsFetch;
 
   final int Function(
     int stmtId,
@@ -569,6 +585,46 @@ class StubOdbcBindings extends TestOdbcBindings {
         sql,
         paramsBuffer,
         paramsLen,
+        outBuf,
+        bufLen,
+        outWritten,
+      );
+
+  @override
+  bool get supportsExecQueryParamsFetch =>
+      _handlers.forceSupportsExecQueryParamsFetch ??
+      super.supportsExecQueryParamsFetch;
+
+  @override
+  int odbc_exec_query_params_fetch(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    int resultEncoding,
+    int fetchSize,
+    ffi.Pointer<ffi.Uint8> outBuf,
+    int bufLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) =>
+      _handlers.execQueryParamsFetch?.call(
+        connId,
+        sql,
+        paramsBuffer,
+        paramsLen,
+        resultEncoding,
+        fetchSize,
+        outBuf,
+        bufLen,
+        outWritten,
+      ) ??
+      super.odbc_exec_query_params_fetch(
+        connId,
+        sql,
+        paramsBuffer,
+        paramsLen,
+        resultEncoding,
+        fetchSize,
         outBuf,
         bufLen,
         outWritten,

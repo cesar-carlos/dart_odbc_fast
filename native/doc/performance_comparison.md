@@ -1,5 +1,157 @@
 # Performance Comparison - ODBC Engine
 
+## Pool and transaction FFI hot paths (local measurement, 2026-09-24)
+
+Windows x64 (build 26200), Intel Core Ultra 7 155H, Rust 1.93, SQL Server
+Native Client 11.0 and the configured SQL Server `ODBC_TEST_DSN`. The baseline
+is a source snapshot of the pre-change dirty working tree; the current tree
+and baseline use the same `native/Cargo.lock`, release profile, default Cargo
+features plus `test-helpers`, benchmark source and DSN. No database objects
+were changed. Threads and the eight regular connections were created before
+measurement. Each Criterion iteration performs 10 checkout/checkin or
+begin/commit operations per active connection; the pool has capacity eight.
+
+```powershell
+$env:ODBC_LIVE_BENCH = '1'
+$env:ODBC_TEST_DSN = '<SQL Server test DSN or connection string>'
+cargo bench --locked --manifest-path native/odbc_engine/Cargo.toml --features test-helpers --bench live_hotpaths_bench -- 'live_ffi/pool_transaction_sustained' --sample-size 10 --warm-up-time 1 --measurement-time 3
+```
+
+The table uses one sequential, unloaded baseline/current pair. An earlier
+baseline that overlapped release compilation was excluded because contention
+roughly doubled some timings. Throughput is calculated from the Criterion
+point estimate and the number of operations per iteration, not independently
+measured. CPU frequency and database scheduling were not pinned.
+
+| Workload | Connections | Baseline latency / throughput | Current latency / throughput | Observed latency change |
+| --- | ---: | ---: | ---: | ---: |
+| Checkout/checkin | 1 | 1.7645 ms / 5.7k ops/s | 0.9594 ms / 10.4k ops/s | -45.6% |
+| Checkout/checkin | 4 | 2.8884 ms / 13.8k ops/s | 1.3280 ms / 30.1k ops/s | -54.0% |
+| Checkout/checkin | 8 | 4.2179 ms / 19.0k ops/s | 2.2202 ms / 36.0k ops/s | -47.4% |
+| Begin/commit | 1 | 1.7612 ms / 5.7k ops/s | 1.6926 ms / 5.9k ops/s | -3.9% |
+| Begin/commit | 4 | 2.5918 ms / 15.4k ops/s | 2.3708 ms / 16.9k ops/s | -8.5% |
+| Begin/commit | 8 | 4.2349 ms / 18.9k ops/s | 4.0997 ms / 19.5k ops/s | -3.2% |
+
+The checkout result is clear in this workload; the short-transaction changes
+are small relative to observed run-to-run variation and are **not** claimed
+as a stable gain. A separate repeated single-connection prepared-query case
+measured 0.495–0.543 ms in the current tree versus 0.685 ms in one baseline
+run; that narrower comparison is provisional. Allocations and peak process
+memory were not instrumented. Results do not establish performance on other
+drivers, server locations or application query mixes.
+
+## Streaming follow-up microbenchmarks (local measurement, 2026-09-24)
+
+Windows x64, Intel Core Ultra 7 155H, Rust 1.93, release profile and default
+Cargo features, without a DSN. Criterion compared both variants inside the
+same bench binary. The buffer benchmark includes production batch-copy logic,
+but not ODBC execution, producer/consumer scheduling or allocator telemetry.
+Each entry below is the point estimate from 30 samples, 0.5 s warm-up and
+2 s measurement; the three runs were made consecutively:
+
+```powershell
+cd native
+1..3 | ForEach-Object {
+  cargo bench -p odbc_engine --bench buffer_recycle_bench -- 'stream_buffer_copy' --sample-size 30 --warm-up-time 0.5 --measurement-time 2
+}
+```
+
+| Encoded batch | Fresh / recycled, run 1 | Run 2 | Run 3 | Interpretation |
+| --- | ---: | ---: | ---: | --- |
+| 64 KiB | 2.346 / 2.402 µs | 2.334 / 2.266 µs | 3.450 / 2.993 µs | No repeated >5% regression; small-batch effect is noisy |
+| 1 MiB | 340.29 / 66.34 µs | 345.97 / 64.91 µs | 331.41 / 64.55 µs | About 80–81% less time in this allocation-and-copy workload |
+
+The bounded per-stream recycling pool is retained because the 1 MiB result
+was consistent and the 64 KiB case did not show a repeated relevant
+regression. This does **not** establish an 80% end-to-end streaming gain.
+
+The fallback transposition comparison uses the production transposition and
+encoder, but clones the in-memory row fixture for each batch. With 16 batches
+of 1,000 rows, fresh/reused point estimates were 2.074/2.231 ms,
+1.511/1.424 ms and 1.442/1.452 ms across three runs. The signs differ, so
+the benchmark does not establish a reliable CPU gain; separate regressions
+verify byte parity:
+
+```powershell
+cd native
+1..3 | ForEach-Object {
+  cargo bench -p odbc_engine --bench fallback_transpose_bench -- 'fallback_transpose_16_batches' --sample-size 20 --warm-up-time 0.5 --measurement-time 2
+}
+```
+
+In a separate 20-sample, 0.5 s warm-up, 2 s measurement run,
+`stream_param_decode_bench` compared the former full-buffer copy plus decode
+against scoped direct decode of the same serialized fixture: legacy 16 MiB
+blob 9.426/4.206 ms and DRT1 1 MiB blob 656/328 µs. The 1 KiB legacy case
+was 136/132 ns, inside practical measurement noise. These are decoder-only
+results; the 1 MiB legacy run had large outliers and should be repeated
+before claiming a precise percentage:
+
+```powershell
+cd native
+cargo bench -p odbc_engine --bench stream_param_decode_bench -- 'stream_param_decode' --sample-size 20 --warm-up-time 0.5 --measurement-time 2
+```
+
+## Compressed columnar encoder (local measurement, 2026-09-23)
+
+Criterion exercised the production `ColumnarEncoder::encode` with a mixed
+8-column fixture, encoding 16 batches per iteration. These are in-memory
+encoder timings, **not** ODBC fetch or end-to-end stream throughput. Both
+measurements used the same release profile/default Cargo features, Windows,
+Intel Core Ultra 7 155H, 10 samples, 0.2 s warm-up and 0.4 s measurement:
+
+```powershell
+cd native/odbc_engine
+cargo bench --bench encoder_bench -- 'encoder/streaming_columnar_compressed' --sample-size 10 --warm-up-time 0.2 --measurement-time 0.4
+```
+
+| Workload | Before (Criterion point estimate) | After | Change |
+| --- | ---: | ---: | ---: |
+| 16 × 100 rows × 8 columns | 17.189 ms | 0.486 ms | -97.2% |
+| 16 × 1,000 rows × 8 columns | 37.288 ms | 6.919 ms | -81.4% |
+
+The reduced zstd context/setup work and reusable scratch space affect this
+fixture strongly. The benchmark creates a fresh workspace for each standalone
+`encode` call; per-cursor reuse across batches and live-driver performance
+are **not** measured here. The short run and unpinned CPU frequency limit
+precision; these figures should not be projected to other drivers or data
+distributions.
+
+## Live FFI hot paths (post-change only, 2026-09-23)
+
+The opt-in benchmark calls the production FFI against the configured SQL
+Server ODBC DSN. It reads `sys.all_objects` only. Measurements below used the
+same Windows / Intel Core Ultra 7 155H host, release profile, default features
+plus `test-helpers`, 10 samples, 0.2 s warm-up and 0.4 s measurement:
+
+```powershell
+$env:ODBC_LIVE_BENCH = '1'
+$env:ODBC_TEST_DSN = '<SQL Server test DSN or connection string>'
+cargo bench --manifest-path native/odbc_engine/Cargo.toml --features test-helpers --bench live_hotpaths_bench -- 'live_ffi' --sample-size 10 --warm-up-time 0.2 --measurement-time 0.4
+```
+
+| FFI workload per iteration | Mean |
+| --- | ---: |
+| 1 connection × 10 queries × 100 rows | 5.61 ms |
+| 4 connections × 10 queries × 100 rows | 6.90 ms |
+| 8 connections × 10 queries × 100 rows | 12.89 ms |
+| Stream 100 rows, row-major / compression-enabled columnar | 0.689 / 0.815 ms |
+| Stream 1,000 rows, row-major / compression-enabled columnar | 2.42 / 2.74 ms |
+| Parameterized numeric NULL / 4 KiB blob with NULL | 0.350 / 1.54 ms |
+| Repeated MULT sync / streaming | 0.140 / 0.314 ms |
+
+These are post-change measurements, with **no comparable pre-change live
+baseline**, so they do not establish a speedup. The concurrent cases complete
+10 queries per connection (10/40/80 total), not the same amount of work; do
+not compare their raw latencies as scaling percentages. The columnar mode
+enables zstd but may publish raw fallback per column. A separate process
+sampler observed a 44 MiB peak working set during the full run (46 samples),
+not allocator-level peak usage. Short samples and shared-machine scheduling
+made some same-revision cases fluctuate by over 5%; three repeat runs of the
+suspect parameter/MULT cases did not show a consistent regression.
+
+---
+
 Comparative benchmarks against SQL Server via ODBC. Run with:
 
 ```bash
@@ -212,10 +364,9 @@ in `engine::fetch::fetch_cursor_into_row_buffer` chooses between:
 When the encoder asks for columnar output and the result is not FOR JSON,
 `engine::core::columnar_fetch::fetch_columnar_into` populates
 `RowBufferV2` directly from `ColumnarAnyBuffer` views, eliminating the
-row-major intermediate and the per-cell clones that
-`row_buffer_to_columnar` paid (`row_buffer_to_columnar` is marked
-`#[deprecated]` on the doc-comment; still used by `encode_for_bulk` and
-when `block-cursor-fetch` is off).
+row-major intermediate and the extra transposition pass. The fallback
+`row_buffer_to_columnar` moves binary/text cells; batched fallback streams
+also reuse metadata, typed vectors and compression scratch across batches.
 
 Synthetic benches that quantify these paths (no DSN required):
 
@@ -224,6 +375,9 @@ cargo bench --bench cell_reader_bench       # Integer/BigInt/Varchar/Binary/Date
 cargo bench --bench encoder_bench           # direct_columnar_vs_via_row_major group
 cargo bench --bench prepared_cache_bench    # parameterized_hit_path group
 cargo bench --bench ffi_contention_bench    # synthetic N-thread FFI contention model
+cargo bench --bench fallback_transpose_bench # one-shot vs reused fallback transposition
+cargo bench --bench buffer_recycle_bench     # fresh vs reused batch output buffer
+cargo bench --bench stream_param_decode_bench # copied vs borrowed parameter payload
 ```
 
 Baselines are tracked in

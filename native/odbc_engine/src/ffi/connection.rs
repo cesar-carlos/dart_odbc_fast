@@ -233,25 +233,25 @@ pub extern "C" fn odbc_disconnect(conn_id: c_uint) -> c_int {
                     async_mgr.free_for_connection(conn_id);
                 }
 
+                let mut rollback_error = None;
                 for txn in cleanup.transactions {
-                    let _ = txn.rollback();
+                    if let Err(e) = txn.rollback() {
+                        rollback_error.get_or_insert(e);
+                    }
                 }
                 let disconnect_result = cleanup.connection.disconnect();
 
                 let Some(mut state) = try_lock_global_state() else {
                     return -1;
                 };
-                match disconnect_result {
-                    Ok(_) => {
+                match (disconnect_result, rollback_error) {
+                    (Ok(_), None) => {
                         state::clear_connection_error(conn_id);
                         0
                     }
-                    Err(e) => {
-                        set_connection_error(
-                            &mut state,
-                            conn_id,
-                            format!("odbc_disconnect failed: {}", e),
-                        );
+                    (result, rollback_error) => {
+                        let msg = format!("odbc_disconnect cleanup failed: disconnect={result:?}, rollback={rollback_error:?}");
+                        set_connection_error(&mut state, conn_id, msg);
                         1
                     }
                 }

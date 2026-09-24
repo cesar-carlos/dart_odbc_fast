@@ -2,6 +2,7 @@ import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/transaction_completion_status.dart';
 
 /// Convenience wrapper around an active transaction.
 ///
@@ -12,9 +13,8 @@ import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 /// Two safety nets were added in v3.1:
 ///
 /// - [TransactionHandle.runWithBegin]: a static helper that runs a closure
-///   inside a transaction, committing on success and rolling back on **any**
-///   error or thrown exception. Use it instead of manual try/finally to make
-///   leaks impossible.
+///   inside a transaction, committing on success and attempting rollback on
+///   errors. Concurrent native operations may leave the handle retryable.
 /// - A best-effort native finalizer that fires when the Dart object is
 ///   garbage-collected without an explicit commit/rollback. The finalizer
 ///   reclaims the small native token allocated to track the transaction.
@@ -54,29 +54,41 @@ class TransactionHandle implements ffi.Finalizable {
 
   /// Commits the transaction.
   ///
-  /// Returns true on success, false on failure. After this call the
-  /// transaction is no longer active and the finalizer will not fire.
+  /// Returns true on success. A busy native transaction remains active for
+  /// retry.
   bool commit() {
     if (_state != _State.active) {
       return false;
     }
-    final ok = _backend.commitTransaction(_txnId);
-    _state = ok ? _State.committed : _State.failed;
-    if (ok) _detachFinalizer();
+    final Object provider = _backend;
+    final status = provider is TransactionCompletionStatus
+        ? provider.commitTransactionStatus(_txnId)
+        : (_backend.commitTransaction(_txnId) ? 0 : 1);
+    final ok = status == 0;
+    if (status != 2) {
+      _state = ok ? _State.committed : _State.failed;
+      _detachFinalizer();
+    }
     return ok;
   }
 
   /// Rolls back the transaction.
   ///
-  /// Returns true on success, false on failure. After this call the
-  /// transaction is no longer active and the finalizer will not fire.
+  /// Returns true on success. A busy native transaction remains active for
+  /// retry.
   bool rollback() {
     if (_state != _State.active) {
       return false;
     }
-    final ok = _backend.rollbackTransaction(_txnId);
-    _state = ok ? _State.rolledBack : _State.failed;
-    if (ok) _detachFinalizer();
+    final Object provider = _backend;
+    final status = provider is TransactionCompletionStatus
+        ? provider.rollbackTransactionStatus(_txnId)
+        : (_backend.rollbackTransaction(_txnId) ? 0 : 1);
+    final ok = status == 0;
+    if (status != 2) {
+      _state = ok ? _State.rolledBack : _State.failed;
+      _detachFinalizer();
+    }
     return ok;
   }
 
@@ -151,10 +163,10 @@ class TransactionHandle implements ffi.Finalizable {
 
   /// Runs [action] inside a fresh transaction obtained from [beginFn].
   ///
-  /// On normal completion the transaction is committed; on any thrown
-  /// exception (or runtime error) it is rolled back **before** rethrowing.
-  /// This mirrors `Transaction::execute` on the Rust side and is the easiest
-  /// way to write leak-proof Dart transaction code.
+  /// On normal completion the transaction is committed. On an error, rollback
+  /// is attempted only while the handle remains active; a concurrent native
+  /// operation can keep it busy, so cleanup is not guaranteed. The original
+  /// error is rethrown even if that rollback attempt fails.
   ///
   /// `beginFn` is whatever piece of API returns a `TransactionHandle?` (e.g.
   /// `NativeOdbcConnection.beginTransactionHandle`).
@@ -169,11 +181,6 @@ class TransactionHandle implements ffi.Finalizable {
     try {
       final result = await action(txn);
       if (!txn.commit()) {
-        // Commit failed. The native engine removes the transaction handle
-        // from its registry *before* issuing SQL COMMIT, so a subsequent
-        // rollback call would return "Invalid transaction ID" — it is a
-        // no-op. Cleanup is handled by odbc_disconnect when the connection
-        // is eventually closed.
         throw StateError('Failed to commit transaction ${txn.txnId}');
       }
       return result;

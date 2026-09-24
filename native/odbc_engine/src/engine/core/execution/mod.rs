@@ -1,4 +1,4 @@
-﻿mod multi_result_collect;
+mod multi_result_collect;
 mod param_binding;
 pub(crate) mod result_encoding;
 
@@ -22,12 +22,12 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use multi_result_collect::is_no_more_results;
 use multi_result_collect::{bound_params_first_multi_item, odbc_row_count_i64};
-use param_binding::{
-    ensure_ref_cursor_oracle_only, plan_query_param_binding, require_inference_input_params,
-    QueryParamBindingPlan,
-};
+use param_binding::{ensure_ref_cursor_oracle_only, plan_query_input, QueryInputPlan};
 #[cfg(test)]
-use param_binding::{plan_multi_result_param_binding, MultiResultParamBindingPlan};
+use param_binding::{
+    plan_multi_result_param_binding, plan_query_param_binding, require_inference_input_params,
+    MultiResultParamBindingPlan, QueryParamBindingPlan,
+};
 use result_encoding::encode_query_result_payload;
 
 pub struct ExecutionEngine {
@@ -317,7 +317,7 @@ impl ExecutionEngine {
             // accordingly so existing callers that only use the first result set keep
             // working without change.
             let mut drain_writer = MultiResultWriter::new();
-            self.drive_more_results(&mut prealloc, &mut drain_writer)?;
+            self.drive_more_results(&mut prealloc, &mut drain_writer, None)?;
 
             coalesce_for_json_rows(&mut row_buffer);
 
@@ -368,21 +368,20 @@ impl ExecutionEngine {
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         let plugin = self.current_plugin();
-        match plan_query_param_binding(params)? {
-            QueryParamBindingPlan::DirectNoParams => {
+        match plan_query_input(params)? {
+            QueryInputPlan::DirectNoParams => {
                 let cursor = conn
                     .execute(sql, (), timeout_sec)
                     .map_err(OdbcError::from)?;
                 self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
-            QueryParamBindingPlan::InferenceExecute => {
-                let parameters = require_inference_input_params(params)?;
+            QueryInputPlan::Inferred(parameters) => {
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
                 self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
-            QueryParamBindingPlan::PreparedNullAware => {
+            QueryInputPlan::PreparedNullAware => {
                 let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
                 if let Some(timeout_sec) = timeout_sec {
                     stmt.set_query_timeout_sec(timeout_sec)
@@ -400,7 +399,7 @@ impl ExecutionEngine {
                     .map_err(OdbcError::from)?;
                 self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
             }
-            QueryParamBindingPlan::PreparedStandard => {
+            QueryInputPlan::PreparedStandard => {
                 let parameters = param_values_to_input_params(params)?;
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
@@ -413,12 +412,21 @@ impl ExecutionEngine {
     }
 
     pub fn execute_multi_result(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
+        self.execute_multi_result_with_fetch(conn, sql, None)
+    }
+
+    pub fn execute_multi_result_with_fetch(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
         use std::time::Instant;
 
         let start_time = Instant::now();
         let _span = self.log_query_start(sql);
 
-        let result = self.execute_multi_result_inner(conn, sql);
+        let result = self.execute_multi_result_inner(conn, sql, fetch_size);
 
         self.metrics.record_query(start_time.elapsed());
 
@@ -438,12 +446,22 @@ impl ExecutionEngine {
         sql: &str,
         params: &[ParamValue],
     ) -> Result<Vec<u8>> {
+        self.execute_multi_result_with_params_and_fetch(conn, sql, params, None)
+    }
+
+    pub fn execute_multi_result_with_params_and_fetch(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
         use std::time::Instant;
 
         let start_time = Instant::now();
         let _span = self.log_query_start(sql);
 
-        let result = self.execute_multi_result_with_params_inner(conn, sql, params);
+        let result = self.execute_multi_result_with_params_inner(conn, sql, params, fetch_size);
 
         self.metrics.record_query(start_time.elapsed());
 

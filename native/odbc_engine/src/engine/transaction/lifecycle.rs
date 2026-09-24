@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::engine::core::ENGINE_POSTGRES;
 use crate::error::{OdbcError, Result};
 use crate::handles::{HandleManager, SharedHandleManager};
 use crate::pool::SharedPooledConnection;
@@ -123,36 +124,64 @@ impl Transaction {
                         savepoint_dialect,
                     );
 
-                let applied_lock_timeout = {
-                    let conn = cached.connection_mut();
-
-                    // Apply isolation level using a dialect-aware strategy. Must run BEFORE
-                    // `set_autocommit(false)` because some engines (notably SQL Server)
-                    // refuse `SET TRANSACTION ISOLATION LEVEL` inside an open transaction.
-                    apply_isolation(conn, engine_id, isolation_level)?;
-
-                    // Access mode must follow isolation. Oracle is special-cased inside
-                    // `apply_access_mode` because `SET TRANSACTION READ ONLY` overrides
-                    // the previous isolation choice on that engine.
-                    apply_access_mode(conn, engine_id, access_mode)?;
-
-                    // Lock timeout is engine-aware too. PostgreSQL uses `SET LOCAL`
-                    // (so it auto-resets on commit/rollback); other engines apply
-                    // session-wide. The override is best-effort: failure here would
-                    // prevent the transaction from starting, which is too coarse,
-                    // so we surface the engine error verbatim and let the caller
-                    // decide.
-                    let applied = apply_lock_timeout(conn, engine_id, lock_timeout)?;
-
-                    conn.set_autocommit(false).map_err(OdbcError::from)?;
-                    applied
-                };
-                if applied_lock_timeout
-                    && super::dialect_sql::lock_timeout_is_session_scoped(engine_id)
-                {
-                    cached.mark_session_lock_timeout_dirty();
+                let mut manual_started = false;
+                let mut attempted_manual = false;
+                let setup = (|| {
+                    if engine_id == ENGINE_POSTGRES {
+                        attempted_manual = true;
+                        cached.connection().set_autocommit(false).map_err(OdbcError::from)?;
+                        manual_started = true;
+                    }
+                    apply_isolation(cached.connection(), engine_id, isolation_level)?;
+                    let isolation_changes_session =
+                        crate::engine::session_defaults::session_isolation_reset_sql(engine_id)
+                            .is_some()
+                            && match engine_id {
+                                crate::engine::core::ENGINE_SQLITE => {
+                                    isolation_level == IsolationLevel::ReadUncommitted
+                                }
+                                _ => isolation_level != IsolationLevel::ReadCommitted,
+                            };
+                    if isolation_changes_session {
+                        cached.mark_session_isolation_dirty();
+                    }
+                    apply_access_mode(cached.connection(), engine_id, access_mode)?;
+                    let applied = apply_lock_timeout(cached.connection(), engine_id, lock_timeout)?;
+                    if applied && super::dialect_sql::lock_timeout_is_session_scoped(engine_id) {
+                        cached.mark_session_lock_timeout_dirty();
+                    }
+                    if !manual_started {
+                        attempted_manual = true;
+                        cached.connection().set_autocommit(false).map_err(OdbcError::from)?;
+                        manual_started = true;
+                    }
+                    Ok(resolved_dialect)
+                })();
+                if let Err(original) = setup {
+                    let mut cleanup_failure = None;
+                    if attempted_manual && !manual_started {
+                        cached.mark_unusable();
+                    }
+                    if manual_started {
+                        if let Err(cleanup) = cached.end_transaction(false) {
+                            log::error!("Transaction begin cleanup failed on conn_id {conn_id}: {cleanup}; original: {original}");
+                            cleanup_failure = Some(cleanup);
+                        }
+                    } else {
+                        if let Err(cleanup) = cached.try_restore_session_settings_if_dirty() {
+                            log::error!("Transaction begin settings cleanup failed on conn_id {conn_id}: {cleanup}; original: {original}");
+                            cleanup_failure = Some(cleanup);
+                        }
+                        // A failed pre-autocommit statement can have changed
+                        // the session even when the driver returned an error.
+                        cached.mark_unusable();
+                    }
+                    return Err(match cleanup_failure {
+                        Some(cleanup) => append_begin_cleanup_failure(original, cleanup),
+                        None => original,
+                    });
                 }
-                Ok(resolved_dialect)
+                setup
             })?;
 
         Ok(Self {
@@ -177,40 +206,16 @@ impl Transaction {
             )));
         }
 
-        let (commit_result, autocommit_result) =
+        *s = TransactionState::None;
+        let result =
             self.connection
                 .with_cached_mut(self.conn_id, "commit transaction", |cached| {
-                    cached.restore_session_lock_timeout_if_dirty();
-                    let conn = cached.connection_mut();
-                    Ok((
-                        conn.commit().map_err(OdbcError::from),
-                        conn.set_autocommit(true),
-                    ))
-                })?;
-        // ALWAYS try to restore autocommit, regardless of commit outcome (B7 fix).
-        // If commit failed the driver may already have rolled back and reset
-        // autocommit; the call is a best-effort safety net so the connection
-        // is never returned to the caller / pool stuck in autocommit=off.
-        if let Err(e) = autocommit_result {
-            log::error!(
-                "Transaction::commit: failed to restore autocommit on conn_id {}: {e}",
-                self.conn_id
-            );
+                    cached.end_transaction(true)
+                });
+        if result.is_ok() {
+            *s = TransactionState::Committed;
         }
-
-        match commit_result {
-            Ok(()) => {
-                *s = TransactionState::Committed;
-                Ok(())
-            }
-            Err(e) => {
-                // Commit failed → driver semantics say the transaction was
-                // rolled back (or is in an undefined state, which we model as
-                // RolledBack to allow reuse). Surface the original error.
-                *s = TransactionState::RolledBack;
-                Err(e)
-            }
-        }
+        result
     }
 
     pub fn rollback(self) -> Result<()> {
@@ -224,28 +229,16 @@ impl Transaction {
             )));
         }
 
-        let (rollback_result, autocommit_result) =
+        *s = TransactionState::None;
+        let result =
             self.connection
                 .with_cached_mut(self.conn_id, "rollback transaction", |cached| {
-                    cached.restore_session_lock_timeout_if_dirty();
-                    let conn = cached.connection_mut();
-                    Ok((
-                        conn.rollback().map_err(OdbcError::from),
-                        conn.set_autocommit(true),
-                    ))
-                })?;
-        // ALWAYS restore autocommit (B7 fix), same rationale as `commit`.
-        if let Err(e) = autocommit_result {
-            log::error!(
-                "Transaction::rollback: failed to restore autocommit on conn_id {}: {e}",
-                self.conn_id
-            );
+                    cached.end_transaction(false)
+                });
+        if result.is_ok() {
+            *s = TransactionState::RolledBack;
         }
-
-        // Whether the engine accepted the rollback or not, this Transaction
-        // value is consumed and can no longer be used.
-        *s = TransactionState::RolledBack;
-        rollback_result
+        result
     }
 
     pub fn execute<F, T>(
@@ -387,6 +380,27 @@ impl Transaction {
     }
 }
 
+fn append_begin_cleanup_failure(original: OdbcError, cleanup: OdbcError) -> OdbcError {
+    match original {
+        OdbcError::Structured {
+            sqlstate,
+            native_code,
+            message,
+        } => OdbcError::Structured {
+            sqlstate,
+            native_code,
+            message: format!("{message}; begin cleanup failed: {cleanup}"),
+        },
+        OdbcError::OdbcApi(message) => {
+            OdbcError::OdbcApi(format!("{message}; begin cleanup failed: {cleanup}"))
+        }
+        OdbcError::PoolError(message) => {
+            OdbcError::PoolError(format!("{message}; begin cleanup failed: {cleanup}"))
+        }
+        other => other,
+    }
+}
+
 impl Drop for Transaction {
     fn drop(&mut self) {
         let s = self
@@ -404,21 +418,7 @@ impl Drop for Transaction {
         if let Err(e) =
             self.connection
                 .with_cached_mut(self.conn_id, "drop transaction", |cached| {
-                    cached.restore_session_lock_timeout_if_dirty();
-                    let conn = cached.connection_mut();
-                    if let Err(e) = conn.rollback() {
-                        log::error!(
-                            "Transaction Drop: rollback failed on conn_id {}: {e}",
-                            self.conn_id
-                        );
-                    }
-                    if let Err(e) = conn.set_autocommit(true) {
-                        log::error!(
-                            "Transaction Drop: set_autocommit(true) failed on conn_id {}: {e}",
-                            self.conn_id
-                        );
-                    }
-                    Ok(())
+                    cached.end_transaction(false)
                 })
         {
             log::error!(
@@ -426,5 +426,35 @@ impl Drop for Transaction {
                 self.conn_id
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod cleanup_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn begin_cleanup_keeps_original_sqlstate_and_native_code() {
+        let original = OdbcError::Structured {
+            sqlstate: *b"40001",
+            native_code: 1205,
+            message: "deadlock victim".to_string(),
+        };
+        let result = append_begin_cleanup_failure(
+            original,
+            OdbcError::PoolError("reset failed".to_string()),
+        );
+        let OdbcError::Structured {
+            sqlstate,
+            native_code,
+            message,
+        } = result
+        else {
+            panic!("original structured diagnostic must survive");
+        };
+        assert_eq!(sqlstate, *b"40001");
+        assert_eq!(native_code, 1205);
+        assert!(message.contains("deadlock victim"));
+        assert!(message.contains("reset failed"));
     }
 }

@@ -312,4 +312,59 @@ mixin _OdbcNativeStream on _OdbcNativeState, _OdbcNativeHelpers {
       },
     );
   }
+
+  bool get supportsMultiResultStreamParams =>
+      _bindings.supportsMultiResultStreamParams;
+
+  int? streamMultiStartBatchedParams(
+    int connectionId,
+    String sql,
+    Uint8List params, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) {
+    if (!_bindings.supportsMultiResultStreamParams) return null;
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _withParamsBuffer(
+        params,
+        (paramsPtr) => _bindings.odbc_stream_multi_start_batched_params_options(
+          connectionId,
+          sqlPtr,
+          paramsPtr,
+          params.length,
+          fetchSize,
+          chunkSize,
+          resultEncodingWire,
+        ),
+      ),
+    );
+  }
+
+  int? streamMultiStartAsyncParams(
+    int connectionId,
+    String sql,
+    Uint8List params, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) {
+    if (!_bindings.supportsAsyncMultiResultStreamParams) return null;
+    return _withSql<int>(
+      sql,
+      (sqlPtr) => _withParamsBuffer(
+        params,
+        (paramsPtr) => _bindings.odbc_stream_multi_start_async_params_options(
+          connectionId,
+          sqlPtr,
+          paramsPtr,
+          params.length,
+          fetchSize,
+          chunkSize,
+          resultEncodingWire,
+        ),
+      ),
+    );
+  }
 }

@@ -42,6 +42,14 @@ Domain-style types (errors, protocol types) live in `error` and `protocol` and s
 - **Choice**: r2d2 as the connection pool.
 - **Rationale**: Mature, thread-safe, and `ManageConnection` fits ODBC well. Pool size, timeouts, and health checks (`is_valid` / `has_broken`) are configurable.
 - **Usage**: One pool per connection string (or per logical “backend”). Pool ID is derived from `server:port:user` (database excluded) for reuse when only database changes.
+- **Lifecycle**: Checkout reserves the pool before waiting on r2d2. Resize holds
+  an exclusive reservation while constructing its replacement; close rejects
+  pending checkouts and releases. Failed transaction or session cleanup marks the physical
+  connection unusable so r2d2 discards it. Checkin checks
+  `SQL_ATTR_CONNECTION_DEAD`, with a health-query fallback for unsupported
+  attributes; explicit health checks always execute a validation query.
+  Session-scoped isolation overrides on SQL Server, SQLite and DB2 are reset
+  to documented defaults after transaction completion or pool reset.
 
 ### Custom binary protocol
 
@@ -117,7 +125,8 @@ flowchart TD
 
 Notes:
 
-- `block_fetch::plan_buffer_descs` decides whether the bind path is usable per query — LOB columns and `WLONGVARCHAR` without an advertised max length fall back to the legacy per-row path automatically.
+- `block_fetch::describe_and_plan_columns` describes and plans streaming columns in one pass; LOB columns and `WLONGVARCHAR` without an advertised max length fall back to the legacy per-row path automatically. Row-major block and legacy fallback streams recycle bounded row vectors, but not individual text/binary allocations. Both direct and fallback columnar streams keep typed vectors, metadata and a per-cursor zstd workspace while emitting independent frames.
+- Streaming workers and consumers share a private output-buffer pool with at most two idle buffers of capacity up to 8 MiB each. Fully copied buffers may be recycled without blocking; owned `Vec` results remain with their caller. Pending payloads and closed streams are detached under their registry locks and destroyed after unlocking.
 - `OdbcType::Date` / `Time` / `Timestamp` use native `BufferDesc::Date` / `Time` / `Timestamp` (sprint 4 follow-up B5) and are formatted to ISO 8601 in our code, skipping the driver-side WCHAR transcoding.
 - Batch size honours the `ODBC_FAST_BLOCK_FETCH_BATCH` env var (default 256). See `engine::core::block_fetch::configured_batch_size`.
 
@@ -159,7 +168,11 @@ flowchart LR
 ```
 
 - `stmt_cache` is declared **before** `conn` in `CachedConnection` so drop glue runs `stmt_cache.drop()` first — the invariant the `OwnedPreparedStatement::from_borrowed` `# Safety` clause relies on. Reordering the fields trips the `from_borrowed_transmute_size_invariant_holds` tripwire test.
-- Sprint 4.2 wire-up extended the cache to the parameterised path through `CachedConnection::execute_query_with_params`; the FFI helper `try_cached_legacy_params` decides per-call whether the params are eligible (legacy list, no NULLs).
+- Transaction begin does not borrow the connection mutably, so it leaves idle
+  prepared statements cached. Commit/rollback use the cached driver cursor
+  behavior to retain prepared plans only for `SQL_CB_CLOSE` or
+  `SQL_CB_PRESERVE`; unknown or `SQL_CB_DELETE` behavior evicts them.
+- The FFI parameter path decodes each buffer once. Batched/async streaming decodes from the caller's scoped bytes into owned values before starting a worker; input-only DRT1 execution moves those values without another clone. Legacy inputs with no NULLs or inferable NULL types can rebind on the per-connection cache; descriptor-dependent and directed inputs use the direct path. Streaming MULT also uses this cache when enabled, evicting the used statement after any error, cancellation, or consumer abandonment. With `statement-handle-reuse` disabled, MULT prepares directly.
 
 ## Dependencies
 
@@ -211,5 +224,3 @@ Structured errors include SQLSTATE, native error code, and message:
 - **Locks**: Prefer `try_lock`/`lock().ok()` in FFI and caches; avoid `unwrap()` on mutexes in hot paths. Per-category sub-locks in `ffi::state` follow the canonical order documented above; never acquire them out of order while holding the residual outer mutex.
 - **Error handling**: Always use connection-specific error storage when `conn_id` is available; fall back to global error state only for functions without connection context. The dedicated `RwLock` in `ffi::state` logs `log::error!` on poison so silent diagnostic loss is observable.
 - **Defaults**: `block-cursor-fetch` and `statement-handle-reuse` ship enabled by default. Consumers can opt out via `default-features = false, features = ["test-helpers", "observability"]` in their `Cargo.toml`.
-
-

@@ -112,6 +112,7 @@ class _FakeAsyncNative extends AsyncNativeOdbcConnection {
     int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async =>
       _responseBuffer;
 

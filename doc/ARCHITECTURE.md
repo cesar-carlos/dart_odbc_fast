@@ -197,13 +197,23 @@ Runners shipped today:
 - [`OdbcQueryMultiRunner`](../lib/infrastructure/repositories/runners/odbc_query_multi_runner.dart)
   — multi-result execute paths.
 - [`OdbcStreamRunner`](../lib/infrastructure/repositories/runners/odbc_stream_runner.dart)
-  — `streamQuery*`, `streamQueryMulti`; uses
+  — `streamQuery*`, coalesced `streamQueryMulti`, and bounded-batch
+  `streamQueryMultiBatches`; uses
   [`StreamCapabilityPolicy`](../lib/infrastructure/repositories/runners/stream_capability_policy.dart)
   and [`StreamChunkDecoder`](../lib/infrastructure/repositories/runners/stream_chunk_decoder.dart).
 - [`OdbcTransactionRunner`](../lib/infrastructure/repositories/runners/odbc_transaction_runner.dart)
   — transactions, savepoints, XA.
 - [`OdbcPoolRunner`](../lib/infrastructure/repositories/runners/odbc_pool_runner.dart)
   — pool create/resize/health/checkout.
+
+Native transaction handles reserve their connection while begin, savepoint or
+completion is in progress. A busy completion returns status `2`, allowing the
+low-level Dart `TransactionHandle` to retry; driver failures are terminal and
+make the physical connection unusable. Pool checkout and resize have separate
+reservations so a connection acquired from an older pool is never published
+under its replacement. Failed checkin cleanup discards the physical connection.
+Session-scoped isolation overrides are restored to documented defaults before
+the next pooled user on SQL Server, SQLite and DB2.
 - [`OdbcAdminRunner`](../lib/infrastructure/repositories/runners/odbc_admin_runner.dart)
   — initialize, version, metrics, event bus.
 - [`OdbcCatalogRunner`](../lib/infrastructure/repositories/runners/odbc_catalog_runner.dart)

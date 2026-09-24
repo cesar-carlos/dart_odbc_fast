@@ -2,8 +2,14 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-/// Exports retained for ABI compatibility but not resolved by the Dart client.
-const _optionalDartLookupSymbols = {'odbc_release_buffer'};
+/// Exports retained for ABI compatibility or native callers, but not resolved
+/// by the Dart client. Dart uses its existing MULT/prepared entry points.
+const _optionalDartLookupSymbols = {
+  'odbc_exec_query_multi_fetch',
+  'odbc_exec_query_multi_params_fetch',
+  'odbc_execute_options',
+  'odbc_release_buffer',
+};
 
 /// Parses `native/odbc_engine/odbc_exports.def` and verifies every exported
 /// symbol required by Dart has a matching `lookup` in Dart FFI sources.

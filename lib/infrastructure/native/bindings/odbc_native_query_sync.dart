@@ -41,6 +41,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     int? maxBufferBytes,
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) {
     _requireResultEncodingSupport(
       resultEncoding: resultEncoding,
@@ -49,6 +50,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     );
     final paramsOrEmpty =
         (params == null || params.isEmpty) ? Uint8List(0) : params;
+    final useFetch = fetchSize > 0 && _bindings.supportsExecQueryParamsFetch;
     final useOptions = resultEncoding != ResultEncoding.rowMajor;
     return _withSql(
       sql,
@@ -56,26 +58,41 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
         return _withParamsBuffer(
           paramsOrEmpty,
           (paramsPtr) => callWithBuffer(
-            (buf, bufLen, outWritten) => useOptions
-                ? _bindings.odbc_exec_query_params_options(
-                    connectionId,
-                    sqlPtr,
-                    paramsPtr,
-                    paramsOrEmpty.length,
-                    resultEncoding.wireCode,
-                    buf,
-                    bufLen,
-                    outWritten,
-                  )
-                : _bindings.odbc_exec_query_params(
-                    connectionId,
-                    sqlPtr,
-                    paramsPtr,
-                    paramsOrEmpty.length,
-                    buf,
-                    bufLen,
-                    outWritten,
-                  ),
+            (buf, bufLen, outWritten) {
+              if (useFetch) {
+                return _bindings.odbc_exec_query_params_fetch(
+                  connectionId,
+                  sqlPtr,
+                  paramsPtr,
+                  paramsOrEmpty.length,
+                  resultEncoding.wireCode,
+                  fetchSize,
+                  buf,
+                  bufLen,
+                  outWritten,
+                );
+              }
+              return useOptions
+                  ? _bindings.odbc_exec_query_params_options(
+                      connectionId,
+                      sqlPtr,
+                      paramsPtr,
+                      paramsOrEmpty.length,
+                      resultEncoding.wireCode,
+                      buf,
+                      bufLen,
+                      outWritten,
+                    )
+                  : _bindings.odbc_exec_query_params(
+                      connectionId,
+                      sqlPtr,
+                      paramsPtr,
+                      paramsOrEmpty.length,
+                      buf,
+                      bufLen,
+                      outWritten,
+                    );
+            },
             maxSize: maxBufferBytes,
             initialSize: initialBufferBytes,
             preferTransient: preferTransientFfiBufferForParams(paramsOrEmpty),
@@ -101,6 +118,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     int? maxBufferBytes,
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) {
     if (params.isEmpty) {
       return execQueryParams(
@@ -110,6 +128,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
         maxBufferBytes: maxBufferBytes,
         initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
+        fetchSize: fetchSize,
       );
     }
     final buf = serializeParams(params);
@@ -120,6 +139,7 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
       maxBufferBytes: maxBufferBytes,
       initialBufferBytes: initialBufferBytes,
       resultEncoding: resultEncoding,
+      fetchSize: fetchSize,
     );
   }
 
@@ -136,17 +156,28 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     String sql, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) {
+    final useFetch = fetchSize > 0 && _bindings.supportsExecQueryMultiFetch;
     return _withSql(
       sql,
       (sqlPtr) => callWithBuffer(
-        (buf, bufLen, outWritten) => _bindings.odbc_exec_query_multi(
-          connectionId,
-          sqlPtr,
-          buf,
-          bufLen,
-          outWritten,
-        ),
+        (buf, bufLen, outWritten) => useFetch
+            ? _bindings.odbc_exec_query_multi_fetch(
+                connectionId,
+                sqlPtr,
+                fetchSize,
+                buf,
+                bufLen,
+                outWritten,
+              )
+            : _bindings.odbc_exec_query_multi(
+                connectionId,
+                sqlPtr,
+                buf,
+                bufLen,
+                outWritten,
+              ),
         maxSize: maxBufferBytes,
         initialSize: initialBufferBytes,
       ),
@@ -176,12 +207,15 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) {
     if (!_bindings.supportsExecQueryMultiParams) {
       throw StateError(
         'odbc_exec_query_multi_params requires odbc_engine >= 3.2.0',
       );
     }
+    final useFetch =
+        fetchSize > 0 && _bindings.supportsExecQueryMultiParamsFetch;
     return _withSql(
       sql,
       (sqlPtr) {
@@ -190,16 +224,26 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
           return _withParamsBuffer(
             paramsBuffer,
             (paramsPtr) => callWithBuffer(
-              (buf, bufLen, outWritten) =>
-                  _bindings.odbc_exec_query_multi_params(
-                connectionId,
-                sqlPtr,
-                paramsPtr,
-                paramsBuffer.length,
-                buf,
-                bufLen,
-                outWritten,
-              ),
+              (buf, bufLen, outWritten) => useFetch
+                  ? _bindings.odbc_exec_query_multi_params_fetch(
+                      connectionId,
+                      sqlPtr,
+                      paramsPtr,
+                      paramsBuffer.length,
+                      fetchSize,
+                      buf,
+                      bufLen,
+                      outWritten,
+                    )
+                  : _bindings.odbc_exec_query_multi_params(
+                      connectionId,
+                      sqlPtr,
+                      paramsPtr,
+                      paramsBuffer.length,
+                      buf,
+                      bufLen,
+                      outWritten,
+                    ),
               maxSize: maxBufferBytes,
               initialSize: initialBufferBytes,
               preferTransient: preferTransientFfiBufferForParams(paramsBuffer),
@@ -207,15 +251,26 @@ mixin _OdbcNativeQuerySync on _OdbcNativeState, _OdbcNativeHelpers {
           );
         }
         return callWithBuffer(
-          (buf, bufLen, outWritten) => _bindings.odbc_exec_query_multi_params(
-            connectionId,
-            sqlPtr,
-            null,
-            0,
-            buf,
-            bufLen,
-            outWritten,
-          ),
+          (buf, bufLen, outWritten) => useFetch
+              ? _bindings.odbc_exec_query_multi_params_fetch(
+                  connectionId,
+                  sqlPtr,
+                  null,
+                  0,
+                  fetchSize,
+                  buf,
+                  bufLen,
+                  outWritten,
+                )
+              : _bindings.odbc_exec_query_multi_params(
+                  connectionId,
+                  sqlPtr,
+                  null,
+                  0,
+                  buf,
+                  bufLen,
+                  outWritten,
+                ),
           maxSize: maxBufferBytes,
           initialSize: initialBufferBytes,
         );

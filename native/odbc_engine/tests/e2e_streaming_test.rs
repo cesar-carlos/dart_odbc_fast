@@ -7,6 +7,167 @@ use helpers::e2e::{should_run_slow_e2e_tests, should_run_sqlserver_e2e_tests};
 use helpers::env::get_sqlserver_test_dsn;
 
 #[test]
+fn test_fallback_columnar_lob_reuses_batches_without_changing_payload() {
+    if !should_run_sqlserver_e2e_tests() {
+        eprintln!("Skipping LOB fallback E2E: SQL Server DSN unavailable");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("SQL Server DSN");
+    let env = OdbcEnvironment::new();
+    env.init().expect("initialize ODBC");
+    let conn = OdbcConnection::connect(env.get_handles(), &conn_str).expect("connect");
+    let handles = conn.get_handles();
+    let conn_arc = handles
+        .lock()
+        .expect("handles")
+        .get_connection(conn.get_connection_id())
+        .expect("connection");
+    let cached = conn_arc.lock().expect("connection lock");
+    let sql = "SELECT TOP 5 CAST(REPLICATE('x', 2000) AS VARCHAR(MAX)) AS payload \
+               FROM sys.all_objects a CROSS JOIN sys.all_objects b";
+    let mut batches = Vec::new();
+    StreamingExecutor::new(4096)
+        .execute_streaming_batched(
+            &cached,
+            sql,
+            2,
+            |batch| {
+                batches.push(batch);
+                Ok(())
+            },
+            None,
+            ResultEncoding::ColumnarCompressed,
+        )
+        .expect("LOB fallback stream");
+    assert_eq!(batches.len(), 3);
+    for (batch, expected_rows) in batches.iter().zip([2usize, 2, 1]) {
+        assert_eq!(&batch[..4], &0x4F44_4243u32.to_le_bytes());
+        assert_eq!(
+            u32::from_le_bytes(batch[10..14].try_into().expect("row count")) as usize,
+            expected_rows
+        );
+        let name_len = u16::from_le_bytes(batch[21..23].try_into().expect("name length")) as usize;
+        let flag_offset = 23 + name_len;
+        let compressed = batch[flag_offset] == 1;
+        let length_offset = if compressed {
+            flag_offset + 2
+        } else {
+            flag_offset + 1
+        };
+        let payload_len = u32::from_le_bytes(
+            batch[length_offset..length_offset + 4]
+                .try_into()
+                .expect("payload length"),
+        ) as usize;
+        let payload = &batch[length_offset + 4..length_offset + 4 + payload_len];
+        let raw = if compressed {
+            zstd::decode_all(payload).expect("independent zstd frame")
+        } else {
+            payload.to_vec()
+        };
+        let mut position = 0;
+        for _ in 0..expected_rows {
+            assert_eq!(raw[position], 0, "non-NULL LOB");
+            position += 1;
+            let len =
+                u32::from_le_bytes(raw[position..position + 4].try_into().expect("cell length"))
+                    as usize;
+            position += 4;
+            assert_eq!(len, 2000);
+            assert!(raw[position..position + len]
+                .iter()
+                .all(|byte| *byte == b'x'));
+            position += len;
+        }
+        assert_eq!(position, raw.len());
+    }
+    drop(cached);
+    conn.disconnect().expect("disconnect");
+}
+
+#[cfg(feature = "block-cursor-fetch")]
+#[test]
+fn test_streaming_columnar_compressed_reuses_cursor_workspace() {
+    if !should_run_sqlserver_e2e_tests() {
+        eprintln!("Skipping compressed columnar E2E: SQL Server DSN unavailable");
+        return;
+    }
+    let conn_str = get_sqlserver_test_dsn().expect("SQL Server DSN");
+    let env = OdbcEnvironment::new();
+    env.init().expect("initialize ODBC");
+    let conn = OdbcConnection::connect(env.get_handles(), &conn_str).expect("connect");
+    let handles = conn.get_handles();
+    let conn_arc = handles
+        .lock()
+        .expect("handles")
+        .get_connection(conn.get_connection_id())
+        .expect("connection");
+    let cached = conn_arc.lock().expect("connection lock");
+    let sql = "SELECT TOP 205 CAST(REPLICATE('x', 100) AS NVARCHAR(100)) AS payload \
+               FROM sys.all_objects a CROSS JOIN sys.all_objects b";
+    let mut batches = Vec::new();
+    StreamingExecutor::new(4096)
+        .execute_streaming_batched(
+            &cached,
+            sql,
+            100,
+            |batch| {
+                batches.push(batch);
+                Ok(())
+            },
+            None,
+            ResultEncoding::ColumnarCompressed,
+        )
+        .expect("columnar stream");
+    assert_eq!(batches.len(), 3);
+    for (batch, expected_rows) in batches.iter().zip([100usize, 100, 5]) {
+        assert_eq!(&batch[..4], &0x4F44_4243u32.to_le_bytes());
+        assert_eq!(
+            u16::from_le_bytes(batch[8..10].try_into().expect("columns")),
+            1
+        );
+        assert_eq!(
+            u32::from_le_bytes(batch[10..14].try_into().expect("rows")) as usize,
+            expected_rows
+        );
+        assert_eq!(batch[14], 1, "compression-capable v2 message");
+        let name_len = u16::from_le_bytes(batch[21..23].try_into().expect("name length")) as usize;
+        let flag_offset = 23 + name_len;
+        let compressed = batch[flag_offset] == 1;
+        let length_offset = if compressed {
+            assert_eq!(batch[flag_offset + 1], 1, "zstd column");
+            flag_offset + 2
+        } else {
+            flag_offset + 1
+        };
+        let payload_len = u32::from_le_bytes(
+            batch[length_offset..length_offset + 4]
+                .try_into()
+                .expect("payload length"),
+        ) as usize;
+        let payload = &batch[length_offset + 4..length_offset + 4 + payload_len];
+        let raw = if compressed {
+            zstd::decode_all(payload).expect("decode independent zstd frame")
+        } else {
+            payload.to_vec()
+        };
+        let mut pos = 0;
+        for _ in 0..expected_rows {
+            assert_eq!(raw[pos], 0, "non-NULL cell");
+            pos += 1;
+            let len =
+                u32::from_le_bytes(raw[pos..pos + 4].try_into().expect("cell length")) as usize;
+            pos += 4;
+            assert_eq!(&raw[pos..pos + len], &[b'x'; 100]);
+            pos += len;
+        }
+        assert_eq!(pos, raw.len());
+    }
+    drop(cached);
+    conn.disconnect().expect("disconnect");
+}
+
+#[test]
 fn test_streaming_small_result_set() {
     if !should_run_sqlserver_e2e_tests() {
         eprintln!("⚠️  Skipping E2E test: SQL Server not available");

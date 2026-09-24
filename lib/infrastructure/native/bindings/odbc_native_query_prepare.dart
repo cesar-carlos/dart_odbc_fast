@@ -34,19 +34,51 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
     int fetchSize = 1000,
     int? maxBufferBytes,
     int? initialBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   ]) {
-    if (params == null || params.isEmpty) {
-      return callWithBuffer(
-        (buf, bufLen, outWritten) => _bindings.odbc_execute(
+    if (resultEncoding != ResultEncoding.rowMajor) {
+      _requireResultEncodingSupport(
+        resultEncoding: resultEncoding,
+        supported: _bindings.supportsExecuteOptions,
+        symbol: 'odbc_execute_options',
+      );
+    }
+    int invoke(
+      ffi.Pointer<ffi.Uint8> buf,
+      int bufLen,
+      ffi.Pointer<ffi.Uint32> outWritten,
+      ffi.Pointer<ffi.Uint8>? paramsPtr,
+      int paramsLen,
+    ) {
+      if (resultEncoding != ResultEncoding.rowMajor) {
+        return _bindings.odbc_execute_options(
           stmtId,
-          ffi.nullptr,
-          0,
+          paramsPtr,
+          paramsLen,
           timeoutOverrideMs,
           fetchSize,
+          resultEncoding.wireCode,
           buf,
           bufLen,
           outWritten,
-        ),
+        );
+      }
+      return _bindings.odbc_execute(
+        stmtId,
+        paramsPtr,
+        paramsLen,
+        timeoutOverrideMs,
+        fetchSize,
+        buf,
+        bufLen,
+        outWritten,
+      );
+    }
+
+    if (params == null || params.isEmpty) {
+      return callWithBuffer(
+        (buf, bufLen, outWritten) =>
+            invoke(buf, bufLen, outWritten, ffi.nullptr, 0),
         maxSize: maxBufferBytes,
         initialSize: initialBufferBytes,
       );
@@ -54,16 +86,8 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
     return _withParamsBuffer(
       params,
       (paramsPtr) => callWithBuffer(
-        (buf, bufLen, outWritten) => _bindings.odbc_execute(
-          stmtId,
-          paramsPtr,
-          params.length,
-          timeoutOverrideMs,
-          fetchSize,
-          buf,
-          bufLen,
-          outWritten,
-        ),
+        (buf, bufLen, outWritten) =>
+            invoke(buf, bufLen, outWritten, paramsPtr, params.length),
         maxSize: maxBufferBytes,
         initialSize: initialBufferBytes,
         preferTransient: preferTransientFfiBufferForParams(params),
@@ -88,6 +112,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
     int fetchSize = 1000,
     int? maxBufferBytes,
     int? initialBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   ]) {
     if (params == null || params.isEmpty) {
       return execute(
@@ -97,6 +122,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
         fetchSize,
         maxBufferBytes,
         initialBufferBytes,
+        resultEncoding,
       );
     }
     return execute(
@@ -106,6 +132,7 @@ mixin _OdbcNativeQueryPrepare on _OdbcNativeState, _OdbcNativeHelpers {
       fetchSize,
       maxBufferBytes,
       initialBufferBytes,
+      resultEncoding,
     );
   }
 

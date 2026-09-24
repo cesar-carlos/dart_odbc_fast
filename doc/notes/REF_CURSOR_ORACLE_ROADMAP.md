@@ -7,7 +7,7 @@
 
 **Estado (motor, Oracle + plugin activo):** `ParamValue::RefCursorOut` no buffer DRT1
 activa o *path* `engine::core::ref_cursor_oracle` + `execute_oracle_ref_cursor_path` em
-[`execution_engine.rs`](../../native/odbc_engine/src/engine/core/execution_engine.rs):
+[`execution/mod.rs`](../../native/odbc_engine/src/engine/core/execution/mod.rs):
 os `?` para *ref cursor* são **retirados** do texto SQL (modelo *Oracle Database ODBC —
 Enabling Result Sets*), os restantes *binds* vão para `OutputAwareParams`, e o motor usa
 `prepare` + `execute` + o primeiro *cursor* + `SQLMoreResults` para recolher *um result
@@ -32,7 +32,7 @@ do *stack* documentado). Chamadas a `bound_to_slots` *sem* o filtro do *path* Or
 
 ## 1. Ponto de integração: `execute_query_with_bound_params_and_timeout`
 
-Ficheiro: [`execution_engine.rs`](../../native/odbc_engine/src/engine/core/execution_engine.rs)
+Ficheiro: [`execution/mod.rs`](../../native/odbc_engine/src/engine/core/execution/mod.rs)
 
 Fluxo (Oracle, resumo):
 

@@ -264,6 +264,22 @@ name = "encoder_bench"
 harness = false
 
 [[bench]]
+name = "live_hotpaths_bench"
+harness = false
+
+[[bench]]
+name = "buffer_recycle_bench"
+harness = false
+
+[[bench]]
+name = "fallback_transpose_bench"
+harness = false
+
+[[bench]]
+name = "stream_param_decode_bench"
+harness = false
+
+[[bench]]
 name = "ffi_contention_bench"
 harness = false
 

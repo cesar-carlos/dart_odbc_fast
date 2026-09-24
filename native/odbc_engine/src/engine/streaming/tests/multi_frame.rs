@@ -119,7 +119,7 @@ fn test_reserved_multi_prefix_encodes_row_payload_without_reallocation() {
     rows.add_row_vecs(vec![Some(7i32.to_le_bytes().to_vec())]);
     let payload = RowBufferEncoder::encode_result(&rows).expect("payload");
 
-    let mut framed = begin_batch_output(Some(MULTI_STREAM_ITEM_TAG_RESULT_SET));
+    let mut framed = begin_batch_output(Some(MULTI_STREAM_ITEM_TAG_RESULT_SET), None);
     framed.reserve(payload.len());
     let allocation = framed.as_ptr();
     RowBufferEncoder::encode_result_into(&rows, &mut framed).expect("direct encode");

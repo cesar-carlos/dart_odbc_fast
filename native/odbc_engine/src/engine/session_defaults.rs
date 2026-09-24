@@ -27,3 +27,38 @@ pub(crate) fn session_lock_timeout_reset_sql(engine_id: &str) -> Option<&'static
         _ => None,
     }
 }
+
+/// SQL Server, SQLite and DB2 apply these isolation settings to the session,
+/// so a pooled connection must restore the documented engine default.
+pub(crate) fn session_isolation_reset_sql(engine_id: &str) -> Option<&'static str> {
+    match engine_id {
+        ENGINE_SQLSERVER => Some("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"),
+        ENGINE_SQLITE => Some("PRAGMA read_uncommitted = 0"),
+        ENGINE_DB2 => Some("SET CURRENT ISOLATION = CS"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::core::{ENGINE_MYSQL, ENGINE_POSTGRES};
+
+    #[test]
+    fn only_session_scoped_isolation_has_reset_sql() {
+        assert_eq!(
+            session_isolation_reset_sql(ENGINE_SQLSERVER),
+            Some("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        );
+        assert_eq!(
+            session_isolation_reset_sql(ENGINE_SQLITE),
+            Some("PRAGMA read_uncommitted = 0")
+        );
+        assert_eq!(
+            session_isolation_reset_sql(ENGINE_DB2),
+            Some("SET CURRENT ISOLATION = CS")
+        );
+        assert_eq!(session_isolation_reset_sql(ENGINE_POSTGRES), None);
+        assert_eq!(session_isolation_reset_sql(ENGINE_MYSQL), None);
+    }
+}

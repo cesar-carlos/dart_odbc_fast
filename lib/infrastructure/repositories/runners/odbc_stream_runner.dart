@@ -12,6 +12,7 @@ import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dar
     show MultiResultItem;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_stream_decoder.dart'
     show MultiResultStreamDecoder;
+import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/multi_stream_coalescer.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_connection_runner.dart';
@@ -101,6 +102,46 @@ class OdbcStreamRunner {
   /// from continuation frames. Use this for large multi-result cursors when
   /// bounded memory is more important than receiving one fully coalesced item
   /// per SQL cursor.
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
+    final coalescer = MultiStreamCoalescer(_parser);
+    return _streamQueryMulti<QueryResultMultiItem>(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      params: params,
+      mapItems: coalescer.take,
+      finish: coalescer.finish,
+      fromFullItem: (item) => item,
+    );
+  }
+
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) {
+    final mapper = MultiStreamBatchMapper(_parser);
+    return _streamQueryMulti<QueryResultMultiBatchItem>(
+      connectionId,
+      sql,
+      fetchSize: fetchSize,
+      chunkSize: chunkSize,
+      params: params,
+      mapItems: mapper.take,
+      finish: mapper.finish,
+      fromFullItem: _batchItemFromFull,
+    );
+  }
+
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
     String connectionId,
     String sql, {
@@ -127,6 +168,7 @@ class OdbcStreamRunner {
     required List<T> Function(Iterable<MultiResultItem> items) mapItems,
     required List<T> Function() finish,
     required T Function(QueryResultMultiItem item) fromFullItem,
+    List<ParamValue> params = const <ParamValue>[],
   }) async* {
     final nativeId = _state.connectionIds[connectionId];
     if (nativeId == null) {
@@ -166,6 +208,7 @@ class OdbcStreamRunner {
     var streamId = 0;
     var completed = false;
     try {
+      final serialized = params.isEmpty ? null : serializeParams(params);
       streamId = _ffi.isAsync
           ? await _ffi.async.streamMultiStartAsync(
               nativeId,
@@ -173,14 +216,24 @@ class OdbcStreamRunner {
               fetchSize: fetchSize,
               chunkSize: effectiveChunk,
               resultEncodingWire: resultEncoding.wireCode,
+              serializedParams: serialized ?? const <int>[],
             )
-          : _ffi.sync.streamMultiStartBatched(
-                nativeId,
-                sql,
-                fetchSize: fetchSize,
-                chunkSize: effectiveChunk,
-                resultEncodingWire: resultEncoding.wireCode,
-              ) ??
+          : (serialized == null
+                  ? _ffi.sync.streamMultiStartBatched(
+                      nativeId,
+                      sql,
+                      fetchSize: fetchSize,
+                      chunkSize: effectiveChunk,
+                      resultEncodingWire: resultEncoding.wireCode,
+                    )
+                  : _ffi.sync.streamMultiStartBatchedParams(
+                      nativeId,
+                      sql,
+                      serialized,
+                      fetchSize: fetchSize,
+                      chunkSize: effectiveChunk,
+                      resultEncodingWire: resultEncoding.wireCode,
+                    )) ??
               0;
       if (streamId == 0) {
         final fallback = await _query.executeQueryMultiFull(connectionId, sql);

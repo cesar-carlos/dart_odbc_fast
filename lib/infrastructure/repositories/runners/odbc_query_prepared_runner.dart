@@ -2,6 +2,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart'
     show PreparedStatementMetrics;
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
@@ -113,8 +114,9 @@ class OdbcQueryPreparedRunner {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) async {
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) async {
     final ownership = state.validateStatementOwnership<QueryResult>(
       connectionId: connectionId,
       stmtId: stmtId,
@@ -125,9 +127,12 @@ class OdbcQueryPreparedRunner {
     try {
       final pv = params == null || params.isEmpty ? null : params;
       final timeoutMs = options?.timeout?.inMilliseconds ?? 0;
-      final fetchSizeVal = options?.fetchSize ?? 1000;
-      final maxBuf = options?.maxBufferSize;
       final connOpts = state.optionsFor(connectionId);
+      final fetchSizeVal = resolvePreparedFetchSize(
+        statementFetchSize: options?.fetchSize,
+        blockFetchBatchSize: connOpts?.blockFetchBatchSize,
+      );
+      final maxBuf = options?.maxBufferSize;
       final initialBytes = options?.initialBufferSize ??
           connOpts?.initialResultBufferBytes ??
           defaultInitialResultBufferBytes;
@@ -139,6 +144,7 @@ class OdbcQueryPreparedRunner {
               fetchSizeVal,
               maxBufferBytes: maxBuf,
               initialBufferBytes: initialBytes,
+              resultEncoding: resultEncoding ?? ResultEncoding.rowMajor,
             )
           : ffi.sync.executePrepared(
               stmtId,
@@ -147,6 +153,7 @@ class OdbcQueryPreparedRunner {
               fetchSizeVal,
               maxBufferBytes: maxBuf,
               initialBufferBytes: initialBytes,
+              resultEncoding: resultEncoding ?? ResultEncoding.rowMajor,
             );
 
       final qr = parser.parseBufferToQueryResult(
@@ -389,4 +396,16 @@ class OdbcQueryPreparedRunner {
       );
     }
   }
+}
+
+/// Explicit [statementFetchSize] wins. Otherwise a positive connection
+/// [blockFetchBatchSize] is used. The prepared default remains 1000.
+int resolvePreparedFetchSize({
+  required int? statementFetchSize,
+  required int? blockFetchBatchSize,
+}) {
+  if (statementFetchSize != null) return statementFetchSize;
+  final batch = blockFetchBatchSize;
+  if (batch != null && batch > 0) return batch;
+  return 1000;
 }

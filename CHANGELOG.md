@@ -24,15 +24,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a large cursor without retaining all of its previous rows. Connection
   overloads and telemetry forwards are included. The existing
   `streamQueryMulti` API remains coalesced and fully compatible.
+- **Parameterized multi-result streaming** — `streamQueryMultiParamValues`
+  and `streamQueryMultiBatchesParamValues` bind the same legacy/DRT1 input
+  buffer as single-result streams. New additive exports:
+  `odbc_stream_multi_start_batched_params_options` and
+  `odbc_stream_multi_start_async_params_options`. Calls without parameters
+  keep the previous symbols.
+- **Prepared wire encoding** — `executePreparedParamValues` accepts an
+  optional `ResultEncoding` (default row-major). Columnar requests use the
+  additive `odbc_execute_options` export and fail with a typed error when
+  that symbol is absent. `odbc_execute` stays row-major.
 
 ### Changed
 
+- **`ConnectionOptions.blockFetchBatchSize`** — a positive value is now sent
+  on buffered `executeQuery*` / `executeQueryMulti*` through the additive
+  exports `odbc_exec_query_params_fetch`, `odbc_execute_async_params_fetch`,
+  `odbc_exec_query_multi_fetch`, and `odbc_exec_query_multi_params_fetch`.
+  `0` or a missing symbol keeps the process default
+  (`ODBC_FAST_BLOCK_FETCH_BATCH` or 256). Prepared execution still prefers
+  `StatementOptions.fetchSize`; when that option is null it inherits
+  `blockFetchBatchSize`, otherwise 1000.
 - **Live `capabilities.driver_name`** — on an open connection this is now
   `SQL_DRIVER_NAME` (for example the ODBC driver DLL/so name). The server
   product name stays in `DbmsInfo.dbms_name` / `dbmsName`.
 
 ### Performance
 
+- **Pool and short transactions** — checkin uses the driver's connection-dead
+  attribute instead of running a health query on every return when supported.
+  Transaction begin no longer clears the prepared cache; commit and rollback
+  retain reusable statements only when the driver's cursor behavior reports
+  that their prepared plans survive.
+- **Streaming follow-up** — batched and async FFI parameter buffers are parsed
+  directly from the borrowed caller bytes; input-only DRT1 values move into
+  execution without cloning. Pending payloads and stream resources are
+  destroyed after their shared registry locks are released. Columnar fallback
+  reuses metadata, typed vectors, row vectors and compression scratch across
+  batches. Fully copied batch buffers can be recycled in a bounded per-stream
+  pool (two idle buffers, up to 8 MiB capacity each).
+- **Rust execution and streaming paths** — synchronous FFI result delivery and
+  pending `-2` retries copy outside the global/pending mutexes while pooled
+  reservations remain held through publication. Row-major block streams
+  recycle bounded row vectors between batches, and streaming metadata is
+  described/planned in one pass per column.
+- **Prepared parameters and MULT** — legacy parameter buffers are decoded
+  once, inferable NULL binds are built once for cached execution/streaming,
+  and repeated MULT streams can use the per-connection prepared cache. MULT
+  entries are invalidated on execution, fetch, encoding, cancellation, or
+  consumer-delivery failure.
+- **Columnar compression workspace** — raw/compressed buffers and the zstd
+  context are reused across columns and streaming batches, with independent
+  frames and the existing raw fallback preserved.
 - **MULT streaming and columnar batches** — encoders now write directly after
   the reserved five-byte MULT prefix, then patch the tag and little-endian
   payload length in place. Columnar streaming sessions retain their metadata
@@ -58,6 +101,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pool and transaction lifecycle** — begin, savepoints and finalization keep
+  connection reservations until their driver calls finish. Concurrent cleanup,
+  checkout and resize cannot orphan or mix pooled connections. Failed
+  commit/rollback or session reset discards an indeterminate connection instead
+  of returning it to use; failed lock-timeout or session-isolation resets remain
+  pending until the connection is discarded. Session-scoped isolation overrides
+  on SQL Server, SQLite and DB2 return to documented engine defaults before a
+  pooled connection is reused. PostgreSQL
+  transaction settings now run after entering manual commit mode. Explicit pool
+  health checks reserve acquisition against close/resize and validate even
+  when checkout validation is disabled. Dart
+  transaction handles remain retryable when the native result is busy.
+- **Parameterized MULT without statement cache** — the direct-prepare streaming
+  path now forwards input parameters to the prepared statement when
+  `statement-handle-reuse` is disabled.
+- **Dart fetch-size binding regressions** — restored the legacy MULT method
+  declaration after adding optional fetch exports, and updated test doubles
+  to match the new optional fetch-size argument and missing-symbol behavior.
+- **Native `test-helpers` build** — the FFI prelude now imports three
+  execution helpers from their defining module, restoring the default-feature
+  SQL Server integration-test build without changing exported APIs.
 - **Dart FFI zero-copy compatibility** — Dart-owned transient result buffers
   now use `malloc.nativeFree` directly through `NativeFinalizer`; zero-copy no
   longer depends on the optional `odbc_release_buffer` export from the native
@@ -80,6 +144,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- Added pending-result concurrent/repeated-retry, reusable row-vector,
+  parameter-plan, and independent zstd-frame regressions. The zstd golden
+  fixture now checks wire metadata and decompressed cells instead of exact
+  compressor bytes.
+- Added a SQL Server live regression for three compressed columnar stream
+  batches, including the final partial batch and per-frame decompression.
+- Added an opt-in, read-only SQL Server Criterion harness for production FFI
+  concurrency, batched row/columnar streams, typed NULL parameters, and
+  repeated buffered/streaming MULT (post-change measurements only).
 - Added direct-prefix MULT framing, compressed/raw columnar fallback,
   reusable-column-buffer parity, little-endian decoder, and zero-copy
   compatibility regressions. Criterion benchmarks now include repeated
@@ -92,6 +165,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and admin-runner audit / metadata-cache / detect-driver JSON paths.
 - Added regressions for uncoalesced multi-result continuation batches and for
   compressed columnar output retaining less capacity than its raw payload.
+- Added block-fetch batch resolution coverage: an explicit fetch size
+  overrides the process default, wire `0` falls back to it, and Dart uses
+  the new fetch export only when the symbol is loaded. Prepared fetch size
+  keeps an explicit `StatementOptions.fetchSize` and otherwise inherits
+  `blockFetchBatchSize`.
 
 ## [4.5.1] - 2026-08-15
 
@@ -3126,7 +3204,7 @@ with these enabled out of the box for `SYSTEM`.
     - [`PreparingXa`] / [`PreparedXa`] handles enforce the per-state
       contract at compile time — there is no way to call
       `commit_prepared` on an `Active` branch.
-    - [`commit_one_phase`](XaTransaction::commit_one_phase) — 1RM
+    - `XaTransaction::commit_one_phase` — 1RM
       shortcut that fuses prepare + commit when this RM is the sole
       participant.
     - [`recover_prepared_xids`] / [`resume_prepared`] — crash-recovery
@@ -3186,7 +3264,7 @@ with these enabled out of the box for `SYSTEM`.
 - **`SqlDataType` engine-specific kinds.** Seven additional typed kinds
   for engine-native types that don't have a portable cross-vendor
   equivalent. Brings the `SqlDataType` surface from 20/30 → **27/30**
-  of the [TYPE_MAPPING.md](../doc/notes/TYPE_MAPPING.md) roadmap.
+  of the [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) roadmap.
   Wire-compatible with existing `ParamValue*` primitives (the value
   is the type-discipline at the call site plus per-kind validation).
   - **PostgreSQL `range`** — accepts the standard PG range literal
@@ -3233,7 +3311,7 @@ with these enabled out of the box for `SYSTEM`.
   `lib/infrastructure/native/protocol/param_value.dart`. Together with
   the previous batch this brings the `SqlDataType` surface from
   10/30 → **20/30** of the
-  [TYPE_MAPPING.md](../doc/notes/TYPE_MAPPING.md) roadmap. Same
+  [TYPE_MAPPING.md](doc/notes/TYPE_MAPPING.md) roadmap. Same
   contract as before: non-breaking, no FFI changes, no wire changes,
   no existing call site has to be touched.
   - **`SqlDataType.tinyInt`** — accepts `int`, validates against
@@ -3272,7 +3350,7 @@ with these enabled out of the box for `SYSTEM`.
 - **`SqlDataType` extras: `smallInt`, `bigInt`, `json`, `uuid`, `money`.**
   Five new typed kinds in `lib/infrastructure/native/protocol/param_value.dart`,
   bringing the total to 15/30 from the
-  [`TYPE_MAPPING.md`](../doc/notes/TYPE_MAPPING.md) roadmap. Every
+  [`TYPE_MAPPING.md`](doc/notes/TYPE_MAPPING.md) roadmap. Every
   kind is **non-breaking** — no existing call site changes, no FFI
   changes, no wire-format changes. They run on top of the existing
   `ParamValue*` primitives.

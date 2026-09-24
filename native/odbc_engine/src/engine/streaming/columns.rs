@@ -1,5 +1,8 @@
 use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
+use crate::protocol::columnar::RowBufferV2;
+use crate::protocol::columnar_encoder::ColumnarCompressionWorkspace;
+use crate::protocol::converter::{empty_columnar_for_row_buffer, transpose_row_buffer_into};
 use crate::protocol::{
     row_buffer_to_columnar, ColumnarEncoder, OdbcType, RowBuffer, RowBufferEncoder,
 };
@@ -60,6 +63,74 @@ pub(crate) fn encode_row_buffer_with_encoding_into(
                 &columnar,
                 matches!(encoding, ResultEncoding::ColumnarCompressed),
             )
+        }
+    }
+}
+
+pub(super) struct FallbackColumnarEncoder {
+    batch: RowBufferV2,
+    workspace: ColumnarCompressionWorkspace,
+}
+
+impl FallbackColumnarEncoder {
+    pub(super) fn new(row_buffer: &RowBuffer) -> Self {
+        Self {
+            batch: empty_columnar_for_row_buffer(row_buffer),
+            workspace: ColumnarCompressionWorkspace::new(),
+        }
+    }
+
+    pub(super) fn encode_into(
+        &mut self,
+        row_buffer: &mut RowBuffer,
+        compressed: bool,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        transpose_row_buffer_into(row_buffer, &mut self.batch)?;
+        ColumnarEncoder::encode_into_with_workspace(
+            output,
+            &self.batch,
+            compressed,
+            &mut self.workspace,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_reuses_metadata_and_matches_standalone_batches() {
+        let mut rows = RowBuffer::new();
+        rows.add_column("payload".to_string(), OdbcType::Binary);
+        let mut encoder = FallbackColumnarEncoder::new(&rows);
+        let name_ptr = encoder.batch.columns[0].metadata.name.as_ptr();
+        for len in [2048, 3072, 0] {
+            rows.rows.clear();
+            if len > 0 {
+                rows.add_row_vecs(vec![Some(vec![42; len])]);
+                rows.add_row_vecs(vec![None]);
+            }
+            for compressed in [false, true] {
+                let mut expected_rows = rows.clone();
+                let expected = encode_row_buffer_with_encoding(
+                    &mut expected_rows,
+                    if compressed {
+                        ResultEncoding::ColumnarCompressed
+                    } else {
+                        ResultEncoding::Columnar
+                    },
+                )
+                .expect("standalone encode");
+                let mut actual_rows = rows.clone();
+                let mut actual = Vec::new();
+                encoder
+                    .encode_into(&mut actual_rows, compressed, &mut actual)
+                    .expect("fallback encode");
+                assert_eq!(actual, expected);
+                assert_eq!(encoder.batch.columns[0].metadata.name.as_ptr(), name_ptr);
+            }
         }
     }
 }

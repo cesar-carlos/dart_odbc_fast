@@ -17,6 +17,16 @@ pub(crate) fn resolve_batch_size(fetch_size: Option<u32>) -> usize {
         .unwrap_or_else(crate::engine::fetch::configured_fetch_batch_size)
 }
 
+/// Wire `fetch_size` of `0` keeps the process default (`ODBC_FAST_BLOCK_FETCH_BATCH`
+/// or 256). Any positive value is a per-call override.
+pub(crate) fn fetch_size_from_wire(fetch_size: u32) -> Option<u32> {
+    if fetch_size == 0 {
+        None
+    } else {
+        Some(fetch_size)
+    }
+}
+
 /// Shared cursor drain + encode used by [`CachedConnection`] and
 /// [`ExecutionEngine`]. When `plugin` is `None`, column types are mapped via
 /// [`OdbcType::from_odbc_sql_type`] (no driver-plugin overrides).
@@ -216,6 +226,7 @@ impl ExecutionEngine {
     pub(super) fn encode_cursor_owned<C: Cursor + ResultSetMetadata>(
         &self,
         cursor: C,
+        fetch_size: Option<u32>,
     ) -> Result<(Vec<u8>, C)> {
         let mut row_buffer = RowBuffer::new();
         let plugin = self.current_plugin();
@@ -243,7 +254,7 @@ impl ExecutionEngine {
                         column_metas,
                         &column_types,
                         descs,
-                        crate::engine::fetch::configured_fetch_batch_size(),
+                        resolve_batch_size(fetch_size),
                     )?;
                     let encoded =
                         crate::protocol::ColumnarEncoder::encode(&v2, self.use_compression)?;
@@ -256,7 +267,7 @@ impl ExecutionEngine {
             cursor,
             &column_types,
             &mut row_buffer,
-            resolve_batch_size(None),
+            resolve_batch_size(fetch_size),
             None,
         )?;
 
@@ -275,5 +286,27 @@ impl ExecutionEngine {
         plugin: Option<&dyn DriverPlugin>,
     ) -> Result<Vec<OdbcType>> {
         describe_columns_for_encode(cursor, row_buffer, plugin)
+    }
+}
+
+#[cfg(test)]
+mod batch_size_tests {
+    use super::{fetch_size_from_wire, resolve_batch_size};
+
+    #[test]
+    fn explicit_fetch_size_overrides_process_default() {
+        assert_eq!(resolve_batch_size(Some(32)), 32);
+        assert_eq!(resolve_batch_size(Some(0)), 1);
+    }
+
+    #[test]
+    fn zero_wire_fetch_size_uses_process_default() {
+        assert_eq!(fetch_size_from_wire(0), None);
+        assert_eq!(fetch_size_from_wire(64), Some(64));
+        assert_eq!(
+            resolve_batch_size(fetch_size_from_wire(0)),
+            crate::engine::fetch::configured_fetch_batch_size()
+        );
+        assert_eq!(resolve_batch_size(fetch_size_from_wire(128)), 128);
     }
 }

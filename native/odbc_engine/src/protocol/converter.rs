@@ -44,7 +44,7 @@ fn decode_bigint_cell(
 /// **Deprecation note (Sprint 2):** when the `block-cursor-fetch` feature
 /// is enabled the engine populates `RowBufferV2` directly from the cursor
 /// via [`crate::engine::core::columnar_fetch::fetch_columnar_into`],
-/// avoiding the per-cell `.clone()` cost this function pays. The function
+/// avoiding the row-major intermediate and transposition cost. The function
 /// is retained because:
 ///
 /// - It is still the path taken when `block-cursor-fetch` is OFF.
@@ -59,75 +59,114 @@ fn decode_bigint_cell(
 /// Takes ownership of [buffer] so varchar/binary cells move out of the
 /// row-major grid via [`Option::take`] instead of cloning each `Vec<u8>`.
 pub fn row_buffer_to_columnar(mut buffer: RowBuffer) -> Result<RowBufferV2> {
-    let col_count = buffer.column_count();
-    let mut v2 = RowBufferV2::with_capacity(col_count);
-    v2.set_row_count(buffer.row_count());
+    let mut v2 = empty_columnar_for_row_buffer(&buffer);
+    transpose_row_buffer_into(&mut buffer, &mut v2)?;
+    Ok(v2)
+}
 
-    if col_count == 0 {
-        return Ok(v2);
-    }
-
-    for (col_idx, col_meta) in buffer.columns.iter().enumerate() {
+pub(crate) fn empty_columnar_for_row_buffer(buffer: &RowBuffer) -> RowBufferV2 {
+    let mut v2 = RowBufferV2::with_capacity(buffer.column_count());
+    for col_meta in &buffer.columns {
         let metadata = ColumnMetadata {
             name: col_meta.name.clone(),
             odbc_type: col_meta.odbc_type,
         };
-
         let data = match col_meta.odbc_type {
-            OdbcType::Integer => {
-                let mut int_data = Vec::with_capacity(buffer.row_count());
-                for (row_idx, row) in buffer.rows.iter().enumerate() {
-                    let cell = row.get(col_idx).and_then(|o| o.as_ref());
-                    int_data.push(decode_integer_cell(&col_meta.name, row_idx, cell)?);
-                }
-                ColumnData::Integer(int_data)
-            }
-            OdbcType::BigInt => {
-                let mut bigint_data = Vec::with_capacity(buffer.row_count());
-                for (row_idx, row) in buffer.rows.iter().enumerate() {
-                    let cell = row.get(col_idx).and_then(|o| o.as_ref());
-                    bigint_data.push(decode_bigint_cell(&col_meta.name, row_idx, cell)?);
-                }
-                ColumnData::BigInt(bigint_data)
-            }
-            OdbcType::Binary => {
-                let mut binary_data = Vec::with_capacity(buffer.row_count());
-                for row in &mut buffer.rows {
-                    if col_idx < row.len() {
-                        binary_data.push(row[col_idx].take().map(|b| b.into_vec()));
-                    } else {
-                        binary_data.push(None);
-                    }
-                }
-                ColumnData::Binary(binary_data)
-            }
-            _ => {
-                let mut varchar_data = Vec::with_capacity(buffer.row_count());
-                for row in &mut buffer.rows {
-                    if col_idx < row.len() {
-                        varchar_data.push(row[col_idx].take().map(|b| b.into_vec()));
-                    } else {
-                        varchar_data.push(None);
-                    }
-                }
-                ColumnData::Varchar(varchar_data)
-            }
+            OdbcType::Integer => ColumnData::Integer(Vec::new()),
+            OdbcType::BigInt => ColumnData::BigInt(Vec::new()),
+            OdbcType::Binary => ColumnData::Binary(Vec::new()),
+            _ => ColumnData::Varchar(Vec::new()),
         };
-
         v2.add_column(metadata, data);
     }
+    v2
+}
 
-    Ok(v2)
+pub(crate) fn transpose_row_buffer_into(
+    buffer: &mut RowBuffer,
+    v2: &mut RowBufferV2,
+) -> Result<()> {
+    debug_assert_eq!(buffer.column_count(), v2.column_count());
+    v2.set_row_count(0);
+    for (col_idx, (col_meta, column)) in buffer.columns.iter().zip(&mut v2.columns).enumerate() {
+        match &mut column.data {
+            ColumnData::Integer(values) => {
+                values.clear();
+                for (row_idx, row) in buffer.rows.iter().enumerate() {
+                    let cell = row.get(col_idx).and_then(|o| o.as_ref());
+                    values.push(decode_integer_cell(&col_meta.name, row_idx, cell)?);
+                }
+            }
+            ColumnData::BigInt(values) => {
+                values.clear();
+                for (row_idx, row) in buffer.rows.iter().enumerate() {
+                    let cell = row.get(col_idx).and_then(|o| o.as_ref());
+                    values.push(decode_bigint_cell(&col_meta.name, row_idx, cell)?);
+                }
+            }
+            ColumnData::Binary(values) | ColumnData::Varchar(values) => {
+                values.clear();
+                for row in &mut buffer.rows {
+                    values.push(
+                        row.get_mut(col_idx)
+                            .and_then(Option::take)
+                            .map(|b| b.into_vec()),
+                    );
+                }
+            }
+        }
+    }
+    v2.set_row_count(buffer.row_count());
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::error::OdbcError;
-    use crate::protocol::row_buffer::RowBuffer;
+    #[test]
+    fn transpose_reuses_column_vectors_and_matches_standalone_bytes() {
+        use super::*;
+        use crate::protocol::ColumnarEncoder;
 
+        let mut rows = RowBuffer::new();
+        rows.add_column("id".to_string(), OdbcType::Integer);
+        rows.add_column("data".to_string(), OdbcType::Binary);
+        let mut reused = empty_columnar_for_row_buffer(&rows);
+        let column_ptrs: Vec<_> = reused
+            .columns
+            .iter()
+            .map(|column| column.metadata.name.as_ptr())
+            .collect();
+
+        for batch in [
+            vec![
+                vec![Some(1i32.to_le_bytes().to_vec()), Some(vec![7; 2048])],
+                vec![None, None],
+            ],
+            vec![vec![Some(3i32.to_le_bytes().to_vec()), Some(vec![8; 1536])]],
+            Vec::new(),
+        ] {
+            rows.rows.clear();
+            for row in batch {
+                rows.add_row_vecs(row);
+            }
+            let expected = row_buffer_to_columnar(rows.clone()).expect("standalone transpose");
+            transpose_row_buffer_into(&mut rows, &mut reused).expect("reused transpose");
+            for compressed in [false, true] {
+                let expected =
+                    ColumnarEncoder::encode(&expected, compressed).expect("expected encode");
+                let actual = ColumnarEncoder::encode(&reused, compressed).expect("reused encode");
+                assert_eq!(actual, expected);
+            }
+            assert!(reused
+                .columns
+                .iter()
+                .zip(&column_ptrs)
+                .all(|(column, ptr)| column.metadata.name.as_ptr() == *ptr));
+        }
+    }
     #[test]
     fn test_row_buffer_to_columnar_empty() {
+        use super::*;
         let buffer = RowBuffer::new();
         let v2 = row_buffer_to_columnar(buffer).expect("empty buffer");
         assert_eq!(v2.column_count(), 0);
@@ -136,6 +175,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_integer() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
         buffer.add_row_vecs(vec![Some(42i32.to_le_bytes().to_vec())]);
@@ -161,6 +201,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_bigint() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("big_id".to_string(), OdbcType::BigInt);
         buffer.add_row_vecs(vec![Some(1234567890i64.to_le_bytes().to_vec())]);
@@ -182,6 +223,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_varchar() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("name".to_string(), OdbcType::Varchar);
         buffer.add_row_vecs(vec![Some(b"Alice".to_vec())]);
@@ -205,6 +247,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_binary() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("payload".to_string(), OdbcType::Binary);
         buffer.add_row_vecs(vec![Some(vec![0x01, 0x02, 0x03])]);
@@ -226,6 +269,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_multiple_columns() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
         buffer.add_column("name".to_string(), OdbcType::Varchar);
@@ -247,6 +291,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_integer_invalid_size_returns_validation_error() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("id".to_string(), OdbcType::Integer);
         buffer.add_row_vecs(vec![Some(vec![1, 2, 3])]);
@@ -259,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_bigint_invalid_size_returns_validation_error() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("big_id".to_string(), OdbcType::BigInt);
         buffer.add_row_vecs(vec![Some(vec![1, 2, 3, 4, 5])]);
@@ -271,6 +317,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_non_numeric_odbc_type_uses_varchar_storage() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("d".to_string(), OdbcType::Date);
         buffer.add_row_vecs(vec![Some(b"2024-01-01".to_vec())]);
@@ -287,6 +334,7 @@ mod tests {
 
     #[test]
     fn test_row_buffer_to_columnar_short_row_treats_missing_cells_as_null() {
+        use super::*;
         let mut buffer = RowBuffer::new();
         buffer.add_column("a".to_string(), OdbcType::Integer);
         buffer.add_column("b".to_string(), OdbcType::Integer);

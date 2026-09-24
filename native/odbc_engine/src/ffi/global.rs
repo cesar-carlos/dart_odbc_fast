@@ -102,14 +102,23 @@ impl AsyncRequestManager {
         sql: String,
         params: Option<Vec<u8>>,
         result_encoding: u32,
+        fetch_size: u32,
     ) -> Option<u32> {
         let request_id = self.allocate_request_id()?;
         let slot = Arc::new(AsyncRequestSlot::new(conn_id));
         let slot_for_worker = Arc::clone(&slot);
+        let fetch_override =
+            crate::engine::core::execution::result_encoding::fetch_size_from_wire(fetch_size);
 
         let handle = match async_bridge::spawn_blocking_task(move || {
             let result = std::panic::catch_unwind(|| {
-                run_async_query(conn_id, &sql, params.as_deref(), result_encoding)
+                run_async_query(
+                    conn_id,
+                    &sql,
+                    params.as_deref(),
+                    result_encoding,
+                    fetch_override,
+                )
             })
             .unwrap_or_else(|_| {
                 Err(OdbcError::InternalError(
@@ -274,7 +283,7 @@ pub(crate) fn try_cached_legacy_params(
     sql: &str,
     params_slice: &[u8],
 ) -> Result<Vec<u8>> {
-    cached.try_execute_param_buffer_with_encoding(sql, params_slice, ResultEncoding::RowMajor)
+    cached.try_execute_param_buffer_with_encoding(sql, params_slice, ResultEncoding::RowMajor, None)
 }
 
 /// Cached counterpart of [`try_cached_legacy_params`] that honours the
@@ -284,8 +293,9 @@ pub(crate) fn try_cached_params_with_encoding(
     sql: &str,
     params_slice: &[u8],
     encoding: ResultEncoding,
+    fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
-    cached.try_execute_param_buffer_with_encoding(sql, params_slice, encoding)
+    cached.try_execute_param_buffer_with_encoding(sql, params_slice, encoding, fetch_size)
 }
 
 /// Build a cache key of the form `"<conn_id>:<table>"` in a single

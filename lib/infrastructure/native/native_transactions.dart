@@ -54,16 +54,15 @@ mixin _NativeTransactions on _NativeOdbcState {
 
   /// True when the loaded native library supports
   /// `odbc_transaction_begin_v2` (Sprint 4.1, the `accessMode` parameter
-  /// of [beginTransaction]). When false, `accessMode` is silently ignored
-  /// and every transaction is `READ WRITE`.
+  /// of [beginTransaction]). When false, a non-default `accessMode` raises
+  /// `UnsupportedFeatureError` rather than being silently ignored.
   bool get supportsTransactionAccessMode =>
       _native.supportsTransactionAccessMode;
 
   /// True when the loaded native library supports
   /// `odbc_transaction_begin_v3` (Sprint 4.2, the `lockTimeoutMs`
-  /// parameter of [beginTransaction]). When false, `lockTimeoutMs` is
-  /// silently ignored and every transaction uses the engine default
-  /// lock timeout.
+  /// parameter of [beginTransaction]). When false, a non-default
+  /// `lockTimeoutMs` raises `UnsupportedFeatureError`.
   bool get supportsTransactionLockTimeout =>
       _native.supportsTransactionLockTimeout;
 
@@ -168,7 +167,13 @@ mixin _NativeTransactions on _NativeOdbcState {
 
   bool commitTransaction(int txnId) => _native.transactionCommit(txnId);
 
+  int commitTransactionStatus(int txnId) =>
+      _native.transactionCommitStatus(txnId);
+
   bool rollbackTransaction(int txnId) => _native.transactionRollback(txnId);
+
+  int rollbackTransactionStatus(int txnId) =>
+      _native.transactionRollbackStatus(txnId);
 
   bool createSavepoint(int txnId, String name) =>
       _native.savepointCreate(txnId, name);

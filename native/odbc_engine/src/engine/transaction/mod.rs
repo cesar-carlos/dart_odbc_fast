@@ -228,12 +228,14 @@ impl TransactionConnection {
                 let mut conn = conn_arc.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock connection".to_string())
                 })?;
+                conn.ensure_usable()?;
                 f(&mut conn)
             }
             Self::Pooled(pooled) => {
                 let mut conn = pooled.lock().map_err(|_| {
                     OdbcError::InternalError("Failed to lock pooled connection".to_string())
                 })?;
+                conn.cached().ensure_usable()?;
                 f(conn.cached_mut())
             }
         }

@@ -1,6 +1,4 @@
-use super::param_binding::{
-    plan_multi_result_param_binding, require_inference_input_params, MultiResultParamBindingPlan,
-};
+use super::param_binding::{plan_multi_input, MultiInputPlan};
 use super::ExecutionEngine;
 use crate::error::{OdbcError, Result};
 use crate::protocol::{
@@ -52,6 +50,7 @@ impl ExecutionEngine {
         &self,
         conn: &Connection<'static>,
         sql: &str,
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
         let mut writer = MultiResultWriter::new();
@@ -63,7 +62,7 @@ impl ExecutionEngine {
         let had_initial_cursor = {
             let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
             if let Some(cursor) = initial_cursor {
-                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
+                let (encoded, cursor) = self.encode_cursor_owned(cursor, fetch_size)?;
                 push_first_or_next_result_set(&mut writer, encoded)?;
                 // Consume cursor *without* close_cursor (preserves pending
                 // result sets for SQLMoreResults below).
@@ -79,7 +78,7 @@ impl ExecutionEngine {
             writer.push_row_count(rc)?;
         }
 
-        self.drive_more_results(&mut stmt, &mut writer)?;
+        self.drive_more_results(&mut stmt, &mut writer, fetch_size)?;
         writer.finish()
     }
 
@@ -88,12 +87,10 @@ impl ExecutionEngine {
         conn: &Connection<'static>,
         sql: &str,
         params: &[ParamValue],
+        fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
-        if matches!(
-            plan_multi_result_param_binding(params)?,
-            MultiResultParamBindingPlan::InferencePrealloc
-        ) {
-            let parameters = require_inference_input_params(params)?;
+        let plan = plan_multi_input(params)?;
+        if let MultiInputPlan::Inferred(parameters) = plan {
             let mut prealloc = conn.preallocate().map_err(OdbcError::from)?;
             let mut writer = MultiResultWriter::new();
 
@@ -107,7 +104,7 @@ impl ExecutionEngine {
                 };
 
                 if let Some(cursor) = initial_cursor {
-                    let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
+                    let (encoded, cursor) = self.encode_cursor_owned(cursor, fetch_size)?;
                     push_first_or_next_result_set(&mut writer, encoded)?;
                     let _stmt_ref = cursor.into_stmt();
                     true
@@ -121,17 +118,17 @@ impl ExecutionEngine {
                 writer.push_row_count(rc)?;
             }
 
-            self.drive_more_results(&mut prealloc, &mut writer)?;
+            self.drive_more_results(&mut prealloc, &mut writer, fetch_size)?;
             return writer.finish();
         }
 
         let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
-        let parameters = match plan_multi_result_param_binding(params)? {
-            MultiResultParamBindingPlan::InferencePrealloc => {
+        let parameters = match plan {
+            MultiInputPlan::Inferred(_) => {
                 unreachable!("inference path handled above")
             }
-            MultiResultParamBindingPlan::PreparedStandard if params.is_empty() => Vec::new(),
-            MultiResultParamBindingPlan::PreparedNullAware => {
+            MultiInputPlan::PreparedStandard if params.is_empty() => Vec::new(),
+            MultiInputPlan::PreparedNullAware => {
                 let descriptions = stmt
                     .parameter_descriptions()
                     .map_err(OdbcError::from)?
@@ -139,7 +136,7 @@ impl ExecutionEngine {
                     .map_err(OdbcError::from)?;
                 param_values_to_input_params_with_descriptions(params, &descriptions)?
             }
-            MultiResultParamBindingPlan::PreparedStandard => param_values_to_input_params(params)?,
+            MultiInputPlan::PreparedStandard => param_values_to_input_params(params)?,
         };
         let mut writer = MultiResultWriter::new();
 
@@ -152,7 +149,7 @@ impl ExecutionEngine {
             };
 
             if let Some(cursor) = initial_cursor {
-                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
+                let (encoded, cursor) = self.encode_cursor_owned(cursor, fetch_size)?;
                 push_first_or_next_result_set(&mut writer, encoded)?;
                 // Same SQLCloseCursor avoidance as in `execute_multi_result_inner`.
                 let _stmt_ref = cursor.into_stmt();
@@ -167,7 +164,7 @@ impl ExecutionEngine {
             writer.push_row_count(rc)?;
         }
 
-        self.drive_more_results(&mut stmt, &mut writer)?;
+        self.drive_more_results(&mut stmt, &mut writer, fetch_size)?;
         writer.finish()
     }
 
@@ -188,6 +185,7 @@ impl ExecutionEngine {
         &self,
         stmt: &mut S,
         writer: &mut MultiResultWriter,
+        fetch_size: Option<u32>,
     ) -> Result<()>
     where
         S: AsStatementRef,
@@ -238,7 +236,7 @@ impl ExecutionEngine {
                 // pending result sets after this one are not discarded by
                 // `SQLCloseCursor`.
                 let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-                let (encoded, cursor) = self.encode_cursor_owned(cursor)?;
+                let (encoded, cursor) = self.encode_cursor_owned(cursor, fetch_size)?;
                 push_first_or_next_result_set(writer, encoded)?;
                 let _stmt_ref = cursor.into_stmt();
             } else {

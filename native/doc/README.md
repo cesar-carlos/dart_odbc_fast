@@ -34,9 +34,8 @@ behavior and operational guidance.
 
 - [plan_checklist_template.md](./plan_checklist_template.md): reusable
   completion checklist for future plans.
-- [zero_copy_ffi_evaluation.md](./zero_copy_ffi_evaluation.md): viability
-  analysis and prerequisites for zero-copy FFI result buffers (deferred
-  to a future release).
+- [zero_copy_ffi_evaluation.md](./zero_copy_ffi_evaluation.md): shipped
+  zero-copy result-buffer ownership model, threshold, and ABI compatibility.
 
 ## Documentation policy
 
@@ -64,5 +63,4 @@ Docker test environment:
 
 - `docker/README.md`
 - `docker-compose.yml`
-
 

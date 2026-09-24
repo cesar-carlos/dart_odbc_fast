@@ -152,13 +152,15 @@ class OdbcQueryRunner {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) =>
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) =>
       _prepared.executePreparedParamValues(
         connectionId,
         stmtId,
         params,
         options,
+        resultEncoding: resultEncoding,
       );
 
   Future<Result<QueryResult>> executePreparedNamed(

@@ -37,23 +37,43 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
       case StreamMultiStartBatchedRequest():
-        final streamId = conn.streamMultiStartBatched(
-          request.connectionId,
-          request.sql,
-          fetchSize: request.fetchSize,
-          chunkSize: request.chunkSize,
-          resultEncodingWire: request.resultEncodingWire,
-        );
+        final params = Uint8List.fromList(request.serializedParams);
+        final streamId = params.isEmpty
+            ? conn.streamMultiStartBatched(
+                request.connectionId,
+                request.sql,
+                fetchSize: request.fetchSize,
+                chunkSize: request.chunkSize,
+                resultEncodingWire: request.resultEncodingWire,
+              )
+            : conn.streamMultiStartBatchedParams(
+                request.connectionId,
+                request.sql,
+                params,
+                fetchSize: request.fetchSize,
+                chunkSize: request.chunkSize,
+                resultEncodingWire: request.resultEncodingWire,
+              );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
       case StreamMultiStartAsyncRequest():
-        final streamId = conn.streamMultiStartAsync(
-          request.connectionId,
-          request.sql,
-          fetchSize: request.fetchSize,
-          chunkSize: request.chunkSize,
-          resultEncodingWire: request.resultEncodingWire,
-        );
+        final params = Uint8List.fromList(request.serializedParams);
+        final streamId = params.isEmpty
+            ? conn.streamMultiStartAsync(
+                request.connectionId,
+                request.sql,
+                fetchSize: request.fetchSize,
+                chunkSize: request.chunkSize,
+                resultEncodingWire: request.resultEncodingWire,
+              )
+            : conn.streamMultiStartAsyncParams(
+                request.connectionId,
+                request.sql,
+                params,
+                fetchSize: request.fetchSize,
+                chunkSize: request.chunkSize,
+                resultEncodingWire: request.resultEncodingWire,
+              );
         sendPort.send(IntResponse(request.requestId, streamId ?? 0));
 
       case StreamPollAsyncRequest():

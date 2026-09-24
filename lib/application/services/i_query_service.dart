@@ -70,6 +70,22 @@ abstract interface class IQueryService {
     int? chunkSize,
   });
 
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
   /// Streams each native multi-result fetch batch without accumulating prior
   /// continuation rows. [QueryResultMultiBatchItem.isContinuationBatch]
   /// identifies batches after the first one for the same SQL cursor.

@@ -1,10 +1,49 @@
 use crate::error::{OdbcError, Result};
 use crate::protocol::bound_param::BoundParam;
 use crate::protocol::{has_null_param, param_values_to_input_params_with_inference, ParamValue};
+use odbc_api::parameter::InputParameter;
 
-/// Gate for Oracle-only ref-cursor binds before any connection I/O.
+/// Production binding plan carries inferred values so they are built once.
+pub(super) enum QueryInputPlan {
+    DirectNoParams,
+    Inferred(Vec<Box<dyn InputParameter>>),
+    PreparedNullAware,
+    PreparedStandard,
+}
+
+pub(super) fn plan_query_input(params: &[ParamValue]) -> Result<QueryInputPlan> {
+    if params.is_empty() {
+        return Ok(QueryInputPlan::DirectNoParams);
+    }
+    if has_null_param(params) {
+        return Ok(match param_values_to_input_params_with_inference(params)? {
+            Some(inputs) => QueryInputPlan::Inferred(inputs),
+            None => QueryInputPlan::PreparedNullAware,
+        });
+    }
+    Ok(QueryInputPlan::PreparedStandard)
+}
+
+pub(super) enum MultiInputPlan {
+    Inferred(Vec<Box<dyn InputParameter>>),
+    PreparedNullAware,
+    PreparedStandard,
+}
+
+pub(super) fn plan_multi_input(params: &[ParamValue]) -> Result<MultiInputPlan> {
+    if let Some(inputs) = param_values_to_input_params_with_inference(params)? {
+        return Ok(MultiInputPlan::Inferred(inputs));
+    }
+    if has_null_param(params) {
+        Ok(MultiInputPlan::PreparedNullAware)
+    } else {
+        Ok(MultiInputPlan::PreparedStandard)
+    }
+}
+
 /// How [`super::ExecutionEngine::execute_query_with_params_inner`] routes positional params (no ODBC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(super) enum QueryParamBindingPlan {
     DirectNoParams,
     InferenceExecute,
@@ -12,6 +51,7 @@ pub(super) enum QueryParamBindingPlan {
     PreparedStandard,
 }
 
+#[cfg(test)]
 pub(super) fn plan_query_param_binding(params: &[ParamValue]) -> Result<QueryParamBindingPlan> {
     if params.is_empty() {
         return Ok(QueryParamBindingPlan::DirectNoParams);
@@ -27,12 +67,14 @@ pub(super) fn plan_query_param_binding(params: &[ParamValue]) -> Result<QueryPar
 
 /// How [`super::ExecutionEngine::execute_multi_result_with_params_inner`] routes params (no ODBC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(super) enum MultiResultParamBindingPlan {
     InferencePrealloc,
     PreparedStandard,
     PreparedNullAware,
 }
 
+#[cfg(test)]
 pub(super) fn plan_multi_result_param_binding(
     params: &[ParamValue],
 ) -> Result<MultiResultParamBindingPlan> {
@@ -48,6 +90,7 @@ pub(super) fn plan_multi_result_param_binding(
 /// Converts positional params for the inference execute/prealloc paths.
 /// Returns [`OdbcError::InternalError`] when the binding plan and conversion
 /// disagree (regression guard against `.expect` on the inference branch).
+#[cfg(test)]
 pub(super) fn require_inference_input_params(
     params: &[ParamValue],
 ) -> Result<Vec<Box<dyn odbc_api::parameter::InputParameter>>> {
@@ -58,6 +101,7 @@ pub(super) fn require_inference_input_params(
     })
 }
 
+/// Reject non-Oracle ref-cursor binds before any connection I/O.
 pub(super) fn ensure_ref_cursor_oracle_only(
     bound: &[BoundParam],
     oracle_active: bool,

@@ -15,6 +15,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxResultBufferBytes,
           initialBufferBytes: request.initialResultBufferBytes,
           resultEncoding: request.resultEncoding,
+          fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -32,6 +33,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.sql,
           maxBufferBytes: request.maxResultBufferBytes,
           initialBufferBytes: request.initialResultBufferBytes,
+          fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -52,6 +54,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           bytes,
           maxBufferBytes: request.maxResultBufferBytes,
           initialBufferBytes: request.initialResultBufferBytes,
+          fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -82,6 +85,11 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.fetchSize,
           maxBufferBytes: request.maxResultBufferBytes,
           initialBufferBytes: request.initialResultBufferBytes,
+          resultEncoding: switch (request.resultEncodingWire) {
+            1 => ResultEncoding.columnar,
+            2 => ResultEncoding.columnarCompressed,
+            _ => ResultEncoding.rowMajor,
+          },
         );
         if (data != null) {
           sendPort.send(queryDataResponse(request.requestId, data));
@@ -245,6 +253,7 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.sql,
           request.serializedParams.isEmpty ? null : request.serializedParams,
           resultEncoding: encoding,
+          fetchSize: request.blockFetchBatchSize,
         );
         sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
 

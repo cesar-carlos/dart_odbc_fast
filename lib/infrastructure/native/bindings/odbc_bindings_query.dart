@@ -32,6 +32,12 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     } on Object catch (_) {
       _odbc_execute_async_params_options_ptr = null;
     }
+    try {
+      _odbc_execute_async_params_fetch_ptr =
+          _dylib.lookup('odbc_execute_async_params_fetch');
+    } on Object catch (_) {
+      _odbc_execute_async_params_fetch_ptr = null;
+    }
     _odbc_get_metrics_ptr = _dylib.lookup('odbc_get_metrics');
     _odbc_get_cache_metrics_ptr = _dylib.lookup('odbc_get_cache_metrics');
     _odbc_clear_statement_cache_ptr =
@@ -43,12 +49,30 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     } on Object catch (_) {
       _odbc_exec_query_params_options_ptr = null;
     }
+    try {
+      _odbc_exec_query_params_fetch_ptr =
+          _dylib.lookup('odbc_exec_query_params_fetch');
+    } on Object catch (_) {
+      _odbc_exec_query_params_fetch_ptr = null;
+    }
     _odbc_exec_query_multi_ptr = _dylib.lookup('odbc_exec_query_multi');
+    try {
+      _odbc_exec_query_multi_fetch_ptr =
+          _dylib.lookup('odbc_exec_query_multi_fetch');
+    } on Object catch (_) {
+      _odbc_exec_query_multi_fetch_ptr = null;
+    }
     try {
       _odbc_exec_query_multi_params_ptr =
           _dylib.lookup('odbc_exec_query_multi_params');
     } on Object catch (_) {
       _odbc_exec_query_multi_params_ptr = null;
+    }
+    try {
+      _odbc_exec_query_multi_params_fetch_ptr =
+          _dylib.lookup('odbc_exec_query_multi_params_fetch');
+    } on Object catch (_) {
+      _odbc_exec_query_multi_params_fetch_ptr = null;
     }
     _odbc_catalog_tables_ptr = _dylib.lookup('odbc_catalog_tables');
     _odbc_catalog_columns_ptr = _dylib.lookup('odbc_catalog_columns');
@@ -58,6 +82,11 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     _odbc_catalog_indexes_ptr = _dylib.lookup('odbc_catalog_indexes');
     _odbc_prepare_ptr = _dylib.lookup('odbc_prepare');
     _odbc_execute_ptr = _dylib.lookup('odbc_execute');
+    try {
+      _odbc_execute_options_ptr = _dylib.lookup('odbc_execute_options');
+    } on Object catch (_) {
+      _odbc_execute_options_ptr = null;
+    }
     _odbc_cancel_ptr = _dylib.lookup('odbc_cancel');
     _odbc_close_statement_ptr = _dylib.lookup('odbc_close_statement');
     try {
@@ -117,6 +146,26 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
             int,
             ffi.Pointer<Utf8>,
             ffi.Pointer<ffi.Uint8>,
+            int,
+            int,
+          )>();
+
+  ffi.Pointer<ffi.NativeFunction<odbc_execute_async_params_fetch_func>>?
+      _odbc_execute_async_params_fetch_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    int,
+    int,
+  )? _odbc_execute_async_params_fetch_fn =
+      _odbc_execute_async_params_fetch_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>,
+            int,
             int,
             int,
           )>();
@@ -218,6 +267,32 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
             ffi.Pointer<ffi.Uint32>,
           )>();
 
+  ffi.Pointer<ffi.NativeFunction<odbc_exec_query_params_fetch_func>>?
+      _odbc_exec_query_params_fetch_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>?,
+    int,
+    int,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_exec_query_params_fetch_fn =
+      _odbc_exec_query_params_fetch_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>?,
+            int,
+            int,
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
+
   late final ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_func>>
       _odbc_exec_query_multi_ptr;
   late final int Function(
@@ -234,6 +309,26 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
         int,
         ffi.Pointer<ffi.Uint32>,
       )>();
+
+  ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_fetch_func>>?
+      _odbc_exec_query_multi_fetch_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<Utf8>,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_exec_query_multi_fetch_fn =
+      _odbc_exec_query_multi_fetch_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
 
   ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_params_func>>?
       _odbc_exec_query_multi_params_ptr;
@@ -257,6 +352,30 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
             ffi.Pointer<ffi.Uint32>,
           )>();
 
+  ffi.Pointer<ffi.NativeFunction<odbc_exec_query_multi_params_fetch_func>>?
+      _odbc_exec_query_multi_params_fetch_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<Utf8>,
+    ffi.Pointer<ffi.Uint8>?,
+    int,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_exec_query_multi_params_fetch_fn =
+      _odbc_exec_query_multi_params_fetch_ptr?.asFunction<
+          int Function(
+            int,
+            ffi.Pointer<Utf8>,
+            ffi.Pointer<ffi.Uint8>?,
+            int,
+            int,
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            ffi.Pointer<ffi.Uint32>,
+          )>();
+
   /// True when the loaded native library exports
   /// `odbc_exec_query_multi_params` (added in v3.2.0). Used by
   /// `OdbcNative.execQueryMultiParams` to fall back gracefully on older
@@ -265,8 +384,20 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
   bool get supportsExecQueryMultiParams =>
       _odbc_exec_query_multi_params_ptr != null;
 
+  bool get supportsExecQueryMultiFetch =>
+      _odbc_exec_query_multi_fetch_ptr != null;
+
+  bool get supportsExecQueryMultiParamsFetch =>
+      _odbc_exec_query_multi_params_fetch_ptr != null;
+
+  bool get supportsExecuteOptions => _odbc_execute_options_ptr != null;
+
   bool get supportsExecQueryParamsOptions =>
       _odbc_exec_query_params_options_ptr != null;
+
+  /// True when [odbc_exec_query_params_fetch] is exported.
+  bool get supportsExecQueryParamsFetch =>
+      _odbc_exec_query_params_fetch_ptr != null;
 
   late final ffi.Pointer<ffi.NativeFunction<odbc_catalog_tables_func>>
       _odbc_catalog_tables_ptr;
@@ -398,6 +529,31 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
         ffi.Pointer<ffi.Uint32>,
       )>();
 
+  ffi.Pointer<ffi.NativeFunction<odbc_execute_options_func>>?
+      _odbc_execute_options_ptr;
+  late final int Function(
+    int,
+    ffi.Pointer<ffi.Uint8>?,
+    int,
+    int,
+    int,
+    int,
+    ffi.Pointer<ffi.Uint8>,
+    int,
+    ffi.Pointer<ffi.Uint32>,
+  )? _odbc_execute_options_fn = _odbc_execute_options_ptr?.asFunction<
+      int Function(
+        int,
+        ffi.Pointer<ffi.Uint8>?,
+        int,
+        int,
+        int,
+        int,
+        ffi.Pointer<ffi.Uint8>,
+        int,
+        ffi.Pointer<ffi.Uint32>,
+      )>();
+
   late final ffi.Pointer<ffi.NativeFunction<odbc_cancel_func>> _odbc_cancel_ptr;
   late final int Function(int) _odbc_cancel_fn =
       _odbc_cancel_ptr.asFunction<int Function(int)>();
@@ -475,6 +631,11 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
       supportsAsyncExecuteParamsApi &&
       _odbc_execute_async_params_options_ptr != null;
 
+  /// True when [odbc_execute_async_params_fetch] is exported.
+  bool get supportsAsyncExecuteParamsFetchApi =>
+      supportsAsyncExecuteParamsOptionsApi &&
+      _odbc_execute_async_params_fetch_ptr != null;
+
   int odbc_exec_query(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -511,6 +672,19 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     final fn = _odbc_execute_async_params_options_fn;
     if (fn == null) return null;
     return fn(connId, sql, paramsBuffer, paramsLen, resultEncoding);
+  }
+
+  int? odbc_execute_async_params_fetch(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8> paramsBuffer,
+    int paramsLen,
+    int resultEncoding,
+    int fetchSize,
+  ) {
+    final fn = _odbc_execute_async_params_fetch_fn;
+    if (fn == null) return null;
+    return fn(connId, sql, paramsBuffer, paramsLen, resultEncoding, fetchSize);
   }
 
   int? odbc_async_poll(int requestId, ffi.Pointer<ffi.Int32> outStatus) {
@@ -601,6 +775,32 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     );
   }
 
+  int odbc_exec_query_params_fetch(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    int resultEncoding,
+    int fetchSize,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final fn = _odbc_exec_query_params_fetch_fn;
+    if (fn == null) return -1;
+    return fn(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      resultEncoding,
+      fetchSize,
+      outBuffer,
+      bufferLen,
+      outWritten,
+    );
+  }
+
   int odbc_exec_query_multi(
     int connId,
     ffi.Pointer<Utf8> sql,
@@ -609,6 +809,19 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
     ffi.Pointer<ffi.Uint32> outWritten,
   ) =>
       _odbc_exec_query_multi_fn(connId, sql, outBuffer, bufferLen, outWritten);
+
+  int odbc_exec_query_multi_fetch(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    int fetchSize,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final fn = _odbc_exec_query_multi_fetch_fn;
+    if (fn == null) return -1;
+    return fn(connId, sql, fetchSize, outBuffer, bufferLen, outWritten);
+  }
 
   int odbc_exec_query_multi_params(
     int connId,
@@ -631,6 +844,30 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
       sql,
       paramsBuffer,
       paramsLen,
+      outBuffer,
+      bufferLen,
+      outWritten,
+    );
+  }
+
+  int odbc_exec_query_multi_params_fetch(
+    int connId,
+    ffi.Pointer<Utf8> sql,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    int fetchSize,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final fn = _odbc_exec_query_multi_params_fetch_fn;
+    if (fn == null) return -1;
+    return fn(
+      connId,
+      sql,
+      paramsBuffer,
+      paramsLen,
+      fetchSize,
       outBuffer,
       bufferLen,
       outWritten,
@@ -733,6 +970,32 @@ mixin _OdbcBindingsQuery on _OdbcBindingsState {
         bufferLen,
         outWritten,
       );
+
+  int odbc_execute_options(
+    int stmtId,
+    ffi.Pointer<ffi.Uint8>? paramsBuffer,
+    int paramsLen,
+    int timeoutOverrideMs,
+    int fetchSize,
+    int resultEncoding,
+    ffi.Pointer<ffi.Uint8> outBuffer,
+    int bufferLen,
+    ffi.Pointer<ffi.Uint32> outWritten,
+  ) {
+    final fn = _odbc_execute_options_fn;
+    if (fn == null) return -1;
+    return fn(
+      stmtId,
+      paramsBuffer,
+      paramsLen,
+      timeoutOverrideMs,
+      fetchSize,
+      resultEncoding,
+      outBuffer,
+      bufferLen,
+      outWritten,
+    );
+  }
 
   int odbc_cancel(int stmtId) => _odbc_cancel_fn(stmtId);
 

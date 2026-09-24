@@ -73,8 +73,10 @@ pub(crate) fn allocate_stream_id(_conn_id: u32) -> u32 {
 
 pub(crate) fn insert_stream(stream_id: u32, conn_id: u32, stream: StreamKind) {
     if let Some(mut maps) = try_lock_stream_maps() {
-        maps.streams.insert(stream_id, stream);
+        let replaced = maps.streams.insert(stream_id, stream);
         maps.stream_connections.insert(stream_id, conn_id);
+        drop(maps);
+        drop(replaced);
     }
 }
 
@@ -108,11 +110,14 @@ pub(crate) fn with_stream_mut<R>(
 /// reach again.
 pub(crate) fn reinsert_stream(stream_id: u32, stream: StreamKind) {
     if let Some(mut maps) = try_lock_stream_maps() {
-        if maps.stream_connections.contains_key(&stream_id) {
-            maps.streams.insert(stream_id, stream);
+        let stream_to_drop = if maps.stream_connections.contains_key(&stream_id) {
+            maps.streams.insert(stream_id, stream)
         } else {
             stream.cancel();
-        }
+            Some(stream)
+        };
+        drop(maps);
+        drop(stream_to_drop);
     }
 }
 
@@ -127,6 +132,8 @@ pub(crate) fn close_stream(stream_id: u32) -> bool {
         if let Some(stream) = maps.streams.remove(&stream_id) {
             stream.cancel();
             maps.stream_connections.remove(&stream_id);
+            drop(maps);
+            drop(stream);
             return true;
         }
     }
@@ -142,12 +149,16 @@ pub(crate) fn cancel_streams_for_connection(conn_id: u32) {
                 (*stream_conn_id == conn_id).then_some(*stream_id)
             })
             .collect();
+        let mut removed = Vec::with_capacity(streams_to_drop.len());
         for stream_id in streams_to_drop {
             if let Some(stream) = maps.streams.remove(&stream_id) {
                 stream.cancel();
+                removed.push(stream);
             }
             maps.stream_connections.remove(&stream_id);
         }
+        drop(maps);
+        drop(removed);
     }
 }
 
@@ -155,6 +166,34 @@ pub(crate) fn cancel_streams_for_connection(conn_id: u32) {
 mod tests {
     use super::*;
     use crate::engine::{StreamState, StreamingState};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    #[serial_test::serial]
+    fn closed_and_disconnected_streams_drop_after_unlock() {
+        for disconnect in [false, true] {
+            let conn_id = if disconnect { 3_000_011 } else { 3_000_010 };
+            let stream_id = allocate_stream_id(conn_id);
+            let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let observed = Arc::new(AtomicBool::new(false));
+            let checked = Arc::clone(&observed);
+            let mut stream = crate::engine::BatchedStreamingState::from_receiver(receiver, 4);
+            stream.drop_probe = Some(Box::new(move || {
+                checked.store(stream_maps().try_lock().is_ok(), Ordering::SeqCst);
+            }));
+            insert_stream(stream_id, conn_id, StreamKind::Batched(stream));
+            if disconnect {
+                cancel_streams_for_connection(conn_id);
+            } else {
+                assert!(close_stream(stream_id));
+            }
+            assert!(
+                observed.load(Ordering::SeqCst),
+                "stream dropped under map lock"
+            );
+        }
+    }
 
     fn dummy_stream() -> StreamKind {
         StreamKind::Buffer(StreamState::InMemory(StreamingState {

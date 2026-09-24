@@ -77,6 +77,59 @@ fn test_ffi_pool_release_connection_invalid_id() {
 }
 
 #[test]
+#[serial(ffi_pool_txn)]
+fn should_consume_and_discard_poisoned_pooled_connection_on_release() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+    odbc_init();
+    let pool_id = odbc_pool_create(CString::new(dsn).unwrap().as_ptr(), 1);
+    assert!(pool_id > 0);
+    let conn_id = odbc_pool_get_connection(pool_id);
+    assert!(conn_id > 0);
+    let pooled = state::get_pooled_connection(conn_id).expect("checked-out connection");
+    pooled.pooled.lock().unwrap().cached_mut().mark_unusable();
+    drop(pooled);
+    assert_eq!(odbc_pool_release_connection(conn_id), 1);
+    assert_eq!(
+        odbc_pool_release_connection(conn_id),
+        1,
+        "handle was consumed"
+    );
+    let replacement = odbc_pool_get_connection(pool_id);
+    assert!(
+        replacement > 0,
+        "pool must replace the discarded connection"
+    );
+    assert_eq!(odbc_pool_release_connection(replacement), 0);
+    assert_eq!(odbc_pool_close(pool_id), 0);
+}
+
+#[test]
+#[serial(ffi_pool_txn)]
+fn should_reject_second_resize_close_and_checkout_during_resize_reservation() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+    odbc_init();
+    let pool_id = odbc_pool_create(CString::new(dsn).unwrap().as_ptr(), 1);
+    assert!(pool_id > 0);
+    assert_eq!(
+        state::with_pool_maps_mut(|maps| maps.reserve_resize(pool_id)),
+        Some(true)
+    );
+    assert_eq!(odbc_pool_set_size(pool_id, 2), -1);
+    assert_eq!(odbc_pool_close(pool_id), 1);
+    assert_eq!(odbc_pool_get_connection(pool_id), 0);
+    assert_eq!(odbc_pool_health_check(pool_id), -1);
+    state::with_pool_maps_mut(|maps| maps.finish_resize(pool_id));
+    assert_eq!(odbc_pool_set_size(pool_id, 2), 0);
+    assert_eq!(odbc_pool_close(pool_id), 0);
+}
+
+#[test]
 fn test_ffi_pool_health_check_invalid_pool_id() {
     odbc_init();
 
@@ -262,6 +315,44 @@ fn test_ffi_pool_set_size_workflow() {
 
     let cr = odbc_pool_close(pool_id);
     assert_eq!(cr, 0);
+}
+
+#[test]
+#[serial(ffi_pool_txn)]
+fn should_reject_resize_and_close_during_pending_checkout() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+    odbc_init();
+    let pool_id = odbc_pool_create(CString::new(dsn).unwrap().as_ptr(), 2);
+    assert!(pool_id > 0);
+    let pending = state::with_pool_maps_mut(|maps| maps.reserve_checkout(pool_id)).flatten();
+    assert!(pending.is_some(), "checkout reservation should succeed");
+    assert_eq!(odbc_pool_set_size(pool_id, 3), -1);
+    assert_eq!(odbc_pool_close(pool_id), 1);
+    drop(pending);
+    state::with_pool_maps_mut(|maps| maps.finish_checkout(pool_id));
+    assert_eq!(odbc_pool_set_size(pool_id, 3), 0);
+    assert_eq!(odbc_pool_close(pool_id), 0);
+}
+
+#[test]
+#[serial(ffi_pool_txn)]
+fn should_reject_resize_and_close_during_release_cleanup() {
+    let Some(dsn) = ffi_test_dsn() else {
+        eprintln!("Skipping: ODBC_TEST_DSN not set");
+        return;
+    };
+    odbc_init();
+    let pool_id = odbc_pool_create(CString::new(dsn).unwrap().as_ptr(), 2);
+    assert!(pool_id > 0);
+    state::with_pool_maps_mut(|maps| maps.begin_release(pool_id));
+    assert_eq!(odbc_pool_set_size(pool_id, 3), -1);
+    assert_eq!(odbc_pool_close(pool_id), 1);
+    state::with_pool_maps_mut(|maps| maps.finish_release(pool_id));
+    assert_eq!(odbc_pool_set_size(pool_id, 3), 0);
+    assert_eq!(odbc_pool_close(pool_id), 0);
 }
 
 #[test]

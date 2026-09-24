@@ -60,6 +60,14 @@ typedef odbc_execute_async_params_options_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Uint32,
 );
+typedef odbc_execute_async_params_fetch_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
 typedef odbc_async_poll_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Int32>,
@@ -209,9 +217,38 @@ typedef odbc_exec_query_params_options_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
 );
+typedef odbc_exec_query_params_fetch_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>?,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
 typedef odbc_exec_query_multi_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_exec_query_multi_fetch_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_exec_query_multi_params_fetch_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>?,
+  ffi.Uint32,
+  ffi.Uint32,
   ffi.Pointer<ffi.Uint8>,
   ffi.Uint32,
   ffi.Pointer<ffi.Uint32>,
@@ -275,6 +312,17 @@ typedef odbc_prepare_func = ffi.Uint32 Function(
 typedef odbc_execute_func = ffi.Int32 Function(
   ffi.Uint32,
   ffi.Pointer<ffi.Uint8>?,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint32>,
+);
+typedef odbc_execute_options_func = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Pointer<ffi.Uint8>?,
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
@@ -349,6 +397,25 @@ typedef odbc_stream_multi_start_batched_options_func = ffi.Uint32 Function(
 typedef odbc_stream_multi_start_async_options_func = ffi.Uint32 Function(
   ffi.Uint32,
   ffi.Pointer<Utf8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_multi_start_batched_params_options_func = ffi.Uint32
+    Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef odbc_stream_multi_start_async_params_options_func = ffi.Uint32 Function(
+  ffi.Uint32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,
   ffi.Uint32,

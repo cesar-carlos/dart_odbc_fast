@@ -21,6 +21,24 @@ pub const COMPRESSION_THRESHOLD_BYTES: usize = 1024;
 
 pub struct ColumnarEncoder;
 
+/// Per-operation scratch space. `compress2` starts a new independent zstd
+/// frame on each call while retaining the context's allocated tables.
+pub(crate) struct ColumnarCompressionWorkspace {
+    raw: Vec<u8>,
+    compressed: Vec<u8>,
+    compressor: Option<zstd::bulk::Compressor<'static>>,
+}
+
+impl ColumnarCompressionWorkspace {
+    pub(crate) fn new() -> Self {
+        Self {
+            raw: Vec::new(),
+            compressed: Vec::new(),
+            compressor: None,
+        }
+    }
+}
+
 /// Precomputed sizes for one encoded column.
 ///
 /// Planning validates every size that is written to the wire and lets the
@@ -48,10 +66,20 @@ impl ColumnarEncoder {
         buffer: &RowBufferV2,
         use_compression: bool,
     ) -> Result<()> {
+        let mut workspace = ColumnarCompressionWorkspace::new();
+        Self::encode_into_with_workspace(output, buffer, use_compression, &mut workspace)
+    }
+
+    pub(crate) fn encode_into_with_workspace(
+        output: &mut Vec<u8>,
+        buffer: &RowBufferV2,
+        use_compression: bool,
+        workspace: &mut ColumnarCompressionWorkspace,
+    ) -> Result<()> {
         let column_count = checked_u16(buffer.column_count(), "column count")?;
         let row_count = checked_u32(buffer.row_count, "row count")?;
         if use_compression {
-            Self::encode_compressed_into(output, buffer, column_count, row_count)
+            Self::encode_compressed_into(output, buffer, column_count, row_count, workspace)
         } else {
             Self::encode_uncompressed_into(output, buffer, column_count, row_count)
         }
@@ -82,6 +110,7 @@ impl ColumnarEncoder {
         buffer: &RowBufferV2,
         column_count: u16,
         row_count: u32,
+        workspace: &mut ColumnarCompressionWorkspace,
     ) -> Result<()> {
         // The compression path produces each raw payload anyway. Avoid a
         // separate per-cell sizing pass; validate metadata first and validate
@@ -93,7 +122,7 @@ impl ColumnarEncoder {
         let (payload_size_pos, payload_start) =
             Self::write_header(output, buffer.flags, column_count, row_count, true);
         for col_block in &buffer.columns {
-            Self::encode_compressed_column_block(output, col_block)?;
+            Self::encode_compressed_column_block(output, col_block, workspace)?;
         }
         Self::patch_payload_size(output, payload_size_pos, payload_start)
     }
@@ -145,7 +174,11 @@ impl ColumnarEncoder {
         Self::encode_column_payload(output, col_block)
     }
 
-    fn encode_compressed_column_block(output: &mut Vec<u8>, col_block: &ColumnBlock) -> Result<()> {
+    fn encode_compressed_column_block(
+        output: &mut Vec<u8>,
+        col_block: &ColumnBlock,
+        workspace: &mut ColumnarCompressionWorkspace,
+    ) -> Result<()> {
         let col_name_bytes = col_block.metadata.name.as_bytes();
         output.extend_from_slice(&(col_block.metadata.odbc_type as u16).to_le_bytes());
         output.extend_from_slice(
@@ -153,47 +186,45 @@ impl ColumnarEncoder {
         );
         output.extend_from_slice(col_name_bytes);
 
-        let mut raw_payload = Vec::new();
-        Self::encode_column_payload(&mut raw_payload, col_block)?;
-        let raw_payload_size = raw_payload.len();
+        workspace.raw.clear();
+        Self::encode_column_payload(&mut workspace.raw, col_block)?;
+        let raw_payload_size = workspace.raw.len();
         let raw_payload_len = checked_u32(raw_payload_size, "column payload length")?;
 
         if raw_payload_size <= COMPRESSION_THRESHOLD_BYTES {
             output.push(0);
             output.extend_from_slice(&raw_payload_len.to_le_bytes());
-            output.extend_from_slice(&raw_payload);
+            output.extend_from_slice(&workspace.raw);
             return Ok(());
         }
 
-        let mut compressed = Vec::with_capacity(
-            raw_payload
-                .len()
-                .min(COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES),
-        );
-        let compression_result = (|| -> std::io::Result<()> {
-            let mut encoder = zstd::Encoder::new(&mut compressed, 3)
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            encoder.write_all(&raw_payload)?;
-            encoder
-                .finish()
-                .map(|_| ())
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            Ok(())
-        })();
+        workspace.compressed.clear();
+        if workspace.compressor.is_none() {
+            workspace.compressor = zstd::bulk::Compressor::new(3).ok();
+        }
+        let compression_result = workspace.compressor.as_mut().and_then(|compressor| {
+            let bound = zstd::zstd_safe::compress_bound(workspace.raw.len());
+            // Allocation failure keeps the existing raw fallback rather than
+            // turning an optional compression step into an FFI unwind.
+            workspace.compressed.try_reserve(bound).ok()?;
+            compressor
+                .compress_to_buffer(&workspace.raw, &mut workspace.compressed)
+                .ok()
+        });
 
-        if compression_result.is_ok() && compressed.len() < raw_payload.len() {
+        if compression_result.is_some() && workspace.compressed.len() < workspace.raw.len() {
             output.push(1);
             output.push(CompressionType::Zstd as u8);
             output.extend_from_slice(
-                &checked_u32(compressed.len(), "column payload length")?.to_le_bytes(),
+                &checked_u32(workspace.compressed.len(), "column payload length")?.to_le_bytes(),
             );
-            output.extend_from_slice(&compressed);
+            output.extend_from_slice(&workspace.compressed);
             return Ok(());
         }
 
         output.push(0);
         output.extend_from_slice(&raw_payload_len.to_le_bytes());
-        output.extend_from_slice(&raw_payload);
+        output.extend_from_slice(&workspace.raw);
 
         Ok(())
     }
@@ -841,6 +872,47 @@ mod tests {
         let encoded2 = ColumnarEncoder::encode(&buffer, true).expect("encode 2");
         assert_eq!(encoded1, encoded2);
         assert_eq!(encoded1[14], 1, "global compression flag should be set");
+    }
+
+    #[test]
+    fn compression_workspace_reuses_buffers_and_emits_independent_frames() {
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(8);
+        buffer.add_column(
+            ColumnMetadata {
+                name: "payload".to_string(),
+                odbc_type: OdbcType::Varchar,
+            },
+            ColumnData::Varchar(vec![Some(vec![b'a'; 4096]); 8]),
+        );
+        let mut workspace = ColumnarCompressionWorkspace::new();
+        let mut first = Vec::new();
+        ColumnarEncoder::encode_into_with_workspace(&mut first, &buffer, true, &mut workspace)
+            .expect("first batch");
+        let raw_ptr = workspace.raw.as_ptr();
+        let compressed_ptr = workspace.compressed.as_ptr();
+        let mut second = Vec::new();
+        ColumnarEncoder::encode_into_with_workspace(&mut second, &buffer, true, &mut workspace)
+            .expect("second batch");
+        assert_eq!(workspace.raw.as_ptr(), raw_ptr);
+        assert_eq!(workspace.compressed.as_ptr(), compressed_ptr);
+        assert_eq!(first, second);
+
+        let compression_offset = HEADER_SIZE + 2 + 2 + "payload".len();
+        assert_eq!(first[compression_offset], 1);
+        assert_eq!(first[compression_offset + 1], CompressionType::Zstd as u8);
+        let length_offset = compression_offset + 2;
+        let compressed_len = u32::from_le_bytes(
+            first[length_offset..length_offset + 4]
+                .try_into()
+                .expect("compressed length"),
+        ) as usize;
+        let payload = &first[length_offset + 4..length_offset + 4 + compressed_len];
+        let decoded = zstd::decode_all(payload).expect("independent zstd frame");
+        let mut expected = Vec::new();
+        ColumnarEncoder::encode_column_payload(&mut expected, &buffer.columns[0])
+            .expect("raw payload");
+        assert_eq!(decoded, expected);
     }
 
     #[test]

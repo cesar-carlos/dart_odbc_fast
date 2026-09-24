@@ -5,6 +5,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
@@ -121,6 +122,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     int fetchSize, {
     int? initialBufferBytes,
     int? maxBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async =>
       executePreparedResult;
 
@@ -146,6 +148,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     String sql, {
     int? initialBufferBytes,
     int? maxBufferBytes,
+    int fetchSize = 0,
   }) async =>
       executeQueryMultiResult;
 
@@ -156,6 +159,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async {
     lastStreamMultiStartResultEncodingWire = resultEncodingWire;
     lastStreamMultiStartFetchSize = fetchSize;
@@ -171,6 +175,7 @@ class FakeAsyncNativeForRepositoryErrors extends AsyncNativeOdbcConnection {
     int fetchSize = 1000,
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
+    List<int> serializedParams = const <int>[],
   }) async {
     lastStreamMultiStartResultEncodingWire = resultEncodingWire;
     lastStreamMultiStartFetchSize = fetchSize;

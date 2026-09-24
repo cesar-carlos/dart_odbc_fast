@@ -54,11 +54,11 @@ Convenção geral:
 | `odbc_pool_create(conn_str, max_size) -> pool_id` | Cria pool com `PoolAutocommitCustomizer`. |
 | `odbc_pool_create_with_options(conn_str, max_size, idle_timeout_ms, max_lifetime_ms, connection_timeout_ms) -> pool_id` | Cria pool com opções de ciclo de vida (v3.4+). |
 | `odbc_pool_get_connection(pool_id) -> conn_id` | Checkout sem segurar mutex global; o `conn_id` pode ser usado diretamente em `odbc_transaction_begin*`. |
-| `odbc_pool_release_connection(conn_id) -> c_int` | Devolve ao pool com rollback best-effort + restore de autocommit; invalida transações locais restantes. |
-| `odbc_pool_health_check(pool_id) -> c_int` | 1=saudável, 0=falha. |
+| `odbc_pool_release_connection(conn_id) -> c_int` | Invalida transações locais restantes; falha de rollback/reset descarta a conexão e retorna erro, com o handle consumido. |
+| `odbc_pool_health_check(pool_id) -> c_int` | 1=saudável, 0=falha; executa validação explícita mesmo com teste no checkout desativado. |
 | `odbc_pool_get_state(pool_id, ...)` | Métricas binárias do pool (size, idle, wait). |
 | `odbc_pool_get_state_json(pool_id, ...)` | Mesmo conteúdo em JSON estruturado. |
-| `odbc_pool_set_size(pool_id, new_max) -> c_int` | Resize dinâmico preservando a config resolvida do pool; bloqueia com checkout, busy ou `begin` em andamento. |
+| `odbc_pool_set_size(pool_id, new_max) -> c_int` | Resize dinâmico preservando a config resolvida do pool; rejeita checkouts pendentes, conexões checked-out e operações transacionais em andamento. |
 | `odbc_pool_close(pool_id) -> c_int` | Drena checkouts e rollbacka transações locais pendentes antes de remover. |
 
 ### 1.4 Transações & savepoints (8)
@@ -68,8 +68,8 @@ Convenção geral:
 | `odbc_transaction_begin(conn_id, isolation, dialect) -> txn_id` | Inicia transação (v1 — sem access mode / lock timeout), inclusive em `conn_id` vindo de `odbc_pool_get_connection`. |
 | `odbc_transaction_begin_v2(conn_id, isolation, dialect, access_mode) -> txn_id` | Idem com `TransactionAccessMode` (v3.1+), também para conexões pooled checked-out. |
 | `odbc_transaction_begin_v3(conn_id, isolation, dialect, access_mode, lock_timeout_ms) -> txn_id` | Idem com `LockTimeout` (v3.4+), com serialização de `begin` por conexão. |
-| `odbc_transaction_commit(txn_id) -> c_int` | Commit. |
-| `odbc_transaction_rollback(txn_id) -> c_int` | Rollback. |
+| `odbc_transaction_commit(txn_id) -> c_int` | Commit: 0=sucesso, 2=ocupado/retry possível, demais=erro terminal. |
+| `odbc_transaction_rollback(txn_id) -> c_int` | Rollback: 0=sucesso, 2=ocupado/retry possível, demais=erro terminal. |
 | `odbc_savepoint_create(txn_id, name) -> c_int` | Nome validado/quotado. |
 | `odbc_savepoint_rollback(txn_id, name) -> c_int` | Rollback para savepoint nomeado. |
 | `odbc_savepoint_release(txn_id, name) -> c_int` | SQL-92 `RELEASE`; no-op em SQL Server. |
@@ -79,6 +79,9 @@ Contrato atual:
   `odbc_transaction_begin*`, `commit`, `rollback` e savepoints.
 - `odbc_transaction_begin_v3` serializa `begin` por conexão para evitar
   transações locais concorrentes no mesmo handle.
+- Durante commit/rollback, a conexão permanece reservada. Se o driver falhar,
+  seu estado passa a ser indeterminado: descarte a conexão, sem repetir a
+  finalização. `TransactionHandle` no Dart só continua ativo no retorno 2.
 
 ### 1.5 X/Open XA — 2PC (10)
 
@@ -248,8 +251,11 @@ Bindings Dart: `columnar_decompress_ffi.dart` (fora de `OdbcBindings`).
 |---|---|
 | `odbc_release_buffer(ptr, len)` | Libera buffers alocados com o `malloc` do host. Exportado para simetria ABI; Dart usa `malloc.nativeFree` via `NativeFinalizer` em `ffi_buffer_helper.dart`. |
 
-Zero-copy em Dart: payloads ≥ **32 KiB** (`zeroCopyResultThresholdBytes`) quando
-o símbolo resolve.
+Zero-copy em Dart: payloads ≥ **32 KiB** (`zeroCopyResultThresholdBytes`) usam
+um `NativeFinalizer(malloc.nativeFree)` para buffers transitórios alocados pelo
+próprio Dart. Portanto, esse caminho não depende de `odbc_release_buffer` estar
+presente; o símbolo continua exportado somente para consumidores C que adotem
+esse contrato de liberação.
 
 ### 1.21 Telemetria OpenTelemetry (6)
 
@@ -447,7 +453,7 @@ Métodos: `sqlstate()`, `native_code()`, `message()`, `is_retryable()`,
 | `observability` | ✓ | `OtlpExporter` (HTTP via `ureq`). |
 | `test-helpers` | ✓ | `load_dotenv()` para carregar `.env` em testes. |
 | `block-cursor-fetch` | ✓ | `BlockCursor` + `ColumnarAnyBuffer` row-major fetch e rota colunar direta (`engine::core::block_fetch` / `columnar_fetch`). Batch tunável via `ODBC_FAST_BLOCK_FETCH_BATCH`. |
-| `statement-handle-reuse` | ✓ | LRU per-conexão de `OwnedPreparedStatement` (RAII que confina o `mem::transmute` em um único ponto). |
+| `statement-handle-reuse` | ✓ | LRU per-conexão de `OwnedPreparedStatement` (RAII que confina o `mem::transmute` em um único ponto). Reutiliza parâmetros legacy sem NULL ou com tipo inferível; streaming MULT invalida no erro/cancelamento/abandono. |
 | `sqlserver-bcp` | ✗ | `BulkCopyExecutor` (Windows + DLL `bcp.dll`). |
 | `ffi-tests` | ✗ | Habilita `tests/ffi_compatibility_test.rs` e expõe FFI no `lib`. |
 | `xa-dtc` | ✗ | XA / 2PC no SQL Server via MSDTC (Windows-only, COM + `windows` crate). |
@@ -471,10 +477,10 @@ O package Dart `odbc_fast` consome a ABI C via `dart:ffi`. Os helpers de mais al
 | `odbc_xa_*` | `XaTransactionHandle` / `IOdbcService.runInXaTransaction` |
 | `odbc_exec_query*` / `odbc_exec_query_multi*` | `executeQuery*` / `executeQueryMultiFull` / `executeQueryMultiParamValues` / `executeQueryDirectedParams` |
 | `odbc_execute_async`, `odbc_async_*` | `Future<Result>` / async lifecycle APIs |
-| `odbc_stream_*` | `streamQuery` (batched default), `streamQueryBuffer` (legado), `streamQueryMulti` |
+| `odbc_stream_*` | `streamQuery` (batched default), `streamQueryBuffer` (legado), `streamQueryMulti` (coalescido) e `streamQueryMultiBatches` (um item por fetch) |
 | `streamQueryColumnar` (Dart) | `streamQuery` + `toTypedColumnar`; wire columnar → `executeQueryColumnarParamValues` |
 | `recommendedResultEncoding` | `ServiceLocator` / `ResolvedOdbcUsageProfile` (server presets → columnar) |
-| `zeroCopyResultThresholdBytes` | `ffi_buffer_helper.dart` — **32 KiB** quando `odbc_release_buffer` resolve |
+| `zeroCopyResultThresholdBytes` | `ffi_buffer_helper.dart` — **32 KiB**, disponível para buffers transitórios alocados por Dart sem depender de símbolo nativo opcional |
 | `odbc_bulk_insert_*` | `bulkInsert` / `bulkInsertParallel` |
 | `odbc_catalog_*` | `catalogTables` / `catalogColumns` / … |
 | `odbc_build_upsert_sql` / `odbc_append_returning_sql` / `odbc_get_session_init_sql` | `OdbcDriverFeatures` |
@@ -552,8 +558,9 @@ ainda não expostos (ver matriz em [`example/README.md`](../example/README.md)).
 
 *Atualizado para **odbc_fast v4.5.1** (ABI **1.1**, `odbc_release_buffer`,
 `odbc_stream_start_batched_options`, streaming batched default,
-`streamQueryBuffer`, `recommendedResultEncoding`, zero-copy **32 KiB**,
-binary float/bool wire dual-support, **100** exports em `odbc_exports.def`).
+`streamQueryBuffer` / `streamQueryMultiBatches`, `recommendedResultEncoding`,
+zero-copy **32 KiB** por `malloc.nativeFree`, binary float/bool wire
+dual-support, **100** exports em `odbc_exports.def`).
 Para cada funcionalidade com "fix" há um teste de regressão correspondente em
 `native/odbc_engine/tests/regression/` e
 `test/infrastructure/native/bindings/ffi_exports_contract_test.dart`.*

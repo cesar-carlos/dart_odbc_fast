@@ -245,6 +245,27 @@ fn bench_streaming_columnar_batch_encode(c: &mut Criterion) {
     group.finish();
 }
 
+/// Repeated compressed batches exercise the encoder's production entrypoint.
+/// Keep the same fixture and batch count for before/after measurements.
+fn bench_streaming_columnar_compressed(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encoder/streaming_columnar_compressed");
+    for rows in [100usize, 1_000] {
+        let batch = build_mixed_v2(rows, 8);
+        group.bench_function(format!("16x{rows}x8"), |b| {
+            b.iter(|| {
+                let mut total = 0;
+                for _ in 0..16 {
+                    total += ColumnarEncoder::encode(black_box(&batch), true)
+                        .expect("encode")
+                        .len();
+                }
+                black_box(total)
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_row_major_encode,
@@ -254,5 +275,6 @@ criterion_group!(
     bench_row_to_columnar_conversion,
     bench_direct_columnar_vs_via_row_major,
     bench_streaming_columnar_batch_encode,
+    bench_streaming_columnar_compressed,
 );
 criterion_main!(benches);

@@ -7,6 +7,20 @@ String _readRepoFile(String relativePath) {
   return File(path).readAsStringSync();
 }
 
+Iterable<String> _localMarkdownLinkTargets(String content) sync* {
+  final links = RegExp(r'\]\(([^)#]+)(?:#[^)]*)?\)');
+  for (final match in links.allMatches(content)) {
+    final target = match.group(1)!.trim();
+    if (target.startsWith('http:') ||
+        target.startsWith('https:') ||
+        target.startsWith('mailto:') ||
+        target.startsWith('<')) {
+      continue;
+    }
+    yield target;
+  }
+}
+
 void main() {
   group('documentation contract', () {
     test('should_keep_capability_docs_aligned_with_current_surface', () {
@@ -65,6 +79,32 @@ void main() {
           isTrue,
           reason: 'example/README.md links to missing file "$link"',
         );
+      }
+    });
+
+    test('should_keep_local_markdown_links_resolvable', () {
+      final markdownFiles =
+          Directory.current.listSync(recursive: true).whereType<File>().where(
+                (file) =>
+                    file.path.endsWith('.md') &&
+                    !file.path.split(Platform.pathSeparator).contains('target'),
+              );
+
+      for (final markdownFile in markdownFiles) {
+        final sourceDirectory = markdownFile.parent.path;
+        for (final target in _localMarkdownLinkTargets(
+          markdownFile.readAsStringSync(),
+        )) {
+          final targetPath = target.split('/').join(Platform.pathSeparator);
+          final resolved = File(
+            '$sourceDirectory${Platform.pathSeparator}$targetPath',
+          );
+          expect(
+            resolved.existsSync() || Directory(resolved.path).existsSync(),
+            isTrue,
+            reason: '${markdownFile.path} links to missing target "$target"',
+          );
+        }
       }
     });
 
@@ -179,6 +219,25 @@ void main() {
       expect(apiSurface, contains('**100**'));
       expect(apiSurface, contains('**32 KiB**'));
       expect(apiSurface, isNot(contains('**64 KiB**')));
+    });
+
+    test('should_document_current_mult_and_zero_copy_contracts', () {
+      final apiSurface = _readRepoFile('doc/API_SURFACE.md');
+      final performance = _readRepoFile('doc/PERFORMANCE.md');
+      final zeroCopy = _readRepoFile('native/doc/zero_copy_ffi_evaluation.md');
+
+      expect(apiSurface, contains('streamQueryMultiBatches'));
+      expect(performance, contains('streamQueryMultiBatches'));
+      expect(performance, contains('malloc.nativeFree'));
+      expect(
+        performance,
+        isNot(contains('when `odbc_release_buffer` resolves')),
+      );
+      expect(zeroCopy, contains('Dart does not require it'));
+      expect(
+        zeroCopy,
+        isNot(contains('and `odbc_release_buffer` available')),
+      );
     });
 
     test('should_document_dual_barrels_in_architecture', () {

@@ -2,7 +2,9 @@
 
 > **Last updated for:** v4.5.1 (Dart FFI `asFunction` trampoline cache;
 > shared protocol `ByteData` views; param serialize / DateTime parse
-> allocation cuts; prior v4.5.0 binary float/bool wire + Dart dual-decode;
+> allocation cuts; direct-prefix MULT framing; compressed columnar single-pass
+> planning and fetch-buffer reuse; Dart-owned zero-copy no longer requires an
+> optional native release symbol; prior v4.5.0 binary float/bool wire + Dart dual-decode;
 > prepared cache with inferable NULLs; stream prepared reuse; pool
 > `sessionResetOnCheckout` opt-out + single checkout reset; FFI mid-size
 > transient from 32 KiB; additive `streamChunkSizeBytes` /
@@ -23,8 +25,26 @@ This document records architectural decisions with a measurable performance or r
 | Knob | Default | Effect |
 | ---- | ------- | ------ |
 | `block-cursor-fetch` feature | **enabled** | Cursor fetch goes through `engine::core::block_fetch::fetch_rows_into` (`BlockCursor` + `ColumnarAnyBuffer`) for queries whose columns can all be pre-bound. LOBs / `WLONGVARCHAR` without an advertised max length transparently fall back to the legacy per-row path. |
-| `statement-handle-reuse` feature | **enabled** | `CachedConnection` keeps a per-connection LRU of `OwnedPreparedStatement` (RAII guard around the `mem::transmute` that fabricates the `'static` lifetime). `execute_query_with_params` rebinds on the cached statement when the param list is legacy/no-NULL. **Pooled** checkouts store `CachedConnection` in r2d2 and route `odbc_exec_query_params` / `odbc_exec_query` through `try_cached_legacy_params` / `execute_query_with_cached_connection` (wave 4.2). |
+| `statement-handle-reuse` feature | **enabled** | `CachedConnection` keeps a per-connection LRU of `OwnedPreparedStatement` (RAII guard around the `mem::transmute` that fabricates the `'static` lifetime). Legacy parameters without NULL, or with a NULL type inferable from non-NULL siblings, use the prepared cache; descriptor-dependent and directed parameter paths still prepare directly. Repeated MULT streams also reuse prepared statements, but evict the entry on any failure, cancellation, or abandoned delivery. **Pooled** checkouts retain the cache in r2d2. |
 | `ODBC_FAST_BLOCK_FETCH_BATCH` env var | `256` | Batch size for `BlockCursor::fetch_with_truncation_check`. Invalid or missing values fall back to the default. Cached via `OnceLock`, so `std::env::var` is not consulted per query. |
+
+Transaction begin applies settings through the existing connection reference,
+without evicting prepared statements. On commit or rollback, `CachedConnection`
+queries `SQL_CURSOR_COMMIT_BEHAVIOR` and `SQL_CURSOR_ROLLBACK_BEHAVIOR` once per
+physical connection. `SQL_CB_CLOSE` and `SQL_CB_PRESERVE` retain idle prepared
+plans; `SQL_CB_DELETE`, unknown values and probe failures evict them. An
+unrestricted mutable connection access still evicts the cache and invalidates
+the capability snapshot. A failed completion makes the connection unusable.
+Session-scoped isolation changes on SQL Server, SQLite and DB2 are reset to
+their documented defaults after completion or pool reset; non-default
+isolation adds one reset statement on those engines. Arbitrary settings made
+by application SQL are not captured.
+
+Pool checkin uses `SQL_ATTR_CONNECTION_DEAD` for a cheap liveness check. Drivers
+that explicitly do not support that attribute use the configured health query.
+An explicit pool health check always validates, including when checkout
+validation is disabled. Checkout and release reservations prevent resize from
+publishing a replacement pool while acquisition or cleanup is in progress.
 
 Opt out at the crate level with
 `odbc_engine = { version = "...", default-features = false, features = ["test-helpers", "observability"] }`.
@@ -44,6 +64,30 @@ have their own `Mutex<AsyncRequestManager>`, and the legacy global error
 slot lives behind its own `RwLock<LegacyGlobalError>` with `log::error!`
 on poison. Lock ordering when more than one is taken is
 `Outer → AsyncReqs → Errors (write) → Errors (read)`.
+Synchronous query/parameter/MULT result bytes and pending `-2` retries are
+copied after releasing their respective map mutexes. Pooled busy accounting
+remains reserved through result publication (including an error or pending
+payload stash). Each connection still has its own ODBC mutex, so concurrent
+queries on one connection serialize; distinct connections can copy results
+without the outer mutex. Pending retry keys and their two-second TTL are
+unchanged. Expired, replaced and cleared pending payloads are detached before
+destruction; stream close/disconnect also releases encoded buffers and spill
+files after unlocking the shared stream map.
+
+With block fetch enabled, row-major streaming keeps at most one batch of
+empty row vectors for reuse. Cells and their text/binary allocations are
+released after each batch. The final partial batch and empty cursor expose
+only valid current rows. Columnar compressed streaming reuses per-cursor raw
+and compressed scratch buffers plus a zstd context; every column still emits
+an independent frame. LOBs and FOR JSON continue through the legacy fetch
+path when block binding is unsuitable. Columnar fallback keeps typed vectors,
+metadata and the compression workspace for the cursor's lifetime; its
+row-major row vectors are also recycled between batches.
+
+Batched and MULT streams return fully copied output buffers to a private,
+non-blocking per-stream pool. At most two idle buffers with capacity up to
+8 MiB each are retained. Larger buffers are released, and Rust calls that
+transfer an owned `Vec` keep that ownership with the caller.
 
 ---
 
@@ -71,7 +115,8 @@ set repository `defaultResultEncoding` to columnar for
 
 `ServiceLocator.recommendedStreamChunkSizeBytes` exposes the table's stream
 chunk suggestion; public `streamQuery` / `streamQueryNamed` /
-`streamQueryColumnar` / `streamQueryMulti` signature defaults remain 64 KiB —
+`streamQueryColumnar` / `streamQueryMulti` / `streamQueryMultiBatches`
+signature defaults remain 64 KiB —
 pass `chunkSize: locator.recommendedStreamChunkSizeBytes` (and optional
 `fetchSize`) explicitly for large scans. Those parameters forward through to
 batched native start and each `streamFetch(bufferSize: chunkSize)` (async and
@@ -84,9 +129,10 @@ execute (clamped by `maxResultBufferBytes`). When the connection option is
 null, runners use `defaultInitialResultBufferBytes` (64 KiB). Prepared
 executions may override with `StatementOptions.initialBufferSize`.
 
-FFI scratch vs transient: seeds below 256 KiB reuse the scratch pool; seeds at
-or above 256 KiB (or `preferTransient`) use transient allocation for
-zero-copy. The shared byte scratch (params + mid-size bulk ≤256 KiB) and
+FFI scratch vs transient: seeds below 32 KiB reuse the scratch pool; seeds at
+or above 32 KiB (or `preferTransient`) use transient allocation so successful
+payloads can be exposed zero-copy. The shared byte scratch (params + small
+bulk frames) and
 `ProtocolByteAccumulator` growth past 64 KiB snaps to the 1 MiB pool tier.
 
 Buffered `executeQueryMulti*` timeouts are Dart-side only (`Future.timeout`);
@@ -130,13 +176,36 @@ cargo bench --bench columnar_v2_placeholder --features columnar-v2
 # Native engine follow-up micro-benches (no DSN required):
 #   cell_reader_bench       — Integer/BigInt/Varchar/Binary/Date/Timestamp paths
 #   encoder_bench           — RowBufferEncoder + direct columnar vs row-major
-#   ffi_contention_bench    — synthetic N-thread FFI contention model
+#   ffi_contention_bench    — synthetic N-thread FFI contention model (not an ODBC throughput measurement)
 #   prepared_cache_bench    — cache hit vs cold prepare, parameterized path
+#   buffer_recycle_bench    — fresh vs reused output buffer, including FFI copy
+#   fallback_transpose_bench — one-shot vs reused row-to-column transposition
+#   stream_param_decode_bench — copied vs borrowed FFI parameter payload
 cargo bench --bench cell_reader_bench
 cargo bench --bench encoder_bench
 cargo bench --bench ffi_contention_bench
 cargo bench --bench prepared_cache_bench
+cargo bench --bench buffer_recycle_bench
+cargo bench --bench fallback_transpose_bench
+cargo bench --bench stream_param_decode_bench
 ```
+
+For actual SQL Server FFI and streaming hot paths (read-only queries against
+`sys.all_objects`), set `ODBC_LIVE_BENCH=1` and `ODBC_TEST_DSN` in the process
+environment, then run `cargo bench --bench live_hotpaths_bench`. This covers
+1/4/8 distinct connections, 100/1,000-row batched streams, repeated MULT,
+and numeric/blob parameters with inferable NULL. The fixture is opt-in and
+skips parameter cases rejected by the configured driver. It is not a
+before/after comparison unless run against both revisions with the same
+driver, server, features and fixture; results from the present revision alone
+must not be claimed as an improvement.
+The `row_major_100_sustained` group creates its worker threads and 1 MiB
+output buffers before timing; each measured iteration runs ten queries per
+connection and includes only barrier synchronization plus the production FFI
+calls. The original `row_major_100` group includes thread creation and
+output allocation and should not be interpreted as steady-state throughput.
+Criterion sampling and duration for this bench can be set on the command line;
+the benchmark no longer overrides those settings.
 
 Baselines are tracked in
 [`native/odbc_engine/benches/baselines/README.md`](../native/odbc_engine/benches/baselines/README.md).
@@ -507,11 +576,13 @@ serial vs worker-pool behavior with a local slow query instead of the default
 
 | Knob | Value | Effect |
 | ---- | ----- | ------ |
-| `zeroCopyResultThresholdBytes` | `32 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful payloads at or above this size when `odbc_release_buffer` resolves (ABI **1.1+**). Sync param paths with large directed blobs use a transient allocation via `preferTransientFfiBufferForParams`. |
-| Scratch pool | seeds `< 256 KiB` | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Transient + zero-copy when `preferTransient` or `initialSize >= 256 KiB` (not gated on the 16 MiB max ceiling). |
-| `odbc_release_buffer` | exported | C ABI hook for releasing Dart `malloc` buffers; Dart uses the paired `malloc.nativeFree` finalizer today. |
+| `zeroCopyResultThresholdBytes` | `32 KiB` | `callWithBuffer` skips the `Uint8List.fromList` copy for successful transient payloads at or above this size. Sync param paths with large directed blobs use a transient allocation via `preferTransientFfiBufferForParams`. |
+| Scratch pool | seeds `< 32 KiB` | Reusable scratch buffers still copy on return because the pool reuses memory on the next FFI call. Transient + zero-copy when `preferTransient` or `initialSize >= 32 KiB` (not gated on the 16 MiB max ceiling). |
+| `odbc_release_buffer` | exported ABI 1.1 | C ABI hook for consumers that need it. Dart pairs its own `package:ffi` `malloc` buffers with `malloc.nativeFree`, so zero-copy remains available with older compatible native libraries. |
 
-Opt-out is automatic on older native builds that do not export the symbol — the helper falls back to copying.
+The ownership rule is intentionally narrow: this applies only to transient
+buffers allocated by Dart. Native decompression results retain their separate
+native release contract.
 
 ---
 
@@ -538,7 +609,7 @@ parameter buffers on the async worker path.
 
 ---
 
-## `streamQueryColumnar` and native columnar batched wire (v4.2)
+## Streaming and native columnar batched wire
 
 `IQueryService.streamQuery` / `streamQueryNamed` / `streamQueryMulti` always
 request **row-major** wire even when `ServiceLocator` / repository
@@ -551,13 +622,17 @@ policy.
 For `streamQuery` / `streamQueryNamed` / `streamQueryColumnar`, optional
 `fetchSize` (default 1000) and `chunkSize` (default 64 KiB) forward to batched
 native start; each fetch seeds the FFI buffer with `bufferSize: chunkSize`
-(async and sync). For `streamQueryMulti`, the same knobs forward to
+(async and sync). For `streamQueryMulti` and `streamQueryMultiBatches`, the
+same knobs forward to
 `odbc_stream_multi_start_*_options` when available; older natives without the
 options symbol keep the legacy entry (engine default fetch 100).
 Wire tag 2 (continuation batch of the same SQL cursor) is coalesced in the
 repository runner into one `QueryResultMultiItem` so stream item counts match
 `executeQueryMultiFull` (growable row list — no per-batch `List.of` when the
-list is already growable). Async
+list is already growable). `streamQueryMultiBatches` instead exposes every
+tag-0/tag-2 batch as `QueryResultMultiBatchItem`; use it when work can be
+performed per fetch and bounded decoded memory is preferable to coalesced
+cursor semantics. Async
 backends use `streamMultiStartAsync` + `streamPollAndFetch` (one isolate hop
 when ready).
 
@@ -565,9 +640,10 @@ No-param `executeQuery` is a **one-shot** `execQuery` / empty-params path (not a
 drained batched stream). Use `streamQuery*` for incremental delivery of large
 results.
 
-Columnar float/double decode builds `TypedColumnFloat64` (`Float64List`) from
-UTF-8 wire text. Native binary scalar cells (float/bool/date on the wire) remain
-a future protocol-version follow-up.
+Columnar float/double decode builds `TypedColumnFloat64` (`Float64List`).
+Row-major `Float` / `Double` and `Boolean` cells use little-endian IEEE-754
+and a single `0`/`1` byte respectively; Dart also accepts their legacy UTF-8
+representation. Date/time values remain ISO text.
 
 Batched stream framing (`ProtocolByteAccumulator.take`) transfers frame ownership
 via views so drain loops avoid an extra `fromList` copy per message.
@@ -590,7 +666,8 @@ Multi-result streaming (`odbc_stream_multi_*`) encodes each cursor in
 fetch-sized batches. Tag `0` opens a result set; tag `2` continues the same
 result set; tag `1` is row count. Dart `MultiResultStreamDecoder` preserves
 frame boundaries (`isContinuationBatch` on tag 2); `streamQueryMulti`
-coalesces tag-2 batches into one logical `QueryResultMultiItem` per cursor.
+coalesces tag-2 batches into one logical `QueryResultMultiItem` per cursor,
+while `streamQueryMultiBatches` publishes each batch directly.
 
 ---
 

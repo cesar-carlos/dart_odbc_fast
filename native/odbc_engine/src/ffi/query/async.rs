@@ -34,7 +34,7 @@ pub extern "C" fn odbc_execute_async(conn_id: c_uint, sql: *const c_char) -> c_u
             return 0;
         };
         async_mgr
-            .start_request(conn_id, sql_str, None, 0)
+            .start_request(conn_id, sql_str, None, 0, 0)
             .unwrap_or(0)
     })
 }
@@ -93,7 +93,7 @@ pub extern "C" fn odbc_execute_async_params(
             return 0;
         };
         async_mgr
-            .start_request(conn_id, sql_str, params, 0)
+            .start_request(conn_id, sql_str, params, 0, 0)
             .unwrap_or(0)
     })
 }
@@ -157,7 +157,68 @@ pub extern "C" fn odbc_execute_async_params_options(
             return 0;
         };
         async_mgr
-            .start_request(conn_id, sql_str, params, result_encoding)
+            .start_request(conn_id, sql_str, params, result_encoding, 0)
+            .unwrap_or(0)
+    })
+}
+
+/// Like [`odbc_execute_async_params_options`] plus a per-call block-fetch batch.
+/// `fetch_size` of 0 keeps the process default.
+#[no_mangle]
+pub extern "C" fn odbc_execute_async_params_fetch(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    result_encoding: c_uint,
+    fetch_size: c_uint,
+) -> c_uint {
+    crate::ffi_guard_id!(c_uint, {
+        // SAFETY: FFI caller owns `params_buffer`; this async path copies the
+        // bytes before returning, so no foreign pointer is retained.
+        let params_slice = match unsafe { read_param_buffer_owned(params_buffer, params_len) } {
+            Ok(params_slice) => params_slice,
+            Err(message) => {
+                let Some(mut state) = try_lock_global_state() else {
+                    return 0;
+                };
+                set_invalid_param_buffer_error(&mut state, conn_id, message);
+                return 0;
+            }
+        };
+
+        // SAFETY: `sql` must be a valid NUL-terminated C string for this call;
+        // `parse_sql_owned` copies immediately so no foreign pointer is retained.
+        let sql_str = match unsafe { parse_sql_owned(sql) } {
+            Some(s) => s,
+            None => return 0,
+        };
+
+        let params = if params_slice.is_empty() {
+            None
+        } else {
+            Some(params_slice)
+        };
+
+        let Some(mut state) = try_lock_global_state() else {
+            return 0;
+        };
+
+        if !state::contains_connection(conn_id) && !state::contains_pooled_connection(conn_id) {
+            set_connection_error(
+                &mut state,
+                conn_id,
+                format!("Invalid connection ID: {}", conn_id),
+            );
+            return 0;
+        }
+
+        drop(state);
+        let Some(mut async_mgr) = lock_async_requests() else {
+            return 0;
+        };
+        async_mgr
+            .start_request(conn_id, sql_str, params, result_encoding, fetch_size)
             .unwrap_or(0)
     })
 }

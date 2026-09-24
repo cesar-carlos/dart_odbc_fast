@@ -19,6 +19,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
     String sql,
     Uint8List? serializedParams, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async {
     final bytes = serializedParams == null || serializedParams.isEmpty
         ? Uint8List(0)
@@ -30,6 +31,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
         sql,
         bytes,
         resultEncodingWire: resultEncoding.wireCode,
+        blockFetchBatchSize: fetchSize,
       ),
     );
     return r.value;

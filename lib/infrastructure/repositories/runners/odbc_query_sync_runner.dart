@@ -74,6 +74,7 @@ class OdbcQuerySyncRunner {
                 initialBufferBytes: initialBytes,
                 timeout: queryTimeout,
                 resultEncoding: resultEncoding,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               )
             : ffi.sync.executeQueryParams(
                 nativeId,
@@ -82,6 +83,7 @@ class OdbcQuerySyncRunner {
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
                 resultEncoding: resultEncoding,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
         final qr = parser.parseBufferToQueryResult(
@@ -172,6 +174,7 @@ class OdbcQuerySyncRunner {
                 initialBufferBytes: initialBytes,
                 timeout: queryTimeout,
                 resultEncoding: ResultEncoding.columnar,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               )
             : ffi.sync.executeQueryParams(
                 nativeId,
@@ -180,6 +183,7 @@ class OdbcQuerySyncRunner {
                 maxBufferBytes: maxBytes,
                 initialBufferBytes: initialBytes,
                 resultEncoding: ResultEncoding.columnar,
+                fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
         final typed = parser.parseBufferToTypedColumnar(

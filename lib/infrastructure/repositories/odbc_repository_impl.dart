@@ -219,6 +219,38 @@ class OdbcRepositoryImpl implements IOdbcRepository {
       );
 
   @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _stream.streamQueryMultiParamValues(
+        connectionId,
+        sql,
+        params,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _stream.streamQueryMultiBatchesParamValues(
+        connectionId,
+        sql,
+        params,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
     String connectionId,
     String sql, {
@@ -360,9 +392,16 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) =>
-      _query.executePreparedParamValues(connectionId, stmtId, params, options);
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) =>
+      _query.executePreparedParamValues(
+        connectionId,
+        stmtId,
+        params,
+        options,
+        resultEncoding: resultEncoding,
+      );
 
   @override
   Future<Result<QueryResult>> executePreparedNamed(

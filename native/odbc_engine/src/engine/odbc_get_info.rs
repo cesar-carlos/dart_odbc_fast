@@ -17,6 +17,43 @@ use std::mem::{size_of, size_of_val};
 const SQL_DRIVER_NAME: u16 = 6;
 /// ODBC `SQL_DRIVER_VER` — omitted from `odbc-sys` 0.28 `InfoType`.
 const SQL_DRIVER_VER: u16 = 7;
+#[cfg(feature = "statement-handle-reuse")]
+const SQL_CURSOR_ROLLBACK_BEHAVIOR: u16 = 24;
+
+/// `SQL_CB_CLOSE` and `SQL_CB_PRESERVE` retain prepared plans.
+#[cfg(feature = "statement-handle-reuse")]
+pub(crate) fn cursor_behavior_preserves_prepared(value: Option<u16>) -> bool {
+    matches!(value, Some(1 | 2))
+}
+
+#[cfg(feature = "statement-handle-reuse")]
+pub(crate) fn transaction_cursor_behavior(
+    conn: &Connection<'static>,
+) -> (Option<u16>, Option<u16>) {
+    (
+        get_info_u16(conn, InfoType::CursorCommitBehaviour as u16),
+        get_info_u16(conn, SQL_CURSOR_ROLLBACK_BEHAVIOR),
+    )
+}
+
+#[cfg(feature = "statement-handle-reuse")]
+fn get_info_u16(conn: &Connection<'static>, info_type: u16) -> Option<u16> {
+    let mut value = 0u16;
+    let mut out_len = 0i16;
+    let hdbc = connection_hdbc(conn);
+    // SAFETY: the live HDBC and the writable numeric output remain valid for this call.
+    let rc = unsafe {
+        let sql_get_info_u16: SqlGetInfoU16 = std::mem::transmute(sql_get_info as *const ());
+        sql_get_info_u16(
+            hdbc,
+            info_type,
+            (&mut value as *mut u16).cast(),
+            size_of::<u16>() as i16,
+            &mut out_len,
+        )
+    };
+    (rc == SqlReturn::SUCCESS || rc == SqlReturn::SUCCESS_WITH_INFO).then_some(value)
+}
 
 #[cfg(not(windows))]
 use odbc_api::sys::SQLGetInfo as sql_get_info;
@@ -139,6 +176,15 @@ mod tests {
         assert_eq!(SQL_DRIVER_NAME, 6);
         assert_eq!(SQL_DRIVER_VER, 7);
         assert_eq!(InfoType::DbmsVer as u16, 18);
+        #[cfg(feature = "statement-handle-reuse")]
+        {
+            assert_eq!(InfoType::CursorCommitBehaviour as u16, 23);
+            assert_eq!(SQL_CURSOR_ROLLBACK_BEHAVIOR, 24);
+            assert!(!cursor_behavior_preserves_prepared(Some(0)));
+            assert!(cursor_behavior_preserves_prepared(Some(1)));
+            assert!(cursor_behavior_preserves_prepared(Some(2)));
+            assert!(!cursor_behavior_preserves_prepared(None));
+        }
     }
 
     #[test]

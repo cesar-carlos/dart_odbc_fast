@@ -249,13 +249,15 @@ class OdbcService implements IOdbcService {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  ) =>
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  }) =>
       _query.executePreparedParamValues(
         connectionId,
         stmtId,
         params,
         options,
+        resultEncoding: resultEncoding,
       );
 
   @override
@@ -312,6 +314,38 @@ class OdbcService implements IOdbcService {
       _query.streamQueryMulti(
         connectionId,
         sql,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQueryMultiParamValues(
+        connectionId,
+        sql,
+        params,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+      );
+
+  @override
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  }) =>
+      _query.streamQueryMultiBatchesParamValues(
+        connectionId,
+        sql,
+        params,
         fetchSize: fetchSize,
         chunkSize: chunkSize,
       );

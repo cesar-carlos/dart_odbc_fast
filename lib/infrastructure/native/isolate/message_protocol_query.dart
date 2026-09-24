@@ -9,6 +9,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
     this.resultEncoding = ResultEncoding.rowMajor,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executeQueryParams);
@@ -21,6 +22,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
     this.resultEncoding = ResultEncoding.rowMajor,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executeQueryParams);
@@ -33,6 +35,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
     int? maxResultBufferBytes,
     int? initialResultBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int blockFetchBatchSize = 0,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -44,6 +47,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
         maxResultBufferBytes: maxResultBufferBytes,
         initialResultBufferBytes: initialResultBufferBytes,
         resultEncoding: resultEncoding,
+        blockFetchBatchSize: blockFetchBatchSize,
       );
     }
     return ExecuteQueryParamsRequest(
@@ -54,6 +58,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
       maxResultBufferBytes: maxResultBufferBytes,
       initialResultBufferBytes: initialResultBufferBytes,
       resultEncoding: resultEncoding,
+      blockFetchBatchSize: blockFetchBatchSize,
     );
   }
 
@@ -64,6 +69,7 @@ class ExecuteQueryParamsRequest extends WorkerRequest {
   final int? maxResultBufferBytes;
   final int? initialResultBufferBytes;
   final ResultEncoding resultEncoding;
+  final int blockFetchBatchSize;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;
@@ -82,11 +88,13 @@ class ExecuteQueryMultiRequest extends WorkerRequest {
     this.sql, {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.blockFetchBatchSize = 0,
   }) : super(requestId, RequestType.executeQueryMulti);
   final int connectionId;
   final String sql;
   final int? maxResultBufferBytes;
   final int? initialResultBufferBytes;
+  final int blockFetchBatchSize;
 }
 
 /// Execute parameterised multi-result query (M5 in v3.2.0).
@@ -98,6 +106,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     Uint8List serializedParams, {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executeQueryMultiParams);
@@ -109,6 +118,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     TransferableTypedData transferableParams, {
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executeQueryMultiParams);
@@ -120,6 +130,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
     Uint8List serializedParams, {
     int? maxResultBufferBytes,
     int? initialResultBufferBytes,
+    int blockFetchBatchSize = 0,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -130,6 +141,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
         transferableParams,
         maxResultBufferBytes: maxResultBufferBytes,
         initialResultBufferBytes: initialResultBufferBytes,
+        blockFetchBatchSize: blockFetchBatchSize,
       );
     }
     return ExecuteQueryMultiParamsRequest(
@@ -139,6 +151,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
       serializedParams,
       maxResultBufferBytes: maxResultBufferBytes,
       initialResultBufferBytes: initialResultBufferBytes,
+      blockFetchBatchSize: blockFetchBatchSize,
     );
   }
 
@@ -148,6 +161,7 @@ class ExecuteQueryMultiParamsRequest extends WorkerRequest {
   final String sql;
   final int? maxResultBufferBytes;
   final int? initialResultBufferBytes;
+  final int blockFetchBatchSize;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;
@@ -181,6 +195,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     this.fetchSize = 1000,
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.resultEncodingWire = 0,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executePrepared);
@@ -193,6 +208,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     this.fetchSize = 1000,
     this.maxResultBufferBytes,
     this.initialResultBufferBytes,
+    this.resultEncodingWire = 0,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executePrepared);
@@ -205,6 +221,7 @@ class ExecutePreparedRequest extends WorkerRequest {
     int fetchSize = 1000,
     int? maxResultBufferBytes,
     int? initialResultBufferBytes,
+    int resultEncodingWire = 0,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -216,6 +233,7 @@ class ExecutePreparedRequest extends WorkerRequest {
         fetchSize: fetchSize,
         maxResultBufferBytes: maxResultBufferBytes,
         initialResultBufferBytes: initialResultBufferBytes,
+        resultEncodingWire: resultEncodingWire,
       );
     }
     return ExecutePreparedRequest(
@@ -226,6 +244,7 @@ class ExecutePreparedRequest extends WorkerRequest {
       fetchSize: fetchSize,
       maxResultBufferBytes: maxResultBufferBytes,
       initialResultBufferBytes: initialResultBufferBytes,
+      resultEncodingWire: resultEncodingWire,
     );
   }
 
@@ -236,6 +255,7 @@ class ExecutePreparedRequest extends WorkerRequest {
   final int fetchSize;
   final int? maxResultBufferBytes;
   final int? initialResultBufferBytes;
+  final int resultEncodingWire;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;
@@ -509,6 +529,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
     this.sql,
     Uint8List serializedParams, {
     this.resultEncodingWire = 0,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = serializedParams,
         _transferableParams = null,
         super(requestId, RequestType.executeAsyncStartParams);
@@ -519,6 +540,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
     this.sql,
     TransferableTypedData transferableParams, {
     this.resultEncodingWire = 0,
+    this.blockFetchBatchSize = 0,
   })  : _serializedParams = null,
         _transferableParams = transferableParams,
         super(requestId, RequestType.executeAsyncStartParams);
@@ -529,6 +551,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
     String sql,
     Uint8List serializedParams, {
     int resultEncodingWire = 0,
+    int blockFetchBatchSize = 0,
   }) {
     final transferableParams = transferableIsolatePayload(serializedParams);
     if (transferableParams != null) {
@@ -538,6 +561,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
         sql,
         transferableParams,
         resultEncodingWire: resultEncodingWire,
+        blockFetchBatchSize: blockFetchBatchSize,
       );
     }
     return ExecuteAsyncStartParamsRequest(
@@ -546,6 +570,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
       sql,
       serializedParams,
       resultEncodingWire: resultEncodingWire,
+      blockFetchBatchSize: blockFetchBatchSize,
     );
   }
 
@@ -554,6 +579,7 @@ class ExecuteAsyncStartParamsRequest extends WorkerRequest {
   final int connectionId;
   final String sql;
   final int resultEncodingWire;
+  final int blockFetchBatchSize;
 
   Uint8List get serializedParams {
     final inline = _serializedParams;

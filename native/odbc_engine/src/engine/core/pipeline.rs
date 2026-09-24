@@ -119,8 +119,18 @@ impl QueryPipeline {
     }
 
     pub fn execute_multi(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {
+        self.execute_multi_with_fetch(conn, sql, None)
+    }
+
+    pub fn execute_multi_with_fetch(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
         validate_sql_not_empty(sql)?;
-        self.execution_engine.execute_multi_result(conn, sql)
+        self.execution_engine
+            .execute_multi_result_with_fetch(conn, sql, fetch_size)
     }
 
     pub fn execute_multi_with_params(
@@ -129,9 +139,19 @@ impl QueryPipeline {
         sql: &str,
         params: &[crate::protocol::ParamValue],
     ) -> Result<Vec<u8>> {
+        self.execute_multi_with_params_and_fetch(conn, sql, params, None)
+    }
+
+    pub fn execute_multi_with_params_and_fetch(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[crate::protocol::ParamValue],
+        fetch_size: Option<u32>,
+    ) -> Result<Vec<u8>> {
         validate_sql_not_empty(sql)?;
         self.execution_engine
-            .execute_multi_result_with_params(conn, sql, params)
+            .execute_multi_result_with_params_and_fetch(conn, sql, params, fetch_size)
     }
 
     pub fn get_metrics(&self) -> Arc<Metrics> {

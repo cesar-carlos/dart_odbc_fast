@@ -11,7 +11,7 @@
 
 use super::super::global_state::MAX_ID_ALLOC_ATTEMPTS;
 use crate::pool::{ConnectionPool, SharedPooledConnection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 #[derive(Clone)]
@@ -26,6 +26,9 @@ pub(crate) struct PoolMaps {
     pooled_busy_counts: HashMap<u32, usize>,
     pooled_connection_busy_counts: HashMap<u32, usize>,
     pooled_free_ids: HashMap<u32, Vec<u32>>,
+    pending_checkouts: HashMap<u32, usize>,
+    pending_releases: HashMap<u32, usize>,
+    resizing: HashSet<u32>,
     next_pool_id: u32,
     next_pooled_conn_id: u32,
 }
@@ -39,6 +42,9 @@ fn pool_maps() -> &'static Mutex<PoolMaps> {
             pooled_busy_counts: HashMap::new(),
             pooled_connection_busy_counts: HashMap::new(),
             pooled_free_ids: HashMap::new(),
+            pending_checkouts: HashMap::new(),
+            pending_releases: HashMap::new(),
+            resizing: HashSet::new(),
             next_pool_id: 1,
             next_pooled_conn_id: 1_000_000,
         })
@@ -137,6 +143,64 @@ pub(crate) fn with_pool_maps_mut<R>(f: impl FnOnce(&mut PoolMaps) -> R) -> Optio
 }
 
 impl PoolMaps {
+    pub(crate) fn reserve_checkout(&mut self, pool_id: u32) -> Option<Arc<ConnectionPool>> {
+        if self.resizing.contains(&pool_id) {
+            return None;
+        }
+        let pool = self.pools.get(&pool_id)?.clone();
+        *self.pending_checkouts.entry(pool_id).or_default() += 1;
+        Some(pool)
+    }
+
+    pub(crate) fn finish_checkout(&mut self, pool_id: u32) {
+        if let Some(count) = self.pending_checkouts.get_mut(&pool_id) {
+            *count -= 1;
+            if *count == 0 {
+                self.pending_checkouts.remove(&pool_id);
+            }
+        }
+    }
+
+    pub(crate) fn has_pending_checkout(&self, pool_id: u32) -> bool {
+        self.pending_checkouts.contains_key(&pool_id)
+    }
+
+    pub(crate) fn begin_release(&mut self, pool_id: u32) {
+        *self.pending_releases.entry(pool_id).or_default() += 1;
+    }
+
+    pub(crate) fn finish_release(&mut self, pool_id: u32) {
+        if let Some(count) = self.pending_releases.get_mut(&pool_id) {
+            *count -= 1;
+            if *count == 0 {
+                self.pending_releases.remove(&pool_id);
+            }
+        }
+    }
+
+    pub(crate) fn has_pending_release(&self, pool_id: u32) -> bool {
+        self.pending_releases.contains_key(&pool_id)
+    }
+
+    pub(crate) fn reserve_resize(&mut self, pool_id: u32) -> bool {
+        if !self.pools.contains_key(&pool_id)
+            || self.has_pending_checkout(pool_id)
+            || self.has_pending_release(pool_id)
+            || self.resizing.contains(&pool_id)
+        {
+            return false;
+        }
+        self.resizing.insert(pool_id)
+    }
+
+    pub(crate) fn finish_resize(&mut self, pool_id: u32) {
+        self.resizing.remove(&pool_id);
+    }
+
+    pub(crate) fn is_resizing(&self, pool_id: u32) -> bool {
+        self.resizing.contains(&pool_id)
+    }
+
     pub(crate) fn contains_pool(&self, pool_id: u32) -> bool {
         self.pools.contains_key(&pool_id)
     }
@@ -145,8 +209,12 @@ impl PoolMaps {
         self.pools.get(&pool_id)
     }
 
-    pub(crate) fn insert_pool(&mut self, pool_id: u32, pool: Arc<ConnectionPool>) {
-        self.pools.insert(pool_id, pool);
+    pub(crate) fn insert_pool(
+        &mut self,
+        pool_id: u32,
+        pool: Arc<ConnectionPool>,
+    ) -> Option<Arc<ConnectionPool>> {
+        self.pools.insert(pool_id, pool)
     }
 
     pub(crate) fn remove_pool(&mut self, pool_id: u32) -> Option<Arc<ConnectionPool>> {

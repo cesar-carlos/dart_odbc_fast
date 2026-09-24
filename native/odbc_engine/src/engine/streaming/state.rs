@@ -1,5 +1,6 @@
 use super::chunk::{
-    copy_current_batch_chunk, current_batch_len, take_current_batch_chunk, StreamCopyResult,
+    copy_current_batch_chunk, current_batch_len, take_current_batch_chunk, BatchBufferPool,
+    StreamCopyResult,
 };
 use crate::error::{OdbcError, Result};
 use std::fs::File;
@@ -52,6 +53,18 @@ pub struct BatchedStreamingState {
     pub(crate) cancelled: bool,
     pub(crate) cancel_requested: Arc<AtomicBool>,
     _join: Option<JoinHandle<()>>,
+    buffer_pool: Option<Arc<BatchBufferPool>>,
+    #[cfg(test)]
+    pub(crate) drop_probe: Option<Box<dyn FnOnce() + Send>>,
+}
+
+#[cfg(test)]
+impl Drop for BatchedStreamingState {
+    fn drop(&mut self) {
+        if let Some(probe) = self.drop_probe.take() {
+            probe();
+        }
+    }
 }
 
 impl BatchedStreamingState {
@@ -71,7 +84,15 @@ impl BatchedStreamingState {
             cancelled: false,
             cancel_requested,
             _join: join,
+            buffer_pool: None,
+            #[cfg(test)]
+            drop_probe: None,
         }
+    }
+
+    pub(super) fn with_buffer_pool(mut self, pool: Arc<BatchBufferPool>) -> Self {
+        self.buffer_pool = Some(pool);
+        self
     }
 
     /// Requests cancellation of the batched stream. The worker checks this flag
@@ -125,6 +146,7 @@ impl BatchedStreamingState {
             &mut self.offset,
             self.chunk_size,
             "Streaming state corrupted: no batch available after receiver processing",
+            self.buffer_pool.as_deref(),
         )
     }
 
@@ -173,6 +195,7 @@ impl BatchedStreamingState {
             out,
             has_more,
             "Streaming state corrupted: no batch available after receiver processing",
+            self.buffer_pool.as_deref(),
         )
     }
 
@@ -199,6 +222,7 @@ pub struct AsyncStreamingState {
     cancelled: bool,
     pub(crate) cancel_requested: Arc<AtomicBool>,
     _join: Option<JoinHandle<()>>,
+    buffer_pool: Option<Arc<BatchBufferPool>>,
 }
 
 impl AsyncStreamingState {
@@ -218,7 +242,13 @@ impl AsyncStreamingState {
             cancelled: false,
             cancel_requested,
             _join: join,
+            buffer_pool: None,
         }
+    }
+
+    pub(super) fn with_buffer_pool(mut self, pool: Arc<BatchBufferPool>) -> Self {
+        self.buffer_pool = Some(pool);
+        self
     }
 
     /// Requests cancellation of the async stream.
@@ -324,6 +354,7 @@ impl AsyncStreamingState {
             &mut self.offset,
             self.chunk_size,
             "Async stream state corrupted: no batch available after receiver processing",
+            self.buffer_pool.as_deref(),
         )
     }
 
@@ -372,6 +403,7 @@ impl AsyncStreamingState {
             out,
             has_more,
             "Async stream state corrupted: no batch available after receiver processing",
+            self.buffer_pool.as_deref(),
         )
     }
 

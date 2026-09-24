@@ -45,6 +45,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int fetchSize, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
     final bytes =
         params == null || params.isEmpty ? null : serializeParams(params);
@@ -57,6 +58,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         fetchSize: fetchSize,
         maxResultBufferBytes: maxBufferBytes,
         initialResultBufferBytes: initialBufferBytes,
+        resultEncodingWire: resultEncoding.wireCode,
       ),
     );
     if (r.error != null) return null;
@@ -119,6 +121,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async {
     final bytes = params.isEmpty ? Uint8List(0) : serializeParams(params);
     return executeQueryParamBuffer(
@@ -129,6 +132,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       initialBufferBytes: initialBufferBytes,
       timeout: timeout,
       resultEncoding: resultEncoding,
+      fetchSize: fetchSize,
     );
   }
 
@@ -139,6 +143,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int? maxBufferBytes,
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryParamsRequest.withSerializedParams(
@@ -149,6 +154,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         maxResultBufferBytes: maxBufferBytes,
         initialResultBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
+        blockFetchBatchSize: fetchSize,
       ),
     );
     if (r.error != null) return null;
@@ -165,6 +171,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     int? initialBufferBytes,
     Duration? timeout,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) async {
     final bytes =
         paramBuffer == null || paramBuffer.isEmpty ? Uint8List(0) : paramBuffer;
@@ -173,6 +180,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       sql,
       bytes,
       resultEncoding: resultEncoding,
+      fetchSize: fetchSize,
     );
     if (asyncRequestId > 0) {
       return _waitForAsyncResult(
@@ -191,6 +199,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       maxBufferBytes: maxBufferBytes,
       initialBufferBytes: initialBufferBytes,
       resultEncoding: resultEncoding,
+      fetchSize: fetchSize,
     );
   }
 
@@ -243,6 +252,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     String sql, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryMultiRequest(
@@ -251,6 +261,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         sql,
         maxResultBufferBytes: maxBufferBytes,
         initialResultBufferBytes: initialBufferBytes,
+        blockFetchBatchSize: fetchSize,
       ),
     );
     if (r.error != null) return null;
@@ -267,6 +278,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) async {
     final r = await _sendRequest<QueryResponse>(
       ExecuteQueryMultiParamsRequest.withSerializedParams(
@@ -276,6 +288,7 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
         paramsBuffer ?? Uint8List(0),
         maxResultBufferBytes: maxBufferBytes,
         initialResultBufferBytes: initialBufferBytes,
+        blockFetchBatchSize: fetchSize,
       ),
     );
     if (r.error != null) return null;

@@ -86,16 +86,22 @@ mixin _OdbcNativeTransaction on _OdbcNativeState {
   /// The [txnId] must be a valid transaction identifier.
   /// Returns true on success, false on failure.
   bool transactionCommit(int txnId) {
-    return _bindings.odbc_transaction_commit(txnId) == 0;
+    return transactionCommitStatus(txnId) == 0;
   }
+
+  int transactionCommitStatus(int txnId) =>
+      _bindings.odbc_transaction_commit(txnId);
 
   /// Rolls back a transaction.
   ///
   /// The [txnId] must be a valid transaction identifier.
   /// Returns true on success, false on failure.
   bool transactionRollback(int txnId) {
-    return _bindings.odbc_transaction_rollback(txnId) == 0;
+    return transactionRollbackStatus(txnId) == 0;
   }
+
+  int transactionRollbackStatus(int txnId) =>
+      _bindings.odbc_transaction_rollback(txnId);
 
   /// Creates a savepoint within an active transaction.
   ///

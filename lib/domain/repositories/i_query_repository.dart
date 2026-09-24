@@ -45,8 +45,9 @@ abstract interface class IQueryRepository {
     String connectionId,
     int stmtId,
     List<ParamValue>? params,
-    StatementOptions? options,
-  );
+    StatementOptions? options, {
+    ResultEncoding? resultEncoding,
+  });
 
   Future<Result<QueryResult>> executePreparedNamed(
     String connectionId,
@@ -119,6 +120,22 @@ abstract interface class IQueryRepository {
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
     String sql, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
+  Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
+    int fetchSize = 1000,
+    int? chunkSize,
+  });
+
+  Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
+    String connectionId,
+    String sql,
+    List<ParamValue> params, {
     int fetchSize = 1000,
     int? chunkSize,
   });

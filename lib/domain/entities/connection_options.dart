@@ -106,11 +106,12 @@ class ConnectionOptions {
 
   /// Preferred ODBC block-fetch row batch for buffered `executeQuery*` drains.
   ///
-  /// When null, the native engine uses `ODBC_FAST_BLOCK_FETCH_BATCH` (default
-  /// 256). Prepared statements already honor `StatementOptions.fetchSize`;
-  /// prefer `streamQuery*` for large scans where Dart `fetchSize` is plumbed
-  /// end-to-end. This field documents the connection-level intent and is
-  /// forwarded when runners open prepared one-shots for buffered queries.
+  /// When null or not positive, the native engine uses
+  /// `ODBC_FAST_BLOCK_FETCH_BATCH` (default 256). A positive value is sent on
+  /// `odbc_exec_query_params_fetch` / `odbc_execute_async_params_fetch` when
+  /// those symbols are loaded. Prepared statements use
+  /// `StatementOptions.fetchSize` when it is set, and this field only when
+  /// that option is null.
   final int? blockFetchBatchSize;
 
   /// Optional max entries for the process-local SQL UTF-8 pointer cache on the

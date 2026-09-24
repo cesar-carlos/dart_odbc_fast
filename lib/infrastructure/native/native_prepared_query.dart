@@ -61,6 +61,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int fetchSize, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.executeTyped(
         stmtId,
@@ -69,6 +70,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         fetchSize,
         maxBufferBytes,
         initialBufferBytes,
+        resultEncoding,
       );
 
   /// Executes a prepared statement with params already serialized (bytes).
@@ -82,6 +84,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int fetchSize, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
       _native.execute(
         stmtId,
@@ -90,6 +93,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         fetchSize,
         maxBufferBytes,
         initialBufferBytes,
+        resultEncoding,
       );
 
   /// Requests cancellation of a prepared statement execution.
@@ -120,6 +124,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? maxBufferBytes,
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) =>
       _native.execQueryParamsTyped(
         connectionId,
@@ -128,6 +133,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         maxBufferBytes: maxBufferBytes,
         initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
+        fetchSize: fetchSize,
       );
 
   /// Executes a parameterized query with params already serialized (bytes).
@@ -142,6 +148,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? maxBufferBytes,
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
+    int fetchSize = 0,
   }) =>
       _native.execQueryParams(
         connectionId,
@@ -150,6 +157,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         maxBufferBytes: maxBufferBytes,
         initialBufferBytes: initialBufferBytes,
         resultEncoding: resultEncoding,
+        fetchSize: fetchSize,
       );
 
   /// Executes a SQL query that returns multiple result sets.
@@ -165,12 +173,14 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     String sql, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) =>
       _native.execQueryMulti(
         connectionId,
         sql,
         maxBufferBytes: maxBufferBytes,
         initialBufferBytes: initialBufferBytes,
+        fetchSize: fetchSize,
       );
 
   /// Whether the loaded native library exports
@@ -203,6 +213,40 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         resultEncodingWire: resultEncodingWire,
       );
 
+  int? streamMultiStartBatchedParams(
+    int connectionId,
+    String sql,
+    Uint8List params, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) =>
+      _native.streamMultiStartBatchedParams(
+        connectionId,
+        sql,
+        params,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
+      );
+
+  int? streamMultiStartAsyncParams(
+    int connectionId,
+    String sql,
+    Uint8List params, {
+    int fetchSize = 1000,
+    int chunkSize = 64 * 1024,
+    int resultEncodingWire = 0,
+  }) =>
+      _native.streamMultiStartAsyncParams(
+        connectionId,
+        sql,
+        params,
+        fetchSize: fetchSize,
+        chunkSize: chunkSize,
+        resultEncodingWire: resultEncodingWire,
+      );
+
   /// Async variant of [streamMultiStartBatched]. Combine with
   /// `streamPollAsync` for non-blocking readiness.
   int? streamMultiStartAsync(
@@ -230,6 +274,7 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     Uint8List? paramsBuffer, {
     int? maxBufferBytes,
     int? initialBufferBytes,
+    int fetchSize = 0,
   }) =>
       _native.execQueryMultiParams(
         connectionId,
@@ -237,5 +282,6 @@ mixin _NativePreparedQuery on _NativeOdbcState {
         paramsBuffer,
         maxBufferBytes: maxBufferBytes,
         initialBufferBytes: initialBufferBytes,
+        fetchSize: fetchSize,
       );
 }

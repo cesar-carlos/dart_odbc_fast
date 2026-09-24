@@ -1,11 +1,14 @@
 use super::batched_fetch::drain_cursor_in_batches;
+use super::chunk::BatchBufferPool;
 use super::state::{AsyncStreamingState, BatchedMessage, BatchedStreamingState, WorkerCompletion};
 use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 use crate::handles::SharedHandleManager;
 use crate::pool::SharedPooledConnection;
 use odbc_api::handles::{AsStatementRef, SqlResult, Statement};
-use odbc_api::{Connection, Cursor, CursorImpl, ResultSetMetadata};
+#[cfg(not(feature = "statement-handle-reuse"))]
+use odbc_api::Connection;
+use odbc_api::{Cursor, CursorImpl, Prepared, ResultSetMetadata};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -35,6 +38,7 @@ const MULTI_STREAM_CHANNEL_DEPTH: usize = 2;
 ///
 /// Mirrors `ExecutionEngine::collect_multi_results` (see M1 fix in v3.2.0)
 /// but pushes each item through a callback instead of accumulating them.
+#[cfg(not(feature = "statement-handle-reuse"))]
 fn drive_multi_result_stream<F>(
     conn: &Connection<'static>,
     sql: &str,
@@ -42,11 +46,37 @@ fn drive_multi_result_stream<F>(
     result_encoding: ResultEncoding,
     on_item: &mut F,
     cancel_requested: Option<Arc<AtomicBool>>,
+    buffer_pool: Option<&BatchBufferPool>,
+    param_bytes: Option<&[u8]>,
 ) -> Result<()>
 where
     F: FnMut(Vec<u8>) -> Result<()>,
 {
     let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
+    drive_prepared_multi_result_stream(
+        &mut stmt,
+        fetch_size,
+        result_encoding,
+        on_item,
+        cancel_requested,
+        buffer_pool,
+        param_bytes,
+    )
+}
+
+fn drive_prepared_multi_result_stream<S, F>(
+    stmt: &mut Prepared<S>,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    on_item: &mut F,
+    cancel_requested: Option<Arc<AtomicBool>>,
+    buffer_pool: Option<&BatchBufferPool>,
+    param_bytes: Option<&[u8]>,
+) -> Result<()>
+where
+    S: AsStatementRef,
+    F: FnMut(Vec<u8>) -> Result<()>,
+{
     let cancel_check = || {
         cancel_requested
             .as_ref()
@@ -57,13 +87,19 @@ where
     // borrow on `stmt`. Same SQLCloseCursor avoidance pattern as
     // `ExecutionEngine::execute_multi_result_inner` (M1 fix in v3.2.0).
     let had_initial_cursor = {
-        let initial_cursor = stmt.execute(()).map_err(OdbcError::from)?;
+        let initial_cursor = execute_multi_stream_cursor(stmt, param_bytes)?;
         if let Some(cursor) = initial_cursor {
             if cancel_check() {
                 return Err(OdbcError::Cancelled);
             }
-            let cursor =
-                encode_cursor_batched(cursor, fetch_size, result_encoding, on_item, cancel_check)?;
+            let cursor = encode_cursor_batched(
+                cursor,
+                fetch_size,
+                result_encoding,
+                on_item,
+                cancel_check,
+                buffer_pool,
+            )?;
             let _stmt_ref = cursor.into_stmt();
             true
         } else {
@@ -94,7 +130,13 @@ where
         // because it would invalidate any outstanding cursor.
         let advance = unsafe { stmt.as_stmt_ref().more_results() };
         match advance {
-            SqlResult::NoData => return Ok(()),
+            SqlResult::NoData => {
+                return if cancel_check() {
+                    Err(OdbcError::Cancelled)
+                } else {
+                    Ok(())
+                };
+            }
             SqlResult::Success(()) | SqlResult::SuccessWithInfo(()) => { /* continue */ }
             SqlResult::Error { .. } => {
                 let err = advance
@@ -123,8 +165,14 @@ where
         if cols > 0 {
             // SAFETY: just observed cols > 0 with no other live borrow.
             let cursor = unsafe { CursorImpl::new(stmt.as_stmt_ref()) };
-            let cursor =
-                encode_cursor_batched(cursor, fetch_size, result_encoding, on_item, cancel_check)?;
+            let cursor = encode_cursor_batched(
+                cursor,
+                fetch_size,
+                result_encoding,
+                on_item,
+                cancel_check,
+                buffer_pool,
+            )?;
             let _stmt_ref = cursor.into_stmt();
         } else {
             let rc = stmt
@@ -147,12 +195,60 @@ where
 ///
 /// FOR JSON coalescing is skipped here (same rationale as single-result
 /// batched streaming): chunks would be split across batches.
+fn execute_multi_stream_cursor<'a, S: AsStatementRef>(
+    stmt: &'a mut Prepared<S>,
+    param_bytes: Option<&[u8]>,
+) -> Result<Option<CursorImpl<odbc_api::handles::StatementRef<'a>>>> {
+    let Some(bytes) = param_bytes.filter(|b| !b.is_empty()) else {
+        return stmt.execute(()).map_err(OdbcError::from);
+    };
+    use crate::protocol::bound_param::{ParamDirection, ParamList};
+    use crate::protocol::{
+        deserialize_param_buffer, has_null_param, param_values_to_input_params,
+        param_values_to_input_params_with_descriptions,
+        param_values_to_input_params_with_inference,
+    };
+    let list = deserialize_param_buffer(bytes)?;
+    let params = match list {
+        ParamList::Legacy(params) => params,
+        ParamList::Directed(bound) => {
+            if bound
+                .iter()
+                .any(|item| item.direction != ParamDirection::Input)
+            {
+                return Err(OdbcError::ValidationError(
+                    "multi-result stream parameters must be input-only".to_string(),
+                ));
+            }
+            bound.into_iter().map(|item| item.value).collect()
+        }
+    };
+    if params.is_empty() {
+        return stmt.execute(()).map_err(OdbcError::from);
+    }
+    if has_null_param(&params) {
+        if let Some(parameters) = param_values_to_input_params_with_inference(&params)? {
+            return stmt.execute(parameters.as_slice()).map_err(OdbcError::from);
+        }
+        let descriptions = stmt
+            .parameter_descriptions()
+            .map_err(OdbcError::from)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(OdbcError::from)?;
+        let parameters = param_values_to_input_params_with_descriptions(&params, &descriptions)?;
+        return stmt.execute(parameters.as_slice()).map_err(OdbcError::from);
+    }
+    let parameters = param_values_to_input_params(&params)?;
+    stmt.execute(parameters.as_slice()).map_err(OdbcError::from)
+}
+
 fn encode_cursor_batched<C, F>(
     cursor: C,
     fetch_size: usize,
     result_encoding: ResultEncoding,
     on_item: &mut F,
     cancel_check: impl Fn() -> bool,
+    buffer_pool: Option<&BatchBufferPool>,
 ) -> Result<C>
 where
     C: Cursor + ResultSetMetadata,
@@ -174,6 +270,7 @@ where
             Some(tag)
         },
         cancel_check,
+        buffer_pool,
     )
 }
 
@@ -231,10 +328,40 @@ pub fn start_multi_batched_stream(
         handles,
         conn_id,
         sql,
-        chunk_size,
-        fetch_size,
-        result_encoding,
-        /* async = */ false,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: false,
+            param_bytes: None,
+        },
+    )
+    .map(|either| match either {
+        EitherStream::Batched(b) => b,
+        EitherStream::Async(_) => unreachable!(),
+    })
+}
+
+pub fn start_multi_batched_stream_with_params(
+    handles: SharedHandleManager,
+    conn_id: u32,
+    sql: String,
+    chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    params: Vec<u8>,
+) -> Result<BatchedStreamingState> {
+    spawn_multi_stream_worker(
+        handles,
+        conn_id,
+        sql,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: false,
+            param_bytes: Some(params),
+        },
     )
     .map(|either| match either {
         EitherStream::Batched(b) => b,
@@ -256,10 +383,40 @@ pub fn start_multi_async_stream(
         handles,
         conn_id,
         sql,
-        chunk_size,
-        fetch_size,
-        result_encoding,
-        /* async = */ true,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: true,
+            param_bytes: None,
+        },
+    )
+    .map(|either| match either {
+        EitherStream::Batched(_) => unreachable!(),
+        EitherStream::Async(a) => a,
+    })
+}
+
+pub fn start_multi_async_stream_with_params(
+    handles: SharedHandleManager,
+    conn_id: u32,
+    sql: String,
+    chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    params: Vec<u8>,
+) -> Result<AsyncStreamingState> {
+    spawn_multi_stream_worker(
+        handles,
+        conn_id,
+        sql,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: true,
+            param_bytes: Some(params),
+        },
     )
     .map(|either| match either {
         EitherStream::Batched(_) => unreachable!(),
@@ -279,11 +436,41 @@ pub fn start_multi_batched_stream_pooled(
     spawn_multi_stream_worker_pooled(
         pooled,
         sql,
-        chunk_size,
-        fetch_size,
-        result_encoding,
-        /* async = */ false,
         on_complete,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: false,
+            param_bytes: None,
+        },
+    )
+    .map(|either| match either {
+        EitherStream::Batched(b) => b,
+        EitherStream::Async(_) => unreachable!(),
+    })
+}
+
+pub fn start_multi_batched_stream_pooled_with_params(
+    pooled: SharedPooledConnection,
+    sql: String,
+    chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+    params: Vec<u8>,
+) -> Result<BatchedStreamingState> {
+    spawn_multi_stream_worker_pooled(
+        pooled,
+        sql,
+        on_complete,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: false,
+            param_bytes: Some(params),
+        },
     )
     .map(|either| match either {
         EitherStream::Batched(b) => b,
@@ -303,11 +490,41 @@ pub fn start_multi_async_stream_pooled(
     spawn_multi_stream_worker_pooled(
         pooled,
         sql,
-        chunk_size,
-        fetch_size,
-        result_encoding,
-        /* async = */ true,
         on_complete,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: true,
+            param_bytes: None,
+        },
+    )
+    .map(|either| match either {
+        EitherStream::Batched(_) => unreachable!(),
+        EitherStream::Async(a) => a,
+    })
+}
+
+pub fn start_multi_async_stream_pooled_with_params(
+    pooled: SharedPooledConnection,
+    sql: String,
+    chunk_size: usize,
+    fetch_size: usize,
+    result_encoding: ResultEncoding,
+    on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+    params: Vec<u8>,
+) -> Result<AsyncStreamingState> {
+    spawn_multi_stream_worker_pooled(
+        pooled,
+        sql,
+        on_complete,
+        MultiStreamJob {
+            chunk_size,
+            fetch_size,
+            result_encoding,
+            is_async: true,
+            param_bytes: Some(params),
+        },
     )
     .map(|either| match either {
         EitherStream::Batched(_) => unreachable!(),
@@ -320,18 +537,31 @@ enum EitherStream {
     Async(AsyncStreamingState),
 }
 
-fn spawn_multi_stream_worker(
-    handles: SharedHandleManager,
-    conn_id: u32,
-    sql: String,
+struct MultiStreamJob {
     chunk_size: usize,
     fetch_size: usize,
     result_encoding: ResultEncoding,
     is_async: bool,
+    param_bytes: Option<Vec<u8>>,
+}
+
+fn spawn_multi_stream_worker(
+    handles: SharedHandleManager,
+    conn_id: u32,
+    sql: String,
+    job: MultiStreamJob,
 ) -> Result<EitherStream> {
+    let MultiStreamJob {
+        chunk_size,
+        fetch_size,
+        result_encoding,
+        is_async,
+        param_bytes,
+    } = job;
     let chunk_size = chunk_size.max(1);
     let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(MULTI_STREAM_CHANNEL_DEPTH);
     let cancel_requested = Arc::new(AtomicBool::new(false));
+    let buffer_pool = Arc::new(BatchBufferPool::default());
 
     let conn_arc = {
         let Ok(guard) = handles.lock() else {
@@ -346,8 +576,10 @@ fn spawn_multi_stream_worker(
 
     let join = std::thread::spawn({
         let cancel = Arc::clone(&cancel_requested);
+        let worker_pool = Arc::clone(&buffer_pool);
         move || {
-            let Ok(conn_guard) = conn_arc.lock() else {
+            #[allow(unused_mut)]
+            let Ok(mut conn_guard) = conn_arc.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
                     "Failed to lock connection".to_string(),
                 ));
@@ -357,16 +589,37 @@ fn spawn_multi_stream_worker(
                 tx.send(BatchedMessage::Batch(framed))
                     .map_err(|e| OdbcError::InternalError(e.to_string()))
             };
-            match drive_multi_result_stream(
-                conn_guard.connection(),
-                &sql,
-                fetch_size,
-                result_encoding,
-                &mut on_item,
-                Some(cancel),
-            ) {
+            #[cfg(feature = "statement-handle-reuse")]
+            let result = conn_guard.with_multi_prepared_mut(&sql, |stmt| {
+                drive_prepared_multi_result_stream(
+                    stmt,
+                    fetch_size,
+                    result_encoding,
+                    &mut on_item,
+                    Some(cancel),
+                    Some(worker_pool.as_ref()),
+                    param_bytes.as_deref(),
+                )
+            });
+            #[cfg(not(feature = "statement-handle-reuse"))]
+            let result = conn_guard.checked_connection().and_then(|conn| {
+                drive_multi_result_stream(
+                    conn,
+                    &sql,
+                    fetch_size,
+                    result_encoding,
+                    &mut on_item,
+                    Some(cancel),
+                    Some(worker_pool.as_ref()),
+                    param_bytes.as_deref(),
+                )
+            });
+            match result {
                 Ok(()) => {
-                    let _ = tx.send(BatchedMessage::Done);
+                    if tx.send(BatchedMessage::Done).is_err() {
+                        #[cfg(feature = "statement-handle-reuse")]
+                        conn_guard.invalidate_prepared(&sql);
+                    }
                 }
                 Err(OdbcError::Cancelled) => {
                     let _ = tx.send(BatchedMessage::Cancelled);
@@ -379,40 +632,43 @@ fn spawn_multi_stream_worker(
     });
 
     if is_async {
-        Ok(EitherStream::Async(AsyncStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        )))
+        Ok(EitherStream::Async(
+            AsyncStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        ))
     } else {
-        Ok(EitherStream::Batched(BatchedStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        )))
+        Ok(EitherStream::Batched(
+            BatchedStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        ))
     }
 }
 
 fn spawn_multi_stream_worker_pooled(
     pooled: SharedPooledConnection,
     sql: String,
-    chunk_size: usize,
-    fetch_size: usize,
-    result_encoding: ResultEncoding,
-    is_async: bool,
     on_complete: Option<Box<dyn FnOnce() + Send + 'static>>,
+    job: MultiStreamJob,
 ) -> Result<EitherStream> {
+    let MultiStreamJob {
+        chunk_size,
+        fetch_size,
+        result_encoding,
+        is_async,
+        param_bytes,
+    } = job;
     let chunk_size = chunk_size.max(1);
     let (tx, rx) = mpsc::sync_channel::<BatchedMessage>(MULTI_STREAM_CHANNEL_DEPTH);
     let cancel_requested = Arc::new(AtomicBool::new(false));
+    let buffer_pool = Arc::new(BatchBufferPool::default());
 
     let join = std::thread::spawn({
         let cancel = Arc::clone(&cancel_requested);
+        let worker_pool = Arc::clone(&buffer_pool);
         move || {
             let _completion = WorkerCompletion::new(on_complete);
-            let Ok(conn_guard) = pooled.lock() else {
+            #[allow(unused_mut)]
+            let Ok(mut conn_guard) = pooled.lock() else {
                 let _ = tx.send(BatchedMessage::Error(
                     "Failed to lock pooled connection".to_string(),
                 ));
@@ -422,16 +678,39 @@ fn spawn_multi_stream_worker_pooled(
                 tx.send(BatchedMessage::Batch(framed))
                     .map_err(|e| OdbcError::InternalError(e.to_string()))
             };
-            match drive_multi_result_stream(
-                conn_guard.get_connection(),
-                &sql,
-                fetch_size,
-                result_encoding,
-                &mut on_item,
-                Some(cancel),
-            ) {
+            #[cfg(feature = "statement-handle-reuse")]
+            let result = conn_guard
+                .cached_mut()
+                .with_multi_prepared_mut(&sql, |stmt| {
+                    drive_prepared_multi_result_stream(
+                        stmt,
+                        fetch_size,
+                        result_encoding,
+                        &mut on_item,
+                        Some(cancel),
+                        Some(worker_pool.as_ref()),
+                        param_bytes.as_deref(),
+                    )
+                });
+            #[cfg(not(feature = "statement-handle-reuse"))]
+            let result = conn_guard.checked_connection().and_then(|conn| {
+                drive_multi_result_stream(
+                    conn,
+                    &sql,
+                    fetch_size,
+                    result_encoding,
+                    &mut on_item,
+                    Some(cancel),
+                    Some(worker_pool.as_ref()),
+                    param_bytes.as_deref(),
+                )
+            });
+            match result {
                 Ok(()) => {
-                    let _ = tx.send(BatchedMessage::Done);
+                    if tx.send(BatchedMessage::Done).is_err() {
+                        #[cfg(feature = "statement-handle-reuse")]
+                        conn_guard.cached_mut().invalidate_prepared(&sql);
+                    }
                 }
                 Err(OdbcError::Cancelled) => {
                     let _ = tx.send(BatchedMessage::Cancelled);
@@ -444,18 +723,14 @@ fn spawn_multi_stream_worker_pooled(
     });
 
     if is_async {
-        Ok(EitherStream::Async(AsyncStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        )))
+        Ok(EitherStream::Async(
+            AsyncStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        ))
     } else {
-        Ok(EitherStream::Batched(BatchedStreamingState::new(
-            rx,
-            chunk_size,
-            cancel_requested,
-            Some(join),
-        )))
+        Ok(EitherStream::Batched(
+            BatchedStreamingState::new(rx, chunk_size, cancel_requested, Some(join))
+                .with_buffer_pool(buffer_pool),
+        ))
     }
 }

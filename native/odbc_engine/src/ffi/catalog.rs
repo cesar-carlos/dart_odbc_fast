@@ -68,13 +68,12 @@ pub extern "C" fn odbc_catalog_columns(
             };
             if let Some(cached_data) = cache.get_payload_shared(&cache_key) {
                 drop(cache);
-                let Some(mut state) = try_lock_global_state() else {
+                let Some(state) = try_lock_global_state() else {
                     return -1;
                 };
                 if state::contains_connection(conn_id) || state::contains_pooled_connection(conn_id)
                 {
                     return write_connection_output_buffer(
-                        &mut state,
                         conn_id,
                         cached_data.as_ref(),
                         out_buffer,
@@ -123,7 +122,6 @@ pub extern "C" fn odbc_catalog_columns(
                     cache.cache_payload(&cache_key, &data);
                 }
                 let status = write_connection_output_buffer(
-                    &mut state,
                     conn_id,
                     &data,
                     out_buffer,

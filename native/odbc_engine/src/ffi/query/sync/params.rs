@@ -73,14 +73,9 @@ pub extern "C" fn odbc_exec_query_params(
                     let mut conn_guard = match conn_arc.lock() {
                         Ok(g) => g,
                         Err(_) => {
-                            let Some(mut state) = try_lock_global_state() else {
-                                return -1;
-                            };
-                            set_connection_error(
-                                &mut state,
-                                conn_id,
-                                "Failed to lock connection".to_string(),
-                            );
+                            let error = "Failed to lock connection".to_string();
+                            state::set_connection_error(conn_id, error.clone());
+                            state::set_legacy_global_error(error);
                             set_out_written_zero(out_written);
                             return -1;
                         }
@@ -105,17 +100,10 @@ pub extern "C" fn odbc_exec_query_params(
                 },
             };
 
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
-
             match result {
                 Ok(data) => {
                     let elapsed = start.elapsed();
                     let status = write_connection_output_buffer(
-                        &mut state,
                         conn_id,
                         &data,
                         out_buffer,
@@ -132,7 +120,8 @@ pub extern "C" fn odbc_exec_query_params(
                 Err(e) => {
                     metrics.record_error();
                     let structured = e.to_structured();
-                    set_connection_structured_error(&mut state, conn_id, structured);
+                    state::set_connection_structured_error(conn_id, structured.clone());
+                    state::set_legacy_global_structured_error(structured);
                     set_out_written_zero(out_written);
                     -1
                 }
@@ -152,7 +141,8 @@ pub extern "C" fn odbc_exec_query_params(
 ///
 /// result_encoding: 0=row-major v1, 1=columnar v2, 2=columnar v2 compressed.
 /// Older Dart runtimes use `odbc_exec_query_params`; this additive symbol is
-/// resolved dynamically by newer clients.
+/// resolved dynamically by newer clients. Block-fetch batch stays at the
+/// process default; [`odbc_exec_query_params_fetch`] overrides it.
 #[no_mangle]
 pub extern "C" fn odbc_exec_query_params_options(
     conn_id: c_uint,
@@ -160,6 +150,61 @@ pub extern "C" fn odbc_exec_query_params_options(
     params_buffer: *const u8,
     params_len: c_uint,
     result_encoding: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    exec_query_params_encoded(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        result_encoding,
+        None,
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+/// Same as [`odbc_exec_query_params_options`] plus a per-call block-fetch batch.
+/// `fetch_size` of 0 keeps the process default.
+#[no_mangle]
+pub extern "C" fn odbc_exec_query_params_fetch(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    result_encoding: c_uint,
+    fetch_size: c_uint,
+    out_buffer: *mut u8,
+    buffer_len: c_uint,
+    out_written: *mut c_uint,
+) -> c_int {
+    exec_query_params_encoded(
+        conn_id,
+        sql,
+        params_buffer,
+        params_len,
+        result_encoding,
+        crate::engine::core::execution::result_encoding::fetch_size_from_wire(fetch_size),
+        out_buffer,
+        buffer_len,
+        out_written,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Private adapter mirrors the fixed FFI argument list"
+)]
+fn exec_query_params_encoded(
+    conn_id: c_uint,
+    sql: *const c_char,
+    params_buffer: *const u8,
+    params_len: c_uint,
+    result_encoding: c_uint,
+    fetch_size: Option<u32>,
     out_buffer: *mut u8,
     buffer_len: c_uint,
     out_written: *mut c_uint,
@@ -219,26 +264,22 @@ pub extern "C" fn odbc_exec_query_params_options(
                     let mut conn_guard = match conn_arc.lock() {
                         Ok(g) => g,
                         Err(_) => {
-                            let Some(mut state) = try_lock_global_state() else {
-                                return -1;
-                            };
-                            set_connection_error(
-                                &mut state,
-                                conn_id,
-                                "Failed to lock connection".to_string(),
-                            );
+                            let error = "Failed to lock connection".to_string();
+                            state::set_connection_error(conn_id, error.clone());
+                            state::set_legacy_global_error(error);
                             set_out_written_zero(out_written);
                             return -1;
                         }
                     };
                     if params_slice.is_empty() {
-                        conn_guard.execute_with_encoding(sql_str, encoding)
+                        conn_guard.execute_with_encoding(sql_str, encoding, fetch_size)
                     } else {
                         try_cached_params_with_encoding(
                             &mut conn_guard,
                             sql_str,
                             params_slice,
                             encoding,
+                            fetch_size,
                         )
                     }
                 }
@@ -247,13 +288,14 @@ pub extern "C" fn odbc_exec_query_params_options(
                         if params_slice.is_empty() {
                             conn_guard
                                 .cached_mut()
-                                .execute_with_encoding(sql_str, encoding)
+                                .execute_with_encoding(sql_str, encoding, fetch_size)
                         } else {
                             try_cached_params_with_encoding(
                                 conn_guard.cached_mut(),
                                 sql_str,
                                 params_slice,
                                 encoding,
+                                fetch_size,
                             )
                         }
                     }
@@ -263,17 +305,10 @@ pub extern "C" fn odbc_exec_query_params_options(
                 },
             };
 
-            let Some(mut state) = try_lock_global_state() else {
-                set_out_written_zero(out_written);
-                return -1;
-            };
-            restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
-
             match result {
                 Ok(data) => {
                     let elapsed = start.elapsed();
                     let status = write_connection_output_buffer(
-                        &mut state,
                         conn_id,
                         &data,
                         out_buffer,
@@ -290,7 +325,8 @@ pub extern "C" fn odbc_exec_query_params_options(
                 Err(e) => {
                     metrics.record_error();
                     let structured = e.to_structured();
-                    set_connection_structured_error(&mut state, conn_id, structured);
+                    state::set_connection_structured_error(conn_id, structured.clone());
+                    state::set_legacy_global_structured_error(structured);
                     set_out_written_zero(out_written);
                     -1
                 }

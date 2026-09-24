@@ -11,6 +11,30 @@ struct PooledConnIdRecycleGuard {
     armed: bool,
 }
 
+pub(super) struct PendingCheckoutGuard(pub(super) u32);
+
+impl Drop for PendingCheckoutGuard {
+    fn drop(&mut self) {
+        let _ = state::with_pool_maps_mut(|maps| maps.finish_checkout(self.0));
+    }
+}
+
+struct PendingReleaseGuard(u32);
+
+impl Drop for PendingReleaseGuard {
+    fn drop(&mut self) {
+        let _ = state::with_pool_maps_mut(|maps| maps.finish_release(self.0));
+    }
+}
+
+pub(super) struct ResizeGuard(pub(super) u32);
+
+impl Drop for ResizeGuard {
+    fn drop(&mut self) {
+        let _ = state::with_pool_maps_mut(|maps| maps.finish_resize(self.0));
+    }
+}
+
 impl PooledConnIdRecycleGuard {
     fn new(pool_id: u32, connection_id: u32) -> Self {
         Self {
@@ -39,12 +63,14 @@ pub(super) fn checkout_pooled_connection(pool_id: c_uint) -> c_uint {
     // which can block for the configured pool timeout (~30s). We clone the
     // Arc<ConnectionPool>, release the lock, perform the blocking acquire,
     // then re-acquire the lock briefly to install the connection.
-    let Some(pool_arc) = state::get_pool(pool_id) else {
+    let Some(pool_arc) = state::with_pool_maps_mut(|maps| maps.reserve_checkout(pool_id)).flatten()
+    else {
         if let Some(mut gs) = try_lock_global_state() {
             set_error(&mut gs, format!("Invalid pool ID: {}", pool_id));
         }
         return 0;
     };
+    let _checkout = PendingCheckoutGuard(pool_id);
 
     let pooled_wrapper = pool_arc.get();
 
@@ -56,19 +82,12 @@ pub(super) fn checkout_pooled_connection(pool_id: c_uint) -> c_uint {
                 log::debug!("odbc_pool_get_connection: engine_id warm failed: {e}");
             }
 
-            // Guard against the pool being closed between the checkout and
-            // the state re-lock. The connection is physically valid (the
-            // local `pool_arc` keeps r2d2 alive) but its pool_id may no
-            // longer exist. Register it so the caller can use and release
-            // it normally; the orphaned free-id entry will be ignored on
-            // future checkouts since the pool is gone.
             let install = state::with_pool_maps_mut(|maps| {
-                if !maps.contains_pool(pool_id) {
-                    log::warn!(
-                        "odbc_pool_get_connection: pool {} was closed while connection was \
-                         being checked out; connection is usable but pool is orphaned",
-                        pool_id
-                    );
+                if !maps
+                    .get_pool(pool_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &pool_arc))
+                {
+                    return Err("Pool was replaced during checkout".to_string());
                 }
                 let Some(conn_id) = maps.allocate_pooled_connection_id(pool_id) else {
                     return Err("Failed to allocate pooled connection ID".to_string());
@@ -106,7 +125,7 @@ pub(super) fn checkout_pooled_connection(pool_id: c_uint) -> c_uint {
 pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
     // Lock order: transactions → pools.
     let remove_result = state::with_transaction_maps_mut(|txn_maps| {
-        if txn_maps.begin_in_progress(connection_id) {
+        if txn_maps.operation_in_progress(connection_id) {
             return Err("begin");
         }
         let entry = state::with_pool_maps_mut(|maps| {
@@ -117,7 +136,10 @@ pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
                 return Err("busy");
             }
             match maps.remove_pooled_connection(connection_id) {
-                Some(entry) => Ok(entry),
+                Some(entry) => {
+                    maps.begin_release(entry.pool_id);
+                    Ok(entry)
+                }
                 None => Err("gone"),
             }
         });
@@ -178,19 +200,45 @@ pub(super) fn checkin_pooled_connection(connection_id: c_uint) -> c_int {
     };
 
     let pool_id = entry.pool_id;
+    let _release = PendingReleaseGuard(pool_id);
     let mut id_recycle_guard = PooledConnIdRecycleGuard::new(pool_id, connection_id);
     if let Some(cache) = state::metadata_cache_read() {
         cache.remove_payloads_with_conn_prefix(connection_id);
     }
     state::retain_statements_not_for_connection(connection_id);
 
-    state::rollback_transactions_best_effort(transactions);
-    if let Ok(mut pooled) = entry.pooled.lock() {
-        let _ = pooled.cached_mut().pool_session_reset();
-    } else {
-        log::warn!("Failed to lock pooled connection {connection_id} during release cleanup");
+    let rollback_failures = state::rollback_transactions_best_effort(transactions);
+    let reset_result = match entry.pooled.lock() {
+        Ok(mut pooled) => {
+            if !rollback_failures.is_empty() {
+                pooled.cached_mut().mark_unusable();
+                Err(crate::error::OdbcError::PoolError(
+                    "Transaction rollback failed during pooled connection release".to_string(),
+                ))
+            } else {
+                pooled.cached_mut().pool_session_reset()
+            }
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().cached_mut().mark_unusable();
+            Err(crate::error::OdbcError::PoolError(format!(
+                "Pooled connection {connection_id} lock was poisoned during release"
+            )))
+        }
+    };
+    if !rollback_failures.is_empty() || reset_result.is_err() {
+        id_recycle_guard.disarm();
+        if let Some(mut gs) = try_lock_global_state() {
+            set_connection_error(
+                &mut gs,
+                connection_id,
+                format!(
+                    "Pooled connection release failed: rollback={rollback_failures:?}; reset={reset_result:?}"
+                ),
+            );
+        }
+        return 1;
     }
-
     state::recycle_pooled_connection_id(pool_id, connection_id);
     id_recycle_guard.disarm();
     0
@@ -207,7 +255,18 @@ pub(super) fn close_pool(pool_id: c_uint) -> c_int {
             if maps.pool_busy_count(pool_id) > 0 {
                 return Err("busy");
             }
-            if maps.has_begin_in_progress(pool_id, &begins) {
+            if maps.has_pending_checkout(pool_id)
+                || maps.has_pending_release(pool_id)
+                || maps.is_resizing(pool_id)
+            {
+                return Err("busy");
+            }
+            if maps.has_begin_in_progress(pool_id, &begins)
+                || maps
+                    .pooled_connection_ids_for_pool(pool_id)
+                    .iter()
+                    .any(|&cid| txn_maps.operation_in_progress(cid))
+            {
                 return Err("begin");
             }
             let Some(pool) = maps.remove_pool(pool_id) else {
@@ -277,15 +336,32 @@ pub(super) fn close_pool(pool_id: c_uint) -> c_int {
         state::retain_statements_not_for_connection(*cid);
     }
 
-    state::rollback_transactions_best_effort(transactions);
+    let mut cleanup_failures = state::rollback_transactions_best_effort(transactions);
     for (_, pooled) in checked_out {
-        if let Ok(mut pooled) = pooled.lock() {
-            let _ = pooled.cached_mut().pool_session_reset();
-        } else {
-            log::warn!("Failed to lock pooled connection during pool close cleanup");
+        match pooled.lock() {
+            Ok(mut pooled) => {
+                if let Err(e) = pooled.cached_mut().pool_session_reset() {
+                    cleanup_failures.push(e.to_string());
+                }
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().cached_mut().mark_unusable();
+                cleanup_failures
+                    .push("Pooled connection lock poisoned during pool close".to_string());
+            }
         }
         // `pooled` is dropped here, releasing the connection back to the pool.
     }
     drop(pool);
-    0
+    if cleanup_failures.is_empty() {
+        0
+    } else {
+        if let Some(mut gs) = try_lock_global_state() {
+            set_error(
+                &mut gs,
+                format!("Pool close cleanup failed: {cleanup_failures:?}"),
+            );
+        }
+        1
+    }
 }

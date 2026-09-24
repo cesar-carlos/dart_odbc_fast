@@ -13,6 +13,7 @@ import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dart';
+import 'package:odbc_fast/infrastructure/native/wrappers/transaction_completion_status.dart';
 import 'package:odbc_fast/odbc_fast.dart'
     hide
         DatabaseEngineIds,
@@ -67,7 +68,7 @@ class NativeOdbcConnection extends _NativeOdbcState
         _NativeCatalog,
         _NativePool,
         _NativeStreaming
-    implements OdbcConnectionBackend {
+    implements OdbcConnectionBackend, TransactionCompletionStatus {
   /// Creates a new [NativeOdbcConnection] instance.
   NativeOdbcConnection({int? sqlPointerCacheMaxSize})
       : super(
