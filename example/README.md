@@ -16,6 +16,11 @@ exists.
 | Goal | Pattern | Starting point |
 | ---- | ------- | -------------- |
 | High-level service API (recommended) | `ServiceLocator` + `OdbcUsageProfile` | [`quick_start_balanced_demo.dart`](quick_start_balanced_demo.dart) (async balanced) or [`main.dart`](main.dart) (sync legacy) |
+| Choose the fast API for a workload | Decision map | [`recommended_performance_patterns_demo.dart`](recommended_performance_patterns_demo.dart) |
+| Wide `SELECT *` scan | `streamQueryBatched`, row-major, `fetchSize: 1000`, chunk 1 MiB | [`streaming_demo.dart`](streaming_demo.dart) throughput path |
+| Narrow typed analytics | `streamQueryColumnar` on `balancedServer` / `highThroughput` | [`stream_query_columnar_demo.dart`](stream_query_columnar_demo.dart) |
+| Repeated same SQL | prepare once, execute many | [`named_parameters_demo.dart`](named_parameters_demo.dart) |
+| Insert ~100–1k / >1k rows | `bulkInsert` / `bulkInsertParallel` | [`bulk_insert_demo.dart`](bulk_insert_demo.dart), [`bulk_insert_parallel_demo.dart`](bulk_insert_parallel_demo.dart) |
 | Large multi-result cursor | `streamQueryMultiBatches` | [`multi_result_batches_demo.dart`](multi_result_batches_demo.dart) |
 | Raw FFI / worker pool / native pool | `odbc_fast_native.dart` types | [`simple_demo.dart`](simple_demo.dart) or [`async_demo.dart`](async_demo.dart) |
 | Manual `OdbcService(OdbcRepositoryImpl(...))` wiring | Rare; prefer `ServiceLocator` | Prefer repository getters on `ServiceLocator` (`queryRepository`, …) when demonstrating repository-level seams |
@@ -184,7 +189,7 @@ accumulation with small chunks, and streaming multi-result decoding.
 - [multi_result_performance_benchmark.dart](multi_result_performance_benchmark.dart): live timing of `executeQueryMultiFull`, coalesced `streamQueryMulti`, and bounded `streamQueryMultiBatches`; tunables `ODBC_MULTI_BENCH_ROWS` / `SETS` / `ITERS` / `WARMUP` / `FETCH` / `CHUNK` (defaults to `Produto`, 1 MiB chunks).
 - [output_param_directions_demo.dart](output_param_directions_demo.dart): directed params (`IN`, `OUT`, `INOUT`) wire format and `executeQueryDirectedParams`.
 - [oracle_ref_cursor_demo.dart](oracle_ref_cursor_demo.dart): opt-in Oracle `ParamValueRefCursorOut` call that surfaces cursor row sets through `QueryResult.refCursorResults`.
-- [streaming_demo.dart](streaming_demo.dart): native `streamQueryBatched` with a conservative and a throughput-tuned (`fetchSize=1000`, 1 MiB chunk) configuration.
+- [streaming_demo.dart](streaming_demo.dart): native `streamQueryBatched`. Copy the throughput path (`fetchSize: 1000`, 1 MiB chunk). The `fetchSize: 250` run is a smaller-batch comparison. The row-by-row seed is a fixture only — real loads use `bulkInsert` / `bulkInsertParallel`.
 
 ### Connection / pool
 

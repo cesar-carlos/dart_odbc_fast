@@ -1,18 +1,21 @@
 // Recommended performance patterns — decision map in executable form.
 //
 // Workload → API (see also specialized demos):
+//   repeated SQL    → prepare once, execute many (named_parameters_demo)
 //   small query     → executeQuery / executeQueryParamValues
-//   large read      → streamQuery / streamQueryNamed / streamQueryColumnar
-//                     Prefer chunkSize ≥ batch wire (often 1–4 MiB).
+//   wide SELECT *   → streamQuery batched, row-major, fetchSize 1000,
+//                     chunkSize 1 MiB (streaming_demo throughput path)
+//   narrow typed    → streamQueryColumnar on balancedServer/highThroughput
 //   large MULT      → streamQueryMultiBatches (no continuation coalescing)
-//                     when each result-set batch can be handled independently.
-//                     Columnar helps typed analytics paths; full SELECT *
-//                     text materialize may stay faster on row-major — see
-//                     doc/PERFORMANCE.md "Streaming SELECT headroom".
-//   medium insert   → bulkInsert (~hundreds)
-//   large insert    → bulkInsertParallel (example/bulk_insert_parallel_demo.dart)
+//                     when each result-set batch can be handled independently
+//   < ~100 rows     → prepared INSERT
+//   ~100–1k rows    → bulkInsert (bulk_insert_demo)
+//   > ~1k rows      → bulkInsertParallel (bulk_insert_parallel_demo)
 //   server/async    → OdbcUsageProfile.balancedServer or highThroughput
 //   app default     → OdbcUsageProfile.balanced (this demo)
+//
+// The queries below are shape samples (a few rows, a 50-row bulk), not the
+// volumes in the map. Scale the API, do not copy the row counts.
 //
 // Optional:
 //   ODBC_PERF_PROFILE=balancedServer|highThroughput|balanced
@@ -208,8 +211,8 @@ Future<void> _bulkInsertSample(IOdbcService service, String connId) async {
   );
   inserted.fold(
     (n) => AppLogger.info(
-      'medium insert (bulkInsert): inserted=$n '
-      '(scale up → bulk_insert_parallel_demo)',
+      'bulkInsert shape sample: inserted=$n '
+      '(~100–1k rows in production; >1k → bulk_insert_parallel_demo)',
     ),
     (e) => AppLogger.warning('bulkInsert failed: $e'),
   );

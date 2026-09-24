@@ -505,11 +505,13 @@ Future<void> main() async {
 
 | Scenario | Prefer |
 | -------- | ------ |
-| Large SELECT (many rows, stable types) | `ResultEncoding.columnar` or `streamQueryBatched` / streaming APIs |
+| Wide `SELECT *` (text-heavy scan) | `streamQueryBatched`, row-major, `fetchSize: 1000`, chunk 1 MiB |
+| Narrow typed analytics | `streamQueryColumnar` / `ResultEncoding.columnar` on `balancedServer` or `highThroughput` |
+| Repeated same SQL | Prepare once, execute many |
 | Large multi-result cursor | `streamQueryMultiBatches`; handle each fetch batch and use `isContinuationBatch` to group it when needed |
 | INSERT &lt; ~100 rows | Prepared `INSERT` in a loop |
 | INSERT 100–1k rows | `bulkInsert` / `bulkInsertArray` on one connection |
-| INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) |
+| INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) (about 3× array binding locally) |
 | Concurrency / worker tuning | [`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart) via `ServiceLocator.initialize(profile: ...)` |
 
 Rationale, how to reproduce, and opt-in perf flags:
@@ -527,19 +529,19 @@ Native engine (`comparative_bench`):
 
 | Workload | Typical |
 | -------- | ------- |
-| Single-row `INSERT` (INT) | ~290–300 µs (~3.4k rows/s) |
-| Bulk array 1k / 5k / 10k | ~80–100 / ~430 / ~830 ms |
-| Bulk parallel ×4 (same sizes) | ~30 / ~140 / ~280 ms (~3× vs array) |
-| `SELECT` 5k INT, streaming | ~1.3 ms |
+| Single-row `INSERT` (INT) | ~260–300 µs (~3.4–3.7k rows/s) |
+| Bulk array 1k / 5k / 10k | ~75–100 / ~370–430 / ~730–830 ms |
+| Bulk parallel ×4 (same sizes) | ~25–30 / ~120–140 / ~230–280 ms (~3× vs array) |
+| `SELECT` 5k INT, streaming | ~1.1–1.4 ms |
 
 Dart (same DSN):
 
 | Workload | Typical |
 | -------- | ------- |
-| `INSERT` 5k columnar + pool ×4 | ~20–40k ops/s |
+| `INSERT` 5k columnar + pool ×4 | ~20–45k ops/s |
 | `SELECT` 5k narrow table, `streamQueryBatched` | ~300–650k rows/s |
-| `SELECT TOP 5000 * FROM Produto`, `streamQueryBatched` | ~19k rows/s |
-| `SELECT 1` prepared reuse (smoke) | ~3.5k q/s |
+| `SELECT TOP 5000 * FROM Produto`, `streamQueryBatched` | ~19–20k rows/s |
+| `SELECT 1` prepared reuse (smoke) | ~3.5–3.9k q/s |
 
 Wide `SELECT *` is the honest scan number; the 300–650k rows/s lane is a
 two-column bench table. Optional native BCP (`sqlserver-bcp` + `sqlncli11.dll`)
@@ -703,10 +705,17 @@ Tuning defaults:
   only when there are multiple connections, native pool checkouts, or
   independent non-handle operations to route.
 
-For high-level incremental consumption without materializing all rows:
+For a wide scan, pass a 1 MiB chunk. `fetchSize` already defaults to 1000.
+Leaving `chunkSize` unset keeps the 64 KiB base default (server profiles
+raise it to 1 MiB through `recommendedStreamChunkSizeBytes`). Narrow typed
+reads should use `streamQueryColumnar` instead of `SELECT *`.
 
 ```dart
-await for (final chunkResult in service.streamQuery(conn.id, 'SELECT * FROM big_table')) {
+await for (final chunkResult in service.streamQuery(
+  conn.id,
+  'SELECT * FROM big_table',
+  chunkSize: 1024 * 1024,
+)) {
   chunkResult.fold(
     (chunk) => print('chunk rows=${chunk.rowCount}'),
     (err) => print('stream error: $err'),
@@ -801,8 +810,9 @@ dart run example/recommended_performance_patterns_demo.dart
 
 | Workload | Prefer | Example |
 | --- | --- | --- |
-| Small query | `executeQuery` / `executeQueryParamValues` | `recommended_performance_patterns_demo.dart` |
-| Large read | `streamQueryBatched` / `streamQueryNamed` / `streamQueryColumnar` | `streaming_demo.dart`, `stream_query_named_demo.dart` |
+| Small or repeated query | `executeQueryParamValues`; prepare once when the SQL repeats | `recommended_performance_patterns_demo.dart`, `named_parameters_demo.dart` |
+| Wide scan | `streamQueryBatched` row-major, `fetchSize: 1000`, chunk 1 MiB | `streaming_demo.dart` throughput path |
+| Narrow typed read | `streamQueryColumnar` | `stream_query_columnar_demo.dart` |
 | Large multi-result cursor | `streamQueryMultiBatches` | `multi_result_batches_demo.dart` |
 | Medium insert (~hundreds) | `bulkInsert` | `bulk_insert_demo.dart` |
 | Large insert (>1k) | `bulkInsertParallel` | `bulk_insert_parallel_demo.dart` |

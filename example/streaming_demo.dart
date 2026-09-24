@@ -1,11 +1,15 @@
-// Streaming demo: native `streamQueryBatched` with default and throughput
-// tuning. It intentionally does not use the older buffer-mode `streamQuery`.
+// Streaming demo: native `streamQueryBatched` with a conservative fetch
+// and the recommended throughput settings. It does not use buffer-mode
+// `streamQuery`.
 //
-// Recommendation: use batched streaming for large result sets. The high-level
-// `IOdbcService.streamQuery` path already defaults to batched. Prefer service
-// APIs (`streamQuery` / `streamQueryNamed` / `streamQueryColumnar`) unless you
-// need raw native control — see example/recommended_performance_patterns_demo.dart
-// and example/streaming_performance_benchmark.dart.
+// Copy the throughput path for large scans: `fetchSize: 1000` and
+// `chunkSize: 1 MiB`. The `fetchSize: 250` run is only a smaller-batch
+// comparison. Wide `SELECT *` stays row-major; narrow typed analytics should
+// use `streamQueryColumnar` (see stream_query_columnar_demo.dart).
+//
+// The 2k-row seed below is a fixture built with prepared INSERT so this file
+// stays on the native connection API. Do not copy that loop for real loads:
+// hundreds of rows → `bulkInsert`, more than ~1k → `bulkInsertParallel`.
 //
 // Run: dart run example/streaming_demo.dart
 
@@ -86,6 +90,7 @@ Future<void> _createStreamingTestTable(
   }
 
   try {
+    // Fixture only. Production inserts of this size use bulkInsertParallel.
     for (var i = 1; i <= rows; i++) {
       final result = native.executePrepared(
         insertStmt,
@@ -130,7 +135,7 @@ Future<void> _runBatchedStreaming(
 
   sw.stop();
   AppLogger.info(
-    'Batched stream (preferred): chunks=$chunks '
+    'Batched stream (comparison, fetchSize=250): chunks=$chunks '
     'rows=$totalRows time=${sw.elapsedMilliseconds}ms',
   );
 }
@@ -155,7 +160,7 @@ Future<void> _runThroughputTunedBatchedStreaming(
   }
 
   AppLogger.info(
-    'Throughput-tuned batched stream: chunks=$chunks rows=$totalRows '
-    '(fetchSize=1000, chunkSize=1 MiB)',
+    'Throughput-tuned batched stream (recommended): chunks=$chunks '
+    'rows=$totalRows (fetchSize=1000, chunkSize=1 MiB)',
   );
 }

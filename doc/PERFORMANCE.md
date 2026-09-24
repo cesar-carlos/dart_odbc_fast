@@ -397,9 +397,12 @@ Takeaways:
 
 | Knob | Prefer when | Why |
 | ---- | ----------- | --- |
+| `fetchSize: 1000` + `chunkSize` 1 MiB | Large scans | Matches the throughput path in `example/streaming_demo.dart`. A 250-row fetch is a comparison, not the default to copy. |
 | `chunkSize` | Large scans (often **1–4 MiB**) | Fewer FFI fetch round-trips / resize loops; seed via `streamFetch(bufferSize:)` |
 | Columnar / `streamQueryColumnar*` | Analytics pipelines that keep **typed numeric** columns or use `lazyStrings` | Avoids row `List` framing; **not** a free win for full `SELECT *` string/datetime materialization |
+| Row-major `streamQueryBatched` | Wide `SELECT *` | Local `Produto` scans stay near ~19k rows/s; the 300–650k rows/s lane is a narrow bench table |
 | Service `balancedServer` / `highThroughput` | Server apps already on the repository path | Columnar default for **typed** APIs; QueryResult APIs stay row-major wire; recommended stream chunk 1 MiB via `locator.recommendedStreamChunkSizeBytes` |
+| `bulkInsertParallel` (pool ×4) | Inserts above ~1k rows | About 3× single-connection array binding on the local comparative bench |
 
 Standalone `my_test` files default `chunkSize` to **1 MiB** when
 `MY_TEST_FULL_TABLE_SCAN=1` (override with `MY_TEST_CHUNK_SIZE_BYTES`).
