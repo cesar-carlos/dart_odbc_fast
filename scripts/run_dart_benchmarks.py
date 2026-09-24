@@ -269,6 +269,8 @@ def run_rust_micro(root: Path) -> int:
             "metadata_cache_bench",
             "--bench",
             "columnar_v1_v2_encode",
+            "--",
+            "--noplot",
         ],
         native,
     )
@@ -276,7 +278,16 @@ def run_rust_micro(root: Path) -> int:
         return code
     print_step("Rust columnar_v2_placeholder (--features columnar-v2)")
     code = run_criterion(
-        ["cargo", "bench", "--bench", "columnar_v2_placeholder", "--features", "columnar-v2"],
+        [
+            "cargo",
+            "bench",
+            "--bench",
+            "columnar_v2_placeholder",
+            "--features",
+            "columnar-v2",
+            "--",
+            "--noplot",
+        ],
         native,
     )
     if code != 0:
@@ -296,6 +307,8 @@ def run_rust_micro(root: Path) -> int:
                     "bulk_operations_bench",
                     "--bench",
                     "metadata_cache_bench",
+                    "--",
+                    "--noplot",
                 ],
                 cwd=native,
                 stdout=log_file,

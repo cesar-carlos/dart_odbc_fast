@@ -22,7 +22,31 @@ panic = "unwind"
 
 # Bench profile mirrors release so Criterion numbers reflect the binary we
 # actually ship instead of a faster-to-build approximation.
+# Artifacts land in `target/release` (same tree as the FFI DLL), not
+# `target/debug`. Incremental is off; binaries are stripped. Criterion
+# history stays under `target/criterion` (tens of MB). Prefer `-- --noplot`
+# locally so HTML/SVG reports do not accumulate.
 [profile.bench]
 lto = "fat"
 codegen-units = 1
 opt-level = 3
+incremental = false
+strip = true
+
+# Keep `native/target/debug` from growing without bound on Windows MSVC.
+# Full `debug = 2` plus leftover incremental hashes produced tens of GB of
+# PDBs and `incremental/odbc_engine-*` copies across cargo test/clippy.
+# Line tables keep usable backtraces; crates.io deps skip debuginfo.
+# `cargo build` / rust-analyzer stay incremental; `cargo test` does not.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+incremental = false
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false

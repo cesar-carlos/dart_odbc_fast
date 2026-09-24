@@ -48,6 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Live `capabilities.driver_name`** — on an open connection this is now
   `SQL_DRIVER_NAME` (for example the ODBC driver DLL/so name). The server
   product name stays in `DbmsInfo.dbms_name` / `dbmsName`.
+- **Native debug artifacts** — `profile.dev` / `profile.test` emit
+  line-tables-only debuginfo and skip debuginfo on crates.io dependencies
+  so `native/target/debug` does not accumulate multi-GB PDBs on Windows.
+  `cargo test` builds without incremental caches; `cargo build` and
+  rust-analyzer stay incremental. `cargo clean` in `native/` is still the
+  prune if extra `CARGO_TARGET_DIR` copies appear.
+- **Native bench artifacts** — `profile.bench` is stripped and
+  non-incremental (same as release) so Criterion does not rebuild the
+  debug PDB pile. Local `scripts/run_dart_benchmarks.py --rust-micro`
+  passes `--noplot`. History stays in `native/target/criterion`; Dart
+  JSON stays in `bench_baselines/` (gitignores machine outputs, keeps
+  `*.baseline.json`).
 
 ### Performance
 
