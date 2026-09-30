@@ -106,6 +106,7 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
     final timeoutStopwatch = Stopwatch()..start();
     var delay = _pollBackoffMin;
     final maxDelay = pollInterval;
+    OdbcError? primary;
 
     try {
       while (true) {
@@ -121,7 +122,23 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
           case 0: // pending
             if (effectiveTimeout > Duration.zero &&
                 timeoutStopwatch.elapsed >= effectiveTimeout) {
-              await asyncCancel(requestId);
+              primary = const QueryError(
+                message: 'The operation timed out',
+                details: OdbcErrorDetails(
+                  code: OdbcErrorCode.timeout,
+                  outcomeUnknown: true,
+                ),
+              );
+              final cleanup = await cleanupNativeResources(
+                [
+                  (
+                    operation: 'asyncCancel',
+                    action: () => asyncCancel(requestId)
+                  ),
+                ],
+                primary: primary,
+              );
+              primary = cleanup;
               return null;
             }
             await Future<void>.delayed(delay);
@@ -133,14 +150,32 @@ mixin _AsyncQueryAsync on _AsyncOdbcState, _AsyncWorkerDispatch {
               );
             }
           case -1: // error
+            primary = NativeCallContext.takeFailure() ??
+                const QueryError(message: 'Async query failed');
+            NativeCallContext.record(primary);
+            return null;
           case -2: // cancelled
+            primary = const CancelledError();
+            NativeCallContext.record(primary);
             return null;
           default:
             return null;
         }
       }
+    } on Object catch (error, stack) {
+      primary = translateOdbcError(
+        error,
+        operation: 'executeQueryAsync',
+        stackTrace: stack,
+      );
+      rethrow;
     } finally {
-      await asyncFree(requestId);
+      final captured = NativeCallContext.takeFailure();
+      final failure = await cleanupNativeResources(
+        [(operation: 'asyncFree', action: () => asyncFree(requestId))],
+        primary: primary ?? captured,
+      );
+      if (failure != null) NativeCallContext.record(failure);
     }
   }
 

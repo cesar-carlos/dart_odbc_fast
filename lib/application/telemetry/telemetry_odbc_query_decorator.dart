@@ -9,6 +9,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped telemetry decorator implementing [IQueryService].
@@ -41,13 +42,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      _ops.inOperation(
-        'ODBC.executeQueryParamValues',
-        () => _queries.executeQueryParamValues(
-          connectionId,
-          sql,
-          params,
-          resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValues',
+        () => _ops.inOperation(
+          'ODBC.executeQueryParamValues',
+          () => _queries.executeQueryParamValues(
+            connectionId,
+            sql,
+            params,
+            resultEncoding: resultEncoding,
+          ),
         ),
       );
 
@@ -57,9 +61,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql,
     List<DirectedParam> params,
   ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryDirectedParams',
-        () => _queries.executeQueryDirectedParams(connectionId, sql, params),
+      OdbcErrorBoundary.run(
+        'executeQueryDirectedParams',
+        () => _ops.inOperation(
+          'ODBC.executeQueryDirectedParams',
+          () => _queries.executeQueryDirectedParams(
+            connectionId,
+            sql,
+            params,
+          ),
+        ),
       );
 
   @override
@@ -69,13 +80,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQuery',
-        () => _queries.streamQuery(
-          connectionId,
-          sql,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQuery',
+        () => _ops.wrapStream(
+          'ODBC.streamQuery',
+          () => _queries.streamQuery(
+            connectionId,
+            sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -84,9 +98,12 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _ops.inOperation(
-        'ODBC.prepare',
-        () => _service.prepare(connectionId, sql, timeoutMs: timeoutMs),
+      OdbcErrorBoundary.run(
+        'prepare',
+        () => _ops.inOperation(
+          'ODBC.prepare',
+          () => _service.prepare(connectionId, sql, timeoutMs: timeoutMs),
+        ),
       );
 
   Future<Result<int>> prepareNamed(
@@ -94,9 +111,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _ops.inOperation(
-        'ODBC.prepareNamed',
-        () => _service.prepareNamed(connectionId, sql, timeoutMs: timeoutMs),
+      OdbcErrorBoundary.run(
+        'prepareNamed',
+        () => _ops.inOperation(
+          'ODBC.prepareNamed',
+          () => _service.prepareNamed(
+            connectionId,
+            sql,
+            timeoutMs: timeoutMs,
+          ),
+        ),
       );
 
   Future<Result<QueryResult>> executePreparedParamValues(
@@ -106,14 +130,17 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     StatementOptions? options, {
     ResultEncoding? resultEncoding,
   }) =>
-      _ops.inOperation(
-        'ODBC.executePreparedParamValues',
-        () => _service.executePreparedParamValues(
-          connectionId,
-          stmtId,
-          params,
-          options,
-          resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValues',
+        () => _ops.inOperation(
+          'ODBC.executePreparedParamValues',
+          () => _service.executePreparedParamValues(
+            connectionId,
+            stmtId,
+            params,
+            options,
+            resultEncoding: resultEncoding,
+          ),
         ),
       );
 
@@ -123,44 +150,59 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     Map<String, Object?> namedParams,
     StatementOptions? options,
   ) =>
-      _ops.inOperation(
-        'ODBC.executePreparedNamed',
-        () => _service.executePreparedNamed(
-          connectionId,
-          stmtId,
-          namedParams,
-          options,
+      OdbcErrorBoundary.run(
+        'executePreparedNamed',
+        () => _ops.inOperation(
+          'ODBC.executePreparedNamed',
+          () => _service.executePreparedNamed(
+            connectionId,
+            stmtId,
+            namedParams,
+            options,
+          ),
         ),
       );
 
   Future<Result<void>> closeStatement(String connectionId, int stmtId) =>
-      _ops.inOperation(
-        'ODBC.closeStatement',
-        () => _service.closeStatement(connectionId, stmtId),
+      OdbcErrorBoundary.runVoid(
+        'closeStatement',
+        () => _ops.inOperation(
+          'ODBC.closeStatement',
+          () => _service.closeStatement(connectionId, stmtId),
+        ),
       );
 
   Future<Result<void>> cancelStatement(String connectionId, int stmtId) =>
-      _ops.inOperation(
-        'ODBC.cancelStatement',
-        () => _service.cancelStatement(connectionId, stmtId),
+      OdbcErrorBoundary.runVoid(
+        'cancelStatement',
+        () => _ops.inOperation(
+          'ODBC.cancelStatement',
+          () => _service.cancelStatement(connectionId, stmtId),
+        ),
       );
 
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
   ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryMulti',
-        () => _service.executeQueryMulti(connectionId, sql),
+      OdbcErrorBoundary.run(
+        'executeQueryMulti',
+        () => _ops.inOperation(
+          'ODBC.executeQueryMulti',
+          () => _service.executeQueryMulti(connectionId, sql),
+        ),
       );
 
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
   ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryMultiFull',
-        () => _service.executeQueryMultiFull(connectionId, sql),
+      OdbcErrorBoundary.run(
+        'executeQueryMultiFull',
+        () => _ops.inOperation(
+          'ODBC.executeQueryMultiFull',
+          () => _service.executeQueryMultiFull(connectionId, sql),
+        ),
       );
 
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
@@ -168,9 +210,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql,
     List<ParamValue> params,
   ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryMultiParamValues',
-        () => _service.executeQueryMultiParamValues(connectionId, sql, params),
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValues',
+        () => _ops.inOperation(
+          'ODBC.executeQueryMultiParamValues',
+          () => _service.executeQueryMultiParamValues(
+            connectionId,
+            sql,
+            params,
+          ),
+        ),
       );
 
   @override
@@ -180,13 +229,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryMulti',
-        () => _queries.streamQueryMulti(
-          connectionId,
-          sql,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMulti',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryMulti',
+          () => _queries.streamQueryMulti(
+            connectionId,
+            sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -198,14 +250,17 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryMultiParamValues',
-        () => _queries.streamQueryMultiParamValues(
-          connectionId,
-          sql,
-          params,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiParamValues',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryMultiParamValues',
+          () => _queries.streamQueryMultiParamValues(
+            connectionId,
+            sql,
+            params,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -217,14 +272,17 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryMultiBatchesParamValues',
-        () => _queries.streamQueryMultiBatchesParamValues(
-          connectionId,
-          sql,
-          params,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesParamValues',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryMultiBatchesParamValues',
+          () => _queries.streamQueryMultiBatchesParamValues(
+            connectionId,
+            sql,
+            params,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -235,13 +293,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryMultiBatches',
-        () => _queries.streamQueryMultiBatches(
-          connectionId,
-          sql,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatches',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryMultiBatches',
+          () => _queries.streamQueryMultiBatches(
+            connectionId,
+            sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -251,9 +312,12 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      _ops.inOperation(
-        'ODBC.executeQueryNamed',
-        () => _queries.executeQueryNamed(connectionId, sql, namedParams),
+      OdbcErrorBoundary.run(
+        'executeQueryNamed',
+        () => _ops.inOperation(
+          'ODBC.executeQueryNamed',
+          () => _queries.executeQueryNamed(connectionId, sql, namedParams),
+        ),
       );
 
   @override
@@ -264,14 +328,17 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryNamed',
-        () => _queries.streamQueryNamed(
-          connectionId,
-          sql,
-          namedParams,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamed',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryNamed',
+          () => _queries.streamQueryNamed(
+            connectionId,
+            sql,
+            namedParams,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -281,12 +348,15 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      _ops.inOperation(
-        'ODBC.executeQueryColumnarParamValues',
-        () => _queries.executeQueryColumnarParamValues(
-          connectionId,
-          sql,
-          params: params,
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValues',
+        () => _ops.inOperation(
+          'ODBC.executeQueryColumnarParamValues',
+          () => _queries.executeQueryColumnarParamValues(
+            connectionId,
+            sql,
+            params: params,
+          ),
         ),
       );
 
@@ -297,13 +367,16 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.wrapStream(
-        'ODBC.streamQueryColumnar',
-        () => _queries.streamQueryColumnar(
-          connectionId,
-          sql,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnar',
+        () => _ops.wrapStream(
+          'ODBC.streamQueryColumnar',
+          () => _queries.streamQueryColumnar(
+            connectionId,
+            sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
@@ -312,12 +385,15 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String catalog = '',
     String schema = '',
   }) =>
-      _ops.inOperation(
-        'ODBC.catalogTables',
-        () => _service.catalogTables(
-          connectionId: connectionId,
-          catalog: catalog,
-          schema: schema,
+      OdbcErrorBoundary.run(
+        'catalogTables',
+        () => _ops.inOperation(
+          'ODBC.catalogTables',
+          () => _service.catalogTables(
+            connectionId: connectionId,
+            catalog: catalog,
+            schema: schema,
+          ),
         ),
       );
 
@@ -325,42 +401,57 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String connectionId,
     String table,
   ) =>
-      _ops.inOperation(
-        'ODBC.catalogColumns',
-        () => _service.catalogColumns(connectionId, table),
+      OdbcErrorBoundary.run(
+        'catalogColumns',
+        () => _ops.inOperation(
+          'ODBC.catalogColumns',
+          () => _service.catalogColumns(connectionId, table),
+        ),
       );
 
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId) =>
-      _ops.inOperation(
-        'ODBC.catalogTypeInfo',
-        () => _service.catalogTypeInfo(connectionId),
+      OdbcErrorBoundary.run(
+        'catalogTypeInfo',
+        () => _ops.inOperation(
+          'ODBC.catalogTypeInfo',
+          () => _service.catalogTypeInfo(connectionId),
+        ),
       );
 
   Future<Result<QueryResult>> catalogPrimaryKeys(
     String connectionId,
     String table,
   ) =>
-      _ops.inOperation(
-        'ODBC.catalogPrimaryKeys',
-        () => _service.catalogPrimaryKeys(connectionId, table),
+      OdbcErrorBoundary.run(
+        'catalogPrimaryKeys',
+        () => _ops.inOperation(
+          'ODBC.catalogPrimaryKeys',
+          () => _service.catalogPrimaryKeys(connectionId, table),
+        ),
       );
 
   Future<Result<QueryResult>> catalogForeignKeys(
     String connectionId,
     String table,
   ) =>
-      _ops.inOperation(
-        'ODBC.catalogForeignKeys',
-        () => _service.catalogForeignKeys(connectionId, table),
+      OdbcErrorBoundary.run(
+        'catalogForeignKeys',
+        () => _ops.inOperation(
+          'ODBC.catalogForeignKeys',
+          () => _service.catalogForeignKeys(connectionId, table),
+        ),
       );
 
   Future<Result<QueryResult>> catalogIndexes(
     String connectionId,
     String table,
   ) =>
-      _ops.inOperation(
-        'ODBC.catalogIndexes',
-        () => _service.catalogIndexes(connectionId, table),
+      OdbcErrorBoundary.run(
+        'catalogIndexes',
+        () => _ops.inOperation(
+          'ODBC.catalogIndexes',
+          () => _service.catalogIndexes(connectionId, table),
+        ),
       );
 
   Future<Result<int>> bulkInsert(
@@ -370,14 +461,17 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     List<int> dataBuffer,
     int rowCount,
   ) =>
-      _ops.inOperation(
-        'ODBC.bulkInsert',
-        () => _service.bulkInsert(
-          connectionId,
-          table,
-          columns,
-          dataBuffer,
-          rowCount,
+      OdbcErrorBoundary.run(
+        'bulkInsert',
+        () => _ops.inOperation(
+          'ODBC.bulkInsert',
+          () => _service.bulkInsert(
+            connectionId,
+            table,
+            columns,
+            dataBuffer,
+            rowCount,
+          ),
         ),
       );
 
@@ -389,15 +483,18 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     int rowCount, {
     int parallelism = 0,
   }) =>
-      _ops.inOperation(
-        'ODBC.bulkInsertParallel',
-        () => _service.bulkInsertParallel(
-          poolId,
-          table,
-          columns,
-          dataBuffer,
-          rowCount,
-          parallelism: parallelism,
+      OdbcErrorBoundary.run(
+        'bulkInsertParallel',
+        () => _ops.inOperation(
+          'ODBC.bulkInsertParallel',
+          () => _service.bulkInsertParallel(
+            poolId,
+            table,
+            columns,
+            dataBuffer,
+            rowCount,
+            parallelism: parallelism,
+          ),
         ),
       );
 
@@ -406,22 +503,25 @@ class TelemetryOdbcQueryDecorator implements IQueryService {
     String sql, {
     String? connectionId,
   }) =>
-      _ops.inOperation(
-        'ODBC.executeQuery',
-        () async {
-          final cid = connectionId;
-          if (cid == null || cid.isEmpty) {
-            return const Failure<QueryResult, OdbcError>(
-              ConnectionError(
-                message: 'No active connection. Call connect() first.',
-              ),
+      OdbcErrorBoundary.run(
+        'executeQuery',
+        () => _ops.inOperation(
+          'ODBC.executeQuery',
+          () async {
+            final cid = connectionId;
+            if (cid == null || cid.isEmpty) {
+              return const Failure<QueryResult, OdbcError>(
+                ConnectionError(
+                  message: 'No active connection. Call connect() first.',
+                ),
+              );
+            }
+            return _queries.executeQueryParamValues(
+              cid,
+              sql,
+              const <ParamValue>[],
             );
-          }
-          return _queries.executeQueryParamValues(
-            cid,
-            sql,
-            const <ParamValue>[],
-          );
-        },
+          },
+        ),
       );
 }

@@ -20,6 +20,7 @@ void main() {
       native = FakeAsyncNativeForRepositoryErrors();
       state = OdbcRepositoryState();
       state.connectionIds['conn-1'] = 42;
+      state.transactionOwners.addAll({1: 'conn-1', 3: 'conn-1'});
       runner = OdbcTransactionRunner(
         ffi: OdbcFfiDispatch(AsyncBackend(native)),
         state: state,

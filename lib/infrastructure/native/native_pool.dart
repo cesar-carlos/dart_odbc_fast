@@ -11,16 +11,21 @@ mixin _NativePool on _NativeOdbcState {
     String connectionString,
     int maxSize, {
     PoolOptions? options,
-  }) {
-    if (options == null || !options.hasAnyOption) {
-      return _native.poolCreate(connectionString, maxSize);
-    }
-    return _native.poolCreateWithOptions(
-      connectionString,
-      maxSize,
-      optionsJson: options.toJson(),
-    );
-  }
+  }) =>
+      _captureSync(
+        'poolCreate',
+        () {
+          if (options == null || !options.hasAnyOption) {
+            return _native.poolCreate(connectionString, maxSize);
+          }
+          return _native.poolCreateWithOptions(
+            connectionString,
+            maxSize,
+            optionsJson: options.toJson(),
+          );
+        },
+        failed: (value) => value == 0,
+      );
 
   /// Creates a pool from a pre-encoded native options JSON payload.
   int poolCreateWithOptions(
@@ -28,10 +33,14 @@ mixin _NativePool on _NativeOdbcState {
     int maxSize, {
     String? optionsJson,
   }) =>
-      _native.poolCreateWithOptions(
-        connectionString,
-        maxSize,
-        optionsJson: optionsJson,
+      _captureSync(
+        'poolCreateWithOptions',
+        () => _native.poolCreateWithOptions(
+          connectionString,
+          maxSize,
+          optionsJson: optionsJson,
+        ),
+        failed: (value) => value == 0,
       );
 
   /// Creates a new connection pool and returns a [ConnectionPool] wrapper.
@@ -50,12 +59,24 @@ mixin _NativePool on _NativeOdbcState {
     return ConnectionPool(_connection, poolId);
   }
 
-  int poolGetConnection(int poolId) => _native.poolGetConnection(poolId);
+  int poolGetConnection(int poolId) => _captureSync(
+        'poolGetConnection',
+        () => _native.poolGetConnection(poolId),
+        failed: (value) => value == 0,
+      );
 
-  bool poolReleaseConnection(int connectionId) =>
-      _native.poolReleaseConnection(connectionId);
+  bool poolReleaseConnection(int connectionId) => _captureSync(
+        'poolReleaseConnection',
+        () => _native.poolReleaseConnection(connectionId),
+        failed: (value) => !value,
+        nativeConnectionId: connectionId,
+      );
 
-  bool poolHealthCheck(int poolId) => _native.poolHealthCheck(poolId);
+  bool poolHealthCheck(int poolId) => _captureSync(
+        'poolHealthCheck',
+        () => _native.poolHealthCheck(poolId),
+        failed: (value) => !value,
+      );
 
   ({int size, int idle})? poolGetState(int poolId) =>
       _native.poolGetState(poolId);
@@ -64,10 +85,17 @@ mixin _NativePool on _NativeOdbcState {
   Map<String, dynamic>? poolGetStateJson(int poolId) =>
       _native.poolGetStateJson(poolId);
 
-  bool poolSetSize(int poolId, int newMaxSize) =>
-      _native.poolSetSize(poolId, newMaxSize);
+  bool poolSetSize(int poolId, int newMaxSize) => _captureSync(
+        'poolSetSize',
+        () => _native.poolSetSize(poolId, newMaxSize),
+        failed: (value) => !value,
+      );
 
-  bool poolClose(int poolId) => _native.poolClose(poolId);
+  bool poolClose(int poolId) => _captureSync(
+        'poolClose',
+        () => _native.poolClose(poolId),
+        failed: (value) => !value,
+      );
 
   /// Performs a bulk insert operation.
   ///
@@ -84,12 +112,17 @@ mixin _NativePool on _NativeOdbcState {
     Uint8List dataBuffer,
     int rowCount,
   ) =>
-      _native.bulkInsertArray(
-        connectionId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
+      _captureSync(
+        'bulkInsertArray',
+        () => _native.bulkInsertArray(
+          connectionId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+        ),
+        failed: (value) => value < 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Performs parallel bulk insert through [poolId].
@@ -103,11 +136,15 @@ mixin _NativePool on _NativeOdbcState {
     Uint8List dataBuffer,
     int parallelism,
   ) =>
-      _native.bulkInsertParallel(
-        poolId,
-        table,
-        columns,
-        dataBuffer,
-        parallelism,
+      _captureSync(
+        'bulkInsertParallel',
+        () => _native.bulkInsertParallel(
+          poolId,
+          table,
+          columns,
+          dataBuffer,
+          parallelism,
+        ),
+        failed: (value) => value < 0,
       );
 }

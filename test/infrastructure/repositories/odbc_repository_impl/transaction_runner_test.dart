@@ -107,6 +107,8 @@ void main() {
         localRepo = OdbcRepositoryImpl(localNative);
         await localRepo.initialize();
         connId = (await localRepo.connect('Driver={Test}')).getOrNull()!.id;
+        localNative.beginTransactionResult = 12;
+        await localRepo.beginTransaction(connId, IsolationLevel.readCommitted);
       });
 
       test(
@@ -166,9 +168,9 @@ void main() {
         'rollbackTransaction should_forward_to_native_on_valid_txnId',
         () async {
           localNative.rollbackTransactionSuccess = true;
-          final r = await localRepo.rollbackTransaction(connId, 99);
+          final r = await localRepo.rollbackTransaction(connId, 12);
           expect(r.isSuccess(), isTrue);
-          expect(localNative.lastTxnId, equals(99));
+          expect(localNative.lastTxnId, equals(12));
         },
       );
 
@@ -188,7 +190,7 @@ void main() {
 
       group('savepoint operations', () {
         test('createSavepoint should_reject_empty_name_after_trim', () async {
-          final r = await localRepo.createSavepoint(connId, 1, '   ');
+          final r = await localRepo.createSavepoint(connId, 12, '   ');
           r.fold(
             (_) => fail('Expected failure'),
             (e) => expect(
@@ -210,21 +212,21 @@ void main() {
         });
 
         test('createSavepoint should_forward_args_to_native', () async {
-          final r = await localRepo.createSavepoint(connId, 7, 'sp_alpha');
+          final r = await localRepo.createSavepoint(connId, 12, 'sp_alpha');
           expect(r.isSuccess(), isTrue);
-          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastTxnId, equals(12));
           expect(localNative.lastSavepointName, equals('sp_alpha'));
         });
 
         test('rollbackToSavepoint should_forward_args_to_native', () async {
-          final r = await localRepo.rollbackToSavepoint(connId, 7, 'sp_beta');
+          final r = await localRepo.rollbackToSavepoint(connId, 12, 'sp_beta');
           expect(r.isSuccess(), isTrue);
-          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastTxnId, equals(12));
           expect(localNative.lastSavepointName, equals('sp_beta'));
         });
 
         test('rollbackToSavepoint should_reject_empty_name', () async {
-          final r = await localRepo.rollbackToSavepoint(connId, 7, '');
+          final r = await localRepo.rollbackToSavepoint(connId, 12, '');
           r.fold(
             (_) => fail('Expected failure'),
             (e) => expect(
@@ -235,9 +237,9 @@ void main() {
         });
 
         test('releaseSavepoint should_forward_args_to_native', () async {
-          final r = await localRepo.releaseSavepoint(connId, 7, 'sp_gamma');
+          final r = await localRepo.releaseSavepoint(connId, 12, 'sp_gamma');
           expect(r.isSuccess(), isTrue);
-          expect(localNative.lastTxnId, equals(7));
+          expect(localNative.lastTxnId, equals(12));
           expect(localNative.lastSavepointName, equals('sp_gamma'));
         });
 
@@ -251,7 +253,7 @@ void main() {
                 nativeCode: 1234,
                 message: 'release failed',
               );
-            final r = await localRepo.releaseSavepoint(connId, 7, 'sp');
+            final r = await localRepo.releaseSavepoint(connId, 12, 'sp');
             r.fold(
               (_) => fail('Expected failure'),
               (e) {

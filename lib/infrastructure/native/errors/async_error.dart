@@ -57,7 +57,7 @@ enum AsyncErrorCode {
 ///
 /// See also:
 /// - [AsyncError.toOdbcError] to convert back to domain error types
-class AsyncError implements Exception {
+class AsyncError implements Exception, OdbcErrorConvertible {
   /// Creates a new [AsyncError] with the given properties.
   ///
   /// All parameters are required except [sqlState] and [nativeCode],
@@ -73,6 +73,7 @@ class AsyncError implements Exception {
   final AsyncErrorCode code;
 
   /// Human-readable error message.
+  @override
   final String message;
 
   /// SQLSTATE code from the ODBC driver (if available).
@@ -114,8 +115,24 @@ class AsyncError implements Exception {
   ///   throw domainError;
   /// }
   /// ```
+  @override
   OdbcError toOdbcError() {
-    return switch (code) {
+    final details = OdbcErrorDetails(
+      cause: this,
+      code: switch (code) {
+        AsyncErrorCode.requestTimeout => OdbcErrorCode.timeout,
+        AsyncErrorCode.workerTerminated => OdbcErrorCode.workerInterrupted,
+        AsyncErrorCode.resourceExhausted => OdbcErrorCode.resourceLimit,
+        AsyncErrorCode.notInitialized => OdbcErrorCode.environmentUnavailable,
+        AsyncErrorCode.invalidParameter => OdbcErrorCode.validation,
+        AsyncErrorCode.transactionFailed => OdbcErrorCode.transaction,
+        AsyncErrorCode.connectionFailed => OdbcErrorCode.connection,
+        _ => OdbcErrorCode.query,
+      },
+      outcomeUnknown: code == AsyncErrorCode.requestTimeout ||
+          code == AsyncErrorCode.workerTerminated,
+    );
+    final error = switch (code) {
       AsyncErrorCode.connectionFailed => ConnectionError(
           message: message,
           sqlState: sqlState,
@@ -136,13 +153,31 @@ class AsyncError implements Exception {
           sqlState: sqlState,
           nativeCode: nativeCode,
         ),
-      AsyncErrorCode.invalidParameter => ValidationError(message: message),
-      AsyncErrorCode.notInitialized => const EnvironmentNotInitializedError(),
-      AsyncErrorCode.requestTimeout => QueryError(message: message),
-      AsyncErrorCode.workerTerminated => QueryError(message: message),
+      AsyncErrorCode.invalidParameter => ValidationError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+      AsyncErrorCode.notInitialized => EnvironmentNotInitializedError(
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+      AsyncErrorCode.requestTimeout => QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
+      AsyncErrorCode.workerTerminated => QueryError(
+          message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
+        ),
       AsyncErrorCode.resourceExhausted => ResourceLimitReachedError(
           message: message,
+          sqlState: sqlState,
+          nativeCode: nativeCode,
         ),
     };
+    return error.withDetails(details);
   }
 }

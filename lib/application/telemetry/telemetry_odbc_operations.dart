@@ -26,37 +26,46 @@ class TelemetryOdbcOperations {
   ) async* {
     final start = DateTime.now();
     var chunkCount = 0;
-    await _telemetry.recordEvent(
-      name: '$operation.open',
-      severity: TelemetrySeverity.info,
-      message: 'stream subscription opened',
-      context: {'operation': operation},
+    await _telemetry.safely(
+      'recordStreamEvent',
+      () => _telemetry.recordEvent(
+        name: '$operation.open',
+        severity: TelemetrySeverity.info,
+        message: 'stream subscription opened',
+        context: {'operation': operation},
+      ),
     );
     try {
       await for (final chunk in factory()) {
         chunkCount++;
         yield chunk;
       }
-      await _telemetry.recordEvent(
-        name: '$operation.close',
-        severity: TelemetrySeverity.info,
-        message: 'stream completed normally',
-        context: {
-          'operation': operation,
-          'chunkCount': chunkCount,
-          'durationMs': DateTime.now().difference(start).inMilliseconds,
-        },
+      await _telemetry.safely(
+        'recordStreamEvent',
+        () => _telemetry.recordEvent(
+          name: '$operation.close',
+          severity: TelemetrySeverity.info,
+          message: 'stream completed normally',
+          context: {
+            'operation': operation,
+            'chunkCount': chunkCount,
+            'durationMs': DateTime.now().difference(start).inMilliseconds,
+          },
+        ),
       );
     } on Object catch (e) {
-      await _telemetry.recordEvent(
-        name: '$operation.error',
-        severity: TelemetrySeverity.error,
-        message: 'stream failed: $e',
-        context: {
-          'operation': operation,
-          'chunkCount': chunkCount,
-          'durationMs': DateTime.now().difference(start).inMilliseconds,
-        },
+      await _telemetry.safely(
+        'recordStreamEvent',
+        () => _telemetry.recordEvent(
+          name: '$operation.error',
+          severity: TelemetrySeverity.error,
+          message: 'stream failed: $e',
+          context: {
+            'operation': operation,
+            'chunkCount': chunkCount,
+            'durationMs': DateTime.now().difference(start).inMilliseconds,
+          },
+        ),
       );
       rethrow;
     }

@@ -24,6 +24,10 @@ mixin _AsyncWorkerLifecycle
 
     var initialized = true;
     for (final worker in _workers) {
+      if (worker.startupFailure != null) {
+        NativeCallContext.record(worker.startupFailure!);
+        return false;
+      }
       final initResp = await _sendRequestOnWorker<InitializeResponse>(
         worker,
         InitializeRequest(_nextRequestId()),
@@ -43,6 +47,25 @@ mixin _AsyncWorkerLifecycle
       (message) {
         if (message is SendPort) {
           if (!handshake.isCompleted) handshake.complete(message);
+        } else if (message is WorkerReply) {
+          if (worker.pendingRequests.containsKey(message.response.requestId)) {
+            final failure = message.failure;
+            if (failure != null) {
+              worker.failureSnapshots[message.response.requestId] = failure;
+            }
+            _handleResponse(message.response, worker);
+          }
+        } else if (message is InitializeResponse &&
+            message.requestId == 0 &&
+            message.failure != null) {
+          worker.startupFailure = message.failure!.toError(worker.index);
+          NativeCallContext.record(worker.startupFailure!);
+          worker.failAll(
+            const AsyncError(
+              code: AsyncErrorCode.notInitialized,
+              message: 'The native library is unavailable',
+            ),
+          );
         } else if (message is WorkerResponse) {
           _handleResponse(message, worker);
         } else if (message == _workerTerminatedSignal) {
@@ -94,6 +117,9 @@ mixin _AsyncWorkerLifecycle
   }
 
   Future<String?> _safeGetWorkerError() async {
+    final context = NativeCallContext.current;
+    if (context?.failure != null) return context!.failure!.message;
+    if (context?.receivedResponse ?? false) return null;
     try {
       final r = await _sendRequest<GetErrorResponse>(
         GetErrorRequest(_nextRequestId()),
@@ -104,7 +130,20 @@ mixin _AsyncWorkerLifecycle
         return null;
       }
       return trimmed;
-    } on Object {
+    } on Object catch (error, stack) {
+      final failure = QueryError(
+        message: 'The native operation failed',
+        details: OdbcErrorDetails(
+          secondaryErrors: [
+            translateOdbcError(
+              error,
+              operation: 'collectDiagnostic',
+              stackTrace: stack,
+            ),
+          ],
+        ),
+      );
+      NativeCallContext.record(failure);
       return null;
     }
   }
@@ -199,6 +238,9 @@ mixin _AsyncWorkerLifecycle
     _workers.clear();
     _namedParamOrderByStmtId.clear();
     _connectionWorkerById.clear();
+    _connectionPoolById.clear();
+    _streamConnectionById.clear();
+    _asyncRequestConnectionById.clear();
     _statementWorkerById.clear();
     _statementConnectionById.clear();
     _transactionWorkerById.clear();

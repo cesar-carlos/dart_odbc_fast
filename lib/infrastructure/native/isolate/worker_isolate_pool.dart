@@ -15,24 +15,47 @@ mixin _WorkerIsolatePool on _WorkerIsolateState {
                 request.maxSize,
                 optionsJson: request.optionsJson,
               );
-        sendPort.send(IntResponse(request.requestId, poolId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, poolId),
+        );
 
       case PoolGetConnectionRequest():
         final connId = conn.poolGetConnection(request.poolId);
-        sendPort.send(IntResponse(request.requestId, connId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, connId),
+        );
 
       case PoolReleaseConnectionRequest():
         final ok = conn.poolReleaseConnection(request.connectionId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case PoolHealthCheckRequest():
         final ok = conn.poolHealthCheck(request.poolId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case PoolGetStateRequest():
         final state = conn.poolGetState(request.poolId);
         if (state != null) {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             PoolStateResponse(
               request.requestId,
               size: state.size,
@@ -40,10 +63,13 @@ mixin _WorkerIsolatePool on _WorkerIsolateState {
             ),
           );
         } else {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             PoolStateResponse(
               request.requestId,
-              error: conn.getError(),
+              error: _workerError(conn),
             ),
           );
         }
@@ -51,28 +77,44 @@ mixin _WorkerIsolatePool on _WorkerIsolateState {
       case PoolGetStateJsonRequest():
         final payload = conn.poolGetStateJson(request.poolId);
         if (payload != null) {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             AuditPayloadResponse(
               request.requestId,
               payload: jsonEncode(payload),
             ),
           );
         } else {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             AuditPayloadResponse(
               request.requestId,
-              error: conn.getError(),
+              error: _workerError(conn),
             ),
           );
         }
 
       case PoolSetSizeRequest():
         final ok = conn.poolSetSize(request.poolId, request.newMaxSize);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case PoolCloseRequest():
         final ok = conn.poolClose(request.poolId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       default:
         throw StateError('Unexpected pool request: ${request.type}');

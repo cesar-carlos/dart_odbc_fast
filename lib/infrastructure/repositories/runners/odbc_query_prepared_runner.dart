@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -80,8 +81,10 @@ class OdbcQueryPreparedRunner {
       }
       state.statementConnectionByStmtId[stmtId] = connectionId;
       return Success(stmtId);
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<int, OdbcError>(
+        translateOdbcError(e, operation: 'prepare', stackTrace: st),
+      );
     }
   }
 
@@ -105,8 +108,10 @@ class OdbcQueryPreparedRunner {
         (_) {},
       );
       return prepared;
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<int, OdbcError>(
+        translateOdbcError(e, operation: 'prepareNamed', stackTrace: st),
+      );
     }
   }
 
@@ -223,9 +228,13 @@ class OdbcQueryPreparedRunner {
       return Failure<QueryResult, OdbcError>(
         ValidationError(message: e.message),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<QueryResult, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'executePreparedNamed',
+          stackTrace: st,
+        ),
       );
     }
   }
@@ -273,48 +282,31 @@ class OdbcQueryPreparedRunner {
           : ffi.sync.cancelStatement(stmtId);
       if (ok) return const Success(unit);
 
-      final structuredError = ffi.isAsync
-          ? await ffi.async.getStructuredError()
-          : ffi.sync.getStructuredError();
-      final errorMsg =
-          ffi.isAsync ? await ffi.async.getError() : ffi.sync.getError();
-      final message = (errorMsg.isNotEmpty && errorMsg != 'No error')
-          ? errorMsg
-          : (structuredError?.message.isNotEmpty ?? false)
-              ? structuredError!.message
-              : 'Failed to cancel statement';
-      final sqlState = structuredError?.sqlStateString;
-      final nativeCode = structuredError?.nativeCode;
-
+      final result = await ffi.convertNativeErrorToFailure<Unit>(
+        errorFactory: odbcQueryErrorFactory,
+        fallbackMessage: 'Failed to cancel statement',
+      );
+      final error = result.exceptionOrNull();
       if (isUnsupportedCancellation(
-        message: message,
-        sqlState: sqlState,
-        nativeCode: nativeCode,
+        message: error.message,
+        sqlState: error.sqlState,
+        nativeCode: error.nativeCode,
       )) {
-        return Failure<Unit, OdbcError>(
+        return Failure(
           UnsupportedFeatureError(
-            message: '$message. $odbcCancelStatementPreferQueryTimeoutHint',
-            sqlState: sqlState,
-            nativeCode: nativeCode,
+            message:
+                '${error.message}. $odbcCancelStatementPreferQueryTimeoutHint',
+            sqlState: error.sqlState,
+            nativeCode: error.nativeCode,
+            details: error.details,
           ),
         );
       }
-
-      if (message.contains('Invalid statement ID')) {
-        return Failure<Unit, OdbcError>(
-          ValidationError(message: message),
-        );
-      }
-
+      return result;
+    } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        QueryError(
-          message: message,
-          sqlState: sqlState,
-          nativeCode: nativeCode,
-        ),
+        translateOdbcError(e, operation: 'cancelStatement', stackTrace: st),
       );
-    } on Exception catch (e) {
-      return Failure<Unit, OdbcError>(QueryError(message: e.toString()));
     }
   }
 
@@ -336,9 +328,9 @@ class OdbcQueryPreparedRunner {
         );
       }
       return const Success(unit);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'clearStatementCache', stackTrace: st),
       );
     }
   }
@@ -390,9 +382,13 @@ class OdbcQueryPreparedRunner {
           avgExecutionsPerStmt: metrics.avgExecutionsPerStmt,
         ),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<PreparedStatementMetrics, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'getPreparedStatementsMetrics',
+          stackTrace: st,
+        ),
       );
     }
   }

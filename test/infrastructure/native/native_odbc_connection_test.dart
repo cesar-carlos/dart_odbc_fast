@@ -2,6 +2,7 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     as odbc_bindings show Utf8;
@@ -56,6 +57,8 @@ NativeOdbcConnection _stubConnection(
     ),
   );
 }
+
+int _streamCloseSuccess(int _) => 0;
 
 int _catalogWriteFrame(
   ffi.Pointer<ffi.Uint8> outBuf,
@@ -487,6 +490,26 @@ void main() {
     });
 
     group('streamQuery success paths', () {
+      test('successful read exposes failed native close', () async {
+        final connection = _connection(
+          TestOdbcBindingsOverrides(
+            init: _initSuccess,
+            streamStartBatched: _streamStartBatchedOne,
+            streamFetch: FakeOdbcBindings.streamFetchChunks(
+              [FakeOdbcBindings.minimalStreamRowMajorFrame()],
+            ).streamFetch,
+            streamClose: (_) => -1,
+          ),
+        )..initialize();
+        addTearDown(connection.dispose);
+        await expectLater(
+          connection.streamQueryBatched(1, 'SELECT 1').toList(),
+          throwsA(
+            isA<OdbcError>()
+                .having((e) => e.code, 'code', OdbcErrorCode.cleanup),
+          ),
+        );
+      });
       test('should_parse_batched_stream_payload', () async {
         final frame = FakeOdbcBindings.minimalStreamRowMajorFrame();
         final fetchOverride = FakeOdbcBindings.streamFetchChunks([frame]);
@@ -494,6 +517,7 @@ void main() {
           TestOdbcBindingsOverrides(
             init: _initSuccess,
             streamStartBatched: _streamStartBatchedOne,
+            streamClose: _streamCloseSuccess,
             streamFetch: fetchOverride.streamFetch,
           ),
         )..initialize();
@@ -514,6 +538,7 @@ void main() {
           TestOdbcBindingsOverrides(
             init: _initSuccess,
             streamStartBatched: _streamStartBatchedOne,
+            streamClose: _streamCloseSuccess,
             streamFetch: fetchOverride.streamFetch,
           ),
         )..initialize();
@@ -554,6 +579,7 @@ void main() {
           TestOdbcBindingsOverrides(
             init: _initSuccess,
             streamStartBatched: _streamStartBatchedOne,
+            streamClose: _streamCloseSuccess,
             streamFetch: _streamFetchFailure,
             getError: FakeOdbcBindings.getErrorWrites('fetch failed'),
           ),
@@ -631,6 +657,7 @@ void main() {
             TestOdbcBindingsOverrides(
               init: _initSuccess,
               streamStartBatched: _streamStartBatchedOne,
+              streamClose: _streamCloseSuccess,
               streamFetch: FakeOdbcBindings.streamFetchChunks([
                 Uint8List.fromList([0x4F, 0x44]),
               ]).streamFetch,
@@ -639,7 +666,10 @@ void main() {
 
           await expectLater(
             connection.streamQueryBatched(1, 'SELECT 1').drain<void>(),
-            throwsA(isA<FormatException>()),
+            throwsA(
+              isA<MalformedPayloadError>()
+                  .having((e) => e.code, 'code', OdbcErrorCode.protocol),
+            ),
           );
           connection.dispose();
         },
@@ -650,6 +680,7 @@ void main() {
           const TestOdbcBindingsOverrides(
             init: _initSuccess,
             streamStartBatched: _streamStartBatchedOne,
+            streamClose: _streamCloseSuccess,
             streamFetch: _streamFetchEmptySuccess,
           ),
         )..initialize();
@@ -667,6 +698,7 @@ void main() {
           TestOdbcBindingsOverrides(
             init: _initSuccess,
             streamStartBatched: _streamStartBatchedOne,
+            streamClose: _streamCloseSuccess,
             streamFetch:
                 _streamFetchTwoChunksWithHasMore([frame, frame]).streamFetch,
           ),

@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/isolate/worker_failure_snapshot.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
 /// Fake worker: initialize handshake fails (success=false).
@@ -54,7 +56,18 @@ void fakeWorkerDelayedQuery(SendPort mainSendPort) {
       return;
     }
     if (message is ExecuteAsyncStartParamsRequest) {
-      mainSendPort.send(IntResponse(message.requestId, 0));
+      mainSendPort.send(
+        IntResponse(
+          message.requestId,
+          0,
+          failure: WorkerFailureSnapshot(
+            message: 'Async parameter entrypoint unavailable',
+            operation: 'executeAsyncStartParams',
+            requestId: message.requestId,
+            code: OdbcErrorCode.unsupported,
+          ),
+        ),
+      );
       return;
     }
     if (message is ExecuteQueryParamsRequest) {
@@ -135,7 +148,18 @@ void fakeWorkerNamedSupport(SendPort mainSendPort) {
       return;
     }
     if (message is ExecuteAsyncStartParamsRequest) {
-      mainSendPort.send(IntResponse(message.requestId, 0));
+      mainSendPort.send(
+        IntResponse(
+          message.requestId,
+          0,
+          failure: WorkerFailureSnapshot(
+            message: 'Async parameter entrypoint unavailable',
+            operation: 'executeAsyncStartParams',
+            requestId: message.requestId,
+            code: OdbcErrorCode.unsupported,
+          ),
+        ),
+      );
       return;
     }
     if (message is ExecuteQueryParamsRequest) {
@@ -662,7 +686,18 @@ void fakeWorkerAsyncExecuteParamsFallback(SendPort mainSendPort) {
       return;
     }
     if (message is ExecuteAsyncStartParamsRequest) {
-      mainSendPort.send(IntResponse(message.requestId, 0));
+      mainSendPort.send(
+        IntResponse(
+          message.requestId,
+          0,
+          failure: WorkerFailureSnapshot(
+            message: 'Async parameter entrypoint unavailable',
+            operation: 'executeAsyncStartParams',
+            requestId: message.requestId,
+            code: OdbcErrorCode.unsupported,
+          ),
+        ),
+      );
       return;
     }
     if (message is ExecuteQueryParamsRequest) {
@@ -699,7 +734,18 @@ void fakeWorkerPoolRoutingSupport(SendPort mainSendPort) {
       return;
     }
     if (message is ExecuteAsyncStartParamsRequest) {
-      mainSendPort.send(IntResponse(message.requestId, 0));
+      mainSendPort.send(
+        IntResponse(
+          message.requestId,
+          0,
+          failure: WorkerFailureSnapshot(
+            message: 'Async parameter entrypoint unavailable',
+            operation: 'executeAsyncStartParams',
+            requestId: message.requestId,
+            code: OdbcErrorCode.unsupported,
+          ),
+        ),
+      );
       return;
     }
     if (message is ExecuteQueryParamsRequest) {
@@ -865,4 +911,37 @@ extension on int {
     }
     return out;
   }
+}
+
+void fakeWorkerAsyncStartFailure(SendPort mainSendPort) {
+  final receivePort = ReceivePort();
+  mainSendPort.send(receivePort.sendPort);
+  receivePort.listen((message) {
+    if (message == 'shutdown') {
+      receivePort.close();
+      return;
+    }
+    if (message is InitializeRequest) {
+      mainSendPort.send(InitializeResponse(message.requestId, success: true));
+    } else if (message is ExecuteAsyncStartParamsRequest) {
+      mainSendPort.send(
+        IntResponse(
+          message.requestId,
+          0,
+          failure: WorkerFailureSnapshot(
+            message: 'Query start failed',
+            operation: 'executeAsyncStartParams',
+            requestId: message.requestId,
+            sqlState: '08006',
+            code: OdbcErrorCode.connection,
+            outcomeUnknown: true,
+          ),
+        ),
+      );
+    } else if (message is ExecuteQueryParamsRequest) {
+      mainSendPort.send(
+        QueryResponse(message.requestId, data: Uint8List.fromList([99])),
+      );
+    }
+  });
 }

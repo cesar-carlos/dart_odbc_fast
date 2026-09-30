@@ -11,7 +11,12 @@ mixin _NativePreparedQuery on _NativeOdbcState {
   /// (0 = no timeout).
   /// Returns a statement ID on success, 0 on failure.
   int prepare(int connectionId, String sql, {int timeoutMs = 0}) =>
-      _native.prepare(connectionId, sql, timeoutMs: timeoutMs);
+      _captureSync(
+        'prepare',
+        () => _native.prepare(connectionId, sql, timeoutMs: timeoutMs),
+        failed: (value) => value == 0,
+        nativeConnectionId: connectionId,
+      );
 
   /// Prepares a SQL statement and returns a [PreparedStatement] wrapper.
   ///
@@ -63,14 +68,18 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
-      _native.executeTyped(
-        stmtId,
-        params,
-        timeoutOverrideMs,
-        fetchSize,
-        maxBufferBytes,
-        initialBufferBytes,
-        resultEncoding,
+      _captureSync(
+        'executePrepared',
+        () => _native.executeTyped(
+          stmtId,
+          params,
+          timeoutOverrideMs,
+          fetchSize,
+          maxBufferBytes,
+          initialBufferBytes,
+          resultEncoding,
+        ),
+        failed: (value) => value == null,
       );
 
   /// Executes a prepared statement with params already serialized (bytes).
@@ -86,24 +95,40 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? initialBufferBytes,
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) =>
-      _native.execute(
-        stmtId,
-        serializedParams,
-        timeoutOverrideMs,
-        fetchSize,
-        maxBufferBytes,
-        initialBufferBytes,
-        resultEncoding,
+      _captureSync(
+        'executePreparedRaw',
+        () => _native.execute(
+          stmtId,
+          serializedParams,
+          timeoutOverrideMs,
+          fetchSize,
+          maxBufferBytes,
+          initialBufferBytes,
+          resultEncoding,
+        ),
+        failed: (value) => value == null,
       );
 
   /// Requests cancellation of a prepared statement execution.
   ///
   /// Returns true on success, false when cancellation fails or is unsupported.
-  bool cancelStatement(int stmtId) => _native.cancelStatement(stmtId);
+  bool cancelStatement(int stmtId) => _captureSync(
+        'cancelStatement',
+        () => _native.cancelStatement(stmtId),
+        failed: (value) => !value,
+      );
 
-  bool closeStatement(int stmtId) => _native.closeStatement(stmtId);
+  bool closeStatement(int stmtId) => _captureSync(
+        'closeStatement',
+        () => _native.closeStatement(stmtId),
+        failed: (value) => !value,
+      );
 
-  int clearAllStatements() => _native.clearAllStatements();
+  int clearAllStatements() => _captureSync(
+        'clearAllStatements',
+        _native.clearAllStatements,
+        failed: (value) => value < 0,
+      );
 
   PreparedStatementMetrics? getCacheMetrics() => _native.getCacheMetrics();
 
@@ -126,14 +151,19 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     int fetchSize = 0,
   }) =>
-      _native.execQueryParamsTyped(
-        connectionId,
-        sql,
-        params,
-        maxBufferBytes: maxBufferBytes,
-        initialBufferBytes: initialBufferBytes,
-        resultEncoding: resultEncoding,
-        fetchSize: fetchSize,
+      _captureSync(
+        'executeQueryParams',
+        () => _native.execQueryParamsTyped(
+          connectionId,
+          sql,
+          params,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+          resultEncoding: resultEncoding,
+          fetchSize: fetchSize,
+        ),
+        failed: (value) => value == null,
+        nativeConnectionId: connectionId,
       );
 
   /// Executes a parameterized query with params already serialized (bytes).
@@ -150,14 +180,19 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     int fetchSize = 0,
   }) =>
-      _native.execQueryParams(
-        connectionId,
-        sql,
-        serializedParams,
-        maxBufferBytes: maxBufferBytes,
-        initialBufferBytes: initialBufferBytes,
-        resultEncoding: resultEncoding,
-        fetchSize: fetchSize,
+      _captureSync(
+        'executeQueryParamsRaw',
+        () => _native.execQueryParams(
+          connectionId,
+          sql,
+          serializedParams,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+          resultEncoding: resultEncoding,
+          fetchSize: fetchSize,
+        ),
+        failed: (value) => value == null,
+        nativeConnectionId: connectionId,
       );
 
   /// Executes a SQL query that returns multiple result sets.
@@ -175,12 +210,17 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? initialBufferBytes,
     int fetchSize = 0,
   }) =>
-      _native.execQueryMulti(
-        connectionId,
-        sql,
-        maxBufferBytes: maxBufferBytes,
-        initialBufferBytes: initialBufferBytes,
-        fetchSize: fetchSize,
+      _captureSync(
+        'executeQueryMulti',
+        () => _native.execQueryMulti(
+          connectionId,
+          sql,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+          fetchSize: fetchSize,
+        ),
+        failed: (value) => value == null,
+        nativeConnectionId: connectionId,
       );
 
   /// Whether the loaded native library exports
@@ -205,12 +245,17 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
   }) =>
-      _native.streamMultiStartBatched(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
+      _captureSync(
+        'streamMultiStartBatched',
+        () => _native.streamMultiStartBatched(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   int? streamMultiStartBatchedParams(
@@ -221,13 +266,18 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
   }) =>
-      _native.streamMultiStartBatchedParams(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
+      _captureSync(
+        'streamMultiStartBatchedParams',
+        () => _native.streamMultiStartBatchedParams(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   int? streamMultiStartAsyncParams(
@@ -238,13 +288,18 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
   }) =>
-      _native.streamMultiStartAsyncParams(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
+      _captureSync(
+        'streamMultiStartAsyncParams',
+        () => _native.streamMultiStartAsyncParams(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Async variant of [streamMultiStartBatched]. Combine with
@@ -256,12 +311,17 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
   }) =>
-      _native.streamMultiStartAsync(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
+      _captureSync(
+        'streamMultiStartAsync',
+        () => _native.streamMultiStartAsync(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Executes a parameterised batch SQL that may return multiple result sets.
@@ -276,12 +336,17 @@ mixin _NativePreparedQuery on _NativeOdbcState {
     int? initialBufferBytes,
     int fetchSize = 0,
   }) =>
-      _native.execQueryMultiParams(
-        connectionId,
-        sql,
-        paramsBuffer,
-        maxBufferBytes: maxBufferBytes,
-        initialBufferBytes: initialBufferBytes,
-        fetchSize: fetchSize,
+      _captureSync(
+        'executeQueryMultiParams',
+        () => _native.execQueryMultiParams(
+          connectionId,
+          sql,
+          paramsBuffer,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+          fetchSize: fetchSize,
+        ),
+        failed: (value) => value == null,
+        nativeConnectionId: connectionId,
       );
 }

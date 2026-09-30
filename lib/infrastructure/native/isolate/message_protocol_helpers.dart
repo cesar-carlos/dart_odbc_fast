@@ -336,26 +336,42 @@ StreamPollFetchResponse isolateStreamPollFetchResponse({
 
 /// Base class for worker responses. All subclasses must be sendable.
 sealed class WorkerResponse {
-  const WorkerResponse(this.requestId);
+  const WorkerResponse(this.requestId, {this.failure});
+  final WorkerFailureSnapshot? failure;
   final int requestId;
 }
 
 /// Response for initialize.
 class InitializeResponse extends WorkerResponse {
-  const InitializeResponse(super.requestId, {required this.success});
+  const InitializeResponse(
+    super.requestId, {
+    required this.success,
+    super.failure,
+  });
   final bool success;
 }
 
 /// Response for connect.
 class ConnectResponse extends WorkerResponse {
-  const ConnectResponse(super.requestId, this.connectionId, {this.error});
+  const ConnectResponse(
+    super.requestId,
+    this.connectionId, {
+    this.error,
+    super.failure,
+  });
   final int connectionId;
   final String? error;
 }
 
 /// Response for operations returning bool.
 class BoolResponse extends WorkerResponse {
-  const BoolResponse(super.requestId, {required this.value});
+  const BoolResponse(
+    super.requestId, {
+    required this.value,
+    super.failure,
+    this.completionStatus,
+  });
+  final int? completionStatus;
   final bool value;
 }
 
@@ -366,12 +382,23 @@ class QueryResponse extends WorkerResponse {
     Uint8List? data,
     TransferableTypedData? transferableData,
     this.error,
+    super.failure,
   })  : _data = data,
         _transferableData = transferableData;
+
+  QueryResponse withFailure(WorkerFailureSnapshot snapshot) => QueryResponse(
+        requestId,
+        data: _data,
+        transferableData: _transferableData,
+        error: error,
+        failure: snapshot,
+      );
 
   Uint8List? _data;
   final TransferableTypedData? _transferableData;
   final String? error;
+
+  bool get hasData => _data != null || _transferableData != null;
 
   Uint8List? get data {
     final data = _data;
@@ -388,7 +415,7 @@ class QueryResponse extends WorkerResponse {
 
 /// Response for operations returning int (stmtId, poolId, connId, rowCount).
 class IntResponse extends WorkerResponse {
-  const IntResponse(super.requestId, this.value);
+  const IntResponse(super.requestId, this.value, {super.failure});
   final int value;
 }
 
@@ -496,3 +523,10 @@ class ValidateConnectionStringResponse extends WorkerResponse {
 }
 
 /// Response for stream fetch operation.
+
+/// Carries snapshots for legacy responses that have no metadata constructor.
+class WorkerReply {
+  const WorkerReply(this.response, this.failure);
+  final WorkerResponse response;
+  final WorkerFailureSnapshot? failure;
+}

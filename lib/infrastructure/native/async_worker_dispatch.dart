@@ -70,7 +70,20 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
                 throw error;
               },
             );
-      if (_responseHasError(response)) {
+      final snapshot =
+          targetWorker.failureSnapshots.remove(request.requestId) ??
+              response.failure;
+      final context = NativeCallContext.current;
+      if (context != null) {
+        context.receivedResponse = true;
+        if (response is BoolResponse) {
+          context.completionStatus = response.completionStatus;
+        }
+      }
+      if (snapshot != null) {
+        NativeCallContext.record(snapshot.toError(targetWorker.index));
+      }
+      if (snapshot != null || _responseHasError(response)) {
         targetWorker.failedRequests++;
       } else {
         targetWorker.completedRequests++;
@@ -197,6 +210,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
   }
 
   bool _responseHasError(WorkerResponse response) {
+    if (response.failure != null) return true;
     return switch (response) {
       ConnectResponse(:final error) => error != null && error.isNotEmpty,
       QueryResponse(:final error) => error != null && error.isNotEmpty,
@@ -209,6 +223,9 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       AuditPayloadResponse(:final error) => error != null && error.isNotEmpty,
       StreamFetchResponse(:final success, :final error) =>
         !success || (error != null && error.isNotEmpty),
+      BoolResponse(:final value) => !value,
+      InitializeResponse(:final success) => !success,
+      IntResponse(:final value) => value < 0,
       _ => false,
     };
   }
@@ -421,12 +438,20 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
     switch ((request, response)) {
       case (ConnectRequest(), ConnectResponse(:final connectionId))
           when connectionId > 0:
+        _connectionWorkerById[connectionId] = worker.index;
       case (
-            PoolGetConnectionRequest(),
-            IntResponse(value: final connectionId),
+            PoolGetConnectionRequest(:final poolId),
+            IntResponse(value: final connectionId)
           )
           when connectionId > 0:
         _connectionWorkerById[connectionId] = worker.index;
+        _connectionPoolById[connectionId] = poolId;
+      case (PoolCloseRequest(:final poolId), BoolResponse(value: true)):
+        _connectionPoolById.entries
+            .where((entry) => entry.value == poolId)
+            .map((entry) => entry.key)
+            .toList(growable: false)
+            .forEach(_clearConnectionAffinity);
       case (DisconnectRequest(:final connectionId), BoolResponse(:final value))
           when value:
       case (
@@ -453,8 +478,16 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
           when id > 0:
         _transactionWorkerById[id] = worker.index;
         _transactionConnectionById[id] = connectionId;
-      case (CommitTransactionRequest(:final txnId), BoolResponse()):
-      case (RollbackTransactionRequest(:final txnId), BoolResponse()):
+      case (
+            CommitTransactionRequest(:final txnId),
+            BoolResponse(:final completionStatus)
+          )
+          when completionStatus != 2:
+      case (
+            RollbackTransactionRequest(:final txnId),
+            BoolResponse(:final completionStatus)
+          )
+          when completionStatus != 2:
         _transactionWorkerById.remove(txnId);
         _transactionConnectionById.remove(txnId);
       case (XaStartRequest(:final connectionId), IntResponse(value: final id))
@@ -474,27 +507,53 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
                   request.type == RequestType.xaRollbackActive):
         _xaWorkerById.remove(xaId);
         _xaConnectionById.remove(xaId);
-      case (StreamStartRequest(), IntResponse(value: final id)) when id > 0:
-      case (StreamStartBatchedRequest(), IntResponse(value: final id))
+      case (
+            StreamStartRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
-      case (StreamStartAsyncRequest(), IntResponse(value: final id))
+      case (
+            StreamStartBatchedRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
-      case (StreamMultiStartBatchedRequest(), IntResponse(value: final id))
+      case (
+            StreamStartAsyncRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
-      case (StreamMultiStartAsyncRequest(), IntResponse(value: final id))
+      case (
+            StreamMultiStartBatchedRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
+          when id > 0:
+      case (
+            StreamMultiStartAsyncRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
         _streamWorkerById[id] = worker.index;
+        _streamConnectionById[id] = connectionId;
       case (StreamCloseRequest(:final streamId), BoolResponse(:final value))
           when value:
         _streamWorkerById.remove(streamId);
-      case (ExecuteAsyncStartRequest(), IntResponse(value: final id))
+        _streamConnectionById.remove(streamId);
+      case (
+            ExecuteAsyncStartRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
-      case (ExecuteAsyncStartParamsRequest(), IntResponse(value: final id))
+      case (
+            ExecuteAsyncStartParamsRequest(:final connectionId),
+            IntResponse(value: final id)
+          )
           when id > 0:
         _asyncRequestWorkerById[id] = worker.index;
+        _asyncRequestConnectionById[id] = connectionId;
       case (AsyncFreeRequest(:final asyncRequestId), BoolResponse(:final value))
           when value:
         _asyncRequestWorkerById.remove(asyncRequestId);
+        _asyncRequestConnectionById.remove(asyncRequestId);
       default:
         break;
     }
@@ -502,6 +561,20 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
 
   void _clearConnectionAffinity(int connectionId) {
     _connectionWorkerById.remove(connectionId);
+    _connectionPoolById.remove(connectionId);
+    for (final entry in [
+      (_streamConnectionById, _streamWorkerById),
+      (_asyncRequestConnectionById, _asyncRequestWorkerById),
+    ]) {
+      final ids = entry.$1.entries
+          .where((e) => e.value == connectionId)
+          .map((e) => e.key)
+          .toList(growable: false);
+      for (final id in ids) {
+        entry.$1.remove(id);
+        entry.$2.remove(id);
+      }
+    }
     final stmtIds = _statementConnectionById.entries
         .where((entry) => entry.value == connectionId)
         .map((entry) => entry.key)
@@ -558,5 +631,9 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
     }
     _streamWorkerById.removeWhere((_, value) => value == workerIndex);
     _asyncRequestWorkerById.removeWhere((_, value) => value == workerIndex);
+    _streamConnectionById
+        .removeWhere((id, _) => !_streamWorkerById.containsKey(id));
+    _asyncRequestConnectionById
+        .removeWhere((id, _) => !_asyncRequestWorkerById.containsKey(id));
   }
 }

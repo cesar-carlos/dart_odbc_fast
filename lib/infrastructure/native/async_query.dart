@@ -173,6 +173,20 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     int fetchSize = 0,
   }) async {
+    if (NativeCallContext.current == null) {
+      return NativeCallContext.capture(
+        () => executeQueryParamBuffer(
+          connectionId,
+          sql,
+          paramBuffer,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+          timeout: timeout,
+          resultEncoding: resultEncoding,
+          fetchSize: fetchSize,
+        ),
+      );
+    }
     final bytes =
         paramBuffer == null || paramBuffer.isEmpty ? Uint8List(0) : paramBuffer;
     final asyncRequestId = await executeAsyncStartParams(
@@ -191,6 +205,11 @@ mixin _AsyncQuery on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncQueryAsync {
       );
     }
 
+    final startFailure = NativeCallContext.takeFailure();
+    if (startFailure?.code != OdbcErrorCode.unsupported) {
+      if (startFailure != null) NativeCallContext.record(startFailure);
+      return null;
+    }
     _recordFallbackToBlocking(connectionId);
     return _executeQueryParamsBlocking(
       connectionId,

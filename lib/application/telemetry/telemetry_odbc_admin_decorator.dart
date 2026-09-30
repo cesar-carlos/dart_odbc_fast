@@ -8,6 +8,7 @@ import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Admin-shaped telemetry decorator implementing [IAdminService].
@@ -30,62 +31,92 @@ class TelemetryOdbcAdminDecorator implements IAdminService {
   Stream<OdbcEvent> get events => _admin.events;
 
   @override
-  Future<Result<void>> initialize() =>
-      _ops.inOperation('ODBC.initialize', _admin.initialize);
+  Future<Result<void>> initialize() => OdbcErrorBoundary.runVoid(
+        'initialize',
+        () => _ops.inOperation('ODBC.initialize', _admin.initialize),
+      );
 
   @override
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
   }) =>
-      _ops.inOperation(
-        'ODBC.connect',
-        () => _admin.connect(connectionString, options: options),
+      OdbcErrorBoundary.run(
+        'connect',
+        () => _ops.inOperation(
+          'ODBC.connect',
+          () => _admin.connect(connectionString, options: options),
+        ),
       );
 
   @override
-  Future<Result<void>> disconnect(String connectionId) => _ops.inOperation(
-        'ODBC.disconnect',
-        () => _admin.disconnect(connectionId),
+  Future<Result<void>> disconnect(String connectionId) =>
+      OdbcErrorBoundary.runVoid(
+        'disconnect',
+        () => _ops.inOperation(
+          'ODBC.disconnect',
+          () => _admin.disconnect(connectionId),
+        ),
       );
 
   @override
-  Future<Result<OdbcMetrics>> getMetrics() =>
-      _ops.inOperation('ODBC.getMetrics', _admin.getMetrics);
+  Future<Result<OdbcMetrics>> getMetrics() => OdbcErrorBoundary.run(
+        'getMetrics',
+        () => _ops.inOperation('ODBC.getMetrics', _admin.getMetrics),
+      );
 
   bool isInitialized() => _service.isInitialized();
 
-  Future<Result<void>> clearStatementCache() => _ops.inOperation(
-        'ODBC.clearStatementCache',
-        _service.clearStatementCache,
+  Future<Result<void>> clearStatementCache() => OdbcErrorBoundary.runVoid(
+        'clearStatementCache',
+        () => _ops.inOperation(
+          'ODBC.clearStatementCache',
+          _service.clearStatementCache,
+        ),
       );
 
-  Future<Result<void>> clearAllStatements() =>
-      _ops.inOperation('ODBC.clearAllStatements', _service.clearAllStatements);
+  Future<Result<void>> clearAllStatements() => OdbcErrorBoundary.runVoid(
+        'clearAllStatements',
+        () => _ops.inOperation(
+          'ODBC.clearAllStatements',
+          _service.clearAllStatements,
+        ),
+      );
 
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() =>
-      _ops.inOperation(
-        'ODBC.getPreparedStatementsMetrics',
-        _service.getPreparedStatementsMetrics,
+      OdbcErrorBoundary.run(
+        'getPreparedStatementsMetrics',
+        () => _ops.inOperation(
+          'ODBC.getPreparedStatementsMetrics',
+          _service.getPreparedStatementsMetrics,
+        ),
       );
 
-  Future<Result<Map<String, String>>> getVersion() =>
-      _ops.inOperation('ODBC.getVersion', _service.getVersion);
+  Future<Result<Map<String, String>>> getVersion() => OdbcErrorBoundary.run(
+        'getVersion',
+        () => _ops.inOperation('ODBC.getVersion', _service.getVersion),
+      );
 
   @override
   Future<Result<void>> validateConnectionString(String connectionString) =>
-      _ops.inOperation(
-        'ODBC.validateConnectionString',
-        () => _admin.validateConnectionString(connectionString),
+      OdbcErrorBoundary.runVoid(
+        'validateConnectionString',
+        () => _ops.inOperation(
+          'ODBC.validateConnectionString',
+          () => _admin.validateConnectionString(connectionString),
+        ),
       );
 
   @override
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   ) =>
-      _ops.inOperation(
-        'ODBC.getDriverCapabilities',
-        () => _admin.getDriverCapabilities(connectionString),
+      OdbcErrorBoundary.run(
+        'getDriverCapabilities',
+        () => _ops.inOperation(
+          'ODBC.getDriverCapabilities',
+          () => _admin.getDriverCapabilities(connectionString),
+        ),
       );
 
   @override
@@ -93,90 +124,142 @@ class TelemetryOdbcAdminDecorator implements IAdminService {
       _admin.getWorkerPoolStats();
 
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) =>
-      _ops.inOperation(
-        'ODBC.getConnectionDbmsInfo',
-        () => _service.getConnectionDbmsInfo(connectionId),
+      OdbcErrorBoundary.run(
+        'getConnectionDbmsInfo',
+        () => _ops.inOperation(
+          'ODBC.getConnectionDbmsInfo',
+          () => _service.getConnectionDbmsInfo(connectionId),
+        ),
       );
 
-  Future<Result<void>> setLogLevel(int level) => _ops.inOperation(
-        'ODBC.setLogLevel',
-        () => _service.setLogLevel(level),
+  Future<Result<void>> setLogLevel(int level) => OdbcErrorBoundary.runVoid(
+        'setLogLevel',
+        () => _ops.inOperation(
+          'ODBC.setLogLevel',
+          () => _service.setLogLevel(level),
+        ),
       );
 
   Future<Result<void>> setAuditEnabled({required bool enabled}) =>
-      _ops.inOperation(
-        'ODBC.setAuditEnabled',
-        () => _service.setAuditEnabled(enabled: enabled),
+      OdbcErrorBoundary.runVoid(
+        'setAuditEnabled',
+        () => _ops.inOperation(
+          'ODBC.setAuditEnabled',
+          () => _service.setAuditEnabled(enabled: enabled),
+        ),
       );
 
   Future<Result<Map<String, Object?>>> getAuditStatus() =>
-      _ops.inOperation('ODBC.getAuditStatus', _service.getAuditStatus);
+      OdbcErrorBoundary.run(
+        'getAuditStatus',
+        () => _ops.inOperation('ODBC.getAuditStatus', _service.getAuditStatus),
+      );
 
   Future<Result<List<Map<String, Object?>>>> getAuditEvents({
     int limit = 0,
   }) =>
-      _ops.inOperation(
-        'ODBC.getAuditEvents',
-        () => _service.getAuditEvents(limit: limit),
+      OdbcErrorBoundary.run(
+        'getAuditEvents',
+        () => _ops.inOperation(
+          'ODBC.getAuditEvents',
+          () => _service.getAuditEvents(limit: limit),
+        ),
       );
 
-  Future<Result<void>> clearAuditEvents() =>
-      _ops.inOperation('ODBC.clearAuditEvents', _service.clearAuditEvents);
+  Future<Result<void>> clearAuditEvents() => OdbcErrorBoundary.runVoid(
+        'clearAuditEvents',
+        () => _ops.inOperation(
+          'ODBC.clearAuditEvents',
+          _service.clearAuditEvents,
+        ),
+      );
 
   Future<Result<void>> metadataCacheEnable({
     required int maxEntries,
     required int ttlSeconds,
   }) =>
-      _ops.inOperation(
-        'ODBC.metadataCacheEnable',
-        () => _service.metadataCacheEnable(
-          maxEntries: maxEntries,
-          ttlSeconds: ttlSeconds,
+      OdbcErrorBoundary.runVoid(
+        'metadataCacheEnable',
+        () => _ops.inOperation(
+          'ODBC.metadataCacheEnable',
+          () => _service.metadataCacheEnable(
+            maxEntries: maxEntries,
+            ttlSeconds: ttlSeconds,
+          ),
         ),
       );
 
   Future<Result<Map<String, Object?>>> metadataCacheStats() =>
-      _ops.inOperation('ODBC.metadataCacheStats', _service.metadataCacheStats);
+      OdbcErrorBoundary.run(
+        'metadataCacheStats',
+        () => _ops.inOperation(
+          'ODBC.metadataCacheStats',
+          _service.metadataCacheStats,
+        ),
+      );
 
-  Future<Result<void>> clearMetadataCache() =>
-      _ops.inOperation('ODBC.clearMetadataCache', _service.clearMetadataCache);
+  Future<Result<void>> clearMetadataCache() => OdbcErrorBoundary.runVoid(
+        'clearMetadataCache',
+        () => _ops.inOperation(
+          'ODBC.clearMetadataCache',
+          _service.clearMetadataCache,
+        ),
+      );
 
-  Future<Result<void>> cancelStream(int streamId) => _ops.inOperation(
-        'ODBC.cancelStream',
-        () => _service.cancelStream(streamId),
+  Future<Result<void>> cancelStream(int streamId) => OdbcErrorBoundary.runVoid(
+        'cancelStream',
+        () => _ops.inOperation(
+          'ODBC.cancelStream',
+          () => _service.cancelStream(streamId),
+        ),
       );
 
   Future<Result<int>> executeAsyncStart(String connectionId, String sql) =>
-      _ops.inOperation(
-        'ODBC.executeAsyncStart',
-        () => _service.executeAsyncStart(connectionId, sql),
+      OdbcErrorBoundary.run(
+        'executeAsyncStart',
+        () => _ops.inOperation(
+          'ODBC.executeAsyncStart',
+          () => _service.executeAsyncStart(connectionId, sql),
+        ),
       );
 
-  Future<Result<int>> asyncPoll(int requestId) => _ops.inOperation(
-        'ODBC.asyncPoll',
-        () => _service.asyncPoll(requestId),
+  Future<Result<int>> asyncPoll(int requestId) => OdbcErrorBoundary.run(
+        'asyncPoll',
+        () => _ops.inOperation(
+          'ODBC.asyncPoll',
+          () => _service.asyncPoll(requestId),
+        ),
       );
 
   Future<Result<QueryResult>> asyncGetResult(
     int requestId, {
     int? maxBufferBytes,
   }) =>
-      _ops.inOperation(
-        'ODBC.asyncGetResult',
-        () => _service.asyncGetResult(
-          requestId,
-          maxBufferBytes: maxBufferBytes,
+      OdbcErrorBoundary.run(
+        'asyncGetResult',
+        () => _ops.inOperation(
+          'ODBC.asyncGetResult',
+          () => _service.asyncGetResult(
+            requestId,
+            maxBufferBytes: maxBufferBytes,
+          ),
         ),
       );
 
-  Future<Result<void>> asyncCancel(int requestId) => _ops.inOperation(
-        'ODBC.asyncCancel',
-        () => _service.asyncCancel(requestId),
+  Future<Result<void>> asyncCancel(int requestId) => OdbcErrorBoundary.runVoid(
+        'asyncCancel',
+        () => _ops.inOperation(
+          'ODBC.asyncCancel',
+          () => _service.asyncCancel(requestId),
+        ),
       );
 
-  Future<Result<void>> asyncFree(int requestId) => _ops.inOperation(
-        'ODBC.asyncFree',
-        () => _service.asyncFree(requestId),
+  Future<Result<void>> asyncFree(int requestId) => OdbcErrorBoundary.runVoid(
+        'asyncFree',
+        () => _ops.inOperation(
+          'ODBC.asyncFree',
+          () => _service.asyncFree(requestId),
+        ),
       );
 
   Future<Result<int>> streamStartAsync(
@@ -185,19 +268,25 @@ class TelemetryOdbcAdminDecorator implements IAdminService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _ops.inOperation(
-        'ODBC.streamStartAsync',
-        () => _service.streamStartAsync(
-          connectionId,
-          sql,
-          fetchSize: fetchSize,
-          chunkSize: chunkSize,
+      OdbcErrorBoundary.run(
+        'streamStartAsync',
+        () => _ops.inOperation(
+          'ODBC.streamStartAsync',
+          () => _service.streamStartAsync(
+            connectionId,
+            sql,
+            fetchSize: fetchSize,
+            chunkSize: chunkSize,
+          ),
         ),
       );
 
-  Future<Result<int>> streamPollAsync(int streamId) => _ops.inOperation(
-        'ODBC.streamPollAsync',
-        () => _service.streamPollAsync(streamId),
+  Future<Result<int>> streamPollAsync(int streamId) => OdbcErrorBoundary.run(
+        'streamPollAsync',
+        () => _ops.inOperation(
+          'ODBC.streamPollAsync',
+          () => _service.streamPollAsync(streamId),
+        ),
       );
 
   Future<String?> detectDriver(String connectionString) => _ops.inOperation(

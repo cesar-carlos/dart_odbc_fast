@@ -6,6 +6,28 @@ import 'package:test/test.dart';
 
 void main() {
   group('public API exports', () {
+    test('exports structured errors, replay option and indexed reader', () {
+      const error = QueryError(
+        message: 'driver detail',
+        details: OdbcErrorDetails(
+          code: OdbcErrorCode.query,
+          operation: 'executeQuery',
+        ),
+      );
+      expect(error.userMessage, isNot(contains('driver detail')));
+      expect(const ConnectionOptions().replayQueriesAfterReconnect, isFalse);
+      const result = QueryResult(
+        columns: [
+          'name',
+        ],
+        rows: [
+          ['value'],
+        ],
+        rowCount: 1,
+      );
+      final reader = result.reader();
+      expect(reader.cell(0, 'name'), 'value');
+    });
     test('exports domain pool option types', () {
       const options = PoolOptions(
         connectionTimeout: Duration(seconds: 5),

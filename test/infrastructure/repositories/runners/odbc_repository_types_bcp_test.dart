@@ -7,18 +7,20 @@ import 'package:test/test.dart';
 
 void main() {
   group('odbcBulkErrorFactory', () {
-    test('should_map_sqlserver_bcp_feature_message_to_UnsupportedFeatureError',
-        () {
+    test('should_map_unsupported_sqlstate_to_UnsupportedFeatureError', () {
       final err = odbcBulkErrorFactory(
-        message: "Enable 'sqlserver-bcp' feature for BCP support",
+        message: 'The operation is unavailable',
+        sqlState: '0A000',
       );
       expect(err, isA<UnsupportedFeatureError>());
     });
 
-    test('should_map_runtime_guard_message_to_UnsupportedFeatureError', () {
+    test('should_map_driver_capability_sqlstate_to_UnsupportedFeatureError',
+        () {
       final err = odbcBulkErrorFactory(
         message: 'Native SQL Server BCP is disabled by default. '
             'Set ODBC_ENABLE_UNSTABLE_NATIVE_BCP=1 to enable',
+        sqlState: 'HYC00',
       );
       expect(err, isA<UnsupportedFeatureError>());
     });

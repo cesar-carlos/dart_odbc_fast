@@ -7,6 +7,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/directed_param.dart'
     show serializeDirectedParams;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
@@ -55,6 +56,12 @@ class OdbcQueryMultiRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<QueryResult>> run() async {
+      final nativeId = state.connectionIds[connectionId];
+      if (nativeId == null) {
+        return const Failure(
+          ValidationError(message: 'Connection is unavailable'),
+        );
+      }
       try {
         final maxBytes = opts?.maxResultBufferBytes;
         final initialBytes =
@@ -99,19 +106,9 @@ class OdbcQueryMultiRunner {
           );
         }
         return Success(qr);
-      } on Exception catch (e) {
-        return ffi.convertNativeErrorToFailure<QueryResult>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
+      } on Exception catch (e, st) {
+        return Failure(
+          translateOdbcError(e, operation: 'executeQuery', stackTrace: st),
         );
       }
     }
@@ -122,7 +119,13 @@ class OdbcQueryMultiRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<QueryResult, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
+            QueryError(
+              message: odbcQueryTimedOutMessage,
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.timeout,
+                outcomeUnknown: true,
+              ),
+            ),
           ),
         );
       }
@@ -181,6 +184,12 @@ class OdbcQueryMultiRunner {
     final lazyStrings = opts?.lazyStrings ?? false;
 
     Future<Result<QueryResultMulti>> run() async {
+      final nativeId = state.connectionIds[connectionId];
+      if (nativeId == null) {
+        return const Failure(
+          ValidationError(message: 'Connection is unavailable'),
+        );
+      }
       try {
         final buf = ffi.isAsync
             ? await ffi.async.executeQueryMulti(
@@ -198,7 +207,14 @@ class OdbcQueryMultiRunner {
                 fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
-        if (buf == null || buf.isEmpty) {
+        if (buf == null) {
+          return await ffi.convertNativeErrorToFailure<QueryResultMulti>(
+            errorFactory: odbcQueryErrorFactory,
+            fallbackMessage: 'Failed to execute multi-result query',
+            nativeConnectionId: nativeId,
+          );
+        }
+        if (buf.isEmpty) {
           return const Success(
             QueryResultMulti(items: []),
           );
@@ -206,20 +222,13 @@ class OdbcQueryMultiRunner {
 
         final items = MultiResultParser.parse(buf, lazyStrings: lazyStrings);
         return Success(parser.toQueryResultMulti(items));
-      } on Exception catch (e) {
-        return ffi.convertNativeErrorToFailure<QueryResultMulti>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
-          nativeConnectionId: nativeId,
+      } on OdbcError catch (e) {
+        return Failure(e);
+      } on FormatException catch (e) {
+        return Failure(MalformedPayloadError(message: e.message));
+      } on Exception catch (e, st) {
+        return Failure(
+          translateOdbcError(e, operation: 'executeQuery', stackTrace: st),
         );
       }
     }
@@ -230,7 +239,13 @@ class OdbcQueryMultiRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<QueryResultMulti, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
+            QueryError(
+              message: odbcQueryTimedOutMessage,
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.timeout,
+                outcomeUnknown: true,
+              ),
+            ),
           ),
         );
       }
@@ -262,6 +277,12 @@ class OdbcQueryMultiRunner {
         opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
 
     Future<Result<QueryResultMulti>> run() async {
+      final nativeId = state.connectionIds[connectionId];
+      if (nativeId == null) {
+        return const Failure(
+          ValidationError(message: 'Connection is unavailable'),
+        );
+      }
       try {
         final paramsBuffer = params.isEmpty ? null : serializeParams(params);
         final buf = ffi.isAsync
@@ -282,7 +303,14 @@ class OdbcQueryMultiRunner {
                 fetchSize: opts?.blockFetchBatchSize ?? 0,
               );
 
-        if (buf == null || buf.isEmpty) {
+        if (buf == null) {
+          return await ffi.convertNativeErrorToFailure<QueryResultMulti>(
+            errorFactory: odbcQueryErrorFactory,
+            fallbackMessage: 'Failed to execute multi-result query',
+            nativeConnectionId: nativeId,
+          );
+        }
+        if (buf.isEmpty) {
           return const Success(QueryResultMulti(items: []));
         }
 
@@ -291,20 +319,13 @@ class OdbcQueryMultiRunner {
           lazyStrings: opts?.lazyStrings ?? false,
         );
         return Success(parser.toQueryResultMulti(items));
-      } on Exception catch (e) {
-        return ffi.convertNativeErrorToFailure<QueryResultMulti>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
-          nativeConnectionId: nativeId,
+      } on OdbcError catch (e) {
+        return Failure(e);
+      } on FormatException catch (e) {
+        return Failure(MalformedPayloadError(message: e.message));
+      } on Exception catch (e, st) {
+        return Failure(
+          translateOdbcError(e, operation: 'executeQuery', stackTrace: st),
         );
       }
     }
@@ -315,7 +336,13 @@ class OdbcQueryMultiRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<QueryResultMulti, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
+            QueryError(
+              message: odbcQueryTimedOutMessage,
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.timeout,
+                outcomeUnknown: true,
+              ),
+            ),
           ),
         );
       }

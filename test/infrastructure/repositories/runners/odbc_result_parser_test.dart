@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
@@ -106,11 +107,11 @@ void main() {
       expect(result.rows.single.single, equals(42));
     });
 
-    test('should_return_null_for_malformed_buffer', () {
-      final result = parser.parseBufferToQueryResult(
-        Uint8List.fromList([1, 2, 3]),
+    test('should_distinguish_malformed_buffer_from_native_failure', () {
+      expect(
+        () => parser.parseBufferToQueryResult(Uint8List.fromList([1, 2, 3])),
+        throwsA(isA<MalformedPayloadError>()),
       );
-      expect(result, isNull);
     });
 
     test('toQueryResultMulti maps result sets and row counts', () {

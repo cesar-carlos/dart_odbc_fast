@@ -189,7 +189,7 @@ void main() {
     );
 
     test(
-      'cancelStatement maps invalid statement id text to ValidationError',
+      'cancelStatement does not classify invalid statement id by message text',
       () async {
         final prep = await repository.prepare(connectionId, 'SELECT 1');
         final stmtId = prep.getOrNull()!;
@@ -202,9 +202,9 @@ void main() {
         result.fold(
           (_) => fail('Expected failure'),
           (e) {
-            expect(e, isA<ValidationError>());
+            expect(e, isA<QueryError>());
             expect(
-              (e as ValidationError).message,
+              (e as QueryError).message,
               'Invalid statement ID 999',
             );
           },
@@ -234,7 +234,8 @@ void main() {
     );
 
     test(
-      'executeQueryMultiFull maps malformed multi buffer to QueryError',
+      'executeQueryMultiFull maps malformed multi buffer '
+      'to MalformedPayloadError',
       () async {
         native.executeQueryMultiResult = malformedMultiResultBuffer();
         final result = await repository.executeQueryMultiFull(
@@ -244,7 +245,7 @@ void main() {
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),
-          (e) => expect(e, isA<QueryError>()),
+          (e) => expect(e, isA<MalformedPayloadError>()),
         );
       },
     );
@@ -406,7 +407,7 @@ void main() {
             (e) {
               expect(e, isA<QueryError>());
               final err = e as QueryError;
-              expect(err.message, equals('driver is busy'));
+              expect(err.message, equals('Failed to cancel statement'));
             },
           );
         },

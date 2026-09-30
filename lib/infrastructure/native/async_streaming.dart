@@ -254,6 +254,9 @@ mixin _AsyncStreaming
     final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
     var completed = false;
+    OdbcError? primary;
+    Object? thrown;
+    StackTrace? thrownStack;
     try {
       while (true) {
         final fetched = await streamFetch(streamId, bufferSize: chunkSize);
@@ -270,7 +273,7 @@ mixin _AsyncStreaming
           pending.add(data);
           if (limit != null && pending.length > limit) {
             throw const AsyncError(
-              code: AsyncErrorCode.queryFailed,
+              code: AsyncErrorCode.resourceExhausted,
               message: 'Streaming buffer exceeded maxBufferBytes',
             );
           }
@@ -294,11 +297,33 @@ mixin _AsyncStreaming
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      thrown = error;
+      thrownStack = stack;
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        await streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (operation: 'streamCancel', action: () => streamCancel(streamId)),
+          (operation: 'streamClose', action: () => streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        if (identical(failure, primary) && thrown != null) {
+          NativeCallContext.record(failure);
+          Error.throwWithStackTrace(thrown, thrownStack!);
+        }
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      await streamClose(streamId);
     }
   }
 
@@ -330,6 +355,9 @@ mixin _AsyncStreaming
     final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
     var completed = false;
+    OdbcError? primary;
+    Object? thrown;
+    StackTrace? thrownStack;
     try {
       while (true) {
         final fetched = await _streamFetch(streamId, bufferSize: chunkSize);
@@ -346,7 +374,7 @@ mixin _AsyncStreaming
           pending.add(data);
           if (limit != null && pending.length > limit) {
             throw const AsyncError(
-              code: AsyncErrorCode.queryFailed,
+              code: AsyncErrorCode.resourceExhausted,
               message: 'Streaming buffer exceeded maxBufferBytes',
             );
           }
@@ -370,11 +398,33 @@ mixin _AsyncStreaming
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      thrown = error;
+      thrownStack = stack;
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        await streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (operation: 'streamCancel', action: () => streamCancel(streamId)),
+          (operation: 'streamClose', action: () => _streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        if (identical(failure, primary) && thrown != null) {
+          NativeCallContext.record(failure);
+          Error.throwWithStackTrace(thrown, thrownStack!);
+        }
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      await _streamClose(streamId);
     }
   }
 
@@ -420,6 +470,9 @@ mixin _AsyncStreaming
     final buffer = BytesBuilder(copy: false);
     final limit = maxBufferBytes;
     var completed = false;
+    OdbcError? primary;
+    Object? thrown;
+    StackTrace? thrownStack;
     try {
       while (true) {
         final fetched = await _streamFetch(streamId);
@@ -436,7 +489,7 @@ mixin _AsyncStreaming
           buffer.add(data);
           if (limit != null && buffer.length > limit) {
             throw const AsyncError(
-              code: AsyncErrorCode.queryFailed,
+              code: AsyncErrorCode.resourceExhausted,
               message: 'Streaming buffer exceeded maxBufferBytes',
             );
           }
@@ -454,11 +507,33 @@ mixin _AsyncStreaming
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      thrown = error;
+      thrownStack = stack;
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        await streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (operation: 'streamCancel', action: () => streamCancel(streamId)),
+          (operation: 'streamClose', action: () => _streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        if (identical(failure, primary) && thrown != null) {
+          NativeCallContext.record(failure);
+          Error.throwWithStackTrace(thrown, thrownStack!);
+        }
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      await _streamClose(streamId);
     }
   }
 
@@ -495,6 +570,9 @@ mixin _AsyncStreaming
     final pending = BinaryFrameAccumulator();
     final limit = maxBufferBytes;
     var completed = false;
+    OdbcError? primary;
+    Object? thrown;
+    StackTrace? thrownStack;
     var streamDelay = _pollBackoffMin;
     final streamMaxDelay = pollInterval;
     try {
@@ -546,7 +624,7 @@ mixin _AsyncStreaming
           pending.add(data);
           if (limit != null && pending.length > limit) {
             throw const AsyncError(
-              code: AsyncErrorCode.queryFailed,
+              code: AsyncErrorCode.resourceExhausted,
               message: 'Streaming buffer exceeded maxBufferBytes',
             );
           }
@@ -566,11 +644,33 @@ mixin _AsyncStreaming
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      thrown = error;
+      thrownStack = stack;
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        await streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (operation: 'streamCancel', action: () => streamCancel(streamId)),
+          (operation: 'streamClose', action: () => _streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        if (identical(failure, primary) && thrown != null) {
+          NativeCallContext.record(failure);
+          Error.throwWithStackTrace(thrown, thrownStack!);
+        }
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      await _streamClose(streamId);
     }
   }
 }

@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
 import 'package:odbc_fast/infrastructure/native/driver_capabilities_mapper.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -62,9 +63,9 @@ class OdbcAdminRunner {
           ),
         );
       }
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<OdbcMetrics, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'getMetrics', stackTrace: st),
       );
     }
   }
@@ -93,9 +94,9 @@ class OdbcAdminRunner {
         );
       }
       return Success(version);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Map<String, String>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'getVersion', stackTrace: st),
       );
     }
   }
@@ -159,9 +160,13 @@ class OdbcAdminRunner {
       return Failure<Map<String, Object?>, OdbcError>(
         QueryError(message: 'Invalid driver capabilities JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Map<String, Object?>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'getDriverCapabilities',
+          stackTrace: st,
+        ),
       );
     }
   }
@@ -202,9 +207,13 @@ class OdbcAdminRunner {
       return Failure<DbmsInfo, OdbcError>(
         QueryError(message: 'Invalid connection DBMS info JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<DbmsInfo, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'getConnectionDbmsInfo',
+          stackTrace: st,
+        ),
       );
     }
   }
@@ -222,9 +231,9 @@ class OdbcAdminRunner {
         ffi.sync.setLogLevel(level);
       }
       return const Success(unit);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'setLogLevel', stackTrace: st),
       );
     }
   }
@@ -280,9 +289,9 @@ class OdbcAdminRunner {
       return Failure<Map<String, Object?>, OdbcError>(
         QueryError(message: 'Invalid audit status JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Map<String, Object?>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'getAuditStatus', stackTrace: st),
       );
     }
   }
@@ -317,9 +326,9 @@ class OdbcAdminRunner {
       return Failure<List<Map<String, Object?>>, OdbcError>(
         QueryError(message: 'Invalid audit events JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<List<Map<String, Object?>>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'getAuditEvents', stackTrace: st),
       );
     }
   }
@@ -437,9 +446,9 @@ class OdbcAdminRunner {
       return Failure<Map<String, Object?>, OdbcError>(
         QueryError(message: 'Invalid metadata cache stats JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Map<String, Object?>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'metadataCacheStats', stackTrace: st),
       );
     }
   }

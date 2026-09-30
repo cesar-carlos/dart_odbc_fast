@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart'
     show
         DirectedMultiItem,
@@ -9,6 +8,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart'
         QueryResult;
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/helpers/typed_columnar_converter.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show BinaryProtocolParser, ColumnMetadata, ParsedRowBuffer;
@@ -66,12 +66,10 @@ class OdbcResultParser {
             .toList(growable: false),
       );
     } on FormatException catch (e, st) {
-      AppLogger.warning(
-        'BinaryProtocolParser failed (buf len=${buf.length}): ${e.message}',
-        e,
-        st,
+      throw MalformedPayloadError(
+        message: e.message,
+        details: OdbcErrorDetails(cause: e, stackTrace: st),
       );
-      return null;
     }
   }
 
@@ -124,13 +122,10 @@ class OdbcResultParser {
         assumeLazyStrings: lazyStrings,
       );
     } on FormatException catch (e, st) {
-      AppLogger.warning(
-        'BinaryProtocolParser typed columnar decode failed '
-        '(buf len=${buf.length}): ${e.message}',
-        e,
-        st,
+      throw MalformedPayloadError(
+        message: e.message,
+        details: OdbcErrorDetails(cause: e, stackTrace: st),
       );
-      return null;
     }
   }
 

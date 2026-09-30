@@ -22,12 +22,17 @@ mixin _NativeTransactions on _NativeOdbcState {
     int accessMode = 0,
     int lockTimeoutMs = 0,
   }) =>
-      _native.transactionBegin(
-        connectionId,
-        isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeoutMs: lockTimeoutMs,
+      _captureSync(
+        'beginTransaction',
+        () => _native.transactionBegin(
+          connectionId,
+          isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeoutMs: lockTimeoutMs,
+        ),
+        failed: (value) => value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Begins a new transaction and returns a [TransactionHandle] wrapper.
@@ -108,6 +113,7 @@ mixin _NativeTransactions on _NativeOdbcState {
       xaId: xaId,
       xid: xid,
       conn: _connection,
+      connectionId: connectionId,
     );
   }
 
@@ -161,26 +167,50 @@ mixin _NativeTransactions on _NativeOdbcState {
       xaId: xaId,
       xid: xid,
       conn: _connection,
+      connectionId: connectionId,
       initialState: XaState.prepared,
     );
   }
 
-  bool commitTransaction(int txnId) => _native.transactionCommit(txnId);
+  bool commitTransaction(int txnId) => _captureSync(
+        'commitTransaction',
+        () => _native.transactionCommit(txnId),
+        failed: (value) => !value,
+      );
 
-  int commitTransactionStatus(int txnId) =>
-      _native.transactionCommitStatus(txnId);
+  int commitTransactionStatus(int txnId) => _captureSync(
+        'commitTransactionStatus',
+        () => _native.transactionCommitStatus(txnId),
+        failed: (value) => value != 0,
+      );
 
-  bool rollbackTransaction(int txnId) => _native.transactionRollback(txnId);
+  bool rollbackTransaction(int txnId) => _captureSync(
+        'rollbackTransaction',
+        () => _native.transactionRollback(txnId),
+        failed: (value) => !value,
+      );
 
-  int rollbackTransactionStatus(int txnId) =>
-      _native.transactionRollbackStatus(txnId);
+  int rollbackTransactionStatus(int txnId) => _captureSync(
+        'rollbackTransactionStatus',
+        () => _native.transactionRollbackStatus(txnId),
+        failed: (value) => value != 0,
+      );
 
-  bool createSavepoint(int txnId, String name) =>
-      _native.savepointCreate(txnId, name);
+  bool createSavepoint(int txnId, String name) => _captureSync(
+        'createSavepoint',
+        () => _native.savepointCreate(txnId, name),
+        failed: (value) => !value,
+      );
 
-  bool rollbackToSavepoint(int txnId, String name) =>
-      _native.savepointRollback(txnId, name);
+  bool rollbackToSavepoint(int txnId, String name) => _captureSync(
+        'rollbackToSavepoint',
+        () => _native.savepointRollback(txnId, name),
+        failed: (value) => !value,
+      );
 
-  bool releaseSavepoint(int txnId, String name) =>
-      _native.savepointRelease(txnId, name);
+  bool releaseSavepoint(int txnId, String name) => _captureSync(
+        'releaseSavepoint',
+        () => _native.savepointRelease(txnId, name),
+        failed: (value) => !value,
+      );
 }

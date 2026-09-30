@@ -1,5 +1,7 @@
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
@@ -49,8 +51,10 @@ class OdbcFfiDispatch {
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
       );
-    } on Exception catch (e) {
-      return Failure<Unit, OdbcError>(errorFactory(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<Unit, OdbcError>(
+        translateOdbcError(e, operation: 'runBoolFfi', stackTrace: st),
+      );
     }
   }
 
@@ -76,8 +80,14 @@ class OdbcFfiDispatch {
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
       );
-    } on Exception catch (e) {
-      return Failure<Unit, OdbcError>(errorFactory(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<Unit, OdbcError>(
+        translateOdbcError(
+          e,
+          operation: 'runBoolFfiWithCleanup',
+          stackTrace: st,
+        ),
+      );
     }
   }
 
@@ -100,8 +110,10 @@ class OdbcFfiDispatch {
         fallbackMessage: fallbackMessage,
         nativeConnectionId: nativeConnectionId,
       );
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(errorFactory(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<int, OdbcError>(
+        translateOdbcError(e, operation: 'runIntFfi', stackTrace: st),
+      );
     }
   }
 
@@ -133,26 +145,52 @@ class OdbcFfiDispatch {
     String? fallbackMessage,
     int? nativeConnectionId,
   }) async {
-    final structuredError = await getStructuredNativeError(
-      nativeConnectionId: nativeConnectionId,
-    );
-
-    if (structuredError != null) {
-      return Failure<T, OdbcError>(
+    final context = NativeCallContext.current;
+    final captured = NativeCallContext.takeFailure();
+    if (captured != null) return Failure(captured);
+    final fallback = fallbackMessage == null ||
+            fallbackMessage.trim().isEmpty ||
+            fallbackMessage == 'No error'
+        ? 'The native operation failed'
+        : fallbackMessage;
+    // Real worker replies always capture at source, never ask another request
+    // for a potentially unrelated global "last error".
+    if (isAsync && (context?.receivedResponse ?? false)) {
+      return Failure(errorFactory(message: fallback));
+    }
+    try {
+      final structuredError = await getStructuredNativeError(
+        nativeConnectionId: nativeConnectionId,
+      );
+      if (structuredError != null) {
+        final message = structuredError.message.trim();
+        return Failure(
+          errorFactory(
+            message:
+                message.isEmpty || message == 'No error' ? fallback : message,
+            sqlState: structuredError.sqlStateString,
+            nativeCode: structuredError.nativeCode,
+          ),
+        );
+      }
+      final message =
+          (isAsync ? await async.getError() : sync.getError()).trim();
+      return Failure(
         errorFactory(
-          message: structuredError.message,
-          sqlState: structuredError.sqlStateString,
-          nativeCode: structuredError.nativeCode,
+          message:
+              message.isEmpty || message == 'No error' ? fallback : message,
+        ),
+      );
+    } on Object catch (error, stack) {
+      return Failure(
+        errorFactory(message: fallback).withSecondary(
+          translateOdbcError(
+            error,
+            operation: 'collectDiagnostic',
+            stackTrace: stack,
+          ),
         ),
       );
     }
-
-    final errorMsg = isAsync ? await async.getError() : sync.getError();
-    final finalMessage =
-        errorMsg.isNotEmpty ? errorMsg : (fallbackMessage ?? 'Unknown error');
-
-    return Failure<T, OdbcError>(
-      errorFactory(message: finalMessage),
-    );
   }
 }

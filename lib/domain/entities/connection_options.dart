@@ -51,6 +51,7 @@ class ConnectionOptions {
     this.blockFetchBatchSize,
     this.sqlPointerCacheMaxSize,
     this.autoReconnectOnConnectionLost = false,
+    this.replayQueriesAfterReconnect = false,
     this.maxReconnectAttempts,
     this.reconnectBackoff,
     this.slowQueryThreshold,
@@ -118,9 +119,12 @@ class ConnectionOptions {
   /// native engine constructed for this options set (default 256 when null).
   final int? sqlPointerCacheMaxSize;
 
-  /// When true, the repository may attempt to reconnect and re-execute the
-  /// operation on connection-lost errors. Default is false.
+  /// Restores a lost connection for future operations. Default is false.
+  /// The failed query is only repeated with [replayQueriesAfterReconnect].
   final bool autoReconnectOnConnectionLost;
+
+  /// Explicitly permits replay after reconnect. Never used inside transactions.
+  final bool replayQueriesAfterReconnect;
 
   /// Maximum number of reconnect attempts when
   /// [ConnectionOptions.autoReconnectOnConnectionLost] is true.

@@ -190,3 +190,56 @@ canonical spelling and opt-in meaning for live-driver flags.
 - Docker test stack: [`development/docker-test-stack.md`](development/docker-test-stack.md)
 - MSDTC runbook: [`development/msdtc-recovery.md`](development/msdtc-recovery.md)
 - Pending test work: [`Features/PENDING_IMPLEMENTATIONS.md`](Features/PENDING_IMPLEMENTATIONS.md)
+
+## Dart hot-path comparison
+
+Run `dart run benchmarks/dart_hot_paths.dart` for cursor consumption and indexed
+column access; `--linear` retains the old column helper for comparison. Output
+contains 15 measured samples after six warmups, in microseconds. Each sample
+uses eight rounds, except the single full frame which uses 64 rounds to reduce
+timer noise. Compare the same SDK, machine and workload. Frames cover small
+coalesced inputs, large/full-capacity inputs, fragmentation and retained lazy
+text. When comparing revisions, copy the original accumulator into an ignored
+working directory and substitute only its import in this benchmark. No DSN or
+native ABI change is involved. Check the full distributions, not a single run.
+
+### Measured comparison (2026-09-30)
+
+Windows x64, Dart 3.13.4 stable, one process at a time without concurrent test
+suites. Baseline accumulator:
+`7fe2b37f91d1338d19753c44d567387ead5bda80`; column baseline uses the retained
+`result.cell` helper. Numbers below are medians per sample, not per operation.
+The ratio interval resamples baseline and revised samples independently 10,000
+times with seed 7, comparing their medians. A ratio below 1 favors the revision.
+
+| Scenario | Baseline (ms) | Revised (ms) | Speedup | Revised/baseline 95% bootstrap interval |
+| --- | ---: | ---: | ---: | --- |
+| 500 frames, 32 bytes | 16.040 | 0.072 | 222.78x | 0.004–0.009 |
+| 2,000 frames, 32 bytes | 84.362 | 0.222 | 380.01x | 0.002–0.003 |
+| 8,000 frames, 32 bytes | 482.535 | 3.161 | 152.65x | 0.006–0.007 |
+| 16 frames, 65,536 bytes | 26.831 | 3.152 | 8.51x | 0.109–0.120 |
+| Single frame, 65,536 bytes (64 rounds) | 0.992 | 0.664 | 1.49x | 0.107–1.116 |
+| 13-byte input fragments | 42.103 | 38.419 | 1.10x | 0.863–0.963 |
+| Retained lazy text | 778.188 | 1.077 | 722.55x | 0.001–0.001 |
+| Repeated column lookup | 598.942 | 5.972 | 100.29x | 0.010–0.010 |
+
+Consumption no longer copies the remainder after each frame. For one pass over
+8,000 32-byte frames, this removes 1,023,872,000 bytes of remainder copying;
+cursor advancement copies none. Adding new bytes after delivering shared views
+still detaches the backing and copies pending bytes once to preserve ownership.
+The full-frame interval includes 1: this run establishes no significant change
+in that noisy scenario. All other intervals favor the revision. These are local
+JIT measurements, not a cross-platform performance guarantee.
+
+The implementation regression run uses the canonical CI flags (`CI=true`,
+`ENABLE_E2E_TESTS=0`, `RUN_SKIPPED_TESTS=0`, `RUN_LIVE_TESTS=0`). Additional checks
+cover public exports, documentation, examples, and the CI protocol performance
+tests. Local integration cases run without a DSN; live-driver cases explicitly
+skip when their prerequisites are unavailable. No live database result is
+claimed by this comparison.
+
+Validation for this revision: `dart analyze` reports no issues; the CI unit
+command passes 1,607 tests with three explicit skips. The complementary core,
+exports, documentation and examples suite passes 85 tests, and the CI protocol
+performance suite passes 10. Local integration passes 16 cases with 25 explicit
+live-driver skips. The CI slow-test check also passes its 1,500 ms threshold.

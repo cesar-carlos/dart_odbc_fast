@@ -20,6 +20,9 @@ class _WorkerChannel {
   final ReceivePort receivePort;
   final Map<int, Completer<WorkerResponse>> pendingRequests = {};
 
+  OdbcError? startupFailure;
+  final Map<int, WorkerFailureSnapshot> failureSnapshots = {};
+
   SendPort? sendPort;
   Isolate? isolate;
   int activeRequests = 0;

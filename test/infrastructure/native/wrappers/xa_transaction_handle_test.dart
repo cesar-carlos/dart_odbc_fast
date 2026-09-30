@@ -14,6 +14,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
 import 'package:test/test.dart';
 
@@ -25,6 +26,34 @@ void main() {
       );
 
   group('XaTransactionHandle.runWithStart', () {
+    test('commit failure does not roll back an uncertain branch', () async {
+      final fake = _FakeXa(mkXid('uncertain'))..failOn = _FailOn.commitPrepared;
+      await expectLater(
+        XaTransactionHandle.runWithStart(() => fake, (xa) async => 1),
+        throwsStateError,
+      );
+      expect(fake.rollbackCalls, 0);
+      expect(fake.rollbackPreparedCalls, 0);
+    });
+    test('cleanup failure preserves the action cause', () async {
+      final fake = _FakeXa(mkXid('secondary'))..failOn = _FailOn.rollback;
+      final cause = StateError('action failed');
+      await expectLater(
+        XaTransactionHandle.runWithStart(
+          () => fake,
+          (xa) async => throw cause,
+        ),
+        throwsA(
+          isA<OdbcError>()
+              .having((e) => e.details.cause, 'cause', same(cause))
+              .having(
+                (e) => e.details.secondaryErrors.single,
+                'secondary',
+                isA<RollbackFailedError>(),
+              ),
+        ),
+      );
+    });
     test('happy path: end → prepare → commitPrepared, returns value', () async {
       final fake = _FakeXa(mkXid('happy'));
 
@@ -317,7 +346,7 @@ void main() {
         backend: backend,
       );
       expect(await handle.rollbackPrepared(), isFalse);
-      expect(handle.state, XaState.failed);
+      expect(handle.state, XaState.failedAfterPrepare);
 
       handle = XaTransactionHandle.withBackend(
         xaId: 13,

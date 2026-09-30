@@ -9,6 +9,16 @@ import 'fake_workers.dart';
 
 void main() {
   loadTestEnv();
+  test('async start failure must not implicitly replay a query', () async {
+    final native =
+        AsyncNativeOdbcConnection(isolateEntry: fakeWorkerAsyncStartFailure);
+    addTearDown(native.dispose);
+    await native.initialize();
+    final data = await native.executeQueryParamBuffer(1, 'query', null);
+    expect(data, isNull);
+    expect(native.getWorkerPoolStats().fallbacksToBlocking, 0);
+    expect(native.getWorkerPoolStats().failedRequests, 1);
+  });
   group('AsyncNativeOdbcConnection async execute', () {
     test('should run async execute lifecycle via worker messages', () async {
       final async = AsyncNativeOdbcConnection(

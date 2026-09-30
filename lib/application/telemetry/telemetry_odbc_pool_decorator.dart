@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/pool_options.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Pool-shaped telemetry decorator implementing [IPoolService].
@@ -30,13 +31,16 @@ class TelemetryOdbcPoolDecorator implements IPoolService {
     PoolOptions? options,
     ConnectionOptions? connectionOptions,
   }) =>
-      _ops.inOperation(
-        'ODBC.poolCreate',
-        () => _pools.poolCreate(
-          connectionString,
-          maxSize,
-          options: options,
-          connectionOptions: connectionOptions,
+      OdbcErrorBoundary.run(
+        'poolCreate',
+        () => _ops.inOperation(
+          'ODBC.poolCreate',
+          () => _pools.poolCreate(
+            connectionString,
+            maxSize,
+            options: options,
+            connectionOptions: connectionOptions,
+          ),
         ),
       );
 
@@ -45,45 +49,66 @@ class TelemetryOdbcPoolDecorator implements IPoolService {
     int poolId, {
     ConnectionOptions? options,
   }) =>
-      _ops.inOperation(
-        'ODBC.poolGetConnection',
-        () => _pools.poolGetConnection(poolId, options: options),
+      OdbcErrorBoundary.run(
+        'poolGetConnection',
+        () => _ops.inOperation(
+          'ODBC.poolGetConnection',
+          () => _pools.poolGetConnection(poolId, options: options),
+        ),
       );
 
   @override
   Future<Result<void>> poolReleaseConnection(String connectionId) =>
-      _ops.inOperation(
-        'ODBC.poolReleaseConnection',
-        () => _pools.poolReleaseConnection(connectionId),
+      OdbcErrorBoundary.runVoid(
+        'poolReleaseConnection',
+        () => _ops.inOperation(
+          'ODBC.poolReleaseConnection',
+          () => _pools.poolReleaseConnection(connectionId),
+        ),
       );
 
   @override
-  Future<Result<bool>> poolHealthCheck(int poolId) => _ops.inOperation(
-        'ODBC.poolHealthCheck',
-        () => _pools.poolHealthCheck(poolId),
+  Future<Result<bool>> poolHealthCheck(int poolId) => OdbcErrorBoundary.run(
+        'poolHealthCheck',
+        () => _ops.inOperation(
+          'ODBC.poolHealthCheck',
+          () => _pools.poolHealthCheck(poolId),
+        ),
       );
 
-  Future<Result<PoolState>> poolGetState(int poolId) => _ops.inOperation(
-        'ODBC.poolGetState',
-        () => _service.poolGetState(poolId),
+  Future<Result<PoolState>> poolGetState(int poolId) => OdbcErrorBoundary.run(
+        'poolGetState',
+        () => _ops.inOperation(
+          'ODBC.poolGetState',
+          () => _service.poolGetState(poolId),
+        ),
       );
 
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) =>
-      _ops.inOperation(
-        'ODBC.poolGetStateDetailed',
-        () => _service.poolGetStateDetailed(poolId),
+      OdbcErrorBoundary.run(
+        'poolGetStateDetailed',
+        () => _ops.inOperation(
+          'ODBC.poolGetStateDetailed',
+          () => _service.poolGetStateDetailed(poolId),
+        ),
       );
 
   @override
   Future<Result<void>> poolSetSize(int poolId, int newMaxSize) =>
-      _ops.inOperation(
-        'ODBC.poolSetSize',
-        () => _pools.poolSetSize(poolId, newMaxSize),
+      OdbcErrorBoundary.runVoid(
+        'poolSetSize',
+        () => _ops.inOperation(
+          'ODBC.poolSetSize',
+          () => _pools.poolSetSize(poolId, newMaxSize),
+        ),
       );
 
   @override
-  Future<Result<void>> poolClose(int poolId) => _ops.inOperation(
-        'ODBC.poolClose',
-        () => _pools.poolClose(poolId),
+  Future<Result<void>> poolClose(int poolId) => OdbcErrorBoundary.runVoid(
+        'poolClose',
+        () => _ops.inOperation(
+          'ODBC.poolClose',
+          () => _pools.poolClose(poolId),
+        ),
       );
 }

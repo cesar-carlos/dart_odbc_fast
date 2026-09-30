@@ -1,6 +1,9 @@
 import 'dart:async' show unawaited;
 import 'dart:math' show Random;
 
+import 'package:odbc_fast/core/utils/logger.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/domain/repositories/itelemetry_repository.dart';
 import 'package:odbc_fast/domain/services/itelemetry_service.dart';
 import 'package:odbc_fast/domain/telemetry/entities.dart';
@@ -10,7 +13,9 @@ import 'package:odbc_fast/domain/telemetry/entities.dart';
 /// Provides methods for starting/ending traces, spans, and recording metrics.
 /// Uses a simple [ITelemetryRepository] that doesn't return Result types.
 class SimpleTelemetryService implements ITelemetryService {
-  SimpleTelemetryService(this._repository);
+  SimpleTelemetryService(this._repository, {this.onDiagnostic});
+
+  final void Function(OdbcError)? onDiagnostic;
 
   final ITelemetryRepository _repository;
   final Map<String, Trace> _activeTraces = {};
@@ -65,7 +70,7 @@ class SimpleTelemetryService implements ITelemetryService {
     );
 
     _activeTraces[traceId] = trace;
-    unawaited(_repository.exportTrace(trace));
+    unawaited(safely('exportTrace', () => _repository.exportTrace(trace)));
     return trace;
   }
 
@@ -78,17 +83,20 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Trace ID cannot be empty');
     }
 
-    final cached = _activeTraces[traceId];
+    final cached = _activeTraces.remove(traceId);
     if (cached == null) {
       throw Exception('Trace $traceId not found');
     }
 
     final now = DateTime.now().toUtc();
 
-    await _repository.updateTrace(
-      traceId: traceId,
-      endTime: now,
-      attributes: {...cached.attributes, ...attributes},
+    await safely(
+      'updateTrace',
+      () => _repository.updateTrace(
+        traceId: traceId,
+        endTime: now,
+        attributes: {...cached.attributes, ...attributes},
+      ),
     );
 
     _activeTraces.remove(traceId);
@@ -120,7 +128,7 @@ class SimpleTelemetryService implements ITelemetryService {
     );
 
     _activeSpans[spanId] = span;
-    unawaited(_repository.exportSpan(span));
+    unawaited(safely('exportSpan', () => _repository.exportSpan(span)));
     return span;
   }
 
@@ -133,17 +141,20 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Span ID cannot be empty');
     }
 
-    final cached = _activeSpans[spanId];
+    final cached = _activeSpans.remove(spanId);
     if (cached == null) {
       throw Exception('Span $spanId not found');
     }
 
     final now = DateTime.now().toUtc();
 
-    await _repository.updateSpan(
-      spanId: spanId,
-      endTime: now,
-      attributes: {...cached.attributes, ...attributes},
+    await safely(
+      'updateSpan',
+      () => _repository.updateSpan(
+        spanId: spanId,
+        endTime: now,
+        attributes: {...cached.attributes, ...attributes},
+      ),
     );
 
     _activeSpans.remove(spanId);
@@ -167,13 +178,16 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Metric unit cannot be empty');
     }
 
-    await _repository.exportMetric(
-      Metric(
-        name: name,
-        value: value,
-        unit: unit,
-        timestamp: DateTime.now().toUtc(),
-        attributes: attributes,
+    await safely(
+      'exportMetric',
+      () => _repository.exportMetric(
+        Metric(
+          name: name,
+          value: value,
+          unit: unit,
+          timestamp: DateTime.now().toUtc(),
+          attributes: attributes,
+        ),
       ),
     );
   }
@@ -191,13 +205,16 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Gauge value must be a valid number');
     }
 
-    await _repository.exportMetric(
-      Metric(
-        name: name,
-        value: value,
-        unit: 'count',
-        timestamp: DateTime.now().toUtc(),
-        attributes: attributes,
+    await safely(
+      'exportMetric',
+      () => _repository.exportMetric(
+        Metric(
+          name: name,
+          value: value,
+          unit: 'count',
+          timestamp: DateTime.now().toUtc(),
+          attributes: attributes,
+        ),
       ),
     );
   }
@@ -215,13 +232,16 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Duration cannot be negative');
     }
 
-    await _repository.exportMetric(
-      Metric(
-        name: name,
-        value: duration.inMilliseconds.toDouble(),
-        unit: 'ms',
-        timestamp: DateTime.now().toUtc(),
-        attributes: attributes,
+    await safely(
+      'exportMetric',
+      () => _repository.exportMetric(
+        Metric(
+          name: name,
+          value: duration.inMilliseconds.toDouble(),
+          unit: 'ms',
+          timestamp: DateTime.now().toUtc(),
+          attributes: attributes,
+        ),
       ),
     );
   }
@@ -240,25 +260,28 @@ class SimpleTelemetryService implements ITelemetryService {
       throw ArgumentError('Event message cannot be empty');
     }
 
-    await _repository.exportEvent(
-      TelemetryEvent(
-        name: name,
-        severity: severity,
-        message: message,
-        timestamp: DateTime.now().toUtc(),
-        context: context,
+    await safely(
+      'exportEvent',
+      () => _repository.exportEvent(
+        TelemetryEvent(
+          name: name,
+          severity: severity,
+          message: message,
+          timestamp: DateTime.now().toUtc(),
+          context: context,
+        ),
       ),
     );
   }
 
   @override
   Future<void> flush() async {
-    await _repository.flush();
+    await safely('flush', _repository.flush);
   }
 
   @override
   Future<void> shutdown() async {
-    await _repository.shutdown();
+    await safely('shutdown', _repository.shutdown);
   }
 
   /// Wraps an async operation with trace lifecycle and timing.
@@ -269,29 +292,72 @@ class SimpleTelemetryService implements ITelemetryService {
     String operationName,
     Future<T> Function() fn,
   ) async {
-    final trace = startTrace(operationName);
+    Trace? trace;
+    try {
+      trace = startTrace(operationName);
+    } on Object catch (error, stack) {
+      _diagnose(error, stack, 'startTrace');
+    }
     final stopwatch = Stopwatch()..start();
     try {
-      final result = await fn();
-      await recordTiming(
-        name: '$operationName.duration',
-        duration: stopwatch.elapsed,
-        attributes: {'operation': operationName},
+      return await fn();
+    } on Object catch (error, stack) {
+      await safely(
+        'recordOperationError',
+        () => recordEvent(
+          name: '$operationName.error',
+          severity: TelemetrySeverity.error,
+          message: 'The instrumented operation failed',
+          context: {'errorType': error.runtimeType.toString()},
+        ),
       );
-      await endTrace(traceId: trace.traceId);
-      return result;
-    } catch (e, s) {
-      await endTrace(
-        traceId: trace.traceId,
-        attributes: {'error': e.toString()},
+      Error.throwWithStackTrace(error, stack);
+    } finally {
+      await safely(
+        'recordTiming',
+        () => recordTiming(
+          name: '$operationName.duration',
+          duration: stopwatch.elapsed,
+        ),
       );
-      await recordEvent(
-        name: '$operationName.error',
-        severity: TelemetrySeverity.error,
-        message: e.toString(),
-        context: {'stackTrace': s.toString()},
-      );
-      rethrow;
+      final active = trace;
+      if (active != null) {
+        await safely('endTrace', () => endTrace(traceId: active.traceId));
+      }
     }
+  }
+
+  /// Reports instrumentation failures without changing the database result.
+  Future<void> safely(String operation, Future<void> Function() action) async {
+    try {
+      await action();
+    } on Object catch (error, stack) {
+      _diagnose(error, stack, operation);
+    }
+  }
+
+  void _diagnose(Object error, StackTrace stack, String operation) {
+    var diagnostic =
+        normalizeOdbcError(error, operation: operation, stackTrace: stack);
+    final callback = onDiagnostic;
+    if (callback != null) {
+      try {
+        callback(diagnostic);
+        return;
+      } on Object catch (callbackError, callbackStack) {
+        diagnostic = diagnostic.withSecondary(
+          normalizeOdbcError(
+            callbackError,
+            operation: 'onDiagnostic',
+            stackTrace: callbackStack,
+          ),
+        );
+      }
+    }
+    AppLogger.warning(
+      'Telemetry diagnostic: ${diagnostic.userMessage}',
+      diagnostic,
+      stack,
+    );
   }
 }

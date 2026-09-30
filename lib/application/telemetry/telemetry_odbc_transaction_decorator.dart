@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Transaction-shaped telemetry decorator implementing [ITransactionService].
@@ -33,29 +34,38 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      _ops.inOperation(
-        'ODBC.beginTransaction',
-        () => _transactions.beginTransaction(
-          connectionId,
-          isolationLevel: isolationLevel,
-          savepointDialect: savepointDialect,
-          accessMode: accessMode,
-          lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'beginTransaction',
+        () => _ops.inOperation(
+          'ODBC.beginTransaction',
+          () => _transactions.beginTransaction(
+            connectionId,
+            isolationLevel: isolationLevel,
+            savepointDialect: savepointDialect,
+            accessMode: accessMode,
+            lockTimeout: lockTimeout,
+          ),
         ),
       );
 
   @override
   Future<Result<void>> commitTransaction(String connectionId, int txnId) =>
-      _ops.inOperation(
-        'ODBC.commitTransaction',
-        () => _transactions.commitTransaction(connectionId, txnId),
+      OdbcErrorBoundary.runVoid(
+        'commitTransaction',
+        () => _ops.inOperation(
+          'ODBC.commitTransaction',
+          () => _transactions.commitTransaction(connectionId, txnId),
+        ),
       );
 
   @override
   Future<Result<void>> rollbackTransaction(String connectionId, int txnId) =>
-      _ops.inOperation(
-        'ODBC.rollbackTransaction',
-        () => _transactions.rollbackTransaction(connectionId, txnId),
+      OdbcErrorBoundary.runVoid(
+        'rollbackTransaction',
+        () => _ops.inOperation(
+          'ODBC.rollbackTransaction',
+          () => _transactions.rollbackTransaction(connectionId, txnId),
+        ),
       );
 
   @override
@@ -67,15 +77,18 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      _ops.inOperation(
-        'ODBC.runInTransaction',
-        () => _transactions.runInTransaction<T>(
-          connectionId,
-          action,
-          isolationLevel: isolationLevel,
-          savepointDialect: savepointDialect,
-          accessMode: accessMode,
-          lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'runInTransaction',
+        () => _ops.inOperation(
+          'ODBC.runInTransaction',
+          () => _transactions.runInTransaction<T>(
+            connectionId,
+            action,
+            isolationLevel: isolationLevel,
+            savepointDialect: savepointDialect,
+            accessMode: accessMode,
+            lockTimeout: lockTimeout,
+          ),
         ),
       );
 
@@ -85,28 +98,38 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     Future<Result<T>> Function(XaTransactionHandle xa) action, {
     bool onePhase = false,
   }) =>
-      _ops.inOperation(
-        'ODBC.runInXaTransaction',
-        () => _service.runInXaTransaction<T>(
-          connectionId,
-          xid,
-          action,
-          onePhase: onePhase,
+      OdbcErrorBoundary.run(
+        'runInXaTransaction',
+        () => _ops.inOperation(
+          'ODBC.runInXaTransaction',
+          () => _service.runInXaTransaction<T>(
+            connectionId,
+            xid,
+            action,
+            onePhase: onePhase,
+          ),
         ),
       );
 
-  Future<Result<List<Xid>>> xaRecover(String connectionId) => _ops.inOperation(
-        'ODBC.xaRecover',
-        () => _service.xaRecover(connectionId),
+  Future<Result<List<Xid>>> xaRecover(String connectionId) =>
+      OdbcErrorBoundary.run(
+        'xaRecover',
+        () => _ops.inOperation(
+          'ODBC.xaRecover',
+          () => _service.xaRecover(connectionId),
+        ),
       );
 
   Future<Result<XaTransactionHandle>> xaResumePrepared(
     String connectionId,
     Xid xid,
   ) =>
-      _ops.inOperation(
-        'ODBC.xaResumePrepared',
-        () => _service.xaResumePrepared(connectionId, xid),
+      OdbcErrorBoundary.run(
+        'xaResumePrepared',
+        () => _ops.inOperation(
+          'ODBC.xaResumePrepared',
+          () => _service.xaResumePrepared(connectionId, xid),
+        ),
       );
 
   Future<Result<void>> createSavepoint(
@@ -114,9 +137,12 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     int txnId,
     String name,
   ) =>
-      _ops.inOperation(
-        'ODBC.createSavepoint',
-        () => _service.createSavepoint(connectionId, txnId, name),
+      OdbcErrorBoundary.runVoid(
+        'createSavepoint',
+        () => _ops.inOperation(
+          'ODBC.createSavepoint',
+          () => _service.createSavepoint(connectionId, txnId, name),
+        ),
       );
 
   Future<Result<void>> rollbackToSavepoint(
@@ -124,9 +150,12 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     int txnId,
     String name,
   ) =>
-      _ops.inOperation(
-        'ODBC.rollbackToSavepoint',
-        () => _service.rollbackToSavepoint(connectionId, txnId, name),
+      OdbcErrorBoundary.runVoid(
+        'rollbackToSavepoint',
+        () => _ops.inOperation(
+          'ODBC.rollbackToSavepoint',
+          () => _service.rollbackToSavepoint(connectionId, txnId, name),
+        ),
       );
 
   Future<Result<void>> releaseSavepoint(
@@ -134,8 +163,11 @@ class TelemetryOdbcTransactionDecorator implements ITransactionService {
     int txnId,
     String name,
   ) =>
-      _ops.inOperation(
-        'ODBC.releaseSavepoint',
-        () => _service.releaseSavepoint(connectionId, txnId, name),
+      OdbcErrorBoundary.runVoid(
+        'releaseSavepoint',
+        () => _ops.inOperation(
+          'ODBC.releaseSavepoint',
+          () => _service.releaseSavepoint(connectionId, txnId, name),
+        ),
       );
 }

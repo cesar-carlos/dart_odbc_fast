@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/odbc_type.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
 
 /// Active lazy-string mode for the current parse call.
 bool binaryProtocolLazyStringsActive = false;
@@ -23,6 +24,7 @@ void setNullBitmapBit(Uint8List bitmap, int row) {
 Object? decodeProtocolCell(Uint8List data, int odbcType) {
   final type = OdbcType.fromDiscriminant(odbcType);
   if (type == OdbcType.binary) {
+    ProtocolByteAccumulator.protectBacking(data);
     return data;
   }
   if (type == OdbcType.integer) {

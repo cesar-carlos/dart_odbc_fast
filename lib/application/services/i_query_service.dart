@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped operations subset of `IOdbcService`.
@@ -133,7 +134,10 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     Connection conn,
     String sql,
   ) =>
-      executeQuery(sql, connectionId: conn.id);
+      OdbcErrorBoundary.run(
+        'executeQueryFor',
+        () => executeQuery(sql, connectionId: conn.id),
+      );
 
   /// `executeQueryParamValues` overload that accepts a [Connection].
   Future<Result<QueryResult>> executeQueryParamValuesFor(
@@ -142,11 +146,14 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      executeQueryParamValues(
-        conn.id,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValuesFor',
+        () => executeQueryParamValues(
+          conn.id,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   /// `executeQueryNamed` overload that accepts a [Connection].
@@ -155,7 +162,10 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      executeQueryNamed(conn.id, sql, namedParams);
+      OdbcErrorBoundary.run(
+        'executeQueryNamedFor',
+        () => executeQueryNamed(conn.id, sql, namedParams),
+      );
 
   /// `executeQueryColumnarParamValues` overload that accepts a [Connection].
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValuesFor(
@@ -163,7 +173,10 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      executeQueryColumnarParamValues(conn.id, sql, params: params);
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValuesFor',
+        () => executeQueryColumnarParamValues(conn.id, sql, params: params),
+      );
 
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(
@@ -172,11 +185,14 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQuery(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryFor',
+        () => streamQuery(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryNamed` overload that accepts a [Connection].
@@ -187,12 +203,15 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryNamed(
-        conn.id,
-        sql,
-        namedParams,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamedFor',
+        () => streamQueryNamed(
+          conn.id,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryColumnar` overload that accepts a [Connection].
@@ -202,11 +221,14 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryColumnar(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnarFor',
+        () => streamQueryColumnar(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryMultiBatches` overload that accepts a [Connection].
@@ -216,10 +238,13 @@ extension IQueryServiceConnectionOverloads on IQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryMultiBatches(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesFor',
+        () => streamQueryMultiBatches(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 }

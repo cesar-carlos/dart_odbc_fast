@@ -12,9 +12,14 @@ import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
+import 'package:odbc_fast/infrastructure/native/isolate/worker_failure_snapshot.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_isolate.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart';
@@ -26,16 +31,16 @@ import 'package:odbc_fast/infrastructure/native/protocol/stream_frame_decode.dar
 
 export 'package:odbc_fast/core/di/async_backpressure_mode.dart';
 
-part 'async_worker_channel.dart';
-part 'async_worker_lifecycle.dart';
-part 'async_worker_dispatch.dart';
-part 'async_worker_stats.dart';
 part 'async_connection.dart';
-part 'async_query_async.dart';
-part 'async_transactions.dart';
-part 'async_query.dart';
 part 'async_pool.dart';
+part 'async_query.dart';
+part 'async_query_async.dart';
 part 'async_streaming.dart';
+part 'async_transactions.dart';
+part 'async_worker_channel.dart';
+part 'async_worker_dispatch.dart';
+part 'async_worker_lifecycle.dart';
+part 'async_worker_stats.dart';
 
 const _defaultRequestTimeout = Duration(seconds: 30);
 const _streamAsyncStatusPending = 0;
@@ -122,6 +127,9 @@ abstract class _AsyncOdbcState {
   int _requestIdCounter = 0;
   final Map<int, List<String>> _namedParamOrderByStmtId = {};
   final Map<int, int> _connectionWorkerById = {};
+  final Map<int, int> _connectionPoolById = {};
+  final Map<int, int> _streamConnectionById = {};
+  final Map<int, int> _asyncRequestConnectionById = {};
   final Map<int, int> _statementWorkerById = {};
   final Map<int, int> _statementConnectionById = {};
   final Map<int, int> _transactionWorkerById = {};

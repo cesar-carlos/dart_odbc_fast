@@ -27,6 +27,7 @@ import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     hide OdbcMetrics;
@@ -88,18 +89,25 @@ class OdbcService implements IOdbcService {
   Stream<OdbcEvent> get events => _admin.events;
 
   @override
-  Future<Result<void>> initialize() => _admin.initialize();
+  Future<Result<void>> initialize() =>
+      OdbcErrorBoundary.runVoid('initialize', _admin.initialize);
 
   @override
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
   }) =>
-      _admin.connect(connectionString, options: options);
+      OdbcErrorBoundary.run(
+        'connect',
+        () => _admin.connect(connectionString, options: options),
+      );
 
   @override
   Future<Result<void>> disconnect(String connectionId) =>
-      _admin.disconnect(connectionId);
+      OdbcErrorBoundary.runVoid(
+        'disconnect',
+        () => _admin.disconnect(connectionId),
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryParamValues(
@@ -108,11 +116,14 @@ class OdbcService implements IOdbcService {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      _query.executeQueryParamValues(
-        connectionId,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValues',
+        () => _query.executeQueryParamValues(
+          connectionId,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   @override
@@ -121,7 +132,10 @@ class OdbcService implements IOdbcService {
     String sql,
     List<DirectedParam> params,
   ) =>
-      _query.executeQueryDirectedParams(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryDirectedParams',
+        () => _query.executeQueryDirectedParams(connectionId, sql, params),
+      );
 
   @override
   Stream<Result<QueryResult>> streamQuery(
@@ -130,11 +144,14 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQuery(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQuery',
+        () => _query.streamQuery(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -145,21 +162,30 @@ class OdbcService implements IOdbcService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      _transaction.beginTransaction(
-        connectionId,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'beginTransaction',
+        () => _transaction.beginTransaction(
+          connectionId,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
 
   @override
   Future<Result<void>> commitTransaction(String connectionId, int txnId) =>
-      _transaction.commitTransaction(connectionId, txnId);
+      OdbcErrorBoundary.runVoid(
+        'commitTransaction',
+        () => _transaction.commitTransaction(connectionId, txnId),
+      );
 
   @override
   Future<Result<void>> rollbackTransaction(String connectionId, int txnId) =>
-      _transaction.rollbackTransaction(connectionId, txnId);
+      OdbcErrorBoundary.runVoid(
+        'rollbackTransaction',
+        () => _transaction.rollbackTransaction(connectionId, txnId),
+      );
 
   @override
   Future<Result<T>> runInTransaction<T extends Object>(
@@ -170,13 +196,16 @@ class OdbcService implements IOdbcService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      _transaction.runInTransaction(
-        connectionId,
-        action,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'runInTransaction',
+        () => _transaction.runInTransaction(
+          connectionId,
+          action,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
 
   @override
@@ -186,23 +215,32 @@ class OdbcService implements IOdbcService {
     Future<Result<T>> Function(XaTransactionHandle xa) action, {
     bool onePhase = false,
   }) =>
-      _transaction.runInXaTransaction(
-        connectionId,
-        xid,
-        action,
-        onePhase: onePhase,
+      OdbcErrorBoundary.run(
+        'runInXaTransaction',
+        () => _transaction.runInXaTransaction(
+          connectionId,
+          xid,
+          action,
+          onePhase: onePhase,
+        ),
       );
 
   @override
   Future<Result<List<Xid>>> xaRecover(String connectionId) =>
-      _transaction.xaRecover(connectionId);
+      OdbcErrorBoundary.run(
+        'xaRecover',
+        () => _transaction.xaRecover(connectionId),
+      );
 
   @override
   Future<Result<XaTransactionHandle>> xaResumePrepared(
     String connectionId,
     Xid xid,
   ) =>
-      _transaction.xaResumePrepared(connectionId, xid);
+      OdbcErrorBoundary.run(
+        'xaResumePrepared',
+        () => _transaction.xaResumePrepared(connectionId, xid),
+      );
 
   @override
   Future<Result<void>> createSavepoint(
@@ -210,7 +248,10 @@ class OdbcService implements IOdbcService {
     int txnId,
     String name,
   ) =>
-      _transaction.createSavepoint(connectionId, txnId, name);
+      OdbcErrorBoundary.runVoid(
+        'createSavepoint',
+        () => _transaction.createSavepoint(connectionId, txnId, name),
+      );
 
   @override
   Future<Result<void>> rollbackToSavepoint(
@@ -218,7 +259,10 @@ class OdbcService implements IOdbcService {
     int txnId,
     String name,
   ) =>
-      _transaction.rollbackToSavepoint(connectionId, txnId, name);
+      OdbcErrorBoundary.runVoid(
+        'rollbackToSavepoint',
+        () => _transaction.rollbackToSavepoint(connectionId, txnId, name),
+      );
 
   @override
   Future<Result<void>> releaseSavepoint(
@@ -226,7 +270,10 @@ class OdbcService implements IOdbcService {
     int txnId,
     String name,
   ) =>
-      _transaction.releaseSavepoint(connectionId, txnId, name);
+      OdbcErrorBoundary.runVoid(
+        'releaseSavepoint',
+        () => _transaction.releaseSavepoint(connectionId, txnId, name),
+      );
 
   @override
   Future<Result<int>> prepare(
@@ -234,7 +281,10 @@ class OdbcService implements IOdbcService {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _query.prepare(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepare',
+        () => _query.prepare(connectionId, sql, timeoutMs: timeoutMs),
+      );
 
   @override
   Future<Result<int>> prepareNamed(
@@ -242,7 +292,10 @@ class OdbcService implements IOdbcService {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepareNamed',
+        () => _query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs),
+      );
 
   @override
   Future<Result<QueryResult>> executePreparedParamValues(
@@ -252,12 +305,15 @@ class OdbcService implements IOdbcService {
     StatementOptions? options, {
     ResultEncoding? resultEncoding,
   }) =>
-      _query.executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params,
-        options,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValues',
+        () => _query.executePreparedParamValues(
+          connectionId,
+          stmtId,
+          params,
+          options,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   @override
@@ -267,34 +323,49 @@ class OdbcService implements IOdbcService {
     Map<String, Object?> namedParams,
     StatementOptions? options,
   ) =>
-      _query.executePreparedNamed(
-        connectionId,
-        stmtId,
-        namedParams,
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedNamed',
+        () => _query.executePreparedNamed(
+          connectionId,
+          stmtId,
+          namedParams,
+          options,
+        ),
       );
 
   @override
   Future<Result<void>> closeStatement(String connectionId, int stmtId) =>
-      _query.closeStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'closeStatement',
+        () => _query.closeStatement(connectionId, stmtId),
+      );
 
   @override
   Future<Result<void>> cancelStatement(String connectionId, int stmtId) =>
-      _query.cancelStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'cancelStatement',
+        () => _query.cancelStatement(connectionId, stmtId),
+      );
 
   @override
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
   ) =>
-      _query.executeQueryMulti(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMulti',
+        () => _query.executeQueryMulti(connectionId, sql),
+      );
 
   @override
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
   ) =>
-      _query.executeQueryMultiFull(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiFull',
+        () => _query.executeQueryMultiFull(connectionId, sql),
+      );
 
   @override
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
@@ -302,7 +373,10 @@ class OdbcService implements IOdbcService {
     String sql,
     List<ParamValue> params,
   ) =>
-      _query.executeQueryMultiParamValues(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValues',
+        () => _query.executeQueryMultiParamValues(connectionId, sql, params),
+      );
 
   @override
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
@@ -311,11 +385,14 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryMulti(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMulti',
+        () => _query.streamQueryMulti(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -326,12 +403,15 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryMultiParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiParamValues',
+        () => _query.streamQueryMultiParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -342,12 +422,15 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryMultiBatchesParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesParamValues',
+        () => _query.streamQueryMultiBatchesParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -357,11 +440,14 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryMultiBatches(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatches',
+        () => _query.streamQueryMultiBatches(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -370,7 +456,10 @@ class OdbcService implements IOdbcService {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      _query.executeQueryNamed(connectionId, sql, namedParams);
+      OdbcErrorBoundary.run(
+        'executeQueryNamed',
+        () => _query.executeQueryNamed(connectionId, sql, namedParams),
+      );
 
   @override
   Stream<Result<QueryResult>> streamQueryNamed(
@@ -380,12 +469,15 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryNamed(
-        connectionId,
-        sql,
-        namedParams,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamed',
+        () => _query.streamQueryNamed(
+          connectionId,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -394,10 +486,13 @@ class OdbcService implements IOdbcService {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      _query.executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params: params,
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValues',
+        () => _query.executeQueryColumnarParamValues(
+          connectionId,
+          sql,
+          params: params,
+        ),
       );
 
   @override
@@ -407,11 +502,14 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _query.streamQueryColumnar(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnar',
+        () => _query.streamQueryColumnar(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
@@ -420,10 +518,13 @@ class OdbcService implements IOdbcService {
     String catalog = '',
     String schema = '',
   }) =>
-      _query.catalogTables(
-        connectionId: connectionId,
-        catalog: catalog,
-        schema: schema,
+      OdbcErrorBoundary.run(
+        'catalogTables',
+        () => _query.catalogTables(
+          connectionId: connectionId,
+          catalog: catalog,
+          schema: schema,
+        ),
       );
 
   @override
@@ -431,32 +532,47 @@ class OdbcService implements IOdbcService {
     String connectionId,
     String table,
   ) =>
-      _query.catalogColumns(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogColumns',
+        () => _query.catalogColumns(connectionId, table),
+      );
 
   @override
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId) =>
-      _query.catalogTypeInfo(connectionId);
+      OdbcErrorBoundary.run(
+        'catalogTypeInfo',
+        () => _query.catalogTypeInfo(connectionId),
+      );
 
   @override
   Future<Result<QueryResult>> catalogPrimaryKeys(
     String connectionId,
     String table,
   ) =>
-      _query.catalogPrimaryKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogPrimaryKeys',
+        () => _query.catalogPrimaryKeys(connectionId, table),
+      );
 
   @override
   Future<Result<QueryResult>> catalogForeignKeys(
     String connectionId,
     String table,
   ) =>
-      _query.catalogForeignKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogForeignKeys',
+        () => _query.catalogForeignKeys(connectionId, table),
+      );
 
   @override
   Future<Result<QueryResult>> catalogIndexes(
     String connectionId,
     String table,
   ) =>
-      _query.catalogIndexes(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogIndexes',
+        () => _query.catalogIndexes(connectionId, table),
+      );
 
   @override
   Future<Result<int>> poolCreate(
@@ -465,11 +581,14 @@ class OdbcService implements IOdbcService {
     PoolOptions? options,
     ConnectionOptions? connectionOptions,
   }) =>
-      _pool.poolCreate(
-        connectionString,
-        maxSize,
-        options: options,
-        connectionOptions: connectionOptions,
+      OdbcErrorBoundary.run(
+        'poolCreate',
+        () => _pool.poolCreate(
+          connectionString,
+          maxSize,
+          options: options,
+          connectionOptions: connectionOptions,
+        ),
       );
 
   @override
@@ -477,30 +596,45 @@ class OdbcService implements IOdbcService {
     int poolId, {
     ConnectionOptions? options,
   }) =>
-      _pool.poolGetConnection(poolId, options: options);
+      OdbcErrorBoundary.run(
+        'poolGetConnection',
+        () => _pool.poolGetConnection(poolId, options: options),
+      );
 
   @override
   Future<Result<void>> poolReleaseConnection(String connectionId) =>
-      _pool.poolReleaseConnection(connectionId);
+      OdbcErrorBoundary.runVoid(
+        'poolReleaseConnection',
+        () => _pool.poolReleaseConnection(connectionId),
+      );
 
   @override
-  Future<Result<bool>> poolHealthCheck(int poolId) =>
-      _pool.poolHealthCheck(poolId);
+  Future<Result<bool>> poolHealthCheck(int poolId) => OdbcErrorBoundary.run(
+        'poolHealthCheck',
+        () => _pool.poolHealthCheck(poolId),
+      );
 
   @override
   Future<Result<PoolState>> poolGetState(int poolId) =>
-      _pool.poolGetState(poolId);
+      OdbcErrorBoundary.run('poolGetState', () => _pool.poolGetState(poolId));
 
   @override
   Future<Result<Map<String, Object?>>> poolGetStateDetailed(int poolId) =>
-      _pool.poolGetStateDetailed(poolId);
+      OdbcErrorBoundary.run(
+        'poolGetStateDetailed',
+        () => _pool.poolGetStateDetailed(poolId),
+      );
 
   @override
   Future<Result<void>> poolSetSize(int poolId, int newMaxSize) =>
-      _pool.poolSetSize(poolId, newMaxSize);
+      OdbcErrorBoundary.runVoid(
+        'poolSetSize',
+        () => _pool.poolSetSize(poolId, newMaxSize),
+      );
 
   @override
-  Future<Result<void>> poolClose(int poolId) => _pool.poolClose(poolId);
+  Future<Result<void>> poolClose(int poolId) =>
+      OdbcErrorBoundary.runVoid('poolClose', () => _pool.poolClose(poolId));
 
   @override
   Future<Result<int>> bulkInsert(
@@ -510,12 +644,15 @@ class OdbcService implements IOdbcService {
     List<int> dataBuffer,
     int rowCount,
   ) =>
-      _query.bulkInsert(
-        connectionId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
+      OdbcErrorBoundary.run(
+        'bulkInsert',
+        () => _query.bulkInsert(
+          connectionId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+        ),
       );
 
   @override
@@ -527,43 +664,63 @@ class OdbcService implements IOdbcService {
     int rowCount, {
     int parallelism = 0,
   }) =>
-      _query.bulkInsertParallel(
-        poolId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
-        parallelism: parallelism,
+      OdbcErrorBoundary.run(
+        'bulkInsertParallel',
+        () => _query.bulkInsertParallel(
+          poolId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+          parallelism: parallelism,
+        ),
       );
 
   @override
-  Future<Result<OdbcMetrics>> getMetrics() => _admin.getMetrics();
+  Future<Result<OdbcMetrics>> getMetrics() =>
+      OdbcErrorBoundary.run('getMetrics', _admin.getMetrics);
 
   @override
   bool isInitialized() => _admin.isInitialized();
 
   @override
-  Future<Result<void>> clearStatementCache() => _admin.clearStatementCache();
+  Future<Result<void>> clearStatementCache() => OdbcErrorBoundary.runVoid(
+        'clearStatementCache',
+        _admin.clearStatementCache,
+      );
 
   @override
-  Future<Result<void>> clearAllStatements() => _admin.clearAllStatements();
+  Future<Result<void>> clearAllStatements() => OdbcErrorBoundary.runVoid(
+        'clearAllStatements',
+        _admin.clearAllStatements,
+      );
 
   @override
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() =>
-      _admin.getPreparedStatementsMetrics();
+      OdbcErrorBoundary.run(
+        'getPreparedStatementsMetrics',
+        _admin.getPreparedStatementsMetrics,
+      );
 
   @override
-  Future<Result<Map<String, String>>> getVersion() => _admin.getVersion();
+  Future<Result<Map<String, String>>> getVersion() =>
+      OdbcErrorBoundary.run('getVersion', _admin.getVersion);
 
   @override
   Future<Result<void>> validateConnectionString(String connectionString) =>
-      _admin.validateConnectionString(connectionString);
+      OdbcErrorBoundary.runVoid(
+        'validateConnectionString',
+        () => _admin.validateConnectionString(connectionString),
+      );
 
   @override
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   ) =>
-      _admin.getDriverCapabilities(connectionString);
+      OdbcErrorBoundary.run(
+        'getDriverCapabilities',
+        () => _admin.getDriverCapabilities(connectionString),
+      );
 
   @override
   Future<AsyncWorkerPoolStats?> getWorkerPoolStats() =>
@@ -571,67 +728,101 @@ class OdbcService implements IOdbcService {
 
   @override
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) =>
-      _admin.getConnectionDbmsInfo(connectionId);
+      OdbcErrorBoundary.run(
+        'getConnectionDbmsInfo',
+        () => _admin.getConnectionDbmsInfo(connectionId),
+      );
 
   @override
-  Future<Result<void>> setLogLevel(int level) => _admin.setLogLevel(level);
+  Future<Result<void>> setLogLevel(int level) =>
+      OdbcErrorBoundary.runVoid('setLogLevel', () => _admin.setLogLevel(level));
 
   @override
   Future<Result<void>> setAuditEnabled({required bool enabled}) =>
-      _admin.setAuditEnabled(enabled: enabled);
+      OdbcErrorBoundary.runVoid(
+        'setAuditEnabled',
+        () => _admin.setAuditEnabled(enabled: enabled),
+      );
 
   @override
   Future<Result<Map<String, Object?>>> getAuditStatus() =>
-      _admin.getAuditStatus();
+      OdbcErrorBoundary.run('getAuditStatus', _admin.getAuditStatus);
 
   @override
   Future<Result<List<Map<String, Object?>>>> getAuditEvents({int limit = 0}) =>
-      _admin.getAuditEvents(limit: limit);
+      OdbcErrorBoundary.run(
+        'getAuditEvents',
+        () => _admin.getAuditEvents(limit: limit),
+      );
 
   @override
-  Future<Result<void>> clearAuditEvents() => _admin.clearAuditEvents();
+  Future<Result<void>> clearAuditEvents() => OdbcErrorBoundary.runVoid(
+        'clearAuditEvents',
+        _admin.clearAuditEvents,
+      );
 
   @override
   Future<Result<void>> metadataCacheEnable({
     required int maxEntries,
     required int ttlSeconds,
   }) =>
-      _admin.metadataCacheEnable(
-        maxEntries: maxEntries,
-        ttlSeconds: ttlSeconds,
+      OdbcErrorBoundary.runVoid(
+        'metadataCacheEnable',
+        () => _admin.metadataCacheEnable(
+          maxEntries: maxEntries,
+          ttlSeconds: ttlSeconds,
+        ),
       );
 
   @override
   Future<Result<Map<String, Object?>>> metadataCacheStats() =>
-      _admin.metadataCacheStats();
+      OdbcErrorBoundary.run(
+        'metadataCacheStats',
+        _admin.metadataCacheStats,
+      );
 
   @override
-  Future<Result<void>> clearMetadataCache() => _admin.clearMetadataCache();
+  Future<Result<void>> clearMetadataCache() => OdbcErrorBoundary.runVoid(
+        'clearMetadataCache',
+        _admin.clearMetadataCache,
+      );
 
   @override
-  Future<Result<void>> cancelStream(int streamId) =>
-      _admin.cancelStream(streamId);
+  Future<Result<void>> cancelStream(int streamId) => OdbcErrorBoundary.runVoid(
+        'cancelStream',
+        () => _admin.cancelStream(streamId),
+      );
 
   @override
   Future<Result<int>> executeAsyncStart(String connectionId, String sql) =>
-      _admin.executeAsyncStart(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeAsyncStart',
+        () => _admin.executeAsyncStart(connectionId, sql),
+      );
 
   @override
-  Future<Result<int>> asyncPoll(int requestId) => _admin.asyncPoll(requestId);
+  Future<Result<int>> asyncPoll(int requestId) =>
+      OdbcErrorBoundary.run('asyncPoll', () => _admin.asyncPoll(requestId));
 
   @override
   Future<Result<QueryResult>> asyncGetResult(
     int requestId, {
     int? maxBufferBytes,
   }) =>
-      _admin.asyncGetResult(requestId, maxBufferBytes: maxBufferBytes);
+      OdbcErrorBoundary.run(
+        'asyncGetResult',
+        () => _admin.asyncGetResult(requestId, maxBufferBytes: maxBufferBytes),
+      );
 
   @override
-  Future<Result<void>> asyncCancel(int requestId) =>
-      _admin.asyncCancel(requestId);
+  Future<Result<void>> asyncCancel(int requestId) => OdbcErrorBoundary.runVoid(
+        'asyncCancel',
+        () => _admin.asyncCancel(requestId),
+      );
 
   @override
-  Future<Result<void>> asyncFree(int requestId) => _admin.asyncFree(requestId);
+  Future<Result<void>> asyncFree(int requestId) =>
+      OdbcErrorBoundary.runVoid('asyncFree', () => _admin.asyncFree(requestId));
 
   @override
   Future<Result<int>> streamStartAsync(
@@ -640,16 +831,21 @@ class OdbcService implements IOdbcService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _admin.streamStartAsync(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.run(
+        'streamStartAsync',
+        () => _admin.streamStartAsync(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   @override
-  Future<Result<int>> streamPollAsync(int streamId) =>
-      _admin.streamPollAsync(streamId);
+  Future<Result<int>> streamPollAsync(int streamId) => OdbcErrorBoundary.run(
+        'streamPollAsync',
+        () => _admin.streamPollAsync(streamId),
+      );
 
   @override
   Future<String?> detectDriver(String connectionString) =>
@@ -660,7 +856,10 @@ class OdbcService implements IOdbcService {
     String sql, {
     String? connectionId,
   }) =>
-      _query.executeQuery(sql, connectionId: connectionId);
+      OdbcErrorBoundary.run(
+        'executeQuery',
+        () => _query.executeQuery(sql, connectionId: connectionId),
+      );
 
   @override
   bool get supportsDialectApi => _dialect.supportsDialectApi;

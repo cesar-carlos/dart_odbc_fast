@@ -4,6 +4,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_repository_types.dart';
@@ -105,8 +106,26 @@ class StreamColumnarRunner {
     yield* streamWithQueryTimeout(
       source: source,
       queryTimeout: queryTimeout,
+      onCleanupError: (primary, error, stack) => Failure(
+        normalizeOdbcError(
+          primary.exceptionOrNull()!,
+          operation: 'streamQuery',
+        ).withSecondary(
+          normalizeOdbcError(
+            error,
+            operation: 'cancelStream',
+            stackTrace: stack,
+          ),
+        ),
+      ),
       onTimeoutItem: const Failure<TypedColumnarResult, OdbcError>(
-        QueryError(message: odbcQueryTimedOutMessage),
+        QueryError(
+          message: odbcQueryTimedOutMessage,
+          details: OdbcErrorDetails(
+            code: OdbcErrorCode.timeout,
+            outcomeUnknown: true,
+          ),
+        ),
       ),
     );
   }

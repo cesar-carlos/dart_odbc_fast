@@ -6,6 +6,7 @@ import 'dart:ffi' as ffi;
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_bindings.dart'
     show Utf8;
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart';
@@ -20,6 +21,12 @@ import '../bindings/test_odbc_bindings.dart';
 final _emptyParams = Uint8List(0);
 
 int _initSuccess() => 0;
+int _noStructuredDiagnostic(
+  ffi.Pointer<ffi.Uint8> _,
+  int __,
+  ffi.Pointer<ffi.Uint32> ___,
+) =>
+    -1;
 
 Uint8List _metricsWireBytes({
   int queryCount = 10,
@@ -51,7 +58,11 @@ NativeOdbcConnection _connection(
 }) {
   return NativeOdbcConnection.testing(
     OdbcNative.withBindings(
-      FakeOdbcBindings.custom(
+      FakeOdbcBindings.stub(
+        handlers: const StubOdbcBindingsHandlers(
+          forceSupportsStructuredErrorForConnection: false,
+          structuredError: _noStructuredDiagnostic,
+        ),
         capabilities: capabilities,
         overrides: overrides,
       ),
@@ -81,11 +92,45 @@ Future<T> _dispatch<T extends WorkerResponse>(
   addTearDown(receivePort.close);
   final responseFuture = receivePort.first;
   handleWorkerRequestForTesting(request, receivePort.sendPort, conn);
-  return await responseFuture as T;
+  final message = await responseFuture;
+  return (message is WorkerReply ? message.response : message) as T;
 }
 
 void main() {
   group('worker dispatch', timeout: const Timeout(Duration(minutes: 2)), () {
+    test(
+        'diagnostic collection failure remains secondary '
+        'to native query failure', () async {
+      final conn = _connection(
+        TestOdbcBindingsOverrides(
+          getError: (_, __) => throw StateError('collector failed'),
+        ),
+      );
+      addTearDown(conn.dispose);
+      final response = await _dispatch<QueryResponse>(
+        ExecuteQueryParamsRequest(18, 1, 'query', Uint8List(0)),
+        conn,
+      );
+      final failure = response.failure!.toError(0);
+      expect(failure.code, OdbcErrorCode.query);
+      expect(failure.details.operation, 'executeQueryParams');
+      expect(failure.details.secondaryErrors, isNotEmpty);
+      expect(
+        failure.details.secondaryErrors.first.details.cause.toString(),
+        contains('collector failed'),
+      );
+    });
+    test('large transferable response inspection does not consume its payload',
+        () async {
+      final bytes = Uint8List(1024 * 1024)..fillRange(0, 1024 * 1024, 42);
+      final response = isolateQueryDataResponse(17, bytes);
+      expect(response.hasData, isTrue);
+      final receivePort = ReceivePort();
+      addTearDown(receivePort.close);
+      receivePort.sendPort.send(response);
+      final received = await receivePort.first as QueryResponse;
+      expect(received.data, bytes);
+    });
     test('should_initialize_and_return_bool_success', () async {
       final conn = _connection(
         TestOdbcBindingsOverrides(init: () => 0),
@@ -298,7 +343,7 @@ void main() {
       );
 
       expect(response.connectionId, isZero);
-      expect(response.error, 'Connect failed');
+      expect(response.error, 'Failed to complete connect');
     });
 
     test('should_return_query_data_when_execute_query_multi_succeeds',
@@ -337,6 +382,8 @@ void main() {
         ),
         handlers: const StubOdbcBindingsHandlers(
           execQuery: _execQueryNativeFailure,
+          structuredError: _noStructuredDiagnostic,
+          forceSupportsStructuredErrorForConnection: false,
         ),
       );
       addTearDown(conn.dispose);
@@ -360,6 +407,8 @@ void main() {
         ),
         handlers: const StubOdbcBindingsHandlers(
           execQuery: _execQueryNativeFailure,
+          structuredError: _noStructuredDiagnostic,
+          forceSupportsStructuredErrorForConnection: false,
         ),
       );
       addTearDown(conn.dispose);
@@ -370,8 +419,8 @@ void main() {
         conn,
       );
 
-      expect(response.error, contains('Query failed'));
-      expect(response.error, contains('native returned no data'));
+      expect(response.error, contains('executeQueryParams'));
+      expect(response.failure!.operation, 'executeQueryParams');
     });
 
     test('should_return_metrics_fields_when_get_metrics_succeeds', () async {

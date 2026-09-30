@@ -8,15 +8,19 @@ mixin _NativeConnection on _NativeOdbcState {
   /// initialized.
   ///
   /// Returns true on success, false on failure.
-  bool initialize() {
-    if (_isInitialized) return true;
+  bool initialize() => _captureSync(
+        'initialize',
+        () {
+          if (_isInitialized) return true;
 
-    final result = _native.init();
-    if (result) {
-      _isInitialized = true;
-    }
-    return result;
-  }
+          final result = _native.init();
+          if (result) {
+            _isInitialized = true;
+          }
+          return result;
+        },
+        failed: (value) => !value,
+      );
 
   /// Establishes a new database connection.
   ///
@@ -25,31 +29,45 @@ mixin _NativeConnection on _NativeOdbcState {
   ///
   /// Returns a connection ID on success, 0 on failure.
   /// Throws [StateError] if the environment has not been initialized.
-  int connect(String connectionString) {
-    if (!_isInitialized) {
-      throw StateError('Environment not initialized');
-    }
-    return _native.connect(connectionString);
-  }
+  int connect(String connectionString) => _captureSync(
+        'connect',
+        () {
+          if (!_isInitialized) {
+            throw StateError('Environment not initialized');
+          }
+          return _native.connect(connectionString);
+        },
+        failed: (value) => value == 0,
+      );
 
   /// Establishes a connection with a login timeout.
   ///
   /// [timeoutMs] is the login timeout in milliseconds (0 = driver default).
   /// Returns a connection ID on success, 0 on failure.
-  int connectWithTimeout(String connectionString, int timeoutMs) {
-    if (!_isInitialized) {
-      throw StateError('Environment not initialized');
-    }
-    return _native.connectWithTimeout(connectionString, timeoutMs);
-  }
+  int connectWithTimeout(String connectionString, int timeoutMs) =>
+      _captureSync(
+        'connectWithTimeout',
+        () {
+          if (!_isInitialized) {
+            throw StateError('Environment not initialized');
+          }
+          return _native.connectWithTimeout(connectionString, timeoutMs);
+        },
+        failed: (value) => value == 0,
+      );
 
   /// Closes and disconnects a connection.
   ///
   /// The [connectionId] must be a valid connection identifier returned
   /// from [connect]. Returns true on success, false on failure.
-  bool disconnect(int connectionId) {
-    return _native.disconnect(connectionId);
-  }
+  bool disconnect(int connectionId) => _captureSync(
+        'disconnect',
+        () {
+          return _native.disconnect(connectionId);
+        },
+        failed: (value) => !value,
+        nativeConnectionId: connectionId,
+      );
 
   /// Detects the database driver from a connection string.
   ///

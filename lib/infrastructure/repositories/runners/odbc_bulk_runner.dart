@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:odbc_fast/core/utils/logger.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_backend.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_catalog_runner.dart'
     show NativeIdLookupFn;
@@ -67,8 +68,10 @@ class OdbcBulkRunner {
         );
       }
       return Success(n);
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<int, OdbcError>(
+        translateOdbcError(e, operation: 'bulkInsert', stackTrace: st),
+      );
     }
   }
 
@@ -135,8 +138,10 @@ class OdbcBulkRunner {
         );
       }
       return Success(n);
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(QueryError(message: e.toString()));
+    } on Exception catch (e, st) {
+      return Failure<int, OdbcError>(
+        translateOdbcError(e, operation: 'bulkInsertParallel', stackTrace: st),
+      );
     }
   }
 
@@ -155,6 +160,7 @@ class OdbcBulkRunner {
       );
     }
 
+    Result<int> result;
     try {
       final n = await _bulkInsertArray(
         nativeId: connId,
@@ -164,22 +170,32 @@ class OdbcBulkRunner {
         rowCount: rowCount,
       );
       if (n < 0) {
-        return await convertIntError(
+        result = await convertIntError(
           fallbackMessage: 'Failed to bulk insert in fallback mode',
         );
+      } else {
+        result = Success(n);
       }
-      return Success(n);
-    } on Exception catch (e) {
-      return Failure<int, OdbcError>(QueryError(message: e.toString()));
-    } finally {
-      final released = await _poolReleaseConnection(connId);
-      if (!released) {
-        AppLogger.warning(
-          'bulkInsertParallel: failed to release pool connection $connId '
-          'back to pool $poolId',
-        );
-      }
+    } on Exception catch (e, st) {
+      result = Failure<int, OdbcError>(
+        translateOdbcError(
+          e,
+          operation: '_bulkInsertParallelFallback',
+          stackTrace: st,
+        ),
+      );
     }
+    final error = result.exceptionOrNull();
+    final failure = await cleanupNativeResources(
+      [
+        (
+          operation: 'poolReleaseConnection',
+          action: () => _poolReleaseConnection(connId)
+        ),
+      ],
+      primary: error is OdbcError ? error : null,
+    );
+    return failure == null ? result : Failure(failure);
   }
 
   Future<int> _bulkInsertArray({

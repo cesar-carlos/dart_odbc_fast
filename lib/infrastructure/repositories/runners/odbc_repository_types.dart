@@ -69,18 +69,7 @@ bool isUnsupportedCancellation({
       nativeCode == odbcUnsupportedCancelNativeCode) {
     return true;
   }
-  final lower = message.toLowerCase();
-  return lower.contains('unsupported feature') &&
-      lower.contains('statement cancellation');
-}
-
-/// Native `OdbcError::InternalError` messages for disabled SQL Server BCP.
-bool isUnsupportedNativeBcpMessage(String message) {
-  final lower = message.toLowerCase();
-  return lower.contains("enable 'sqlserver-bcp' feature") ||
-      lower.contains('odbc_enable_unstable_native_bcp') ||
-      lower.contains('native sql server bcp is disabled') ||
-      lower.contains('native sql server bcp is currently supported only');
+  return false;
 }
 
 OdbcError odbcBulkErrorFactory({
@@ -88,7 +77,7 @@ OdbcError odbcBulkErrorFactory({
   String? sqlState,
   int? nativeCode,
 }) {
-  if (isUnsupportedNativeBcpMessage(message)) {
+  if (sqlState == '0A000' || sqlState == 'HYC00' || sqlState == 'IM001') {
     return UnsupportedFeatureError(
       message: message,
       sqlState: sqlState,

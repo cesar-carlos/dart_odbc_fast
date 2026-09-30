@@ -17,6 +17,7 @@ import 'package:test/test.dart';
 class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
   _FakeAsyncNativeForGapErrors() : super(requestTimeout: Duration.zero);
 
+  int beginResult = 0;
   String errorMessage = 'native error';
   StructuredError? globalStructuredError;
   StructuredError? connectionStructuredError;
@@ -60,7 +61,7 @@ class _FakeAsyncNativeForGapErrors extends AsyncNativeOdbcConnection {
     int accessMode = 0,
     int lockTimeoutMs = 0,
   }) async =>
-      0;
+      beginResult;
 
   @override
   Future<String?> validateConnectionString(String connectionString) async =>
@@ -727,7 +728,7 @@ void main() {
     );
 
     test(
-      'streamQueryMulti falls back to full execution when async stream start '
+      'streamQueryMulti returns failure without replay when async stream start '
       'returns zero',
       () async {
         asyncNative
@@ -738,7 +739,8 @@ void main() {
             .streamQueryMulti(connectionId, 'SELECT 1')
             .toList();
 
-        expect(items, isEmpty);
+        expect(items, hasLength(1));
+        expect(items.single.exceptionOrNull(), isA<QueryError>());
       },
     );
 
@@ -775,6 +777,11 @@ void main() {
     test(
       'commitTransaction returns QueryError when native returns false',
       () async {
+        asyncNative.beginResult = 1;
+        await repository.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
         final result = await repository.commitTransaction(connectionId, 1);
         expect(result.isSuccess(), isFalse);
         result.fold(
@@ -787,6 +794,11 @@ void main() {
     test(
       'rollbackTransaction returns QueryError when native returns false',
       () async {
+        asyncNative.beginResult = 1;
+        await repository.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
         final result = await repository.rollbackTransaction(connectionId, 1);
         expect(result.isSuccess(), isFalse);
         result.fold(
@@ -799,6 +811,11 @@ void main() {
     test(
       'createSavepoint returns QueryError when native returns false',
       () async {
+        asyncNative.beginResult = 9;
+        await repository.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
         final result = await repository.createSavepoint(connectionId, 9, 'sp');
         expect(result.isSuccess(), isFalse);
         result.fold(
@@ -811,6 +828,11 @@ void main() {
     test(
       'rollbackToSavepoint returns QueryError when native returns false',
       () async {
+        asyncNative.beginResult = 9;
+        await repository.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
         final result =
             await repository.rollbackToSavepoint(connectionId, 9, 'sp');
         expect(result.isSuccess(), isFalse);
@@ -824,6 +846,11 @@ void main() {
     test(
       'releaseSavepoint returns QueryError when native returns false',
       () async {
+        asyncNative.beginResult = 9;
+        await repository.beginTransaction(
+          connectionId,
+          IsolationLevel.readCommitted,
+        );
         final result = await repository.releaseSavepoint(connectionId, 9, 'sp');
         expect(result.isSuccess(), isFalse);
         result.fold(
@@ -1314,15 +1341,15 @@ void main() {
     );
 
     test(
-      'executeQueryMultiParams maps null native buffer to empty multi-result',
+      'executeQueryMultiParams maps null native buffer to failure',
       () async {
         final result = await repository.executeQueryMultiParamValuesFromObjects(
           connectionId,
           'SELECT 1',
           <dynamic>[],
         );
-        expect(result.isSuccess(), isTrue);
-        expect(result.getOrNull()!.items, isEmpty);
+        expect(result.isError(), isTrue);
+        expect(result.exceptionOrNull(), isA<QueryError>());
       },
     );
 

@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_connection_runner.dart';
@@ -36,6 +37,10 @@ class OdbcPoolRunner {
       return const Failure<int, OdbcError>(
         ValidationError(message: 'Connection string cannot be empty'),
       );
+    }
+    final validation = connectionOptions?.validate();
+    if (validation != null) {
+      return Failure(ValidationError(message: validation));
     }
     if (maxSize <= 0) {
       return const Failure<int, OdbcError>(
@@ -109,6 +114,11 @@ class OdbcPoolRunner {
         ValidationError(message: 'Invalid pool ID'),
       );
     }
+    final effectiveOptions = options ?? state.poolConnectionOptions[poolId];
+    final validation = effectiveOptions?.validate();
+    if (validation != null) {
+      return Failure(ValidationError(message: validation));
+    }
     try {
       final connId = ffi.isAsync
           ? await ffi.async.poolGetConnection(poolId)
@@ -127,38 +137,53 @@ class OdbcPoolRunner {
         isActive: true,
       );
       state.connectionIds[c.id] = connId;
+      state.connectionLifetimes[c.id] = Object();
       state.connectionStrings[c.id] = 'pool://$poolId';
       state.connectionOptions[c.id] =
           options ?? state.poolConnectionOptions[poolId];
       state.connectionPoolId[c.id] = poolId;
       state.poolCheckouts.putIfAbsent(poolId, () => <String>{}).add(c.id);
       return Success(c);
-    } on Exception catch (e) {
+    } on Exception catch (e, stack) {
       return Failure<Connection, OdbcError>(
-        ConnectionError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'poolGetConnection',
+          stackTrace: stack,
+        ),
       );
     }
   }
 
   Future<Result<Unit>> poolReleaseConnection(String connectionId) async {
+    void releaseMetadata() {
+      state.clearStatementMetadataForConnection(connectionId);
+      state.connectionIds.remove(connectionId);
+      state.connectionStrings.remove(connectionId);
+      state.connectionOptions.remove(connectionId);
+      state.connectionLifetimes.remove(connectionId);
+      final poolId = state.connectionPoolId.remove(connectionId);
+      if (poolId != null) state.poolCheckouts[poolId]?.remove(connectionId);
+    }
+
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
+      if (state.connectionPoolId.containsKey(connectionId) &&
+          state.connectionLifetimes.containsKey(connectionId)) {
+        // Recovery already returned the old checkout. Invalidate the logical
+        // lifetime so a later reacquisition is returned without publication.
+        releaseMetadata();
+        return const Success(unit);
+      }
       return const Failure<Unit, OdbcError>(
         ValidationError(message: 'Invalid connection ID'),
       );
     }
+    state.connectionLifetimes.remove(connectionId);
     return ffi.runBoolFfiWithCleanup(
       sync: (n) => n.poolReleaseConnection(nativeId),
       async: (a) => a.poolReleaseConnection(nativeId),
-      onSuccess: () {
-        state.clearStatementMetadataForConnection(connectionId);
-        state.connectionIds.remove(connectionId);
-        state.connectionStrings.remove(connectionId);
-        final pid = state.connectionPoolId.remove(connectionId);
-        if (pid != null) {
-          state.poolCheckouts[pid]?.remove(connectionId);
-        }
-      },
+      onSuccess: releaseMetadata,
       errorFactory: odbcConnectionErrorFactory,
       fallbackMessage: 'Failed to release connection to pool',
     );
@@ -180,9 +205,9 @@ class OdbcPoolRunner {
         errorFactory: odbcConnectionErrorFactory,
         fallbackMessage: 'Pool health check failed or pool does not exist',
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, stack) {
       return Failure<bool, OdbcError>(
-        ConnectionError(message: e.toString()),
+        translateOdbcError(e, operation: 'poolHealthCheck', stackTrace: stack),
       );
     }
   }
@@ -205,9 +230,9 @@ class OdbcPoolRunner {
         );
       }
       return Success(PoolState(size: s.size, idle: s.idle));
-    } on Exception catch (e) {
+    } on Exception catch (e, stack) {
       return Failure<PoolState, OdbcError>(
-        ConnectionError(message: e.toString()),
+        translateOdbcError(e, operation: 'poolGetState', stackTrace: stack),
       );
     }
   }
@@ -218,6 +243,8 @@ class OdbcPoolRunner {
         ValidationError(message: 'Invalid pool ID'),
       );
     }
+    (state.poolCheckouts[poolId] ?? const <String>{})
+        .forEach(state.connectionLifetimes.remove);
     return ffi.runBoolFfiWithCleanup(
       sync: (n) => n.poolClose(poolId),
       async: (a) => a.poolClose(poolId),
@@ -228,6 +255,7 @@ class OdbcPoolRunner {
         for (final cId in checkouts) {
           state.clearStatementMetadataForConnection(cId);
           state.connectionIds.remove(cId);
+          state.connectionLifetimes.remove(cId);
           state.connectionStrings.remove(cId);
           state.connectionOptions.remove(cId);
           state.connectionPoolId.remove(cId);
@@ -272,9 +300,13 @@ class OdbcPoolRunner {
       return Failure<Map<String, Object?>, OdbcError>(
         QueryError(message: 'Invalid detailed pool state JSON: ${e.message}'),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Map<String, Object?>, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(
+          e,
+          operation: 'poolGetStateDetailed',
+          stackTrace: st,
+        ),
       );
     }
   }

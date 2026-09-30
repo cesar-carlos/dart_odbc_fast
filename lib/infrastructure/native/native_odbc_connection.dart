@@ -9,6 +9,9 @@ import 'package:odbc_fast/infrastructure/native/audit/odbc_audit_logger.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/odbc_native.dart'
     as bindings;
 import 'package:odbc_fast/infrastructure/native/driver_capabilities.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
@@ -44,6 +47,61 @@ abstract class _NativeOdbcState {
   bool _isInitialized = false;
 
   NativeOdbcConnection get _connection => this as NativeOdbcConnection;
+
+  T _captureSync<T>(
+    String operation,
+    T Function() call, {
+    required bool Function(T) failed,
+    int? nativeConnectionId,
+  }) {
+    nativeConnectionId ??= NativeCallContext.current?.nativeConnectionId;
+    final result = call();
+    if (NativeCallContext.current == null || !failed(result)) return result;
+    if (result == null &&
+        (operation.startsWith('executeAsyncStart') ||
+            operation.startsWith('streamMultiStart'))) {
+      NativeCallContext.record(
+        UnsupportedFeatureError(
+          message: 'The native entrypoint is unavailable',
+          details: OdbcErrorDetails(operation: operation),
+        ),
+      );
+      return result;
+    }
+    OdbcError error = QueryError(
+      message: 'Failed to complete $operation',
+      details: OdbcErrorDetails(
+        operation: operation,
+        connectionId: nativeConnectionId?.toString(),
+        code: operation == 'streamClose' || operation == 'asyncFree'
+            ? OdbcErrorCode.cleanup
+            : null,
+      ),
+    );
+    try {
+      final structured = nativeConnectionId == null
+          ? _connection.getStructuredError()
+          : _connection.getStructuredErrorForConnection(nativeConnectionId);
+      final message = (structured?.message ?? _connection.getError()).trim();
+      error = QueryError(
+        message:
+            message.isEmpty || message == 'No error' ? error.message : message,
+        sqlState: structured?.sqlStateString,
+        nativeCode: structured?.nativeCode,
+        details: error.details,
+      );
+    } on Object catch (diagnosticError, stack) {
+      error = error.withSecondary(
+        translateOdbcError(
+          diagnosticError,
+          operation: 'collectDiagnostic',
+          stackTrace: stack,
+        ),
+      );
+    }
+    NativeCallContext.record(error);
+    return result;
+  }
 }
 
 /// Native ODBC connection implementation using FFI bindings.

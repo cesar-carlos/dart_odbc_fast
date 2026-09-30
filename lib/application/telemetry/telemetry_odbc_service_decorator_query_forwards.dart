@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Query-shaped `IOdbcService` forwards for the telemetry decorator façade.
@@ -16,11 +17,14 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      query.executeQueryParamValues(
-        connectionId,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValues',
+        () => query.executeQueryParamValues(
+          connectionId,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   Future<Result<QueryResult>> executeQueryDirectedParams(
@@ -28,7 +32,10 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String sql,
     List<DirectedParam> params,
   ) =>
-      query.executeQueryDirectedParams(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryDirectedParams',
+        () => query.executeQueryDirectedParams(connectionId, sql, params),
+      );
 
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
@@ -36,11 +43,14 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQuery(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQuery',
+        () => query.streamQuery(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<int>> prepare(
@@ -48,14 +58,20 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      query.prepare(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepare',
+        () => query.prepare(connectionId, sql, timeoutMs: timeoutMs),
+      );
 
   Future<Result<int>> prepareNamed(
     String connectionId,
     String sql, {
     int timeoutMs = 0,
   }) =>
-      query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepareNamed',
+        () => query.prepareNamed(connectionId, sql, timeoutMs: timeoutMs),
+      );
 
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
@@ -64,12 +80,15 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     StatementOptions? options, {
     ResultEncoding? resultEncoding,
   }) =>
-      query.executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params,
-        options,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValues',
+        () => query.executePreparedParamValues(
+          connectionId,
+          stmtId,
+          params,
+          options,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   Future<Result<QueryResult>> executePreparedNamed(
@@ -78,37 +97,55 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     Map<String, Object?> namedParams,
     StatementOptions? options,
   ) =>
-      query.executePreparedNamed(
-        connectionId,
-        stmtId,
-        namedParams,
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedNamed',
+        () => query.executePreparedNamed(
+          connectionId,
+          stmtId,
+          namedParams,
+          options,
+        ),
       );
 
   Future<Result<void>> closeStatement(String connectionId, int stmtId) =>
-      query.closeStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'closeStatement',
+        () => query.closeStatement(connectionId, stmtId),
+      );
 
   Future<Result<void>> cancelStatement(String connectionId, int stmtId) =>
-      query.cancelStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'cancelStatement',
+        () => query.cancelStatement(connectionId, stmtId),
+      );
 
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
   ) =>
-      query.executeQueryMulti(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMulti',
+        () => query.executeQueryMulti(connectionId, sql),
+      );
 
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
   ) =>
-      query.executeQueryMultiFull(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiFull',
+        () => query.executeQueryMultiFull(connectionId, sql),
+      );
 
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params,
   ) =>
-      query.executeQueryMultiParamValues(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValues',
+        () => query.executeQueryMultiParamValues(connectionId, sql, params),
+      );
 
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
@@ -116,11 +153,14 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryMulti(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMulti',
+        () => query.streamQueryMulti(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
@@ -130,12 +170,15 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryMultiParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiParamValues',
+        () => query.streamQueryMultiParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
@@ -145,12 +188,15 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryMultiBatchesParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesParamValues',
+        () => query.streamQueryMultiBatchesParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
@@ -159,11 +205,14 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryMultiBatches(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatches',
+        () => query.streamQueryMultiBatches(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<QueryResult>> executeQueryNamed(
@@ -171,7 +220,10 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      query.executeQueryNamed(connectionId, sql, namedParams);
+      OdbcErrorBoundary.run(
+        'executeQueryNamed',
+        () => query.executeQueryNamed(connectionId, sql, namedParams),
+      );
 
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
@@ -180,12 +232,15 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryNamed(
-        connectionId,
-        sql,
-        namedParams,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamed',
+        () => query.streamQueryNamed(
+          connectionId,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -193,10 +248,13 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      query.executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params: params,
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValues',
+        () => query.executeQueryColumnarParamValues(
+          connectionId,
+          sql,
+          params: params,
+        ),
       );
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
@@ -205,11 +263,14 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      query.streamQueryColumnar(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnar',
+        () => query.streamQueryColumnar(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<QueryResult>> catalogTables({
@@ -217,38 +278,56 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     String catalog = '',
     String schema = '',
   }) =>
-      query.catalogTables(
-        connectionId: connectionId,
-        catalog: catalog,
-        schema: schema,
+      OdbcErrorBoundary.run(
+        'catalogTables',
+        () => query.catalogTables(
+          connectionId: connectionId,
+          catalog: catalog,
+          schema: schema,
+        ),
       );
 
   Future<Result<QueryResult>> catalogColumns(
     String connectionId,
     String table,
   ) =>
-      query.catalogColumns(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogColumns',
+        () => query.catalogColumns(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId) =>
-      query.catalogTypeInfo(connectionId);
+      OdbcErrorBoundary.run(
+        'catalogTypeInfo',
+        () => query.catalogTypeInfo(connectionId),
+      );
 
   Future<Result<QueryResult>> catalogPrimaryKeys(
     String connectionId,
     String table,
   ) =>
-      query.catalogPrimaryKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogPrimaryKeys',
+        () => query.catalogPrimaryKeys(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogForeignKeys(
     String connectionId,
     String table,
   ) =>
-      query.catalogForeignKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogForeignKeys',
+        () => query.catalogForeignKeys(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogIndexes(
     String connectionId,
     String table,
   ) =>
-      query.catalogIndexes(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogIndexes',
+        () => query.catalogIndexes(connectionId, table),
+      );
 
   Future<Result<int>> bulkInsert(
     String connectionId,
@@ -257,12 +336,15 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     List<int> dataBuffer,
     int rowCount,
   ) =>
-      query.bulkInsert(
-        connectionId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
+      OdbcErrorBoundary.run(
+        'bulkInsert',
+        () => query.bulkInsert(
+          connectionId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+        ),
       );
 
   Future<Result<int>> bulkInsertParallel(
@@ -273,21 +355,27 @@ mixin TelemetryOdbcServiceQueryForwards on TelemetryOdbcServiceDecoratorBase {
     int rowCount, {
     int parallelism = 0,
   }) =>
-      query.bulkInsertParallel(
-        poolId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
-        parallelism: parallelism,
+      OdbcErrorBoundary.run(
+        'bulkInsertParallel',
+        () => query.bulkInsertParallel(
+          poolId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+          parallelism: parallelism,
+        ),
       );
 
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     String? connectionId,
   }) =>
-      query.executeQuery(
-        sql,
-        connectionId: connectionId,
+      OdbcErrorBoundary.run(
+        'executeQuery',
+        () => query.executeQuery(
+          sql,
+          connectionId: connectionId,
+        ),
       );
 }

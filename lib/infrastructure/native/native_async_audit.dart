@@ -26,31 +26,50 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
   bool get supportsMetadataCacheApi => _native.supportsMetadataCacheApi;
 
   /// Enables/disables native audit event collection.
-  bool setAuditEnabled({required bool enabled}) =>
-      _native.setAuditEnabled(enabled: enabled);
+  bool setAuditEnabled({required bool enabled}) => _captureSync(
+        'setAuditEnabled',
+        () => _native.setAuditEnabled(enabled: enabled),
+        failed: (value) => !value,
+      );
 
   /// Clears in-memory native audit events.
-  bool clearAuditEvents() => _native.clearAuditEvents();
+  bool clearAuditEvents() => _captureSync(
+        'clearAuditEvents',
+        _native.clearAuditEvents,
+        failed: (value) => !value,
+      );
 
   /// Enables metadata cache in native engine.
   bool metadataCacheEnable({
     required int maxEntries,
     required int ttlSeconds,
   }) =>
-      _native.metadataCacheEnable(
-        maxEntries: maxEntries,
-        ttlSeconds: ttlSeconds,
+      _captureSync(
+        'metadataCacheEnable',
+        () => _native.metadataCacheEnable(
+          maxEntries: maxEntries,
+          ttlSeconds: ttlSeconds,
+        ),
+        failed: (value) => !value,
       );
 
   /// Returns metadata cache stats JSON payload.
   String? getMetadataCacheStatsJson() => _native.metadataCacheStatsJson();
 
   /// Clears metadata cache entries.
-  bool clearMetadataCache() => _native.metadataCacheClear();
+  bool clearMetadataCache() => _captureSync(
+        'clearMetadataCache',
+        _native.metadataCacheClear,
+        failed: (value) => !value,
+      );
 
   /// Starts non-blocking query execution and returns async request ID.
-  int? executeAsyncStart(int connectionId, String sql) =>
-      _native.executeAsyncStart(connectionId, sql);
+  int? executeAsyncStart(int connectionId, String sql) => _captureSync(
+        'executeAsyncStart',
+        () => _native.executeAsyncStart(connectionId, sql),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
+      );
 
   /// Starts non-blocking parameterized query execution.
   int? executeAsyncStartParams(
@@ -60,17 +79,26 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     int fetchSize = 0,
   }) =>
-      _native.executeAsyncStartParams(
-        connectionId,
-        sql,
-        serializedParams,
-        resultEncoding: resultEncoding,
-        fetchSize: fetchSize,
+      _captureSync(
+        'executeAsyncStartParams',
+        () => _native.executeAsyncStartParams(
+          connectionId,
+          sql,
+          serializedParams,
+          resultEncoding: resultEncoding,
+          fetchSize: fetchSize,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Polls async request status:
   /// `0` pending, `1` ready, `-1` error, `-2` cancelled.
-  int? asyncPoll(int requestId) => _native.asyncPoll(requestId);
+  int? asyncPoll(int requestId) => _captureSync(
+        'asyncPoll',
+        () => _native.asyncPoll(requestId),
+        failed: (value) => value == null || value < 0,
+      );
 
   /// Retrieves binary result for a completed async request.
   Uint8List? asyncGetResult(
@@ -78,17 +106,29 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
     int? maxBufferBytes,
     int? initialBufferBytes,
   }) =>
-      _native.asyncGetResult(
-        requestId,
-        maxBufferBytes: maxBufferBytes,
-        initialBufferBytes: initialBufferBytes,
+      _captureSync(
+        'asyncGetResult',
+        () => _native.asyncGetResult(
+          requestId,
+          maxBufferBytes: maxBufferBytes,
+          initialBufferBytes: initialBufferBytes,
+        ),
+        failed: (value) => value == null,
       );
 
   /// Best-effort cancellation for an async request.
-  bool asyncCancel(int requestId) => _native.asyncCancel(requestId);
+  bool asyncCancel(int requestId) => _captureSync(
+        'asyncCancel',
+        () => _native.asyncCancel(requestId),
+        failed: (value) => !value,
+      );
 
   /// Frees async request resources.
-  bool asyncFree(int requestId) => _native.asyncFree(requestId);
+  bool asyncFree(int requestId) => _captureSync(
+        'asyncFree',
+        () => _native.asyncFree(requestId),
+        failed: (value) => !value,
+      );
 
   /// Starts async stream and returns stream ID.
   ///
@@ -102,17 +142,26 @@ mixin _NativeAsyncAudit on _NativeOdbcState {
     int chunkSize = 64 * 1024,
     int resultEncodingWire = 0,
   }) =>
-      _native.streamStartAsync(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
+      _captureSync(
+        'streamStartAsync',
+        () => _native.streamStartAsync(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+        ),
+        failed: (value) => value == null || value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Polls async stream status:
   /// `0` pending, `1` ready, `2` done, `-1` error, `-2` cancelled.
-  int? streamPollAsync(int streamId) => _native.streamPollAsync(streamId);
+  int? streamPollAsync(int streamId) => _captureSync(
+        'streamPollAsync',
+        () => _native.streamPollAsync(streamId),
+        failed: (value) => value == null || value < 0,
+      );
 
   /// Gets audit events as JSON payload.
   String? getAuditEventsJson({int limit = 0}) =>

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
 
 /// Wraps a UTF-8 byte slice and decodes it to a [String] only on demand.
 ///
@@ -48,7 +49,10 @@ import 'package:odbc_fast/infrastructure/native/protocol/protocol_ascii_parse.da
 class LazyString {
   /// Wraps [bytes] without taking a defensive copy. The caller is
   /// responsible for not mutating the slice after wrapping.
-  LazyString(this._bytes);
+  LazyString(this._bytes)
+      : _frameOwner = ProtocolByteAccumulator.retainFrame(_bytes);
+
+  final Uint8List? _frameOwner;
 
   final Uint8List _bytes;
 
@@ -79,7 +83,12 @@ class LazyString {
   /// Read-only view over the underlying UTF-8 bytes. Mutating the slice
   /// is undefined behaviour and will produce inconsistent results from
   /// [value].
-  Uint8List get bytes => _bytes;
+  Uint8List get bytes {
+    // A returned slice can survive this LazyString, so it needs independent
+    // ownership rather than relying on the retained frame.
+    ProtocolByteAccumulator.protectBacking(_frameOwner ?? _bytes);
+    return _bytes;
+  }
 
   @override
   String toString() => value;

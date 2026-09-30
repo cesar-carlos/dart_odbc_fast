@@ -77,7 +77,7 @@ void main() {
       expect(result.isError(), isTrue);
       expect(
         result.exceptionOrNull(),
-        same(original),
+        isA<QueryError>().having((e) => e.message, 'message', original.message),
         reason: 'must propagate the action error verbatim, not wrap it',
       );
       expect(mockRepo.beginTransactionCalled, isTrue);
@@ -102,12 +102,12 @@ void main() {
       final err = result.exceptionOrNull();
       expect(err, isA<QueryError>());
       expect(
-        (err! as QueryError).message,
-        contains('runInTransaction: action threw'),
+        (err! as QueryError).details.operation,
+        equals('transactionAction'),
         reason: 'error message must identify the helper as the catcher',
       );
       expect(
-        (err as QueryError).message,
+        (err as QueryError).details.cause.toString(),
         contains('boom'),
         reason: 'original throw message must be preserved for diagnostics',
       );
@@ -166,8 +166,7 @@ void main() {
       expect(mockRepo.rollbackTransactionCalled, isFalse);
     });
 
-    test('rollback failure during cleanup is swallowed; original error wins',
-        () async {
+    test('rollback failure is secondary; original error wins', () async {
       mockRepo.rollbackTransactionShouldFail = true;
       const original = QueryError(message: 'business rule violated');
 
@@ -179,14 +178,18 @@ void main() {
       expect(result.isError(), isTrue);
       expect(
         result.exceptionOrNull(),
-        same(original),
+        isA<QueryError>().having((e) => e.message, 'message', original.message),
         reason:
             'a noisy rollback failure must NOT overwrite the original cause',
       );
       expect(
+        (result.exceptionOrNull()! as OdbcError).details.secondaryErrors,
+        hasLength(1),
+      );
+      expect(
         mockRepo.rollbackTransactionCalled,
         isTrue,
-        reason: 'rollback was attempted, just failed silently',
+        reason: 'rollback failure is preserved as a secondary error',
       );
     });
 

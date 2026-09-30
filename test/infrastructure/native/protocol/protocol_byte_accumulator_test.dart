@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
 import 'package:test/test.dart';
 
@@ -7,6 +8,46 @@ void main() {
   group('ProtocolByteAccumulator', () {
     setUp(ProtocolByteAccumulator.clearPoolForTest);
     tearDown(ProtocolByteAccumulator.clearPoolForTest);
+
+    test('should_retain_multiple_frames_and_lazy_strings_on_reuse', () {
+      final acc = ProtocolByteAccumulator(initialCapacity: 8)
+        ..add(Uint8List.fromList([97, 98, 99, 100, 101, 102, 103, 104]));
+      final first = acc.take(2);
+      final second = acc.takeAfterPrefix(1, 2);
+      expect(identical(first.buffer, second.buffer), isFalse);
+      expect(first.buffer, second.buffer);
+      final lazy = LazyString(second);
+      acc.add(Uint8List.fromList([105, 106]));
+      acc.take(acc.length);
+      acc.add(Uint8List(16));
+      expect(first, [97, 98]);
+      expect(lazy.value, 'de');
+    });
+
+    test('should_retain_owner_for_lazy_slices_of_single_complete_frame', () {
+      final acc = ProtocolByteAccumulator()
+        ..add(Uint8List(64 * 1024)..[2] = 97);
+      final frame = acc.take(acc.length);
+      final slice = Uint8List.sublistView(frame, 2, 3);
+      expect(ProtocolByteAccumulator.retainFrame(slice), same(frame));
+      final lazy = LazyString(slice);
+      expect(lazy.value, 'a');
+      lazy.bytes;
+      expect(ProtocolByteAccumulator.retainFrame(slice), isNull);
+    });
+
+    test('should_reject_negative_and_out_of_range_consumption', () {
+      final acc = ProtocolByteAccumulator()..add(Uint8List(3));
+      for (final count in [-1, 4]) {
+        expect(() => acc.take(count), throwsRangeError);
+        expect(() => acc.drop(count), throwsRangeError);
+        expect(() => acc.peek(count), throwsRangeError);
+      }
+      expect(() => acc.takeAfterPrefix(-1, 1), throwsRangeError);
+      expect(() => acc.takeAfterPrefix(1, -1), throwsRangeError);
+      expect(() => acc.takeAfterPrefix(2, 2), throwsRangeError);
+      expect(acc.length, 3);
+    });
 
     test('should_return_sublistView_from_peek_and_take', () {
       final acc = ProtocolByteAccumulator()

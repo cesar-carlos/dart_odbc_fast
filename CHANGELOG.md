@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Automatic reconnection now restores the connection for future operations
+  without replaying the failed query. Set
+  `ConnectionOptions.replayQueriesAfterReconnect` to opt in to one replay; the
+  option defaults to false in every profile and has no effect unless
+  `autoReconnectOnConnectionLost` is enabled. Local and XA transactions prohibit
+  reconnect and replay, and report an uncertain outcome where applicable.
+- Service and repository `Result` boundaries normalize unexpected exceptions,
+  including failures from injected implementations, while retaining the cause
+  and stack trace. `Stream<Result<T>>` contracts emit one terminal `Failure`
+  after cleanup and do not also expose the same failure as a stream error.
+- Worker diagnostics are captured for the request that failed, before resource
+  cleanup, and carry SQLSTATE, native code, operation and connection,
+  request/worker identifiers. Known request errors are no longer replaced by a
+  later process-global diagnostic.
+- Reconnection resolves the current native handle for every attempt, shares one
+  recovery among concurrent operations, observes configured attempts/backoff,
+  and cannot publish a recovered handle after disconnect, pool close or dispose.
+  Pool recovery reacquires from the original pool instead of treating its
+  logical identifier as a connection string.
+- Transactions track handle ownership and lifecycle. Busy completion retains
+  the handle and affinity; terminal completion consumes it even when the native
+  operation reports failure. Operation errors remain primary while rollback,
+  cancellation, close and release failures are retained as secondary errors.
+- Query stream subscriptions forward pause, resume and cancellation to their
+  source. Timeout remains a total deadline from subscription, including consumer
+  pauses, and late events are discarded after terminal completion.
+- Telemetry export, trace finalization and diagnostic callback failures no longer
+  change successful SQL results or replace SQL failures. Service reinitialization
+  and shutdown now cancel telemetry event subscriptions.
+- `ProtocolByteAccumulator` now advances read/write cursors instead of copying
+  the unread remainder after every frame. Shared backing is detached only when
+  required, preserving retained frames and lazy strings.
+
+### Added
+
+- `OdbcErrorCode`, `OdbcErrorDetails`, `code`, `userMessage` and `details`.
+- Request-scoped worker failure snapshots with operation and diagnostic context,
+  uncertain-outcome state and recursive secondary failures.
+- Optional `SimpleTelemetryService.onDiagnostic` callback for instrumentation
+  failures; callback failures fall back to logging without changing SQL results.
+- `QueryResultReader`, created by `result.reader()`, snapshots column names and
+  precomputes exact/case-insensitive first-occurrence indices.
+- Dart-only hot-path benchmark covering frames, fragmentation, retained lazy
+  strings and repeated column lookup.
+
+### Fixed
+
+- Native `null` responses from full and parameterized multi-result execution no
+  longer become successful empty results. Confirmed empty result sets and DML
+  results remain valid, and malformed payloads now report protocol errors.
+- Polling exceptions return an error status instead of `pending`, and failed XA
+  operations return a failure status instead of the native success code.
+- Query replay uses the newly recovered handle and preserves the original typed
+  error without casting `Failure<Unit>` to an unrelated result type.
+- Reconnection retries stop on definitive failures, continue on transient ones,
+  and cannot republish stale handles after concurrent lifecycle changes.
+- Commit, rollback, savepoint and XA operations validate transaction ownership.
+  Failed prepared commits retain the XID and uncertain phase and are not reported
+  as a completed rollback.
+- Cleanup now checks thrown exceptions, `false` returns and typed failures.
+  Cleanup failures after successful reads are returned explicitly, while cleanup
+  failures after an operation error are attached as secondary diagnostics.
+- Pool creation and acquisition validate connection options before native calls.
+  Successful release, recovery, close and dispose remove connection metadata and
+  associated worker resource records.
+- Timeout and driver-confirmed cancellation are distinguished. Operations that
+  may still be running in the backend set `details.outcomeUnknown`.
+- Boolean and integer worker replies contribute their captured failure snapshots
+  to failure metrics, including resource, polling and XA failures.
+
+### Compatibility
+
+- Existing `OdbcError` subclasses, constructor call shapes, SQLSTATE/native-code
+  fields and low-level native sentinel conventions remain supported.
+- No native ABI, database wire format, generated binding or exported native
+  symbol changed; failure snapshots are internal to the Dart worker protocol.
+
 ## [4.6.0] - 2026-09-24
 
 ### Added

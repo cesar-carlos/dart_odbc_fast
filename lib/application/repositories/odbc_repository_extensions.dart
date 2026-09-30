@@ -1,4 +1,4 @@
-import 'package:odbc_fast/core/utils/logger.dart';
+import 'package:odbc_fast/application/services/odbc_transaction_service.dart';
 import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/directed_param.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
@@ -10,7 +10,7 @@ import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
-import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
 import 'package:odbc_fast/domain/repositories/odbc_repository.dart';
 import 'package:result_dart/result_dart.dart';
@@ -26,12 +26,15 @@ extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
     String sql, {
     List<Object?>? params,
   }) =>
-      executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params == null || params.isEmpty
-            ? const <ParamValue>[]
-            : paramValuesFromObjects(params),
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarFromObjects',
+        () => executeQueryColumnarParamValues(
+          connectionId,
+          sql,
+          params == null || params.isEmpty
+              ? const <ParamValue>[]
+              : paramValuesFromObjects(params),
+        ),
       );
 
   /// Explicit alias for [streamQueryColumnar] when callers want to stress the
@@ -40,7 +43,10 @@ extension IOdbcRepositoryQueryExtensions on IOdbcRepository {
     String connectionId,
     String sql,
   ) =>
-      streamQueryColumnar(connectionId, sql);
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnarNative',
+        () => streamQueryColumnar(connectionId, sql),
+      );
 }
 
 /// Ergonomic overloads that accept a [Connection] instead of a raw id.
@@ -52,7 +58,10 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     Connection conn,
     String sql,
   ) =>
-      executeQuery(conn.id, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryFor',
+        () => executeQuery(conn.id, sql),
+      );
 
   /// `executeQueryParamValues` overload that accepts a [Connection].
   Future<Result<QueryResult>> executeQueryParamValuesFor(
@@ -61,11 +70,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      executeQueryParamValues(
-        conn.id,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValuesFor',
+        () => executeQueryParamValues(
+          conn.id,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   /// `executeQueryParamValuesFromObjects` overload that accepts a [Connection].
@@ -75,11 +87,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     List<Object?> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      executeQueryParamValuesFromObjects(
-        conn.id,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValuesFromObjectsFor',
+        () => executeQueryParamValuesFromObjects(
+          conn.id,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   /// `executeQueryDirectedParams` overload that accepts a [Connection].
@@ -88,7 +103,10 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql,
     List<DirectedParam> params,
   ) =>
-      executeQueryDirectedParams(conn.id, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryDirectedParamsFor',
+        () => executeQueryDirectedParams(conn.id, sql, params),
+      );
 
   /// `executeQueryNamed` overload that accepts a [Connection].
   Future<Result<QueryResult>> executeQueryNamedFor(
@@ -96,7 +114,10 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      executeQueryNamed(conn.id, sql, namedParams);
+      OdbcErrorBoundary.run(
+        'executeQueryNamedFor',
+        () => executeQueryNamed(conn.id, sql, namedParams),
+      );
 
   /// `executeQueryColumnarParamValues` overload that accepts a [Connection].
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValuesFor(
@@ -104,10 +125,13 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      executeQueryColumnarParamValues(
-        conn.id,
-        sql,
-        params ?? const <ParamValue>[],
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValuesFor',
+        () => executeQueryColumnarParamValues(
+          conn.id,
+          sql,
+          params ?? const <ParamValue>[],
+        ),
       );
 
   /// `executeQueryColumnarFromObjects` overload that accepts a [Connection].
@@ -116,7 +140,10 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql, {
     List<Object?>? params,
   }) =>
-      executeQueryColumnarFromObjects(conn.id, sql, params: params);
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarFromObjectsFor',
+        () => executeQueryColumnarFromObjects(conn.id, sql, params: params),
+      );
 
   /// `executePreparedParamValuesFromObjects` overload for a [Connection].
   Future<Result<QueryResult>> executePreparedParamValuesFromObjectsFor(
@@ -125,11 +152,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     List<Object?>? params,
     StatementOptions? options,
   ) =>
-      executePreparedParamValuesFromObjects(
-        conn.id,
-        stmtId,
-        params,
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValuesFromObjectsFor',
+        () => executePreparedParamValuesFromObjects(
+          conn.id,
+          stmtId,
+          params,
+          options,
+        ),
       );
 
   /// `executeQueryMultiParamValuesFromObjects` overload for a [Connection].
@@ -138,7 +168,10 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     String sql,
     List<Object?> params,
   ) =>
-      executeQueryMultiParamValuesFromObjects(conn.id, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValuesFromObjectsFor',
+        () => executeQueryMultiParamValuesFromObjects(conn.id, sql, params),
+      );
 
   /// `streamQuery` overload that accepts a [Connection].
   Stream<Result<QueryResult>> streamQueryFor(
@@ -147,11 +180,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQuery(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryFor',
+        () => streamQuery(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryNamed` overload that accepts a [Connection].
@@ -162,12 +198,15 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryNamed(
-        conn.id,
-        sql,
-        namedParams,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamedFor',
+        () => streamQueryNamed(
+          conn.id,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryColumnar` overload that accepts a [Connection].
@@ -177,11 +216,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryColumnar(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryColumnarFor',
+        () => streamQueryColumnar(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   /// `streamQueryMultiBatches` overload that accepts a [Connection].
@@ -191,11 +233,14 @@ extension IOdbcRepositoryConnectionOverloads on IOdbcRepository {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      streamQueryMultiBatches(
-        conn.id,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesFor',
+        () => streamQueryMultiBatches(
+          conn.id,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 }
 
@@ -210,11 +255,14 @@ extension IOdbcRepositoryTypedParamExtensions on IOdbcRepository {
     List<Object?> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      executeQueryParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValuesFromObjects',
+        () => executeQueryParamValues(
+          connectionId,
+          sql,
+          paramValuesFromObjects(params),
+          resultEncoding: resultEncoding,
+        ),
       );
 
   /// Prepared positional execute with automatic [ParamValue] conversion.
@@ -224,13 +272,16 @@ extension IOdbcRepositoryTypedParamExtensions on IOdbcRepository {
     List<Object?>? params,
     StatementOptions? options,
   ) =>
-      executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValuesFromObjects',
+        () => executePreparedParamValues(
+          connectionId,
+          stmtId,
+          params == null || params.isEmpty
+              ? null
+              : paramValuesFromObjects(params),
+          options,
+        ),
       );
 
   /// Multi-result positional execute with automatic [ParamValue] conversion.
@@ -239,10 +290,13 @@ extension IOdbcRepositoryTypedParamExtensions on IOdbcRepository {
     String sql,
     List<Object?> params,
   ) =>
-      executeQueryMultiParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValuesFromObjects',
+        () => executeQueryMultiParamValues(
+          connectionId,
+          sql,
+          paramValuesFromObjects(params),
+        ),
       );
 }
 
@@ -258,12 +312,15 @@ extension IOdbcRepositoryTransactionExtensions on IOdbcRepository {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      beginTransaction(
-        connectionId,
-        isolationLevel ?? IsolationLevel.readCommitted,
-        savepointDialect: savepointDialect ?? SavepointDialect.auto,
-        accessMode: accessMode ?? TransactionAccessMode.readWrite,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'beginTransactionWithDefaults',
+        () => beginTransaction(
+          connectionId,
+          isolationLevel ?? IsolationLevel.readCommitted,
+          savepointDialect: savepointDialect ?? SavepointDialect.auto,
+          accessMode: accessMode ?? TransactionAccessMode.readWrite,
+          lockTimeout: lockTimeout,
+        ),
       );
 
   /// `beginTransactionWithDefaults` overload that accepts a connection.
@@ -274,12 +331,15 @@ extension IOdbcRepositoryTransactionExtensions on IOdbcRepository {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      beginTransactionWithDefaults(
-        conn.id,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'beginTransactionFor',
+        () => beginTransactionWithDefaults(
+          conn.id,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
 
   /// Runs [action] inside a freshly opened transaction with automatic
@@ -291,42 +351,18 @@ extension IOdbcRepositoryTransactionExtensions on IOdbcRepository {
     SavepointDialect? savepointDialect,
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
-  }) async {
-    final beginResult = await beginTransactionWithDefaults(
-      connectionId,
-      isolationLevel: isolationLevel,
-      savepointDialect: savepointDialect,
-      accessMode: accessMode,
-      lockTimeout: lockTimeout,
-    );
-    if (beginResult.isError()) {
-      return Failure(beginResult.exceptionOrNull()!);
-    }
-    final txnId = beginResult.getOrNull()!;
-
-    Result<T> userResult;
-    try {
-      userResult = await action(txnId);
-    } on Object catch (e, st) {
-      await _safelyRollbackRepository(this, connectionId, txnId);
-      return Failure(
-        QueryError(
-          message: 'runInTransaction: action threw ${e.runtimeType}: $e\n$st',
+  }) =>
+      OdbcErrorBoundary.run(
+        'runInTransaction',
+        () => OdbcTransactionService(this).runInTransaction(
+          connectionId,
+          action,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
         ),
       );
-    }
-
-    if (userResult.isError()) {
-      await _safelyRollbackRepository(this, connectionId, txnId);
-      return userResult;
-    }
-
-    final commitResult = await commitTransaction(connectionId, txnId);
-    if (commitResult.isError()) {
-      return Failure(commitResult.exceptionOrNull()!);
-    }
-    return userResult;
-  }
 
   /// `runInTransaction` overload that accepts a [Connection].
   Future<Result<T>> runInTransactionFor<T extends Object>(
@@ -337,28 +373,15 @@ extension IOdbcRepositoryTransactionExtensions on IOdbcRepository {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      runInTransaction(
-        conn.id,
-        action,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'runInTransactionFor',
+        () => runInTransaction(
+          conn.id,
+          action,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
-}
-
-Future<void> _safelyRollbackRepository(
-  IOdbcRepository repository,
-  String connectionId,
-  int txnId,
-) async {
-  try {
-    await repository.rollbackTransaction(connectionId, txnId);
-  } on Object catch (rollbackError, rollbackSt) {
-    AppLogger.warning(
-      'Rollback cleanup failed for connection $connectionId txn $txnId',
-      rollbackError,
-      rollbackSt,
-    );
-  }
 }

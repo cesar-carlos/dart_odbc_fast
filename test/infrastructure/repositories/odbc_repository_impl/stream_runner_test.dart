@@ -93,7 +93,7 @@ void main() {
             expect(e, isA<QueryError>());
             expect(
               (e as QueryError).message,
-              contains('Failed to start streaming multi-result'),
+              isNotEmpty,
             );
           },
         );
@@ -444,7 +444,8 @@ void main() {
     );
 
     test(
-      'executeQueryMultiFull maps malformed multi buffer to QueryError',
+      'executeQueryMultiFull maps malformed multi buffer '
+      'to MalformedPayloadError',
       () async {
         native.executeQueryMultiResult = malformedMultiResultBuffer();
         final result = await repository.executeQueryMultiFull(
@@ -454,7 +455,7 @@ void main() {
         expect(result.isSuccess(), isFalse);
         result.fold(
           (_) => fail('Expected failure'),
-          (e) => expect(e, isA<QueryError>()),
+          (e) => expect(e, isA<MalformedPayloadError>()),
         );
       },
     );

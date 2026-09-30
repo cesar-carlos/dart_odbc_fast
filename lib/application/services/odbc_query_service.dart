@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/domain/repositories/i_query_repository.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -21,11 +22,14 @@ class OdbcQueryService {
     List<ParamValue> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      _repository.executeQueryParamValues(
-        connectionId,
-        sql,
-        params,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValues',
+        () => _repository.executeQueryParamValues(
+          connectionId,
+          sql,
+          params,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   Future<Result<QueryResult>> executeQueryDirectedParams(
@@ -33,7 +37,14 @@ class OdbcQueryService {
     String sql,
     List<DirectedParam> params,
   ) =>
-      _repository.executeQueryDirectedParams(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryDirectedParams',
+        () => _repository.executeQueryDirectedParams(
+          connectionId,
+          sql,
+          params,
+        ),
+      );
 
   Stream<Result<QueryResult>> streamQuery(
     String connectionId,
@@ -41,11 +52,14 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQuery(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQuery',
+        () => _repository.streamQuery(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<int>> prepare(
@@ -53,14 +67,24 @@ class OdbcQueryService {
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _repository.prepare(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepare',
+        () => _repository.prepare(connectionId, sql, timeoutMs: timeoutMs),
+      );
 
   Future<Result<int>> prepareNamed(
     String connectionId,
     String sql, {
     int timeoutMs = 0,
   }) =>
-      _repository.prepareNamed(connectionId, sql, timeoutMs: timeoutMs);
+      OdbcErrorBoundary.run(
+        'prepareNamed',
+        () => _repository.prepareNamed(
+          connectionId,
+          sql,
+          timeoutMs: timeoutMs,
+        ),
+      );
 
   Future<Result<QueryResult>> executePreparedParamValues(
     String connectionId,
@@ -69,12 +93,15 @@ class OdbcQueryService {
     StatementOptions? options, {
     ResultEncoding? resultEncoding,
   }) =>
-      _repository.executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params,
-        options,
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValues',
+        () => _repository.executePreparedParamValues(
+          connectionId,
+          stmtId,
+          params,
+          options,
+          resultEncoding: resultEncoding,
+        ),
       );
 
   Future<Result<QueryResult>> executePreparedNamed(
@@ -83,37 +110,59 @@ class OdbcQueryService {
     Map<String, Object?> namedParams,
     StatementOptions? options,
   ) =>
-      _repository.executePreparedNamed(
-        connectionId,
-        stmtId,
-        namedParams,
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedNamed',
+        () => _repository.executePreparedNamed(
+          connectionId,
+          stmtId,
+          namedParams,
+          options,
+        ),
       );
 
   Future<Result<void>> closeStatement(String connectionId, int stmtId) =>
-      _repository.closeStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'closeStatement',
+        () => _repository.closeStatement(connectionId, stmtId),
+      );
 
   Future<Result<void>> cancelStatement(String connectionId, int stmtId) =>
-      _repository.cancelStatement(connectionId, stmtId);
+      OdbcErrorBoundary.runVoid(
+        'cancelStatement',
+        () => _repository.cancelStatement(connectionId, stmtId),
+      );
 
   Future<Result<QueryResult>> executeQueryMulti(
     String connectionId,
     String sql,
   ) =>
-      _repository.executeQueryMulti(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMulti',
+        () => _repository.executeQueryMulti(connectionId, sql),
+      );
 
   Future<Result<QueryResultMulti>> executeQueryMultiFull(
     String connectionId,
     String sql,
   ) =>
-      _repository.executeQueryMultiFull(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiFull',
+        () => _repository.executeQueryMultiFull(connectionId, sql),
+      );
 
   Future<Result<QueryResultMulti>> executeQueryMultiParamValues(
     String connectionId,
     String sql,
     List<ParamValue> params,
   ) =>
-      _repository.executeQueryMultiParamValues(connectionId, sql, params);
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValues',
+        () => _repository.executeQueryMultiParamValues(
+          connectionId,
+          sql,
+          params,
+        ),
+      );
 
   Stream<Result<QueryResultMultiItem>> streamQueryMulti(
     String connectionId,
@@ -121,11 +170,14 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQueryMulti(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMulti',
+        () => _repository.streamQueryMulti(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiItem>> streamQueryMultiParamValues(
@@ -135,12 +187,15 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQueryMultiParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiParamValues',
+        () => _repository.streamQueryMultiParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatchesParamValues(
@@ -150,12 +205,15 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQueryMultiBatchesParamValues(
-        connectionId,
-        sql,
-        params,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatchesParamValues',
+        () => _repository.streamQueryMultiBatchesParamValues(
+          connectionId,
+          sql,
+          params,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Stream<Result<QueryResultMultiBatchItem>> streamQueryMultiBatches(
@@ -164,11 +222,14 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQueryMultiBatches(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryMultiBatches',
+        () => _repository.streamQueryMultiBatches(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<QueryResult>> executeQueryNamed(
@@ -176,7 +237,10 @@ class OdbcQueryService {
     String sql,
     Map<String, Object?> namedParams,
   ) =>
-      _repository.executeQueryNamed(connectionId, sql, namedParams);
+      OdbcErrorBoundary.run(
+        'executeQueryNamed',
+        () => _repository.executeQueryNamed(connectionId, sql, namedParams),
+      );
 
   Stream<Result<QueryResult>> streamQueryNamed(
     String connectionId,
@@ -185,12 +249,15 @@ class OdbcQueryService {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      _repository.streamQueryNamed(
-        connectionId,
-        sql,
-        namedParams,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.stream(
+        'streamQueryNamed',
+        () => _repository.streamQueryNamed(
+          connectionId,
+          sql,
+          namedParams,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
   Future<Result<TypedColumnarResult>> executeQueryColumnarParamValues(
@@ -198,10 +265,13 @@ class OdbcQueryService {
     String sql, {
     List<ParamValue>? params,
   }) =>
-      _repository.executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params ?? const <ParamValue>[],
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarParamValues',
+        () => _repository.executeQueryColumnarParamValues(
+          connectionId,
+          sql,
+          params ?? const <ParamValue>[],
+        ),
       );
 
   Stream<Result<TypedColumnarResult>> streamQueryColumnar(
@@ -209,54 +279,73 @@ class OdbcQueryService {
     String sql, {
     int fetchSize = 1000,
     int? chunkSize,
-  }) async* {
-    await for (final chunk in _repository.streamQueryColumnar(
-      connectionId,
-      sql,
-      fetchSize: fetchSize,
-      chunkSize: chunkSize,
-    )) {
-      yield chunk;
-    }
-  }
+  }) =>
+      OdbcErrorBoundary.stream('streamQueryColumnar', () async* {
+        await for (final chunk in _repository.streamQueryColumnar(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        )) {
+          yield chunk;
+        }
+      });
 
   Future<Result<QueryResult>> catalogTables({
     required String connectionId,
     String catalog = '',
     String schema = '',
   }) =>
-      _repository.catalogTables(
-        connectionId,
-        catalog: catalog,
-        schema: schema,
+      OdbcErrorBoundary.run(
+        'catalogTables',
+        () => _repository.catalogTables(
+          connectionId,
+          catalog: catalog,
+          schema: schema,
+        ),
       );
 
   Future<Result<QueryResult>> catalogColumns(
     String connectionId,
     String table,
   ) =>
-      _repository.catalogColumns(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogColumns',
+        () => _repository.catalogColumns(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogTypeInfo(String connectionId) =>
-      _repository.catalogTypeInfo(connectionId);
+      OdbcErrorBoundary.run(
+        'catalogTypeInfo',
+        () => _repository.catalogTypeInfo(connectionId),
+      );
 
   Future<Result<QueryResult>> catalogPrimaryKeys(
     String connectionId,
     String table,
   ) =>
-      _repository.catalogPrimaryKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogPrimaryKeys',
+        () => _repository.catalogPrimaryKeys(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogForeignKeys(
     String connectionId,
     String table,
   ) =>
-      _repository.catalogForeignKeys(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogForeignKeys',
+        () => _repository.catalogForeignKeys(connectionId, table),
+      );
 
   Future<Result<QueryResult>> catalogIndexes(
     String connectionId,
     String table,
   ) =>
-      _repository.catalogIndexes(connectionId, table);
+      OdbcErrorBoundary.run(
+        'catalogIndexes',
+        () => _repository.catalogIndexes(connectionId, table),
+      );
 
   Future<Result<int>> bulkInsert(
     String connectionId,
@@ -265,12 +354,15 @@ class OdbcQueryService {
     List<int> dataBuffer,
     int rowCount,
   ) =>
-      _repository.bulkInsert(
-        connectionId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
+      OdbcErrorBoundary.run(
+        'bulkInsert',
+        () => _repository.bulkInsert(
+          connectionId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+        ),
       );
 
   Future<Result<int>> bulkInsertParallel(
@@ -281,31 +373,35 @@ class OdbcQueryService {
     int rowCount, {
     int parallelism = 0,
   }) =>
-      _repository.bulkInsertParallel(
-        poolId,
-        table,
-        columns,
-        dataBuffer,
-        rowCount,
-        parallelism: parallelism,
+      OdbcErrorBoundary.run(
+        'bulkInsertParallel',
+        () => _repository.bulkInsertParallel(
+          poolId,
+          table,
+          columns,
+          dataBuffer,
+          rowCount,
+          parallelism: parallelism,
+        ),
       );
 
   Future<Result<QueryResult>> executeQuery(
     String sql, {
     String? connectionId,
-  }) async {
-    if (connectionId == null || connectionId.isEmpty) {
-      return const Failure(
-        ConnectionError(
-          message: 'No active connection. Call connect() first.',
-        ),
-      );
-    }
+  }) =>
+      OdbcErrorBoundary.run('executeQuery', () async {
+        if (connectionId == null || connectionId.isEmpty) {
+          return const Failure(
+            ConnectionError(
+              message: 'No active connection. Call connect() first.',
+            ),
+          );
+        }
 
-    return executeQueryParamValues(
-      connectionId,
-      sql,
-      const <ParamValue>[],
-    );
-  }
+        return executeQueryParamValues(
+          connectionId,
+          sql,
+          const <ParamValue>[],
+        );
+      });
 }

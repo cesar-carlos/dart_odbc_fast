@@ -1,3 +1,7 @@
+import 'package:odbc_fast/domain/errors/odbc_error_details.dart';
+
+export 'package:odbc_fast/domain/errors/odbc_error_details.dart';
+
 /// Error category for decision-making (retry, abort, reconnect, etc.)
 enum ErrorCategory {
   /// Transient error - retry may resolve
@@ -13,6 +17,12 @@ enum ErrorCategory {
   connectionLost,
 }
 
+/// Adapter for errors crossing an implementation boundary.
+abstract interface class OdbcErrorConvertible {
+  String get message;
+  OdbcError toOdbcError();
+}
+
 /// Base class for all ODBC-related errors.
 ///
 /// Provides categorization helpers to help applications make intelligent
@@ -22,6 +32,7 @@ sealed class OdbcError implements Exception {
     required this.message,
     this.sqlState,
     this.nativeCode,
+    this.details = const OdbcErrorDetails(),
   });
 
   /// Human-readable error message describing what went wrong.
@@ -38,6 +49,133 @@ sealed class OdbcError implements Exception {
   /// This is driver-specific and may vary between different database systems.
   /// Can be null if not available.
   final int? nativeCode;
+
+  final OdbcErrorDetails details;
+
+  OdbcErrorCode get code =>
+      details.code ??
+      switch (this) {
+        ValidationError() => OdbcErrorCode.validation,
+        EnvironmentNotInitializedError() =>
+          OdbcErrorCode.environmentUnavailable,
+        ConnectionError() => OdbcErrorCode.connection,
+        MalformedPayloadError() => OdbcErrorCode.protocol,
+        UnsupportedFeatureError() => OdbcErrorCode.unsupported,
+        ResourceLimitReachedError() => OdbcErrorCode.resourceLimit,
+        CancelledError() => OdbcErrorCode.cancelled,
+        WorkerCrashedError() => OdbcErrorCode.workerInterrupted,
+        RollbackFailedError() => OdbcErrorCode.cleanup,
+        _ when sqlState == 'HYT00' || sqlState == 'HYT01' =>
+          OdbcErrorCode.timeout,
+        _ when isConnectionError => OdbcErrorCode.connection,
+        _ => OdbcErrorCode.query,
+      };
+
+  String get userMessage => switch (code) {
+        OdbcErrorCode.validation => 'The operation received invalid input.',
+        OdbcErrorCode.environmentUnavailable =>
+          'The database environment is unavailable.',
+        OdbcErrorCode.connection => 'The database connection failed.',
+        OdbcErrorCode.query => 'The database query failed.',
+        OdbcErrorCode.transaction => 'The transaction could not be completed.',
+        OdbcErrorCode.timeout => 'The operation exceeded its time limit.',
+        OdbcErrorCode.cancelled => 'The operation was cancelled.',
+        OdbcErrorCode.protocol => 'The database returned an invalid response.',
+        OdbcErrorCode.unsupported => 'This operation is not supported.',
+        OdbcErrorCode.resourceLimit =>
+          'The operation exceeded a resource limit.',
+        OdbcErrorCode.workerInterrupted =>
+          'The database worker was interrupted.',
+        OdbcErrorCode.cleanup =>
+          'The operation could not release its resources.',
+        OdbcErrorCode.internal => 'The operation failed unexpectedly.',
+      };
+
+  OdbcError withDetails(OdbcErrorDetails value, {String? message}) =>
+      switch (this) {
+        ConnectionError() => ConnectionError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        QueryError() => QueryError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        ValidationError() => ValidationError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        UnsupportedFeatureError() => UnsupportedFeatureError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        EnvironmentNotInitializedError() => EnvironmentNotInitializedError(
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        NoMoreResultsError() => NoMoreResultsError(
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        MalformedPayloadError() => MalformedPayloadError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        RollbackFailedError() => RollbackFailedError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        ResourceLimitReachedError() => ResourceLimitReachedError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        CancelledError() => CancelledError(
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        WorkerCrashedError() => WorkerCrashedError(
+            message: message ?? this.message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            details: value,
+          ),
+        BulkPartialFailureError(
+          :final rowsInsertedBeforeFailure,
+          :final failedChunks,
+          :final detail
+        ) =>
+          BulkPartialFailureError(
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+            rowsInsertedBeforeFailure: rowsInsertedBeforeFailure,
+            failedChunks: failedChunks,
+            detail: detail,
+            details: value,
+          ),
+      };
+
+  OdbcError withSecondary(OdbcError secondary) => withDetails(
+        details.copyWith(
+          secondaryErrors: [...details.secondaryErrors, secondary],
+        ),
+      );
 
   @override
   String toString() {
@@ -109,6 +247,7 @@ final class ConnectionError extends OdbcError {
     required super.message,
     super.sqlState,
     super.nativeCode,
+    super.details,
   });
 }
 
@@ -133,6 +272,7 @@ final class QueryError extends OdbcError {
     required super.message,
     super.sqlState,
     super.nativeCode,
+    super.details,
   });
 }
 
@@ -147,6 +287,7 @@ final class UnsupportedFeatureError extends OdbcError {
     required super.message,
     super.sqlState,
     super.nativeCode,
+    super.details,
   });
 }
 
@@ -159,7 +300,12 @@ final class ValidationError extends OdbcError {
   /// Creates a new [ValidationError] instance.
   ///
   /// The [message] should describe what validation rule was violated.
-  const ValidationError({required super.message});
+  const ValidationError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  });
 }
 
 /// Error indicating the ODBC environment was not properly initialized.
@@ -171,8 +317,11 @@ final class EnvironmentNotInitializedError extends OdbcError {
   ///
   /// This error indicates that the ODBC service initialization has not been
   /// called or failed to complete successfully.
-  const EnvironmentNotInitializedError()
-      : super(message: 'ODBC environment not initialized');
+  const EnvironmentNotInitializedError({
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  }) : super(message: 'ODBC environment not initialized');
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +331,11 @@ final class EnvironmentNotInitializedError extends OdbcError {
 /// `SQLMoreResults` reports there are no further result sets.
 /// Informational: producers may stop iterating without treating it as failure.
 final class NoMoreResultsError extends OdbcError {
-  const NoMoreResultsError() : super(message: 'No more result sets available');
+  const NoMoreResultsError({
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  }) : super(message: 'No more result sets available');
 
   @override
   ErrorCategory get category => ErrorCategory.fatal;
@@ -191,7 +344,12 @@ final class NoMoreResultsError extends OdbcError {
 /// Wire-format payload is malformed (truncated, length mismatch, invalid tag).
 /// Always indicates a protocol bug in the caller — NOT retryable.
 final class MalformedPayloadError extends OdbcError {
-  const MalformedPayloadError({required super.message});
+  const MalformedPayloadError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  });
 
   @override
   ErrorCategory get category => ErrorCategory.validation;
@@ -204,13 +362,19 @@ final class RollbackFailedError extends OdbcError {
     required super.message,
     super.sqlState,
     super.nativeCode,
+    super.details,
   });
 }
 
 /// Resource limit reached (too many handles, payload too large, queue full).
 /// Generally NOT retryable without backoff.
 final class ResourceLimitReachedError extends OdbcError {
-  const ResourceLimitReachedError({required super.message});
+  const ResourceLimitReachedError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  });
 
   @override
   ErrorCategory get category => ErrorCategory.transient;
@@ -222,7 +386,8 @@ final class ResourceLimitReachedError extends OdbcError {
 /// Operation cancelled by the caller (cooperative cancellation).
 /// Distinct from a driver error: the request was successfully aborted.
 final class CancelledError extends OdbcError {
-  const CancelledError() : super(message: 'Operation cancelled');
+  const CancelledError({super.sqlState, super.nativeCode, super.details})
+      : super(message: 'Operation cancelled');
 
   @override
   ErrorCategory get category => ErrorCategory.fatal;
@@ -231,7 +396,12 @@ final class CancelledError extends OdbcError {
 /// A worker thread (streaming/async pipeline) crashed or disconnected
 /// without sending end-of-stream. Indicates a serious internal failure.
 final class WorkerCrashedError extends OdbcError {
-  const WorkerCrashedError({required super.message});
+  const WorkerCrashedError({
+    required super.message,
+    super.sqlState,
+    super.nativeCode,
+    super.details,
+  });
 
   @override
   ErrorCategory get category => ErrorCategory.fatal;
@@ -246,6 +416,9 @@ final class BulkPartialFailureError extends OdbcError {
     required this.rowsInsertedBeforeFailure,
     required this.failedChunks,
     required this.detail,
+    super.sqlState,
+    super.nativeCode,
+    super.details,
   }) : super(message: 'Bulk insert partial failure');
 
   /// Number of rows successfully committed before the first failure.

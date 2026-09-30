@@ -2,6 +2,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
@@ -80,9 +81,9 @@ class StreamAsyncLifecycleRunner {
         ),
         fallbackMessage: 'Failed to start async request',
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<int, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'executeAsyncStart', stackTrace: st),
       );
     }
   }
@@ -99,10 +100,22 @@ class StreamAsyncLifecycleRunner {
           ? await ffi.async.asyncPoll(requestId)
           : ffi.sync.asyncPoll(requestId);
       final resolved = status ?? -1;
+      if (resolved == -2) return const Failure(CancelledError());
+      if (resolved < 0) {
+        return await ffi.convertNativeErrorToFailure<int>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Async operation failed',
+        );
+      }
       return Success(resolved);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<int, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'asyncPoll', stackTrace: st),
       );
     }
   }
@@ -144,9 +157,9 @@ class StreamAsyncLifecycleRunner {
         );
       }
       return Success(parsed);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<QueryResult, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'asyncGetResult', stackTrace: st),
       );
     }
   }
@@ -173,9 +186,9 @@ class StreamAsyncLifecycleRunner {
         ),
         fallbackMessage: 'Failed to cancel async request',
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'asyncCancel', stackTrace: st),
       );
     }
   }
@@ -203,9 +216,9 @@ class StreamAsyncLifecycleRunner {
         ),
         fallbackMessage: 'Failed to free async request',
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'asyncFree', stackTrace: st),
       );
     }
   }
@@ -249,6 +262,18 @@ class StreamAsyncLifecycleRunner {
             );
       final resolved = streamId ?? 0;
       if (resolved > 0) {
+        if (resolved == -2) return const Failure(CancelledError());
+        if (resolved < 0) {
+          return await ffi.convertNativeErrorToFailure<int>(
+            errorFactory: ({required message, sqlState, nativeCode}) =>
+                QueryError(
+              message: message,
+              sqlState: sqlState,
+              nativeCode: nativeCode,
+            ),
+            fallbackMessage: 'Async operation failed',
+          );
+        }
         return Success(resolved);
       }
       return await ffi.convertNativeErrorToFailure<int>(
@@ -260,9 +285,9 @@ class StreamAsyncLifecycleRunner {
         ),
         fallbackMessage: 'Failed to start async stream',
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<int, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'streamStartAsync', stackTrace: st),
       );
     }
   }
@@ -281,10 +306,22 @@ class StreamAsyncLifecycleRunner {
             )
           : ffi.sync.streamPollAsync(streamId);
       final resolved = status ?? -1;
+      if (resolved == -2) return const Failure(CancelledError());
+      if (resolved < 0) {
+        return await ffi.convertNativeErrorToFailure<int>(
+          errorFactory: ({required message, sqlState, nativeCode}) =>
+              QueryError(
+            message: message,
+            sqlState: sqlState,
+            nativeCode: nativeCode,
+          ),
+          fallbackMessage: 'Async operation failed',
+        );
+      }
       return Success(resolved);
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<int, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'streamPollAsync', stackTrace: st),
       );
     }
   }

@@ -3,6 +3,7 @@ import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
     show NamedParameterParser, ParameterMissingException;
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
@@ -60,6 +61,12 @@ class OdbcQuerySyncRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<QueryResult>> run() async {
+      final nativeId = state.connectionIds[connectionId];
+      if (nativeId == null) {
+        return const Failure(
+          ValidationError(message: 'Connection is unavailable'),
+        );
+      }
       try {
         final maxBytes = opts?.maxResultBufferBytes;
         final initialBytes =
@@ -108,19 +115,9 @@ class OdbcQuerySyncRunner {
         return Success(qr);
       } on OdbcError catch (e) {
         return Failure<QueryResult, OdbcError>(e);
-      } on Exception catch (e) {
-        return ffi.convertNativeErrorToFailure<QueryResult>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
+      } on Exception catch (e, st) {
+        return Failure(
+          translateOdbcError(e, operation: 'executeQuery', stackTrace: st),
         );
       }
     }
@@ -131,7 +128,13 @@ class OdbcQuerySyncRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<QueryResult, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
+            QueryError(
+              message: odbcQueryTimedOutMessage,
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.timeout,
+                outcomeUnknown: true,
+              ),
+            ),
           ),
         );
       }
@@ -160,6 +163,12 @@ class OdbcQuerySyncRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<TypedColumnarResult>> run() async {
+      final nativeId = state.connectionIds[connectionId];
+      if (nativeId == null) {
+        return const Failure(
+          ValidationError(message: 'Connection is unavailable'),
+        );
+      }
       try {
         final maxBytes = opts?.maxResultBufferBytes;
         final initialBytes =
@@ -208,19 +217,9 @@ class OdbcQuerySyncRunner {
         return Success(typed);
       } on OdbcError catch (e) {
         return Failure<TypedColumnarResult, OdbcError>(e);
-      } on Exception catch (e) {
-        return ffi.convertNativeErrorToFailure<TypedColumnarResult>(
-          errorFactory: ({
-            required message,
-            sqlState,
-            nativeCode,
-          }) =>
-              QueryError(
-            message: message,
-            sqlState: sqlState,
-            nativeCode: nativeCode,
-          ),
-          fallbackMessage: e.toString(),
+      } on Exception catch (e, st) {
+        return Failure(
+          translateOdbcError(e, operation: 'executeQuery', stackTrace: st),
         );
       }
     }
@@ -231,7 +230,13 @@ class OdbcQuerySyncRunner {
         return run().timeout(
           queryTimeout,
           onTimeout: () => const Failure<TypedColumnarResult, OdbcError>(
-            QueryError(message: odbcQueryTimedOutMessage),
+            QueryError(
+              message: odbcQueryTimedOutMessage,
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.timeout,
+                outcomeUnknown: true,
+              ),
+            ),
           ),
         );
       }
@@ -265,9 +270,9 @@ class OdbcQuerySyncRunner {
       return Failure<QueryResult, OdbcError>(
         ValidationError(message: e.message),
       );
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       return Failure<QueryResult, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'executeQueryNamed', stackTrace: st),
       );
     }
   }

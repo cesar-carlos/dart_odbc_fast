@@ -2,6 +2,7 @@ import 'package:odbc_fast/domain/entities/connection.dart';
 import 'package:odbc_fast/domain/entities/isolation_level.dart';
 import 'package:odbc_fast/domain/entities/savepoint_dialect.dart';
 import 'package:odbc_fast/domain/entities/transaction_access_mode.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Transaction-shaped operations subset of `IOdbcService`.
@@ -46,12 +47,15 @@ extension ITransactionServiceConnectionOverloads on ITransactionService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      beginTransaction(
-        conn.id,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'beginTransactionFor',
+        () => beginTransaction(
+          conn.id,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
 
   /// `runInTransaction` overload that accepts a [Connection].
@@ -63,12 +67,15 @@ extension ITransactionServiceConnectionOverloads on ITransactionService {
     TransactionAccessMode? accessMode,
     Duration? lockTimeout,
   }) =>
-      runInTransaction(
-        conn.id,
-        action,
-        isolationLevel: isolationLevel,
-        savepointDialect: savepointDialect,
-        accessMode: accessMode,
-        lockTimeout: lockTimeout,
+      OdbcErrorBoundary.run(
+        'runInTransactionFor',
+        () => runInTransaction(
+          conn.id,
+          action,
+          isolationLevel: isolationLevel,
+          savepointDialect: savepointDialect,
+          accessMode: accessMode,
+          lockTimeout: lockTimeout,
+        ),
       );
 }

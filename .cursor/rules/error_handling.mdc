@@ -39,6 +39,23 @@ Anything else is forbidden.
 - Do not catch `Error` unless a hard boundary requires it.
 - Do not use empty `catch` blocks.
 
+## Result Contract Boundaries
+
+- Guard service/repository `Result` and `Stream<Result>` contracts centrally,
+  including injected implementations. Catch unexpected `Object` failures only
+  at those hard boundaries and retain cause and stack trace.
+- Use stable typed codes, never message substrings, for failure classification.
+- Capture worker/native diagnostics at the failed call. Do not read an unrelated
+  later global error to replace a request's known failure.
+- Present `OdbcError.userMessage`; keep driver text in technical diagnostics.
+  Do not add SQL, parameters, credentials or connection strings to new context.
+- Cleanup failures are secondary to the original operation failure. Streams
+  deliver one terminal Failure after cleanup and no duplicate error event.
+- Reconnection does not authorize replay. Require explicit replay options and
+  block both recovery and replay during local/XA transactions.
+- Telemetry failures must never change the operation result; protect diagnostic
+  callbacks and terminate unawaited export failures through diagnostics.
+
 ## Rust Rules
 
 - Return `Result<T, E>` for recoverable failures.

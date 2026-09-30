@@ -143,10 +143,10 @@ void main() {
       chunks.last.fold(
         (_) => fail('Expected failure'),
         (e) {
-          expect(e, isA<QueryError>());
+          expect(e, isA<MalformedPayloadError>());
           expect(
-            (e as QueryError).message,
-            contains('Streaming protocol error'),
+            (e as MalformedPayloadError).message,
+            contains('leftover bytes'),
           );
         },
       );
@@ -197,7 +197,7 @@ void main() {
         (_) => fail('Expected interruption failure'),
         (e) {
           expect(e, isA<QueryError>());
-          expect((e as QueryError).message, contains('Streaming interrupted'));
+          expect((e as OdbcError).code, OdbcErrorCode.workerInterrupted);
         },
       );
     });
@@ -211,7 +211,11 @@ void main() {
           message: 'Incorrect syntax near SELECT',
         )
         ..batchedStreamFactory = () async* {
-          throw Exception('batched failed');
+          throw const QueryError(
+            message: 'Incorrect syntax near SELECT',
+            sqlState: '42000',
+            nativeCode: 156,
+          );
         };
 
       final chunks =
@@ -224,7 +228,7 @@ void main() {
         (e) {
           expect(e, isA<QueryError>());
           final err = e as QueryError;
-          expect(err.message, contains('Streaming SQL error'));
+          expect(err.message, contains('Incorrect syntax'));
           expect(err.sqlState, equals('42000'));
           expect(err.nativeCode, equals(156));
         },

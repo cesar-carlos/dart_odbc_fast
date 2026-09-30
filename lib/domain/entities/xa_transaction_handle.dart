@@ -1,7 +1,8 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:odbc_fast/domain/entities/xid.dart';
+import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 
 /// Native XA operations used by [XaTransactionHandle].
 ///
@@ -14,6 +15,12 @@ abstract interface class XaTransactionBackend {
   Future<int> xaRollbackPrepared(int xaId);
   Future<int> xaCommitOnePhase(int xaId);
   Future<int> xaRollbackActive(int xaId);
+}
+
+/// Optional diagnostics supplied by native XA backend adapters.
+abstract interface class XaDiagnosticBackend {
+  OdbcError? get lastError;
+  void clearDiagnostic();
 }
 
 /// Lifecycle states of an XA transaction branch — mirror of
@@ -46,6 +53,9 @@ class XaTransactionHandle {
   XaState _state;
 
   XaState get state => _state;
+  OdbcError? get lastError => _backend is XaDiagnosticBackend
+      ? (_backend as XaDiagnosticBackend).lastError
+      : null;
 
   Future<bool> end() async {
     final rc = await _backend.xaEnd(xaId);
@@ -83,7 +93,7 @@ class XaTransactionHandle {
       _state = XaState.rolledBack;
       return true;
     }
-    _state = XaState.failed;
+    _state = XaState.failedAfterPrepare;
     return false;
   }
 
@@ -118,6 +128,7 @@ class XaTransactionHandle {
         '(check native.getError() for the underlying ODBC diagnostic).',
       );
     }
+    var committing = false;
     try {
       final result = await action(xa);
       if (!await xa.end()) {
@@ -131,6 +142,7 @@ class XaTransactionHandle {
           'on xid=${xa.xid}',
         );
       }
+      committing = true;
       if (!await xa.commitPrepared()) {
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_commit_prepared failed '
@@ -138,26 +150,10 @@ class XaTransactionHandle {
         );
       }
       return result;
-    } on Object {
-      try {
-        if (xa.state == XaState.active) {
-          await xa.end();
-        }
-        if (xa.state == XaState.prepared ||
-            xa.state == XaState.failedAfterPrepare) {
-          await xa.rollbackPrepared();
-        } else if (xa.state == XaState.idle || xa.state == XaState.failed) {
-          await xa.rollback();
-        }
-      } on Object catch (cleanupError, cleanupSt) {
-        developer.log(
-          'XA cleanup failed after operation error on xid=${xa.xid}',
-          name: 'odbc_fast.xa',
-          error: cleanupError,
-          stackTrace: cleanupSt,
-          level: 900,
-        );
-      }
+    } on Object catch (error, stack) {
+      if (committing || xa.state == XaState.failedAfterPrepare) rethrow;
+      final cleanup = await _cleanup(xa, error, stack);
+      if (cleanup != null) Error.throwWithStackTrace(cleanup, stack);
       rethrow;
     }
   }
@@ -173,8 +169,10 @@ class XaTransactionHandle {
         '(check native.getError() for the underlying ODBC diagnostic).',
       );
     }
+    var committing = false;
     try {
       final result = await action(xa);
+      committing = true;
       if (!await xa.commitOnePhase()) {
         throw StateError(
           'XaTransactionHandle.runWithStartOnePhase: xa_commit_one_phase '
@@ -182,24 +180,69 @@ class XaTransactionHandle {
         );
       }
       return result;
-    } on Object {
-      try {
-        if (xa.state == XaState.active) {
-          await xa.end();
-        }
-        if (xa.state == XaState.idle || xa.state == XaState.failed) {
-          await xa.rollback();
-        }
-      } on Object catch (cleanupError, cleanupSt) {
-        developer.log(
-          'XA one-phase cleanup failed after operation error on xid=${xa.xid}',
-          name: 'odbc_fast.xa',
-          error: cleanupError,
-          stackTrace: cleanupSt,
-          level: 900,
-        );
-      }
+    } on Object catch (error, stack) {
+      if (committing || xa.state == XaState.failedAfterPrepare) rethrow;
+      final cleanup = await _cleanup(xa, error, stack);
+      if (cleanup != null) Error.throwWithStackTrace(cleanup, stack);
       rethrow;
     }
+  }
+
+  static Future<OdbcError?> _cleanup(
+    XaTransactionHandle xa,
+    Object error,
+    StackTrace stack,
+  ) async {
+    OdbcError? combined;
+    void secondary(OdbcError failure) {
+      combined = (combined ??
+              normalizeOdbcError(
+                error,
+                operation: 'xaTransaction',
+                stackTrace: stack,
+              ))
+          .withSecondary(failure);
+    }
+
+    if (xa.state == XaState.active) {
+      try {
+        if (!await xa.end()) {
+          secondary(
+            const QueryError(
+              message: 'XA end failed during cleanup',
+              details: OdbcErrorDetails(
+                code: OdbcErrorCode.cleanup,
+                operation: 'xaEnd',
+              ),
+            ),
+          );
+        }
+      } on Object catch (failure, trace) {
+        secondary(
+          normalizeOdbcError(failure, operation: 'xaEnd', stackTrace: trace),
+        );
+      }
+    }
+    try {
+      final ok = xa.state == XaState.prepared
+          ? await xa.rollbackPrepared()
+          : await xa.rollback();
+      if (!ok) {
+        secondary(
+          const RollbackFailedError(
+            message: 'XA rollback failed during cleanup',
+          ),
+        );
+      }
+    } on Object catch (failure, trace) {
+      secondary(
+        normalizeOdbcError(
+          failure,
+          operation: 'xaRollback',
+          stackTrace: trace,
+        ),
+      );
+    }
+    return combined;
   }
 }

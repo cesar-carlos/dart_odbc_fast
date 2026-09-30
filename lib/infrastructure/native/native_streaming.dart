@@ -32,7 +32,11 @@ mixin _NativeStreaming on _NativeOdbcState {
   /// Clears the prepared statement cache.
   ///
   /// Returns true on success, false on failure.
-  bool clearStatementCache() => _native.clearStatementCache();
+  bool clearStatementCache() => _captureSync(
+        'clearStatementCache',
+        _native.clearStatementCache,
+        failed: (value) => !value,
+      );
 
   /// Starts a low-level streaming query and returns a native stream ID.
   int streamStart(
@@ -40,10 +44,15 @@ mixin _NativeStreaming on _NativeOdbcState {
     String sql, {
     int chunkSize = 1000,
   }) =>
-      _native.streamStart(
-        connectionId,
-        sql,
-        chunkSize: chunkSize,
+      _captureSync(
+        'streamStart',
+        () => _native.streamStart(
+          connectionId,
+          sql,
+          chunkSize: chunkSize,
+        ),
+        failed: (value) => value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Starts a low-level batched streaming query and returns stream ID.
@@ -55,13 +64,18 @@ mixin _NativeStreaming on _NativeOdbcState {
     int resultEncodingWire = 0,
     Uint8List? paramsBuffer,
   }) =>
-      _native.streamStartBatched(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
-        resultEncodingWire: resultEncodingWire,
-        paramsBuffer: paramsBuffer,
+      _captureSync(
+        'streamStartBatched',
+        () => _native.streamStartBatched(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+          resultEncodingWire: resultEncodingWire,
+          paramsBuffer: paramsBuffer,
+        ),
+        failed: (value) => value == 0,
+        nativeConnectionId: connectionId,
       );
 
   /// Fetches the next chunk for a low-level native stream.
@@ -69,13 +83,25 @@ mixin _NativeStreaming on _NativeOdbcState {
     int streamId, {
     int? bufferSize,
   }) =>
-      _native.streamFetch(streamId, bufferSize: bufferSize);
+      _captureSync(
+        'streamFetch',
+        () => _native.streamFetch(streamId, bufferSize: bufferSize),
+        failed: (value) => !value.success,
+      );
 
   /// Requests cancellation for a low-level native stream.
-  bool streamCancel(int streamId) => _native.streamCancel(streamId);
+  bool streamCancel(int streamId) => _captureSync(
+        'streamCancel',
+        () => _native.streamCancel(streamId),
+        failed: (value) => !value,
+      );
 
   /// Closes a low-level native stream.
-  bool streamClose(int streamId) => _native.streamClose(streamId);
+  bool streamClose(int streamId) => _captureSync(
+        'streamClose',
+        () => _native.streamClose(streamId),
+        failed: (value) => !value,
+      );
 
   /// Executes a SQL query and returns results as a batched stream.
   ///
@@ -93,7 +119,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     bool lazyStrings = false,
     Uint8List? paramsBuffer,
   }) async* {
-    final streamId = _native.streamStartBatched(
+    final streamId = streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,
@@ -108,12 +134,15 @@ mixin _NativeStreaming on _NativeOdbcState {
 
     final pending = BinaryFrameAccumulator();
     var completed = false;
+    OdbcError? primary;
     try {
       while (true) {
-        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
+        final result = streamFetch(streamId, bufferSize: chunkSize);
 
         if (!result.success) {
-          throw Exception('Stream fetch failed: ${_native.getError()}');
+          throw QueryError(
+            message: 'Stream fetch failed: ${_native.getError()}',
+          );
         }
 
         final data = result.data;
@@ -138,11 +167,30 @@ mixin _NativeStreaming on _NativeOdbcState {
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        _native.streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (
+              operation: 'streamCancel',
+              action: () async => streamCancel(streamId)
+            ),
+          (operation: 'streamClose', action: () async => streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      _native.streamClose(streamId);
     }
   }
 
@@ -156,7 +204,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     bool lazyStrings = false,
     ResultEncoding resultEncoding = ResultEncoding.columnar,
   }) async* {
-    final streamId = _native.streamStartBatched(
+    final streamId = streamStartBatched(
       connectionId,
       sql,
       fetchSize: fetchSize,
@@ -170,12 +218,15 @@ mixin _NativeStreaming on _NativeOdbcState {
 
     final pending = BinaryFrameAccumulator();
     var completed = false;
+    OdbcError? primary;
     try {
       while (true) {
-        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
+        final result = streamFetch(streamId, bufferSize: chunkSize);
 
         if (!result.success) {
-          throw Exception('Stream fetch failed: ${_native.getError()}');
+          throw QueryError(
+            message: 'Stream fetch failed: ${_native.getError()}',
+          );
         }
 
         final data = result.data;
@@ -200,11 +251,30 @@ mixin _NativeStreaming on _NativeOdbcState {
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        _native.streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (
+              operation: 'streamCancel',
+              action: () async => streamCancel(streamId)
+            ),
+          (operation: 'streamClose', action: () async => streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      _native.streamClose(streamId);
     }
   }
 
@@ -252,12 +322,15 @@ mixin _NativeStreaming on _NativeOdbcState {
 
     final buffer = BytesBuilder(copy: false);
     var completed = false;
+    OdbcError? primary;
     try {
       while (true) {
-        final result = _native.streamFetch(streamId);
+        final result = streamFetch(streamId);
 
         if (!result.success) {
-          throw Exception('Stream fetch failed: ${_native.getError()}');
+          throw QueryError(
+            message: 'Stream fetch failed: ${_native.getError()}',
+          );
         }
 
         final data = result.data;
@@ -278,11 +351,30 @@ mixin _NativeStreaming on _NativeOdbcState {
         yield parsed;
       }
       completed = true;
+    } on Object catch (error, stack) {
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        _native.streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (
+              operation: 'streamCancel',
+              action: () async => streamCancel(streamId)
+            ),
+          (operation: 'streamClose', action: () async => streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      _native.streamClose(streamId);
     }
   }
 
@@ -300,7 +392,7 @@ mixin _NativeStreaming on _NativeOdbcState {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
     bool lazyStrings = false,
   }) async* {
-    final streamId = _native.streamStartAsync(
+    final streamId = _connection.streamStartAsync(
       connectionId,
       sql,
       fetchSize: fetchSize,
@@ -318,9 +410,10 @@ mixin _NativeStreaming on _NativeOdbcState {
     }
     final streamMaxDelay = pollInterval;
     var completed = false;
+    OdbcError? primary;
     try {
       while (true) {
-        final status = _native.streamPollAsync(streamId);
+        final status = _connection.streamPollAsync(streamId);
         if (status == null) {
           throw Exception(
             'Async stream poll unavailable: ${_native.getError()}',
@@ -345,13 +438,15 @@ mixin _NativeStreaming on _NativeOdbcState {
         }
         if (status == _nativeStreamAsyncStatusError ||
             status == _nativeStreamAsyncStatusCancelled) {
-          throw Exception('Async stream failed with status $status');
+          throw (status == _nativeStreamAsyncStatusCancelled
+              ? const CancelledError()
+              : const QueryError(message: 'Async stream failed'));
         }
         if (status != _nativeStreamAsyncStatusReady) {
           throw Exception('Unexpected async stream status: $status');
         }
 
-        final result = _native.streamFetch(streamId, bufferSize: chunkSize);
+        final result = streamFetch(streamId, bufferSize: chunkSize);
         if (!result.success) {
           throw Exception('Async stream fetch failed: ${_native.getError()}');
         }
@@ -374,11 +469,30 @@ mixin _NativeStreaming on _NativeOdbcState {
         );
       }
       completed = true;
+    } on Object catch (error, stack) {
+      primary = translateOdbcError(
+        error,
+        operation: 'streamQuery',
+        stackTrace: stack,
+      );
     } finally {
-      if (!completed) {
-        _native.streamCancel(streamId);
+      final failure = await cleanupNativeResources(
+        [
+          if (!completed)
+            (
+              operation: 'streamCancel',
+              action: () async => streamCancel(streamId)
+            ),
+          (operation: 'streamClose', action: () async => streamClose(streamId)),
+        ],
+        primary: primary,
+      );
+      if (failure != null) {
+        Error.throwWithStackTrace(
+          failure,
+          failure.details.stackTrace ?? StackTrace.current,
+        );
       }
-      _native.streamClose(streamId);
     }
   }
 

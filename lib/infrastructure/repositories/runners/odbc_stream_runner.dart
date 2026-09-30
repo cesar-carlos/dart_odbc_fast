@@ -6,6 +6,8 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/multi_result_parser.dart'
@@ -18,6 +20,7 @@ import 'package:odbc_fast/infrastructure/repositories/runners/multi_stream_coale
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_connection_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_query_runner.dart';
+import 'package:odbc_fast/infrastructure/repositories/runners/odbc_repository_types.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_result_parser.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/stream_async_lifecycle_runner.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/stream_capability_policy.dart';
@@ -190,7 +193,13 @@ class OdbcStreamRunner {
 
     final supportsStreaming = _capability.supportsStreamQueryMulti;
     if (!supportsStreaming) {
-      final fallback = await _query.executeQueryMultiFull(connectionId, sql);
+      final fallback = params.isEmpty
+          ? await _query.executeQueryMultiFull(connectionId, sql)
+          : await _query.executeQueryMultiParamValues(
+              connectionId,
+              sql,
+              params,
+            );
       if (fallback.isError()) {
         final err = fallback.exceptionOrNull();
         yield Failure<T, OdbcError>(
@@ -236,29 +245,29 @@ class OdbcStreamRunner {
                     )) ??
               0;
       if (streamId == 0) {
-        final fallback = await _query.executeQueryMultiFull(connectionId, sql);
-        if (fallback.isSuccess()) {
-          for (final item in fallback.getOrNull()!.items) {
-            yield Success<T, OdbcError>(fromFullItem(item));
-          }
-          return;
-        }
-        final structuredError = await _ffi.getStructuredNativeError(
+        final failure = await _ffi.convertNativeErrorToFailure<T>(
+          errorFactory: odbcQueryErrorFactory,
+          fallbackMessage: 'Failed to start streaming multi-result',
           nativeConnectionId: nativeId,
         );
-        final nativeErr = structuredError?.message ??
-            (_ffi.isAsync ? await _ffi.async.getError() : _ffi.sync.getError());
-        final fallbackErr = fallback.exceptionOrNull();
-        final message = nativeErr.isNotEmpty && nativeErr != 'No error'
-            ? nativeErr
-            : (fallbackErr?.toString() ?? 'Streaming unavailable');
-        yield Failure<T, OdbcError>(
-          QueryError(
-            message: 'Failed to start streaming multi-result: $message',
-            sqlState: structuredError?.sqlStateString,
-            nativeCode: structuredError?.nativeCode,
-          ),
-        );
+        if (failure.exceptionOrNull().code != OdbcErrorCode.unsupported) {
+          yield failure;
+          return;
+        }
+        final fallback = params.isEmpty
+            ? await _query.executeQueryMultiFull(connectionId, sql)
+            : await _query.executeQueryMultiParamValues(
+                connectionId,
+                sql,
+                params,
+              );
+        if (fallback.isError()) {
+          yield Failure(fallback.exceptionOrNull()!);
+          return;
+        }
+        for (final item in fallback.getOrNull()!.items) {
+          yield Success<T, OdbcError>(fromFullItem(item));
+        }
         return;
       }
 
@@ -302,27 +311,32 @@ class OdbcStreamRunner {
         yield Success<T, OdbcError>(item);
       }
       completed = true;
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       yield Failure<T, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: '_streamQueryMulti', stackTrace: st),
       );
     } finally {
       if (streamId != 0) {
-        if (!completed) {
-          try {
-            if (_ffi.isAsync) {
-              await _ffi.async.streamCancel(streamId);
-            } else {
-              _ffi.sync.streamCancel(streamId);
-            }
-          } on Object {
-            // Best-effort; always attempt streamClose below.
-          }
-        }
-        if (_ffi.isAsync) {
-          await _ffi.async.streamClose(streamId);
-        } else {
-          _ffi.sync.streamClose(streamId);
+        final failure = await cleanupNativeResources([
+          if (!completed)
+            (
+              operation: 'streamCancel',
+              action: () async => _ffi.isAsync
+                  ? await _ffi.async.streamCancel(streamId)
+                  : _ffi.sync.streamCancel(streamId)
+            ),
+          (
+            operation: 'streamClose',
+            action: () async => _ffi.isAsync
+                ? await _ffi.async.streamClose(streamId)
+                : _ffi.sync.streamClose(streamId)
+          ),
+        ]);
+        if (failure != null) {
+          Error.throwWithStackTrace(
+            failure,
+            failure.details.stackTrace ?? StackTrace.current,
+          );
         }
       }
     }
@@ -348,7 +362,10 @@ class OdbcStreamRunner {
       final fetched = _ffi.sync.streamFetch(streamId, bufferSize: chunkSize);
       if (!fetched.success) {
         yield Failure<T, OdbcError>(
-          QueryError(message: _ffi.sync.getError()),
+          translateOdbcError(
+            const QueryError(message: 'Multi-result stream fetch failed'),
+            operation: 'streamQueryMulti',
+          ),
         );
         return;
       }
@@ -393,26 +410,33 @@ class OdbcStreamRunner {
       }
       if (status == _streamAsyncStatusError ||
           status == _streamAsyncStatusCancelled) {
-        final errMsg = await _ffi.async.getError();
         yield Failure<T, OdbcError>(
-          QueryError(
-            message: errMsg.isNotEmpty && errMsg != 'No error'
-                ? errMsg
-                : 'Async multi-result stream failed with status $status',
+          translateOdbcError(
+            status == _streamAsyncStatusCancelled
+                ? const CancelledError()
+                : const QueryError(
+                    message: 'Async multi-result stream failed',
+                  ),
+            operation: 'streamQueryMulti',
           ),
         );
         return;
       }
       if (status != _streamAsyncStatusReady) {
         yield Failure<T, OdbcError>(
-          QueryError(message: 'Unexpected async stream status: $status'),
+          MalformedPayloadError(
+            message: 'Unexpected async stream status: $status',
+          ),
         );
         return;
       }
 
       if (!polled.success) {
         yield Failure<T, OdbcError>(
-          QueryError(message: polled.error ?? 'Stream fetch failed'),
+          translateOdbcError(
+            QueryError(message: polled.error ?? 'Stream fetch failed'),
+            operation: 'streamQueryMulti',
+          ),
         );
         return;
       }

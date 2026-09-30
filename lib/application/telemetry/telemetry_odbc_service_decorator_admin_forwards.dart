@@ -6,41 +6,66 @@ import 'package:odbc_fast/domain/entities/driver_capabilities.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/odbc_metrics.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:result_dart/result_dart.dart';
 
 /// Admin-shaped `IOdbcService` forwards for the telemetry decorator façade.
 mixin TelemetryOdbcServiceAdminForwards on TelemetryOdbcServiceDecoratorBase {
-  Future<Result<void>> initialize() => admin.initialize();
+  Future<Result<void>> initialize() =>
+      OdbcErrorBoundary.runVoid('initialize', () => admin.initialize());
 
   Future<Result<Connection>> connect(
     String connectionString, {
     ConnectionOptions? options,
   }) =>
-      admin.connect(connectionString, options: options);
+      OdbcErrorBoundary.run(
+        'connect',
+        () => admin.connect(connectionString, options: options),
+      );
 
   Future<Result<void>> disconnect(String connectionId) =>
-      admin.disconnect(connectionId);
+      OdbcErrorBoundary.runVoid(
+        'disconnect',
+        () => admin.disconnect(connectionId),
+      );
 
-  Future<Result<OdbcMetrics>> getMetrics() => admin.getMetrics();
+  Future<Result<OdbcMetrics>> getMetrics() =>
+      OdbcErrorBoundary.run('getMetrics', () => admin.getMetrics());
 
   bool isInitialized() => admin.isInitialized();
 
-  Future<Result<void>> clearStatementCache() => admin.clearStatementCache();
+  Future<Result<void>> clearStatementCache() => OdbcErrorBoundary.runVoid(
+        'clearStatementCache',
+        () => admin.clearStatementCache(),
+      );
 
-  Future<Result<void>> clearAllStatements() => admin.clearAllStatements();
+  Future<Result<void>> clearAllStatements() => OdbcErrorBoundary.runVoid(
+        'clearAllStatements',
+        () => admin.clearAllStatements(),
+      );
 
   Future<Result<PreparedStatementMetrics>> getPreparedStatementsMetrics() =>
-      admin.getPreparedStatementsMetrics();
+      OdbcErrorBoundary.run(
+        'getPreparedStatementsMetrics',
+        () => admin.getPreparedStatementsMetrics(),
+      );
 
-  Future<Result<Map<String, String>>> getVersion() => admin.getVersion();
+  Future<Result<Map<String, String>>> getVersion() =>
+      OdbcErrorBoundary.run('getVersion', () => admin.getVersion());
 
   Future<Result<void>> validateConnectionString(String connectionString) =>
-      admin.validateConnectionString(connectionString);
+      OdbcErrorBoundary.runVoid(
+        'validateConnectionString',
+        () => admin.validateConnectionString(connectionString),
+      );
 
   Future<Result<Map<String, Object?>>> getDriverCapabilities(
     String connectionString,
   ) =>
-      admin.getDriverCapabilities(connectionString);
+      OdbcErrorBoundary.run(
+        'getDriverCapabilities',
+        () => admin.getDriverCapabilities(connectionString),
+      );
 
   Future<AsyncWorkerPoolStats?> getWorkerPoolStats() =>
       admin.getWorkerPoolStats();
@@ -48,55 +73,89 @@ mixin TelemetryOdbcServiceAdminForwards on TelemetryOdbcServiceDecoratorBase {
   Stream<OdbcEvent> get events => admin.events;
 
   Future<Result<DbmsInfo>> getConnectionDbmsInfo(String connectionId) =>
-      admin.getConnectionDbmsInfo(connectionId);
+      OdbcErrorBoundary.run(
+        'getConnectionDbmsInfo',
+        () => admin.getConnectionDbmsInfo(connectionId),
+      );
 
-  Future<Result<void>> setLogLevel(int level) => admin.setLogLevel(level);
+  Future<Result<void>> setLogLevel(int level) =>
+      OdbcErrorBoundary.runVoid('setLogLevel', () => admin.setLogLevel(level));
 
   Future<Result<void>> setAuditEnabled({required bool enabled}) =>
-      admin.setAuditEnabled(enabled: enabled);
+      OdbcErrorBoundary.runVoid(
+        'setAuditEnabled',
+        () => admin.setAuditEnabled(enabled: enabled),
+      );
 
   Future<Result<Map<String, Object?>>> getAuditStatus() =>
-      admin.getAuditStatus();
+      OdbcErrorBoundary.run('getAuditStatus', () => admin.getAuditStatus());
 
   Future<Result<List<Map<String, Object?>>>> getAuditEvents({
     int limit = 0,
   }) =>
-      admin.getAuditEvents(limit: limit);
+      OdbcErrorBoundary.run(
+        'getAuditEvents',
+        () => admin.getAuditEvents(limit: limit),
+      );
 
-  Future<Result<void>> clearAuditEvents() => admin.clearAuditEvents();
+  Future<Result<void>> clearAuditEvents() => OdbcErrorBoundary.runVoid(
+        'clearAuditEvents',
+        () => admin.clearAuditEvents(),
+      );
 
   Future<Result<void>> metadataCacheEnable({
     required int maxEntries,
     required int ttlSeconds,
   }) =>
-      admin.metadataCacheEnable(
-        maxEntries: maxEntries,
-        ttlSeconds: ttlSeconds,
+      OdbcErrorBoundary.runVoid(
+        'metadataCacheEnable',
+        () => admin.metadataCacheEnable(
+          maxEntries: maxEntries,
+          ttlSeconds: ttlSeconds,
+        ),
       );
 
   Future<Result<Map<String, Object?>>> metadataCacheStats() =>
-      admin.metadataCacheStats();
+      OdbcErrorBoundary.run(
+        'metadataCacheStats',
+        () => admin.metadataCacheStats(),
+      );
 
-  Future<Result<void>> clearMetadataCache() => admin.clearMetadataCache();
+  Future<Result<void>> clearMetadataCache() => OdbcErrorBoundary.runVoid(
+        'clearMetadataCache',
+        () => admin.clearMetadataCache(),
+      );
 
-  Future<Result<void>> cancelStream(int streamId) =>
-      admin.cancelStream(streamId);
+  Future<Result<void>> cancelStream(int streamId) => OdbcErrorBoundary.runVoid(
+        'cancelStream',
+        () => admin.cancelStream(streamId),
+      );
 
   Future<Result<int>> executeAsyncStart(String connectionId, String sql) =>
-      admin.executeAsyncStart(connectionId, sql);
+      OdbcErrorBoundary.run(
+        'executeAsyncStart',
+        () => admin.executeAsyncStart(connectionId, sql),
+      );
 
-  Future<Result<int>> asyncPoll(int requestId) => admin.asyncPoll(requestId);
+  Future<Result<int>> asyncPoll(int requestId) =>
+      OdbcErrorBoundary.run('asyncPoll', () => admin.asyncPoll(requestId));
 
   Future<Result<QueryResult>> asyncGetResult(
     int requestId, {
     int? maxBufferBytes,
   }) =>
-      admin.asyncGetResult(requestId, maxBufferBytes: maxBufferBytes);
+      OdbcErrorBoundary.run(
+        'asyncGetResult',
+        () => admin.asyncGetResult(requestId, maxBufferBytes: maxBufferBytes),
+      );
 
-  Future<Result<void>> asyncCancel(int requestId) =>
-      admin.asyncCancel(requestId);
+  Future<Result<void>> asyncCancel(int requestId) => OdbcErrorBoundary.runVoid(
+        'asyncCancel',
+        () => admin.asyncCancel(requestId),
+      );
 
-  Future<Result<void>> asyncFree(int requestId) => admin.asyncFree(requestId);
+  Future<Result<void>> asyncFree(int requestId) =>
+      OdbcErrorBoundary.runVoid('asyncFree', () => admin.asyncFree(requestId));
 
   Future<Result<int>> streamStartAsync(
     String connectionId,
@@ -104,15 +163,20 @@ mixin TelemetryOdbcServiceAdminForwards on TelemetryOdbcServiceDecoratorBase {
     int fetchSize = 1000,
     int? chunkSize,
   }) =>
-      admin.streamStartAsync(
-        connectionId,
-        sql,
-        fetchSize: fetchSize,
-        chunkSize: chunkSize,
+      OdbcErrorBoundary.run(
+        'streamStartAsync',
+        () => admin.streamStartAsync(
+          connectionId,
+          sql,
+          fetchSize: fetchSize,
+          chunkSize: chunkSize,
+        ),
       );
 
-  Future<Result<int>> streamPollAsync(int streamId) =>
-      admin.streamPollAsync(streamId);
+  Future<Result<int>> streamPollAsync(int streamId) => OdbcErrorBoundary.run(
+        'streamPollAsync',
+        () => admin.streamPollAsync(streamId),
+      );
 
   Future<String?> detectDriver(String connectionString) =>
       admin.detectDriver(connectionString);

@@ -1,6 +1,7 @@
 import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/dart_side_metrics.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -24,6 +25,26 @@ class OdbcRepositoryState {
   /// QueryResult-returning APIs always request row-major via
   /// `forQueryResultWire` and do not read this field.
   ResultEncoding defaultResultEncoding;
+
+  final Map<String, Object> connectionLifetimes = {};
+  final Map<int, String> transactionOwners = {};
+  final Map<String, List<XaTransactionHandle>> xaTransactions = {};
+
+  void registerXa(String connectionId, XaTransactionHandle handle) {
+    xaTransactions.putIfAbsent(connectionId, () => [])
+      ..removeWhere(
+        (h) => h.state == XaState.committed || h.state == XaState.rolledBack,
+      )
+      ..add(handle);
+  }
+
+  bool hasTransaction(String connectionId) =>
+      transactionOwners.containsValue(connectionId) ||
+      (xaTransactions[connectionId]?.any(
+            (h) =>
+                h.state != XaState.committed && h.state != XaState.rolledBack,
+          ) ??
+          false);
 
   /// Domain `connectionId` (string) → native id (int).
   final Map<String, int> connectionIds = {};
@@ -72,6 +93,8 @@ class OdbcRepositoryState {
       statementConnectionByStmtId.remove(stmtId);
       namedParamOrderByStmtId.remove(stmtId);
     }
+    transactionOwners.removeWhere((_, id) => id == connectionId);
+    xaTransactions.remove(connectionId);
     asyncRequestConnectionById.removeWhere((_, id) => id == connectionId);
   }
 
@@ -85,6 +108,9 @@ class OdbcRepositoryState {
   /// Wipes every map. Called on `dispose()` and on
   /// `onWorkerRecovered`.
   void clearAll() {
+    connectionLifetimes.clear();
+    transactionOwners.clear();
+    xaTransactions.clear();
     connectionIds.clear();
     connectionOptions.clear();
     connectionStrings.clear();

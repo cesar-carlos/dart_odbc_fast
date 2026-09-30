@@ -13,7 +13,12 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           request.sql,
           chunkSize: request.chunkSize,
         );
-        sendPort.send(IntResponse(request.requestId, streamId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, streamId),
+        );
 
       case StreamStartBatchedRequest():
         final streamId = conn.streamStartBatched(
@@ -24,7 +29,12 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           resultEncodingWire: request.resultEncodingWire,
           paramsBuffer: request.paramsBuffer,
         );
-        sendPort.send(IntResponse(request.requestId, streamId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, streamId),
+        );
 
       case StreamStartAsyncRequest():
         final streamId = conn.streamStartAsync(
@@ -34,7 +44,12 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           chunkSize: request.chunkSize,
           resultEncodingWire: request.resultEncodingWire,
         );
-        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, streamId ?? 0),
+        );
 
       case StreamMultiStartBatchedRequest():
         final params = Uint8List.fromList(request.serializedParams);
@@ -54,7 +69,12 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
                 chunkSize: request.chunkSize,
                 resultEncodingWire: request.resultEncodingWire,
               );
-        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, streamId ?? 0),
+        );
 
       case StreamMultiStartAsyncRequest():
         final params = Uint8List.fromList(request.serializedParams);
@@ -74,17 +94,30 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
                 chunkSize: request.chunkSize,
                 resultEncodingWire: request.resultEncodingWire,
               );
-        sendPort.send(IntResponse(request.requestId, streamId ?? 0));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, streamId ?? 0),
+        );
 
       case StreamPollAsyncRequest():
         final status = conn.streamPollAsync(request.streamId);
-        sendPort.send(IntResponse(request.requestId, status ?? -1));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, status ?? -1),
+        );
 
       case StreamPollFetchRequest():
         final status = conn.streamPollAsync(request.streamId) ?? -1;
         if (status != 1) {
           // Not ready: return status only (pending / done / error / cancelled).
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             StreamPollFetchResponse(request.requestId, status: status),
           );
           break;
@@ -93,14 +126,17 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           request.streamId,
           bufferSize: request.bufferSize,
         );
-        sendPort.send(
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
           isolateStreamPollFetchResponse(
             requestId: request.requestId,
             status: status,
             success: result.success,
             data: result.data,
             hasMore: result.hasMore,
-            error: result.success ? null : conn.getError(),
+            error: result.success ? null : _workerError(conn),
           ),
         );
 
@@ -109,23 +145,36 @@ mixin _WorkerIsolateStream on _WorkerIsolateState {
           request.streamId,
           bufferSize: request.bufferSize,
         );
-        sendPort.send(
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
           streamDataResponse(
             requestId: request.requestId,
             success: result.success,
             data: result.data,
             hasMore: result.hasMore,
-            error: result.success ? null : conn.getError(),
+            error: result.success ? null : _workerError(conn),
           ),
         );
 
       case StreamCancelRequest():
         final ok = conn.streamCancel(request.streamId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case StreamCloseRequest():
         final ok = conn.streamClose(request.streamId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       default:
         throw StateError('Unexpected stream request: ${request.type}');

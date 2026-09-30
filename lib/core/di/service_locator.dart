@@ -178,6 +178,7 @@ class ServiceLocator {
     }
 
     if (_locatorInitialized) {
+      _closeServiceEvents();
       if (_useAsync) {
         _asyncNativeConnection.dispose();
       }
@@ -441,8 +442,28 @@ class ServiceLocator {
   ///
   /// Safe to call multiple times; subsequent [initialize] calls dispose any
   /// previous resources automatically.
+  void _closeServiceEvents() {
+    final services = [_service, if (_useAsync) _asyncService];
+    for (final service in services) {
+      if (service == null) continue;
+      unawaited(
+        service.closeEvents().then<void>(
+          (_) {},
+          onError: (Object error, StackTrace stack) {
+            AppLogger.warning(
+              'Failed to close service event subscriptions',
+              error,
+              stack,
+            );
+          },
+        ),
+      );
+    }
+  }
+
   void shutdown() {
     if (_locatorInitialized) {
+      _locatorInitialized = false;
       final closeEventsFutures = <Future<void>>[];
       if (_service != null) {
         closeEventsFutures.add(_service!.closeEvents());
@@ -451,7 +472,18 @@ class ServiceLocator {
         closeEventsFutures.add(_asyncService.closeEvents());
       }
       if (closeEventsFutures.isNotEmpty) {
-        unawaited(Future.wait(closeEventsFutures));
+        unawaited(
+          Future.wait(closeEventsFutures).then<void>(
+            (_) {},
+            onError: (Object error, StackTrace stack) {
+              AppLogger.warning(
+                'Failed to close service event subscriptions',
+                error,
+                stack,
+              );
+            },
+          ),
+        );
       }
       if (_useAsync) {
         _asyncNativeConnection.dispose();

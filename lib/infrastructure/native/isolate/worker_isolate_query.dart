@@ -18,13 +18,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Query failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case ExecuteQueryMultiRequest():
@@ -36,13 +46,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Multi-result query failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case ExecuteQueryMultiParamsRequest():
@@ -57,14 +77,24 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           fetchSize: request.blockFetchBatchSize,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Multi-result query (with params) failed '
                   '(native returned no data)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case PrepareRequest():
@@ -73,7 +103,12 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.sql,
           timeoutMs: request.timeoutMs,
         );
-        sendPort.send(IntResponse(request.requestId, stmtId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, stmtId),
+        );
 
       case ExecutePreparedRequest():
         final bytes =
@@ -92,26 +127,51 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           },
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Execute prepared failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CancelStatementRequest():
         final ok = conn.cancelStatement(request.stmtId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case CloseStatementRequest():
         final ok = conn.closeStatement(request.stmtId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case ClearAllStatementsRequest():
         final code = conn.clearAllStatements();
-        sendPort.send(IntResponse(request.requestId, code));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, code),
+        );
 
       case BulkInsertArrayRequest():
         final rows = conn.bulkInsertArray(
@@ -121,7 +181,12 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.dataBuffer,
           request.rowCount,
         );
-        sendPort.send(IntResponse(request.requestId, rows));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, rows),
+        );
 
       case BulkInsertParallelRequest():
         final rows = conn.bulkInsertParallel(
@@ -131,7 +196,12 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.dataBuffer,
           request.parallelism,
         );
-        sendPort.send(IntResponse(request.requestId, rows));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, rows),
+        );
 
       case CatalogTablesRequest():
         final data = conn.catalogTables(
@@ -142,13 +212,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog tables failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CatalogColumnsRequest():
@@ -159,13 +239,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog columns failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CatalogTypeInfoRequest():
@@ -175,13 +265,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog type info failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CatalogPrimaryKeysRequest():
@@ -192,13 +292,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog primary keys failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CatalogForeignKeysRequest():
@@ -209,13 +319,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog foreign keys failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case CatalogIndexesRequest():
@@ -226,13 +346,23 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           maxBufferBytes: request.maxBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          final err = conn.getError();
+          final err = _workerError(conn);
           final message = err.isNotEmpty && err != 'No error'
               ? err
               : 'Catalog indexes failed (native returned no data; check connection/driver state)';
-          sendPort.send(QueryResponse(request.requestId, error: message));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: message),
+          );
         }
 
       case ExecuteAsyncStartRequest():
@@ -240,7 +370,24 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           request.connectionId,
           request.sql,
         );
-        sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(
+            request.requestId,
+            asyncRequestId ?? 0,
+            failure: asyncRequestId == null
+                ? WorkerFailureSnapshot(
+                    message: 'Async query execution is unavailable',
+                    operation: request.type.name,
+                    requestId: request.requestId,
+                    connectionId: request.connectionId,
+                    code: OdbcErrorCode.unsupported,
+                  )
+                : null,
+          ),
+        );
 
       case ExecuteAsyncStartParamsRequest():
         final encoding = switch (request.resultEncodingWire) {
@@ -255,11 +402,33 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           resultEncoding: encoding,
           fetchSize: request.blockFetchBatchSize,
         );
-        sendPort.send(IntResponse(request.requestId, asyncRequestId ?? 0));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(
+            request.requestId,
+            asyncRequestId ?? 0,
+            failure: asyncRequestId == null
+                ? WorkerFailureSnapshot(
+                    message: 'Async query execution is unavailable',
+                    operation: request.type.name,
+                    requestId: request.requestId,
+                    connectionId: request.connectionId,
+                    code: OdbcErrorCode.unsupported,
+                  )
+                : null,
+          ),
+        );
 
       case AsyncPollRequest():
         final status = conn.asyncPoll(request.asyncRequestId);
-        sendPort.send(IntResponse(request.requestId, status ?? -1));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, status ?? -1),
+        );
 
       case AsyncGetResultRequest():
         final data = conn.asyncGetResult(
@@ -268,20 +437,38 @@ mixin _WorkerIsolateQuery on _WorkerIsolateState {
           initialBufferBytes: request.initialResultBufferBytes,
         );
         if (data != null) {
-          sendPort.send(queryDataResponse(request.requestId, data));
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            queryDataResponse(request.requestId, data),
+          );
         } else {
-          sendPort.send(
-            QueryResponse(request.requestId, error: conn.getError()),
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
+            QueryResponse(request.requestId, error: _workerError(conn)),
           );
         }
 
       case AsyncCancelRequest():
         final ok = conn.asyncCancel(request.asyncRequestId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case AsyncFreeRequest():
         final ok = conn.asyncFree(request.asyncRequestId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       default:
         throw StateError('Unexpected query request: ${request.type}');

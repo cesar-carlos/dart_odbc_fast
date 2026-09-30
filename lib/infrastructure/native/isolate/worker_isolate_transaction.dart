@@ -15,27 +15,65 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           accessMode: request.accessMode,
           lockTimeoutMs: request.lockTimeoutMs,
         );
-        sendPort.send(IntResponse(request.requestId, txnId));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, txnId),
+        );
 
       case CommitTransactionRequest():
-        final ok = conn.commitTransaction(request.txnId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        final status = conn.commitTransactionStatus(request.txnId);
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(
+            request.requestId,
+            value: status == 0,
+            completionStatus: status,
+          ),
+        );
 
       case RollbackTransactionRequest():
-        final ok = conn.rollbackTransaction(request.txnId);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        final status = conn.rollbackTransactionStatus(request.txnId);
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(
+            request.requestId,
+            value: status == 0,
+            completionStatus: status,
+          ),
+        );
 
       case SavepointCreateRequest():
         final ok = conn.createSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case SavepointRollbackRequest():
         final ok = conn.rollbackToSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case SavepointReleaseRequest():
         final ok = conn.releaseSavepoint(request.txnId, request.name);
-        sendPort.send(BoolResponse(request.requestId, value: ok));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          BoolResponse(request.requestId, value: ok),
+        );
 
       case XaStartRequest():
         final xid = Xid(
@@ -44,7 +82,10 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           bqual: request.bqual,
         );
         final handle = conn.xaStart(request.connectionId, xid);
-        sendPort.send(
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
           IntResponse(request.requestId, handle?.xaId ?? 0),
         );
 
@@ -60,19 +101,30 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           RequestType.xaRollbackActive => native.xaRollbackActive(request.xaId),
           _ => -1,
         };
-        sendPort.send(IntResponse(request.requestId, rc));
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
+          IntResponse(request.requestId, rc),
+        );
 
       case XaRecoverRequest():
         final recovered = conn.xaRecover(request.connectionId);
         if (recovered == null) {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             XaRecoverResponse(
               request.requestId,
-              error: conn.getError(),
+              error: _workerError(conn),
             ),
           );
         } else {
-          sendPort.send(
+          _sendWorkerResponse(
+            request,
+            sendPort,
+            conn,
             XaRecoverResponse(
               request.requestId,
               entries: [
@@ -94,7 +146,10 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           bqual: request.bqual,
         );
         final handle = conn.xaResumePrepared(request.connectionId, xid);
-        sendPort.send(
+        _sendWorkerResponse(
+          request,
+          sendPort,
+          conn,
           IntResponse(request.requestId, handle?.xaId ?? 0),
         );
 

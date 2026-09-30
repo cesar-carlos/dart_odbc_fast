@@ -724,13 +724,18 @@ await for (final chunkResult in service.streamQuery(
 }
 ```
 
-Streaming errors are now classified with clearer messages:
+Service and repository `Result` APIs return typed `OdbcError` failures, including
+unexpected exceptions from injected implementations. Streams emit one terminal
+`Failure` and then close. Use `error.code` for localization and `error.userMessage`
+for presentation; retain `message`, SQLSTATE and native code for diagnostics.
+`error.details` preserves the operation, cause, stack trace, worker/request IDs,
+uncertain execution (`outcomeUnknown`) and secondary cleanup failures. Presentation
+messages do not contain driver text, SQL, parameters or connection strings.
 
-- protocol/frame errors: `Streaming protocol error: ...`
-- timeout: `Query timed out`
-- worker interruption/dispose: `Streaming interrupted: ...`
-- SQL/driver errors (when structured error is available):
-  `Streaming SQL error: ...` (+ SQLSTATE/native code)
+Instrumentation failures do not change database results. Configure
+`SimpleTelemetryService(onDiagnostic: ...)` to receive these diagnostics;
+without a callback they go to `AppLogger`. A failing diagnostic callback also
+falls back to logging.
 
 ## Connection options example
 
@@ -748,6 +753,21 @@ final result = await service.connect(
   ),
 );
 ```
+
+Automatic reconnection restores the connection for future operations. It does
+**not** replay the failed query by default. Set
+`replayQueriesAfterReconnect: true` together with `autoReconnectOnConnectionLost`
+only when the application explicitly authorizes another execution. The package
+does not infer replay safety from SQL text. Reconnection and replay are blocked
+inside local and XA transactions. A timeout of buffered work may leave execution
+running in the driver; check `error.details.outcomeUnknown` before deciding what
+to do next.
+
+For repeated named-column reads, create `final reader = result.reader()` once.
+Its column names are a snapshot; rows remain live, as in the existing helpers.
+Duplicate names resolve to the first occurrence for cell lookup. Use
+`streamQueryMultiBatches` or `streamQueryColumnar` for large results;
+`streamQueryMulti` deliberately coalesces each complete result set.
 
 Validation rules:
 

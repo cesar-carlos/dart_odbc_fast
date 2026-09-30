@@ -5,6 +5,8 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/binary_protocol.dart'
     show ParsedRowBuffer;
 import 'package:odbc_fast/infrastructure/native/protocol/named_parameter_parser.dart'
@@ -82,8 +84,26 @@ class StreamQueryRunner {
     yield* streamWithQueryTimeout(
       source: source,
       queryTimeout: queryTimeout,
+      onCleanupError: (primary, error, stack) => Failure(
+        normalizeOdbcError(
+          primary.exceptionOrNull()!,
+          operation: 'streamQuery',
+        ).withSecondary(
+          normalizeOdbcError(
+            error,
+            operation: 'cancelStream',
+            stackTrace: stack,
+          ),
+        ),
+      ),
       onTimeoutItem: const Failure<QueryResult, OdbcError>(
-        QueryError(message: odbcQueryTimedOutMessage),
+        QueryError(
+          message: odbcQueryTimedOutMessage,
+          details: OdbcErrorDetails(
+            code: OdbcErrorCode.timeout,
+            outcomeUnknown: true,
+          ),
+        ),
       ),
     );
   }
@@ -118,9 +138,9 @@ class StreamQueryRunner {
         ValidationError(message: e.message),
       );
       return;
-    } on Exception catch (e) {
+    } on Exception catch (e, st) {
       yield Failure<QueryResult, OdbcError>(
-        QueryError(message: e.toString()),
+        translateOdbcError(e, operation: 'streamQueryNamed', stackTrace: st),
       );
       return;
     }
@@ -162,8 +182,26 @@ class StreamQueryRunner {
     yield* streamWithQueryTimeout(
       source: createSource(),
       queryTimeout: queryTimeout,
+      onCleanupError: (primary, error, stack) => Failure(
+        normalizeOdbcError(
+          primary.exceptionOrNull()!,
+          operation: 'streamQuery',
+        ).withSecondary(
+          normalizeOdbcError(
+            error,
+            operation: 'cancelStream',
+            stackTrace: stack,
+          ),
+        ),
+      ),
       onTimeoutItem: const Failure<QueryResult, OdbcError>(
-        QueryError(message: odbcQueryTimedOutMessage),
+        QueryError(
+          message: odbcQueryTimedOutMessage,
+          details: OdbcErrorDetails(
+            code: OdbcErrorCode.timeout,
+            outcomeUnknown: true,
+          ),
+        ),
       ),
     );
   }

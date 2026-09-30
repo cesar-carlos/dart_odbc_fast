@@ -68,7 +68,10 @@ void main() {
         (_) async => const Failure(original),
       );
 
-      expect(result.exceptionOrNull(), same(original));
+      expect(
+        result.exceptionOrNull(),
+        isA<QueryError>().having((e) => e.message, 'message', original.message),
+      );
       final fake = mockRepo.xaStartReturn! as _FakeXa;
       expect(fake.endCalls, greaterThan(0));
     });
@@ -116,7 +119,7 @@ void main() {
         expect(result.isError(), isTrue);
         final err = result.exceptionOrNull()!;
         expect(err, isA<QueryError>());
-        expect((err as QueryError).message, contains('action threw'));
+        expect((err as QueryError).details.cause, isA<StateError>());
         final fake = mockRepo.xaStartReturn! as _FakeXa;
         expect(fake.endCalls + fake.commitOnePhaseCalls, greaterThan(0));
       });
@@ -135,8 +138,8 @@ void main() {
 
         expect(result.isError(), isTrue);
         expect(
-          (result.exceptionOrNull()! as QueryError).message,
-          contains('xa_commit_one_phase failed'),
+          (result.exceptionOrNull()! as QueryError).details.operation,
+          equals('xaCommitOnePhase'),
         );
       });
 
@@ -152,8 +155,8 @@ void main() {
 
         expect(result.isError(), isTrue);
         expect(
-          (result.exceptionOrNull()! as QueryError).message,
-          contains('xa_end failed'),
+          (result.exceptionOrNull()! as QueryError).details.operation,
+          equals('xaEnd'),
         );
       });
 
@@ -169,8 +172,8 @@ void main() {
 
         expect(result.isError(), isTrue);
         expect(
-          (result.exceptionOrNull()! as QueryError).message,
-          contains('xa_prepare failed'),
+          (result.exceptionOrNull()! as QueryError).details.operation,
+          equals('xaPrepare'),
         );
       });
 
@@ -186,8 +189,8 @@ void main() {
 
         expect(result.isError(), isTrue);
         expect(
-          (result.exceptionOrNull()! as QueryError).message,
-          contains('xa_commit_prepared failed'),
+          (result.exceptionOrNull()! as QueryError).details.operation,
+          equals('xaCommitPrepared'),
         );
       });
 
@@ -200,8 +203,8 @@ void main() {
 
         expect(result.isError(), isTrue);
         expect(
-          (result.exceptionOrNull()! as QueryError).message,
-          contains('action threw'),
+          (result.exceptionOrNull()! as QueryError).details.cause,
+          isA<StateError>(),
         );
       });
     });

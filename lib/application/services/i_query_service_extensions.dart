@@ -6,6 +6,7 @@ import 'package:odbc_fast/domain/entities/query_result_multi.dart';
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/statement_options.dart';
 import 'package:odbc_fast/domain/entities/typed_columnar_result.dart';
+import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
 import 'package:odbc_fast/domain/helpers/param_value_conversion.dart';
 import 'package:result_dart/result_dart.dart';
 
@@ -18,11 +19,14 @@ extension IQueryServiceTypedParamExtensions on IQueryService {
     List<Object?> params, {
     ResultEncoding? resultEncoding,
   }) =>
-      executeQueryParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
-        resultEncoding: resultEncoding,
+      OdbcErrorBoundary.run(
+        'executeQueryParamValuesFromObjects',
+        () => executeQueryParamValues(
+          connectionId,
+          sql,
+          paramValuesFromObjects(params),
+          resultEncoding: resultEncoding,
+        ),
       );
 
   /// Columnar execute with automatic [ParamValue] conversion.
@@ -31,12 +35,15 @@ extension IQueryServiceTypedParamExtensions on IQueryService {
     String sql, {
     List<Object?>? params,
   }) =>
-      executeQueryColumnarParamValues(
-        connectionId,
-        sql,
-        params: params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
+      OdbcErrorBoundary.run(
+        'executeQueryColumnarFromObjects',
+        () => executeQueryColumnarParamValues(
+          connectionId,
+          sql,
+          params: params == null || params.isEmpty
+              ? null
+              : paramValuesFromObjects(params),
+        ),
       );
 }
 
@@ -49,13 +56,16 @@ extension IOdbcServiceTypedParamExtensions on IOdbcService {
     List<Object?>? params,
     StatementOptions? options,
   ) =>
-      executePreparedParamValues(
-        connectionId,
-        stmtId,
-        params == null || params.isEmpty
-            ? null
-            : paramValuesFromObjects(params),
-        options,
+      OdbcErrorBoundary.run(
+        'executePreparedParamValuesFromObjects',
+        () => executePreparedParamValues(
+          connectionId,
+          stmtId,
+          params == null || params.isEmpty
+              ? null
+              : paramValuesFromObjects(params),
+          options,
+        ),
       );
 
   /// Multi-result positional execute with automatic [ParamValue] conversion.
@@ -64,9 +74,12 @@ extension IOdbcServiceTypedParamExtensions on IOdbcService {
     String sql,
     List<Object?> params,
   ) =>
-      executeQueryMultiParamValues(
-        connectionId,
-        sql,
-        paramValuesFromObjects(params),
+      OdbcErrorBoundary.run(
+        'executeQueryMultiParamValuesFromObjects',
+        () => executeQueryMultiParamValues(
+          connectionId,
+          sql,
+          paramValuesFromObjects(params),
+        ),
       );
 }
