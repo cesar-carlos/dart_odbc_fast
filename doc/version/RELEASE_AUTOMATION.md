@@ -14,6 +14,13 @@ Version-bump policy is canonical in `VERSIONING_STRATEGY.md`. This document focu
    publishes stable tags to pub.dev using GitHub OIDC. Do not run a second
    manual publish while that workflow is active.
 
+pub.dev limits `CHANGELOG.md` content to 262,144 bytes. Both metadata gates
+validate `scripts/prepare_pub_changelog.py --check` before builds or asset
+waiting. The publish job compacts wrapped prose only when needed; it preserves
+all words, version history, fenced code and explicit Markdown line breaks.
+The repository and version tag retain the original changelog formatting. If
+whitespace compaction is insufficient, publication stops for editorial repair.
+
 ## Workflow triggers
 
 - `push` on tags `v*`
@@ -120,6 +127,12 @@ If asset waiting times out while `release.yml` is still building, first verify
 the release workflow and all four required assets, then rerun the failed
 tag-triggered publish run. A new `workflow_dispatch` run is not a substitute:
 pub.dev OIDC requires a tag ref. Do not move or recreate a published version tag.
+
+For a package-content rejection after a GitHub Release already exists, keep the
+tag immutable. A validated export of that tag may be prepared for manual
+publication by an authorized uploader, with only the required packaging changes.
+If the package disables manual publication, enabling it requires the
+maintainer's authorization; restore that restriction after the upload.
 
 ## Common failures
 

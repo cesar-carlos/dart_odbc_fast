@@ -71,6 +71,9 @@ jobs:
           echo "release_tag=${TAG}" >> "${GITHUB_OUTPUT}"
           echo "release_version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
+      - name: Validate pub.dev changelog content size
+        run: python3 scripts/prepare_pub_changelog.py --check
+
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
         with:

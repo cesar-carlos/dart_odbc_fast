@@ -49,6 +49,9 @@ jobs:
             exit 1
           fi
 
+      - name: Validate pub.dev changelog content size
+        run: python3 scripts/prepare_pub_changelog.py --check
+
   wait-for-release-assets:
     if: ${{ !contains(github.ref_name, '-') }}
     needs: validate-metadata
@@ -101,6 +104,9 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+
+      - name: Prepare changelog within pub.dev content limit
+        run: python3 scripts/prepare_pub_changelog.py
 
       - name: Publish - dry run
         run: dart pub publish --dry-run --ignore-warnings

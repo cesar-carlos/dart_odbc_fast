@@ -164,6 +164,23 @@ void main() {
       expect(readme, contains('runInXaTransaction'));
     });
 
+    test('should_validate_pub_changelog_without_changing_history', () {
+      final before = _readRepoFile('CHANGELOG.md');
+      final result = Process.runSync(
+        Platform.isWindows ? 'python' : 'python3',
+        ['scripts/prepare_pub_changelog.py', '--check'],
+      );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      expect(result.stdout, contains('pub.dev changelog:'));
+      expect(_readRepoFile('CHANGELOG.md'), before);
+      final publish = _readRepoFile('.github/workflows/publish.yml');
+      expect(publish, contains('python3 scripts/prepare_pub_changelog.py'));
+      expect(
+        _readRepoFile('.github/workflows/release.yml'),
+        contains('python3 scripts/prepare_pub_changelog.py --check'),
+      );
+    });
+
     test('should_ship_dart_layer_architecture_doc', () {
       // Phase 4 PR4.4: doc/ARCHITECTURE.md mirrors the native engine's
       // architecture doc but documents only the Dart side. Verify the
