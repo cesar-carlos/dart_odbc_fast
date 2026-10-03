@@ -397,7 +397,7 @@ Takeaways:
 
 | Knob | Prefer when | Why |
 | ---- | ----------- | --- |
-| `fetchSize: 1000` + `chunkSize` 1 MiB | Large scans | Matches the throughput path in `example/streaming_demo.dart`. A 250-row fetch is a comparison, not the default to copy. |
+| `fetchSize: 1000` + `chunkSize` 1 MiB | Large scans | The async Result-service pattern in `example/streaming_demo.dart` uses the server profile chunk recommendation and processes one batch at a time. |
 | `chunkSize` | Large scans (often **1–4 MiB**) | Fewer FFI fetch round-trips / resize loops; seed via `streamFetch(bufferSize:)` |
 | Columnar / `streamQueryColumnar*` | Analytics pipelines that keep **typed numeric** columns or use `lazyStrings` | Avoids row `List` framing; **not** a free win for full `SELECT *` string/datetime materialization |
 | Row-major `streamQueryBatched` | Wide `SELECT *` | Local `Produto` scans stay near ~19k rows/s; the 300–650k rows/s lane is a narrow bench table |
@@ -453,9 +453,9 @@ python scripts/run_dart_benchmarks.py --rust-micro
 
 | Scenario | Prefer | Notes |
 | -------- | ------ | ----- |
-| Few rows (< ~100) | Prepared `INSERT` in a loop | Setup cost of [BulkInsertBuilder] is negligible; row-by-row is simpler. |
-| Medium batches (100–1k rows) | `bulkInsert` / `bulkInsertArray` on one connection | Build the payload once with [BulkInsertBuilder.build]; pass the [Uint8List] directly to FFI (no extra copy). Prefer columnar `addColumnInt32` / `addColumnText` when source data is already column-shaped — avoids per-row `List<dynamic>` and bulk-copies `Int32List`/`Int64List` into the wire buffer. |
-| Large batches (> ~1k rows) | `bulkInsertParallel` via [ConnectionPool] | Pool-backed parallel insert splits work across native workers. Size the pool to at least your target `parallelism` (often 4). |
+| Repeated individual writes | Prepared `INSERT` | Prepare once and bind new values. Keep transaction boundaries explicit. |
+| Batch writes | `bulkInsert` / `bulkInsertArray` on one connection | Build one bounded payload at a time. Prefer columnar `addColumnInt32` / `addColumnText` for column-shaped sources. See `example/bulk_insert_demo.dart`. |
+| Independent parallel batches | `bulkInsertParallel` with a native pool | Measure against single-connection bulk with the same data and batch sizes; there is no universal row-count threshold. Match parallelism to available pool slots. The example reserves one slot for setup/cleanup and does not claim atomicity across parallel workers. |
 | Analytics SELECT (many rows, stable types) | `ResultEncoding.columnar` | Reduces row framing overhead; benchmark before adopting in production. |
 | Repeated statements | Prepared statement reuse | Keep one prepared handle per SQL shape; rebinding is cheaper than re-preparing. |
 
@@ -541,7 +541,7 @@ query when `test_on_check_out` is on; it does not go through
 
 | Workload                                          | Prefer                                                                                                     | Notes                                                                                                                                                             |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Many independent short/medium queries             | `AsyncNativeOdbcConnection(workerCount: N)`                                                                | Open multiple connections. Same-connection calls remain serialized. See `example/high_concurrency_worker_pool_demo.dart`.                                         |
+| Many independent short/medium queries             | `AsyncNativeOdbcConnection(workerCount: N)`                                                                | Open multiple connections. Same-connection calls remain serialized. See the worker-count comparison in `example/async_concurrency_benchmark.dart`.                                         |
 | Many request-style tasks with bounded DB capacity | Native pool + `ServiceLocator.initialize(profile: OdbcUsageProfile.balancedServer/highThroughput)` | Keep an explicit in-flight limit close to pool size. Set `maxPendingRequests` near `poolSize * 2` or `poolSize * 4`. See `example/high_concurrency_pool_demo.dart`. |
 | Large result sets                                 | `streamQueryBatched` / `streamAsync`                                                                       | Streaming controls memory pressure better than raising result-buffer limits.                                                                                      |
 | Many rows with stable column types                | `ResultEncoding.columnar`                                                                                  | Columnar reduces repeated row framing and now avoids an extra Dart column-to-row materialization step during decode. Keep row-major as default for compatibility. |

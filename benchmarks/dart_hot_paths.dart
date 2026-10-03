@@ -3,15 +3,19 @@ import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/query_result.dart';
 import 'package:odbc_fast/domain/helpers/query_result_access.dart';
+import 'package:odbc_fast/infrastructure/native/protocol/frame_accumulator.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/lazy_string.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/protocol_byte_accumulator.dart';
 
 /// Deterministic Dart-only scenarios; no driver, DSN or native library needed.
 void main(List<String> args) {
   final results = <String, List<int>>{};
+  final allocated = <String, int>{};
+  final copied = <String, int>{};
   var checksum = 0;
   void measure(String name, int Function() action, {int rounds = 8}) {
     final samples = <int>[];
+    final before = ProtocolByteAccumulator.allocatedBackingBytes;
     for (var sample = -6; sample < 15; sample++) {
       final timer = Stopwatch()..start();
       for (var round = 0; round < rounds; round++) {
@@ -20,6 +24,7 @@ void main(List<String> args) {
       if (sample >= 0) samples.add(timer.elapsedMicroseconds);
     }
     results[name] = samples;
+    allocated[name] = ProtocolByteAccumulator.allocatedBackingBytes - before;
   }
 
   for (final config in [
@@ -53,6 +58,27 @@ void main(List<String> args) {
     return sum;
   });
 
+  for (final size in [128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024]) {
+    final frame = Uint8List(size);
+    ByteData.sublistView(frame)
+      ..setUint32(0, 0x4F444243, Endian.little)
+      ..setUint16(4, 1, Endian.little)
+      ..setUint32(12, size - 16, Endian.little);
+    final name = 'framing_fragmented_${size}_1k';
+    measure(name, () {
+      final accumulator = BinaryFrameAccumulator();
+      var length = 0;
+      for (var offset = 0; offset < size; offset += 1024) {
+        accumulator.add(Uint8List.sublistView(frame, offset, offset + 1024));
+        for (final complete in accumulator.drainFrames()) {
+          length += complete.length;
+        }
+      }
+      copied[name] = accumulator.bytesCopied;
+      return length;
+    }, rounds: 1);
+  }
+
   final textBytes = Uint8List(2000 * 32)..fillRange(0, 2000 * 32, 65);
   measure('retained_lazy_text', () {
     final accumulator = ProtocolByteAccumulator()..add(textBytes);
@@ -74,5 +100,10 @@ void main(List<String> args) {
       sum += read(0, 'COLUMN_255', ignoreCase: true)! as int;
     return sum;
   });
-  print(jsonEncode({'samplesMicros': results, 'checksum': checksum}));
+  print(jsonEncode({
+    'samplesMicros': results,
+    'checksum': checksum,
+    'allocatedBackingBytes': allocated,
+    'pendingBytesCopied': copied
+  }));
 }

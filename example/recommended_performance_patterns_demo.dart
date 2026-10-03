@@ -1,225 +1,72 @@
-// Recommended performance patterns — decision map in executable form.
-//
-// Workload → API (see also specialized demos):
-//   repeated SQL    → prepare once, execute many (named_parameters_demo)
-//   small query     → executeQuery / executeQueryParamValues
-//   wide SELECT *   → streamQuery batched, row-major, fetchSize 1000,
-//                     chunkSize 1 MiB (streaming_demo throughput path)
-//   narrow typed    → streamQueryColumnar on balancedServer/highThroughput
-//   large MULT      → streamQueryMultiBatches (no continuation coalescing)
-//                     when each result-set batch can be handled independently
-//   < ~100 rows     → prepared INSERT
-//   ~100–1k rows    → bulkInsert (bulk_insert_demo)
-//   > ~1k rows      → bulkInsertParallel (bulk_insert_parallel_demo)
-//   server/async    → OdbcUsageProfile.balancedServer or highThroughput
-//   app default     → OdbcUsageProfile.balanced (this demo)
-//
-// The queries below are shape samples (a few rows, a 50-row bulk), not the
-// volumes in the map. Scale the API, do not copy the row counts.
-//
-// Optional:
-//   ODBC_PERF_PROFILE=balancedServer|highThroughput|balanced
-//
+// Read-only entry point. The tiny query illustrates API shape, not throughput.
 // Run: dart run example/recommended_performance_patterns_demo.dart
-//
-// Requires ODBC_TEST_DSN or ODBC_DSN. Bulk sample DDL targets SQL Server;
-// other dialects still exercise query + stream paths.
+// Optional: ODBC_PERF_QUERY,
+// ODBC_PERF_PROFILE=balanced|balancedServer|highThroughput
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:odbc_fast/odbc_fast.dart';
 
 import 'common.dart';
 
-const _bulkTable = 'perf_patterns_bulk_demo';
-const _bulkRows = 50;
-
-OdbcUsageProfile _profileFromEnv() {
-  final raw = Platform.environment['ODBC_PERF_PROFILE']?.trim().toLowerCase();
-  return switch (raw) {
-    'balancedserver' || 'balanced_server' => OdbcUsageProfile.balancedServer,
-    'highthroughput' || 'high_throughput' => OdbcUsageProfile.highThroughput,
-    _ => OdbcUsageProfile.balanced,
-  };
-}
-
 Future<void> main() async {
-  AppLogger.initialize();
-
-  final dsn = requireExampleDsn();
-  if (dsn == null) {
-    return;
-  }
-
-  final profile = _profileFromEnv();
-  final locator = ServiceLocator()..initialize(profile: profile);
-  final service = locator.service;
-  final tuning = locator.resolvedUsageProfile;
-  final chunkSize = locator.recommendedStreamChunkSizeBytes;
-  final useColumnarStream = tuning.recommendedResultEncoding.isColumnar;
-
-  AppLogger.info(
-    'profile=${tuning.profile.name} async=${tuning.useAsync} '
-    'workers=${tuning.workerCount} '
-    'encoding=${tuning.recommendedResultEncoding.name} '
-    'streamChunk=$chunkSize',
-  );
-  AppLogger.info(
-    'Pointers: streaming_demo / stream_query_columnar_demo / '
-    'bulk_insert_parallel_demo / high_concurrency_pool_demo / '
-    'multi_result_batches_demo / named_parameters_demo (prepared reuse)',
-  );
-
-  final init = await service.initialize();
-  if (init.isError()) {
-    AppLogger.severe('initialize failed: ${init.exceptionOrNull()}');
-    locator.shutdown();
-    return;
-  }
-
-  final connResult = await service.connect(
-    dsn,
-    options: locator.recommendedConnectionOptions,
-  );
-  if (connResult.isError()) {
-    AppLogger.severe('connect failed: ${connResult.exceptionOrNull()}');
-    locator.shutdown();
-    return;
-  }
-
-  final conn = connResult.getOrThrow();
-  try {
-    await _smallQuery(service, conn.id);
-    await _streamRead(
-      service,
-      conn.id,
-      chunkSize: chunkSize,
-      useColumnar: useColumnarStream,
-    );
-    await _bulkInsertSample(service, conn.id);
-  } finally {
-    await service.disconnect(conn.id);
-  }
-
-  locator.shutdown();
-}
-
-Future<void> _smallQuery(IOdbcService service, String connId) async {
-  final result = await service.executeQueryParamValues(
-    connId,
-    "SELECT 1 AS id, 'small-query' AS kind",
-    const <ParamValue>[],
-  );
-  result.fold(
-    (r) => AppLogger.info(
-      'small query (executeQuery*): '
-      'rows=${r.rowCount} cols=${r.columns.length}',
-    ),
-    (e) => AppLogger.warning('small query failed: $e'),
-  );
-}
-
-Future<void> _streamRead(
-  IOdbcService service,
-  String connId, {
-  required int chunkSize,
-  required bool useColumnar,
-}) async {
-  const sql = 'SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3';
-  var chunks = 0;
-  var rows = 0;
-
-  if (useColumnar) {
-    await for (final item in service.streamQueryColumnar(
-      connId,
-      sql,
-      chunkSize: chunkSize,
-    )) {
-      item.fold(
-        (r) {
-          chunks++;
-          rows += r.rowCount;
-        },
-        (e) => AppLogger.warning('columnar stream chunk failed: $e'),
-      );
-    }
-    AppLogger.info(
-      'large-read pattern (streamQueryColumnar, chunkSize=$chunkSize): '
-      'chunks=$chunks rows=$rows',
-    );
-    return;
-  }
-
-  // Service streamQuery uses batched streaming by default (row-major wire).
-  await for (final item in service.streamQuery(
-    connId,
-    sql,
-    chunkSize: chunkSize,
-  )) {
-    item.fold(
-      (r) {
-        chunks++;
-        rows += r.rowCount;
-      },
-      (e) => AppLogger.warning('stream chunk failed: $e'),
-    );
-  }
-  AppLogger.info(
-    'large-read pattern (streamQuery → batched, chunkSize=$chunkSize): '
-    'chunks=$chunks rows=$rows '
-    '(server profiles → streamQueryColumnar; see PERFORMANCE.md)',
-  );
-}
-
-Future<void> _bulkInsertSample(IOdbcService service, String connId) async {
-  const ddl = '''
-    IF OBJECT_ID('$_bulkTable', 'U') IS NOT NULL DROP TABLE $_bulkTable;
-    CREATE TABLE $_bulkTable (
-      id INT NOT NULL PRIMARY KEY,
-      name NVARCHAR(64) NOT NULL
+  stdout
+    ..writeln('Performance patterns:')
+    ..writeln(
+      '  Repeated SQL -> prepare once, bind ParamValue, execute many.',
     )
-  ''';
-  final created = await service.executeQueryParamValues(
-    connId,
-    ddl,
-    const <ParamValue>[],
-  );
-  if (created.isError()) {
-    AppLogger.info(
-      'bulkInsert sample skipped (DDL not supported on this dialect): '
-      '${created.exceptionOrNull()}',
-    );
-    return;
-  }
-
-  final ids = Int32List.fromList(
-    List<int>.generate(_bulkRows, (i) => i + 1),
-  );
-  final names = List<String>.generate(_bulkRows, (i) => 'row-${i + 1}');
-  final builder = BulkInsertBuilder()
-      .table(_bulkTable)
-      .addColumnInt32('id', ids)
-      .addColumnText('name', names, maxLen: 64);
-
-  final inserted = await service.bulkInsert(
-    connId,
-    builder.tableName,
-    builder.columnNames,
-    builder.build(),
-    builder.rowCount,
-  );
-  inserted.fold(
-    (n) => AppLogger.info(
-      'bulkInsert shape sample: inserted=$n '
-      '(~100–1k rows in production; >1k → bulk_insert_parallel_demo)',
-    ),
-    (e) => AppLogger.warning('bulkInsert failed: $e'),
-  );
-
-  await service.executeQueryParamValues(
-    connId,
-    "IF OBJECT_ID('$_bulkTable', 'U') IS NOT NULL DROP TABLE $_bulkTable",
-    const <ParamValue>[],
+    ..writeln(
+      '  Large row reads -> streamQuery, process one batch at a time.',
+    )
+    ..writeln('  Numeric analytics -> streamQueryColumnar, typed arrays.')
+    ..writeln('  Large multi-result -> streamQueryMultiBatches.')
+    ..writeln(
+      '  Inserts -> bulkInsert; measure before choosing parallel bulk.',
+    )
+    ..writeln('  Independent requests -> pool + bounded concurrency.')
+    ..writeln('  Repeated column lookup -> result.reader() once per batch.');
+  final profile =
+      switch (Platform.environment['ODBC_PERF_PROFILE']?.toLowerCase()) {
+    'balanced' => OdbcUsageProfile.balanced,
+    'highthroughput' => OdbcUsageProfile.highThroughput,
+    _ => OdbcUsageProfile.balancedServer,
+  };
+  await withExampleConnection(
+    (locator, service, connection) async {
+      final tuning = locator.resolvedUsageProfile;
+      final sql = Platform.environment['ODBC_PERF_QUERY'] ??
+          'SELECT CAST(1 AS INTEGER) AS id';
+      var rows = 0;
+      var batches = 0;
+      final stopwatch = Stopwatch()..start();
+      if (tuning.recommendedResultEncoding.isColumnar) {
+        await for (final result in service.streamQueryColumnar(
+          connection.id,
+          sql,
+          chunkSize: locator.recommendedStreamChunkSizeBytes,
+        )) {
+          final batch = result.getOrThrow();
+          rows += batch.rowCount;
+          batches++;
+        }
+      } else {
+        await for (final result in service.streamQuery(
+          connection.id,
+          sql,
+          chunkSize: locator.recommendedStreamChunkSizeBytes,
+        )) {
+          final batch = result.getOrThrow();
+          rows += batch.rowCount;
+          batches++;
+        }
+      }
+      stopwatch.stop();
+      reportExampleProgress(
+        'profile=${tuning.profile.name} workers=${tuning.workerCount} '
+        'rows=$rows batches=$batches '
+        'elapsedUs=${stopwatch.elapsedMicroseconds}',
+      );
+    },
+    profile: profile,
   );
 }

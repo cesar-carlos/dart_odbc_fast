@@ -3,16 +3,21 @@ import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 
 export 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 
 final class _NativeXaTransactionBackend
-    implements XaTransactionBackend, XaDiagnosticBackend {
+    implements XaTransactionBackend, XaDiagnosticBackend, XaExecutionBackend {
   _NativeXaTransactionBackend(this._conn, this._connectionId);
   final int? _connectionId;
   OdbcError? _error;
+  @override
+  bool lastCallNotStarted = false;
+  @override
+  void registerReconciliation(void Function(String, int?) callback) {}
   @override
   OdbcError? get lastError => _error;
   @override
@@ -22,7 +27,18 @@ final class _NativeXaTransactionBackend
 
   int _run(String operation, int Function() call) {
     clearDiagnostic();
-    final rc = call();
+    lastCallNotStarted = false;
+    final int rc;
+    try {
+      rc = NativeCallContext.invoke(call);
+    } on Object catch (cause, stack) {
+      _error = translateOdbcError(
+        cause,
+        operation: operation,
+        stackTrace: stack,
+      );
+      rethrow;
+    }
     if (rc == 0) return rc;
     _error = QueryError(
       message: 'The XA phase failed',
@@ -83,9 +99,17 @@ final class _NativeXaTransactionBackend
 }
 
 final class _AsyncXaTransactionBackend
-    implements XaTransactionBackend, XaDiagnosticBackend {
+    implements XaTransactionBackend, XaDiagnosticBackend, XaExecutionBackend {
   _AsyncXaTransactionBackend(this._conn);
   OdbcError? _error;
+  @override
+  bool lastCallNotStarted = false;
+  void Function(String, int?)? _reconciled;
+  @override
+  void registerReconciliation(void Function(String, int?) callback) {
+    _reconciled = callback;
+  }
+
   @override
   OdbcError? get lastError => _error;
   @override
@@ -95,8 +119,25 @@ final class _AsyncXaTransactionBackend
 
   Future<int> _run(String operation, Future<int> Function() call) =>
       NativeCallContext.capture(() async {
-        clearDiagnostic();
-        final rc = await call();
+        _error = null;
+        lastCallNotStarted = false;
+        final context = NativeCallContext.current!
+          ..onReconciled = (status) => _reconciled?.call(operation, status);
+        int rc;
+        try {
+          rc = await call();
+          lastCallNotStarted =
+              context.executionStage == NativeExecutionStage.notStarted;
+        } on Object catch (cause, stack) {
+          lastCallNotStarted =
+              context.executionStage == NativeExecutionStage.notStarted;
+          _error = translateOdbcError(
+            cause,
+            operation: operation,
+            stackTrace: stack,
+          );
+          rethrow;
+        }
         if (rc != 0) {
           _error = NativeCallContext.takeFailure() ??
               QueryError(

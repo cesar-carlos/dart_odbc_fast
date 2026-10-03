@@ -1,7 +1,11 @@
 part of 'async_native_odbc_connection.dart';
 
 mixin _AsyncWorkerLifecycle
-    on _AsyncOdbcState, _AsyncWorkerDispatch, _AsyncConnection {
+    on
+        _AsyncOdbcState,
+        _AsyncWorkerDispatch,
+        _AsyncConnection,
+        _AsyncWorkerReconciliation {
   /// Initializes the worker isolate and ODBC environment.
   ///
   /// 1. Spawns a new isolate via [Isolate.spawn].
@@ -13,107 +17,222 @@ mixin _AsyncWorkerLifecycle
   /// later calls return immediately if already initialized.
   ///
   /// Returns `true` if initialization succeeds, `false` otherwise.
-  Future<bool> initialize() async {
-    if (_isInitialized) return true;
+  Future<bool> initialize() {
+    if (_isInitialized) return Future.value(true);
+    final existing = _initialization;
+    if (existing != null) {
+      return _observeInitialization(existing, _initializationContext!);
+    }
     _isShuttingDown = false;
-
-    _workers.clear();
-    for (var i = 0; i < workerCount; i++) {
-      _workers.add(await _spawnWorker(i));
-    }
-
-    var initialized = true;
-    for (final worker in _workers) {
-      if (worker.startupFailure != null) {
-        NativeCallContext.record(worker.startupFailure!);
-        return false;
-      }
-      final initResp = await _sendRequestOnWorker<InitializeResponse>(
-        worker,
-        InitializeRequest(_nextRequestId()),
-      );
-      initialized = initialized && initResp.success;
-    }
-    _isInitialized = initialized;
-    return initialized;
+    final generation = _generation;
+    late NativeCallContext context;
+    final future = NativeCallContext.capture(() {
+      context = NativeCallContext.current!;
+      return _initializeGeneration(generation);
+    });
+    _initialization = future;
+    _initializationContext = context;
+    return _observeInitialization(future, context);
   }
 
-  Future<_WorkerChannel> _spawnWorker(int index) async {
-    final handshake = Completer<SendPort>();
-    final receivePort = ReceivePort();
-    final worker = _WorkerChannel(index: index, receivePort: receivePort);
+  Future<bool> _observeInitialization(
+    Future<bool> attempt,
+    NativeCallContext context,
+  ) async {
+    final success = await attempt;
+    if (!success && context.failure != null) {
+      NativeCallContext.record(context.failure!);
+    }
+    return success;
+  }
 
-    receivePort.listen(
-      (message) {
-        if (message is SendPort) {
-          if (!handshake.isCompleted) handshake.complete(message);
-        } else if (message is WorkerReply) {
-          if (worker.pendingRequests.containsKey(message.response.requestId)) {
-            final failure = message.failure;
-            if (failure != null) {
-              worker.failureSnapshots[message.response.requestId] = failure;
-            }
-            _handleResponse(message.response, worker);
+  void _checkGeneration(int generation) {
+    if (_generation != generation || _isShuttingDown) {
+      throw const AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'Worker initialization was interrupted',
+      );
+    }
+  }
+
+  Future<bool> _initializeGeneration(int generation) async {
+    final workers = <_WorkerChannel>[];
+    try {
+      for (var i = 0; i < workerCount; i++) {
+        workers.add(await _spawnWorker(i, generation));
+        _checkGeneration(generation);
+      }
+      for (final worker in workers) {
+        _checkGeneration(generation);
+        if (worker.startupFailure case final failure?) {
+          NativeCallContext.record(failure);
+          return false;
+        }
+        final response = await _sendRequestOnWorker<InitializeResponse>(
+          worker,
+          InitializeRequest(_nextRequestId()),
+        );
+        _checkGeneration(generation);
+        if (!response.success) return false;
+      }
+      _workers.addAll(workers);
+      _initializingWorkers.removeAll(workers);
+      _isInitialized = true;
+      return true;
+    } on Object {
+      if (_generation == generation && !_isShuttingDown) {
+        for (final worker in {...workers, ..._initializingWorkers}) {
+          if (worker.generation == generation &&
+              worker.startupFailure != null) {
+            NativeCallContext.record(worker.startupFailure!);
+            return false;
           }
-        } else if (message is InitializeResponse &&
-            message.requestId == 0 &&
-            message.failure != null) {
-          worker.startupFailure = message.failure!.toError(worker.index);
-          NativeCallContext.record(worker.startupFailure!);
-          worker.failAll(
-            const AsyncError(
-              code: AsyncErrorCode.notInitialized,
-              message: 'The native library is unavailable',
-            ),
-          );
-        } else if (message is WorkerResponse) {
-          _handleResponse(message, worker);
-        } else if (message == _workerTerminatedSignal) {
-          worker.failAll(
-            const AsyncError(
-              code: AsyncErrorCode.workerTerminated,
-              message: 'Worker isolate terminated',
-            ),
-          );
-          _clearWorkerAffinity(worker.index);
-          _drainBackpressureWaiters();
         }
-      },
-      onError: (Object error, StackTrace stackTrace) async {
-        worker.failAll(
-          AsyncError(
-            code: AsyncErrorCode.workerTerminated,
-            message: 'Worker isolate ${worker.index} error: $error',
-          ),
-        );
-        _clearWorkerAffinity(worker.index);
-        await _triggerAutoRecovery(
-          reason: 'Worker isolate ${worker.index} crashed',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      },
-      onDone: () async {
-        if (worker.pendingRequests.isNotEmpty) {
-          worker.failAll(
-            const AsyncError(
-              code: AsyncErrorCode.workerTerminated,
-              message: 'Worker isolate terminated',
-            ),
-          );
+      }
+      rethrow;
+    } finally {
+      if (!_isInitialized || _generation != generation) {
+        for (final worker in _initializingWorkers
+            .where((w) => w.generation == generation)
+            .toList()) {
+          worker
+            ..failAll(
+              const AsyncError(
+                code: AsyncErrorCode.workerTerminated,
+                message: 'Worker initialization failed',
+              ),
+            )
+            ..dispose();
+          _initializingWorkers.remove(worker);
         }
-        _clearWorkerAffinity(worker.index);
-        await _triggerAutoRecovery(reason: 'Worker isolate terminated');
-      },
-    );
+      }
+      if (_generation == generation) _initialization = null;
+    }
+  }
 
-    worker
-      ..isolate = await Isolate.spawn(
-        _isolateEntry ?? workerEntry,
-        receivePort.sendPort,
-      )
-      ..sendPort = await handshake.future;
-    return worker;
+  Future<_WorkerChannel> _spawnWorker(int index, int generation) async {
+    final worker = _WorkerChannel(
+      index: index,
+      generation: generation,
+      receivePort: ReceivePort(),
+    );
+    _initializingWorkers.add(worker);
+    void terminated([Object? error, StackTrace? stack]) {
+      if (worker.closed || generation != _generation) return;
+      const failure = AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'Worker isolate terminated',
+      );
+      if (!worker.handshake.isCompleted) {
+        worker.handshake.completeError(failure);
+      }
+      worker.failAll(failure);
+      _abandonWorker(worker, failure);
+      worker.dispose();
+      _clearWorkerAffinity(worker.index);
+      _drainBackpressureWaiters();
+      if (_isInitialized && !_isShuttingDown) {
+        unawaited(
+          _triggerAutoRecovery(
+            reason: 'Worker isolate terminated',
+            error: error,
+            stackTrace: stack,
+          ).catchError((Object e, StackTrace st) {
+            _diagnose(
+              translateOdbcError(
+                e,
+                operation: 'recoverWorker',
+                stackTrace: st,
+              ),
+            );
+          }),
+        );
+      }
+    }
+
+    worker.exitPort.listen((_) => terminated());
+    worker.errorPort.listen((message) {
+      final parts = message is List ? message : null;
+      terminated(
+        parts?.first,
+        parts != null && parts.length > 1
+            ? StackTrace.fromString(parts[1].toString())
+            : null,
+      );
+    });
+    worker.receivePort.listen((message) {
+      if (worker.closed || generation != _generation) return;
+      if (message is SendPort) {
+        if (!worker.handshake.isCompleted) worker.handshake.complete(message);
+      } else if (message is WorkerReply) {
+        final id = message.response.requestId;
+        if (!worker.pendingRequests.containsKey(id) &&
+            (worker.abandoned[id] == null || worker.abandoned[id]!.responded)) {
+          return;
+        }
+        if (message.failure != null) {
+          worker.failureSnapshots[id] = message.failure!;
+        }
+        worker.executionStages[id] = message.executionStage;
+        _handleResponse(message.response, worker);
+      } else if (message is InitializeResponse &&
+          message.requestId == 0 &&
+          message.failure != null) {
+        worker.startupFailure = message.failure!.toError(worker.index);
+        NativeCallContext.record(worker.startupFailure!);
+        for (final entry in worker.requests.values.toList()) {
+          if (entry.type == RequestType.initialize &&
+              worker.pendingRequests.containsKey(entry.requestId)) {
+            _handleResponse(
+              InitializeResponse(
+                entry.requestId,
+                success: false,
+                failure: message.failure,
+              ),
+              worker,
+            );
+          }
+        }
+      } else if (message is WorkerResponse) {
+        _handleResponse(message, worker);
+      } else if (message == _workerTerminatedSignal) {
+        terminated();
+      }
+    });
+    final spawning = Isolate.spawn(
+      _isolateEntry ?? workerEntry,
+      worker.receivePort.sendPort,
+      onExit: worker.exitPort.sendPort,
+      onError: worker.errorPort.sendPort,
+    ).then((isolate) {
+      worker.isolate = isolate;
+      if (worker.closed || generation != _generation) isolate.kill();
+      return isolate;
+    });
+    final timeout = _requestTimeout ?? _defaultRequestTimeout;
+    final timer = timeout == Duration.zero
+        ? null
+        : Timer(timeout, () {
+            if (!worker.handshake.isCompleted) {
+              worker.handshake.completeError(
+                const AsyncError(
+                  code: AsyncErrorCode.requestTimeout,
+                  message: 'Worker handshake timed out',
+                ),
+              );
+            }
+          });
+    try {
+      final values = await Future.wait<Object>(
+        [spawning, worker.handshake.future],
+        eagerError: true,
+      );
+      _checkGeneration(generation);
+      worker.sendPort = values[1] as SendPort;
+      return worker;
+    } finally {
+      timer?.cancel();
+    }
   }
 
   Future<String?> _safeGetWorkerError() async {
@@ -151,21 +270,17 @@ mixin _AsyncWorkerLifecycle
   Future<void> _runSingleRecovery(Future<void> Function() operation) async {
     final inFlight = _recoveryInFlight;
     if (inFlight != null) {
-      await inFlight.future;
+      await inFlight;
       return;
     }
 
-    final completer = Completer<void>();
-    _recoveryInFlight = completer;
+    final recovery = operation();
+    _recoveryInFlight = recovery;
 
     try {
-      await operation();
-      completer.complete();
-    } on Object catch (e, st) {
-      completer.completeError(e, st);
-      rethrow;
+      await recovery;
     } finally {
-      if (identical(_recoveryInFlight, completer)) {
+      if (identical(_recoveryInFlight, recovery)) {
         _recoveryInFlight = null;
       }
     }
@@ -192,7 +307,7 @@ mixin _AsyncWorkerLifecycle
 
   Future<void> _recoverWorkerInternal() async {
     dispose();
-    await initialize();
+    if (!await initialize()) return;
     final cb = onWorkerRecovered;
     if (cb != null) {
       try {
@@ -216,7 +331,8 @@ mixin _AsyncWorkerLifecycle
     await _runSingleRecovery(_recoverWorkerInternal);
   }
 
-  /// Shuts down the worker isolate and releases resources.
+  /// Shuts down worker isolates and invalidates Dart resource state.
+  /// Native cancellation or cleanup cannot be confirmed for blocked calls.
   ///
   /// Completes any pending requests with error before shutting down. Sends
   /// shutdown to the worker, kills the isolate, and closes the receive port.
@@ -225,6 +341,9 @@ mixin _AsyncWorkerLifecycle
   /// requests will complete with [AsyncError] (workerTerminated).
   void dispose() {
     _isShuttingDown = true;
+    _generation++;
+    _initialization = null;
+    _initializationContext = null;
     _failAllPending(
       const AsyncError(
         code: AsyncErrorCode.workerTerminated,
@@ -232,12 +351,34 @@ mixin _AsyncWorkerLifecycle
       ),
     );
     _isInitialized = false;
-    for (final worker in _workers) {
-      worker.dispose();
+    for (final worker in {..._workers, ..._initializingWorkers}) {
+      _abandonWorker(
+        worker,
+        const AsyncError(
+          code: AsyncErrorCode.workerTerminated,
+          message: 'Connection disposed; cleanup is not confirmed',
+        ),
+      );
+      worker
+        ..failAll(
+          const AsyncError(
+            code: AsyncErrorCode.workerTerminated,
+            message: 'Connection disposed',
+          ),
+        )
+        ..dispose();
     }
+    _initializingWorkers.clear();
+    _blockedTransactions.clear();
+    _blockedXa.clear();
+    _quarantinedConnections.clear();
+    _deadConnections.clear();
+    _resumedXa.clear();
+    _pendingXaResume.clear();
     _workers.clear();
     _namedParamOrderByStmtId.clear();
     _connectionWorkerById.clear();
+    _nativeConnectionLifetimes.clear();
     _connectionPoolById.clear();
     _streamConnectionById.clear();
     _asyncRequestConnectionById.clear();

@@ -81,7 +81,9 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           gtrid: request.gtrid,
           bqual: request.bqual,
         );
-        final handle = conn.xaStart(request.connectionId, xid);
+        final handle = NativeCallContext.invoke(
+          () => conn.xaStart(request.connectionId, xid),
+        );
         _sendWorkerResponse(
           request,
           sendPort,
@@ -91,16 +93,21 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
 
       case XaIdRequest():
         final native = conn.native;
-        final rc = switch (request.type) {
-          RequestType.xaEnd => native.xaEnd(request.xaId),
-          RequestType.xaPrepare => native.xaPrepare(request.xaId),
-          RequestType.xaCommitPrepared => native.xaCommitPrepared(request.xaId),
-          RequestType.xaRollbackPrepared =>
-            native.xaRollbackPrepared(request.xaId),
-          RequestType.xaCommitOnePhase => native.xaCommitOnePhase(request.xaId),
-          RequestType.xaRollbackActive => native.xaRollbackActive(request.xaId),
-          _ => -1,
-        };
+        final rc = NativeCallContext.invoke(
+          () => switch (request.type) {
+            RequestType.xaEnd => native.xaEnd(request.xaId),
+            RequestType.xaPrepare => native.xaPrepare(request.xaId),
+            RequestType.xaCommitPrepared =>
+              native.xaCommitPrepared(request.xaId),
+            RequestType.xaRollbackPrepared =>
+              native.xaRollbackPrepared(request.xaId),
+            RequestType.xaCommitOnePhase =>
+              native.xaCommitOnePhase(request.xaId),
+            RequestType.xaRollbackActive =>
+              native.xaRollbackActive(request.xaId),
+            _ => -1,
+          },
+        );
         _sendWorkerResponse(
           request,
           sendPort,
@@ -109,7 +116,9 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
         );
 
       case XaRecoverRequest():
-        final recovered = conn.xaRecover(request.connectionId);
+        final recovered = NativeCallContext.invoke(
+          () => conn.xaRecover(request.connectionId),
+        );
         if (recovered == null) {
           _sendWorkerResponse(
             request,
@@ -145,7 +154,9 @@ mixin _WorkerIsolateTransaction on _WorkerIsolateState {
           gtrid: request.gtrid,
           bqual: request.bqual,
         );
-        final handle = conn.xaResumePrepared(request.connectionId, xid);
+        final handle = NativeCallContext.invoke(
+          () => conn.xaResumePrepared(request.connectionId, xid),
+        );
         _sendWorkerResponse(
           request,
           sendPort,

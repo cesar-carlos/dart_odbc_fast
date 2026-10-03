@@ -14,10 +14,22 @@ class _WorkerChannel {
   _WorkerChannel({
     required this.index,
     required this.receivePort,
+    required this.generation,
   });
 
   final int index;
   final ReceivePort receivePort;
+  final int generation;
+  final Completer<SendPort> handshake = Completer<SendPort>();
+  final ReceivePort exitPort = ReceivePort();
+  final ReceivePort errorPort = ReceivePort();
+  bool closed = false;
+  Future<void> maintenance = Future<void>.value();
+  final Map<int, _AbandonedRequest> abandoned = {};
+  final Map<int, _AbandonedRequest> requests = {};
+  int lateResponses = 0;
+  int compensationFailures = 0;
+  final Map<int, NativeExecutionStage?> executionStages = {};
   final Map<int, Completer<WorkerResponse>> pendingRequests = {};
 
   OdbcError? startupFailure;
@@ -53,17 +65,22 @@ class _WorkerChannel {
   int _cachedQueueWaitP95Micros = 0;
   int _cachedExecutionP95Micros = 0;
 
-  bool get isReady => sendPort != null;
+  bool get isReady => !closed && sendPort != null;
 
-  Completer<WorkerResponse> send(WorkerRequest request) {
+  Completer<WorkerResponse> send(
+    WorkerRequest request, {
+    bool maintenance = false,
+  }) {
     final port = sendPort;
-    if (port == null) {
+    if (port == null || closed) {
       throw StateError('Worker $index not initialized');
     }
     final completer = Completer<WorkerResponse>();
     pendingRequests[request.requestId] = completer;
-    activeRequests++;
-    totalRouted++;
+    if (!maintenance) {
+      activeRequests++;
+      totalRouted++;
+    }
     port.send(request);
     return completer;
   }
@@ -177,9 +194,21 @@ class _WorkerChannel {
   }
 
   void dispose() {
+    if (closed) return;
+    closed = true;
+    if (!handshake.isCompleted) {
+      handshake.completeError(
+        const AsyncError(
+          code: AsyncErrorCode.workerTerminated,
+          message: 'Worker initialization was interrupted',
+        ),
+      );
+    }
     sendPort?.send('shutdown');
     isolate?.kill();
     receivePort.close();
+    exitPort.close();
+    errorPort.close();
     sendPort = null;
     isolate = null;
   }

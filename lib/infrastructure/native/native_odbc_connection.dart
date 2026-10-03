@@ -55,7 +55,7 @@ abstract class _NativeOdbcState {
     int? nativeConnectionId,
   }) {
     nativeConnectionId ??= NativeCallContext.current?.nativeConnectionId;
-    final result = call();
+    final result = NativeCallContext.invoke(call);
     if (NativeCallContext.current == null || !failed(result)) return result;
     if (result == null &&
         (operation.startsWith('executeAsyncStart') ||

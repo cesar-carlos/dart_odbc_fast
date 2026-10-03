@@ -124,7 +124,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     _admin = OdbcAdminRunner(ffi: _ffi, state: _state);
     _catalog = OdbcCatalogRunner(
       backend: _backend,
-      nativeIdLookup: (id) => _state.connectionIds[id],
+      nativeIdLookup: (id) {
+        final blocked = _state.transactionBlock(id);
+        if (blocked != null) throw blocked;
+        return _state.connectionIds[id];
+      },
       parseBuffer: _parser.parseBufferToQueryResult,
       optionsLookup: _state.optionsFor,
       convertQueryError: ({
@@ -139,7 +143,11 @@ class OdbcRepositoryImpl implements IOdbcRepository {
     );
     _bulk = OdbcBulkRunner(
       backend: _backend,
-      nativeIdLookup: (id) => _state.connectionIds[id],
+      nativeIdLookup: (id) {
+        final blocked = _state.transactionBlock(id);
+        if (blocked != null) throw blocked;
+        return _state.connectionIds[id];
+      },
       convertIntError: ({
         required fallbackMessage,
         nativeConnectionId,

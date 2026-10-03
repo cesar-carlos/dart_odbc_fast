@@ -16,6 +16,7 @@ import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/async_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
 import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/errors/structured_error.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
@@ -40,6 +41,7 @@ part 'async_transactions.dart';
 part 'async_worker_channel.dart';
 part 'async_worker_dispatch.dart';
 part 'async_worker_lifecycle.dart';
+part 'async_worker_reconciliation.dart';
 part 'async_worker_stats.dart';
 
 const _defaultRequestTimeout = Duration(seconds: 30);
@@ -74,7 +76,7 @@ const _pollBackoffMin = Duration(milliseconds: 1);
 /// ## Request timeout
 ///
 /// Use `requestTimeout` to avoid UI hangs when the worker does not respond
-/// (default 30s). Pass `Duration.zero` or `null` to disable.
+/// (default 30s). Pass `Duration.zero` to disable; `null` uses the default.
 ///
 /// ## Example
 ///
@@ -103,6 +105,7 @@ abstract class _AsyncOdbcState {
     required this.maxPendingRequests,
     required this.backpressureMode,
     required this.backpressureTimeout,
+    required this.onDiagnostic,
   })  : _requestTimeout = requestTimeout,
         _isolateEntry = isolateEntry;
 
@@ -116,17 +119,29 @@ abstract class _AsyncOdbcState {
   final AsyncBackpressureMode backpressureMode;
   final Duration? backpressureTimeout;
   final bool autoRecoverOnWorkerCrash;
+  final void Function(OdbcError)? onDiagnostic;
 
   /// Optional callback invoked after `_recoverWorkerInternal` completes a
   /// successful auto-recovery.
   void Function()? onWorkerRecovered;
 
   final List<_WorkerChannel> _workers = [];
+  final Set<_WorkerChannel> _initializingWorkers = {};
+  Future<bool>? _initialization;
+  NativeCallContext? _initializationContext;
+  int _generation = 0;
+  final Set<int> _blockedTransactions = {};
+  final Set<int> _blockedXa = {};
+  final Set<int> _quarantinedConnections = {};
+  final Set<int> _deadConnections = {};
+  final Map<String, int> _resumedXa = {};
+  final Set<String> _pendingXaResume = {};
   bool _isInitialized = false;
   bool _isShuttingDown = false;
   int _requestIdCounter = 0;
   final Map<int, List<String>> _namedParamOrderByStmtId = {};
   final Map<int, int> _connectionWorkerById = {};
+  final Map<int, Object> _nativeConnectionLifetimes = {};
   final Map<int, int> _connectionPoolById = {};
   final Map<int, int> _streamConnectionById = {};
   final Map<int, int> _asyncRequestConnectionById = {};
@@ -147,12 +162,13 @@ abstract class _AsyncOdbcState {
   int _cachedAggregateLatencyP95Micros = 0;
   int _cachedAggregateQueueWaitP95Micros = 0;
   int _cachedAggregateExecutionP95Micros = 0;
-  Completer<void>? _recoveryInFlight;
+  Future<void>? _recoveryInFlight;
 }
 
 class AsyncNativeOdbcConnection extends _AsyncOdbcState
     with
         _AsyncWorkerDispatch,
+        _AsyncWorkerReconciliation,
         _AsyncConnection,
         _AsyncWorkerLifecycle,
         _AsyncWorkerStats,
@@ -169,6 +185,7 @@ class AsyncNativeOdbcConnection extends _AsyncOdbcState
     super.maxPendingRequests,
     super.backpressureMode = AsyncBackpressureMode.failFast,
     super.backpressureTimeout,
+    super.onDiagnostic,
   }) {
     if (workerCount < 1) {
       throw ArgumentError.value(

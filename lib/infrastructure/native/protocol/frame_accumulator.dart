@@ -16,6 +16,10 @@ class BinaryFrameAccumulator {
   final int maxFrameBytes;
 
   final ProtocolByteAccumulator _buffer = ProtocolByteAccumulator();
+  int? _pendingFrameLength;
+
+  /// Pending-data copies, excluding incoming chunks and bounded headers.
+  int get bytesCopied => _buffer.bytesCopied;
 
   int get length => _buffer.length;
 
@@ -26,7 +30,13 @@ class BinaryFrameAccumulator {
     const maxHeaderSize = BinaryProtocolParser.headerSizeColumnarV2;
     while (length >= 6) {
       final headerPeekLen = length < maxHeaderSize ? length : maxHeaderSize;
-      final headerPeek = _buffer.peek(headerPeekLen);
+      if (_pendingFrameLength case final frameLength?) {
+        if (length < frameLength) break;
+        _pendingFrameLength = null;
+        yield _buffer.take(frameLength);
+        continue;
+      }
+      final headerPeek = _buffer.copyPrefix(headerPeekLen);
       final version =
           ByteData.sublistView(headerPeek, 4, 6).getUint16(0, Endian.little);
       final headerSize = switch (version) {
@@ -53,6 +63,7 @@ class BinaryFrameAccumulator {
         );
       }
       if (length < frameLength) {
+        _pendingFrameLength = frameLength;
         break;
       }
 

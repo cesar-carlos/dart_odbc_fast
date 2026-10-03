@@ -6,6 +6,23 @@ import 'package:test/test.dart';
 
 void main() {
   group('BinaryFrameAccumulator', () {
+    test('should_copy_linear_pending_bytes_for_fragmented_large_frames', () {
+      final frame = _frame(List<int>.filled(1024 * 1024, 65));
+      final accumulator = BinaryFrameAccumulator();
+      final completed = <Uint8List>[];
+      for (var offset = 0; offset < frame.length; offset += 1024) {
+        accumulator.add(
+          Uint8List.sublistView(
+            frame,
+            offset,
+            (offset + 1024).clamp(0, frame.length),
+          ),
+        );
+        completed.addAll(accumulator.drainFrames());
+      }
+      expect(completed.single, frame);
+      expect(accumulator.bytesCopied, lessThan(frame.length * 2));
+    });
     test('drains a frame split across chunks', () {
       final frame = _frame([1, 2, 3]);
       final accumulator = BinaryFrameAccumulator()

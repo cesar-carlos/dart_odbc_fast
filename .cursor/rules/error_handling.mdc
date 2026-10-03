@@ -56,6 +56,31 @@ Anything else is forbidden.
 - Telemetry failures must never change the operation result; protect diagnostic
   callbacks and terminate unawaited export failures through diagnostics.
 
+## Execution Evidence and Late Completion
+
+- Reset native status and diagnostics for each invocation. Optional evidence
+  distinguishes not started, started and completed; absent evidence is unknown.
+- Mark transaction completion in progress before awaiting the backend. Native
+  statuses 0/1 consume a local handle, while 2 retains ownership and affinity.
+  Handle consumption alone does not confirm the database outcome. Never infer
+  terminal status 1 from false or from a missing completion status.
+- Block conflicting operations while completion is in progress or uncertain,
+  including queries, savepoints, further completion, replay, reconnect and pool
+  return. Allow diagnostics, reconciliation and explicit shutdown.
+- Record XA phase attempts before awaiting; preserve thrown causes and stack
+  traces on the handle. Helpers and services must respect phases performed in
+  application callbacks and must not automatically reverse uncertain decisions.
+- Timeout ends the returned result once, but sent unreconciled work still owns
+  capacity. Reconcile late replies on the original worker and generation; use
+  serialized maintenance outside ordinary capacity, without rerouting cleanup.
+- Keep abandoned request context limited to identifiers and immutable XIDs.
+  Prepared XA adoption requires explicit recovery, never automatic rollback.
+- Check cleanup returns as well as exceptions. Quarantine failed compensation;
+  emit the original timeout with cleanup secondary, without rewriting an earlier
+  Failure or counting another completion. Protect callbacks without recursion.
+- Dispose and worker death invalidate local generations. Report unconfirmed
+  release; do not claim a blocked native call was cancelled or resources freed.
+
 ## Rust Rules
 
 - Return `Result<T, E>` for recoverable failures.

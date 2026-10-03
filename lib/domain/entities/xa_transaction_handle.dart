@@ -23,6 +23,14 @@ abstract interface class XaDiagnosticBackend {
   void clearDiagnostic();
 }
 
+/// Optional evidence and late completion notifications from an adapter.
+abstract interface class XaExecutionBackend {
+  bool get lastCallNotStarted;
+  void registerReconciliation(
+    void Function(String operation, int? status) callback,
+  );
+}
+
 /// Lifecycle states of an XA transaction branch — mirror of
 /// `engine::xa_transaction::XaState` (Rust).
 enum XaState {
@@ -44,77 +52,176 @@ class XaTransactionHandle {
     required XaTransactionBackend backend,
     XaState initialState = XaState.active,
   })  : _backend = backend,
-        _state = initialState;
+        _xidContext = xid.toString(),
+        _state = initialState {
+    if (backend is XaExecutionBackend) {
+      (backend as XaExecutionBackend).registerReconciliation(_reconcile);
+    }
+  }
 
   final int xaId;
   final Xid xid;
 
   final XaTransactionBackend _backend;
+  final String _xidContext;
   XaState _state;
+  OdbcError? _lastError;
+  bool _outcomeUnknown = false;
+  bool _phaseInProgress = false;
+  bool _commitAttempted = false;
+
+  /// True when a phase may have executed without a confirmed outcome.
+  bool get outcomeUnknown => _outcomeUnknown;
+
+  /// Whether commit has been attempted, including a call rejected before FFI.
+  /// Orchestration must not repeat that decision or automatically roll it back.
+  bool get commitAttempted => _commitAttempted;
 
   XaState get state => _state;
-  OdbcError? get lastError => _backend is XaDiagnosticBackend
-      ? (_backend as XaDiagnosticBackend).lastError
-      : null;
+  OdbcError? get lastError =>
+      _lastError ??
+      (_backend is XaDiagnosticBackend
+          ? (_backend as XaDiagnosticBackend).lastError
+          : null);
+
+  Future<bool> _phase(
+    String operation,
+    Future<int> Function(int) invoke,
+    XaState success,
+    XaState failed, {
+    bool committing = false,
+  }) async {
+    if (_phaseInProgress ||
+        _outcomeUnknown ||
+        _state == XaState.committed ||
+        _state == XaState.rolledBack) {
+      throw const ValidationError(
+        message: 'The XA branch is not available for this operation',
+      );
+    }
+    _phaseInProgress = true;
+    _commitAttempted = _commitAttempted || committing;
+    _lastError = null;
+    final previous = _state;
+    try {
+      final rc = await invoke(xaId);
+      if (rc == 0) {
+        _state = success;
+        return true;
+      }
+      final backendError = _backend is XaDiagnosticBackend
+          ? (_backend as XaDiagnosticBackend).lastError
+          : null;
+      final notStarted = _backend is XaExecutionBackend &&
+          (_backend as XaExecutionBackend).lastCallNotStarted;
+      _outcomeUnknown = !notStarted &&
+          (committing || (backendError?.details.outcomeUnknown ?? false));
+      _state = notStarted
+          ? previous
+          : operation == 'xaPrepare' && !_outcomeUnknown
+              ? XaState.failed
+              : failed;
+      _lastError = _decorate(
+        backendError ??
+            const QueryError(
+              message: 'The XA transaction phase failed',
+            ),
+        operation,
+      );
+      return false;
+    } on Object catch (error, stack) {
+      final notStarted = _backend is XaExecutionBackend &&
+          (_backend as XaExecutionBackend).lastCallNotStarted;
+      _outcomeUnknown = !notStarted;
+      _state = notStarted ? previous : failed;
+      _lastError = _decorate(
+        normalizeOdbcError(
+          error,
+          operation: operation,
+          stackTrace: stack,
+        ),
+        operation,
+      );
+      rethrow;
+    } finally {
+      _phaseInProgress = false;
+    }
+  }
+
+  OdbcError _decorate(OdbcError error, String operation) => error.withDetails(
+        error.details.copyWith(
+          operation: operation,
+          transactionId: _xidContext,
+          code: OdbcErrorCode.transaction,
+          outcomeUnknown: _outcomeUnknown,
+        ),
+      );
+
+  void _reconcile(String operation, int? status) {
+    if (status != 0) return;
+    _state = switch (operation) {
+      'xaEnd' => XaState.idle,
+      'xaPrepare' => XaState.prepared,
+      'xaCommitPrepared' || 'xaCommitOnePhase' => XaState.committed,
+      'xaRollbackPrepared' || 'xaRollbackActive' => XaState.rolledBack,
+      _ => _state,
+    };
+    _outcomeUnknown = false;
+    if (_lastError case final error?) {
+      _lastError =
+          error.withDetails(error.details.copyWith(outcomeUnknown: false));
+    }
+  }
 
   Future<bool> end() async {
-    final rc = await _backend.xaEnd(xaId);
-    if (rc == 0) {
-      _state = XaState.idle;
-      return true;
-    }
-    _state = XaState.failed;
-    return false;
+    return _phase('xaEnd', _backend.xaEnd, XaState.idle, XaState.failed);
   }
 
   Future<bool> prepare() async {
-    final rc = await _backend.xaPrepare(xaId);
-    if (rc == 0) {
-      _state = XaState.prepared;
-      return true;
-    }
-    _state = XaState.failed;
-    return false;
+    return _phase(
+      'xaPrepare',
+      _backend.xaPrepare,
+      XaState.prepared,
+      XaState.failedAfterPrepare,
+    );
   }
 
   Future<bool> commitPrepared() async {
-    final rc = await _backend.xaCommitPrepared(xaId);
-    if (rc == 0) {
-      _state = XaState.committed;
-      return true;
-    }
-    _state = XaState.failedAfterPrepare;
-    return false;
+    return _phase(
+      'xaCommitPrepared',
+      _backend.xaCommitPrepared,
+      XaState.committed,
+      XaState.failedAfterPrepare,
+      committing: true,
+    );
   }
 
   Future<bool> rollbackPrepared() async {
-    final rc = await _backend.xaRollbackPrepared(xaId);
-    if (rc == 0) {
-      _state = XaState.rolledBack;
-      return true;
-    }
-    _state = XaState.failedAfterPrepare;
-    return false;
+    return _phase(
+      'xaRollbackPrepared',
+      _backend.xaRollbackPrepared,
+      XaState.rolledBack,
+      XaState.failedAfterPrepare,
+    );
   }
 
   Future<bool> commitOnePhase() async {
-    final rc = await _backend.xaCommitOnePhase(xaId);
-    if (rc == 0) {
-      _state = XaState.committed;
-      return true;
-    }
-    _state = XaState.failed;
-    return false;
+    return _phase(
+      'xaCommitOnePhase',
+      _backend.xaCommitOnePhase,
+      XaState.committed,
+      XaState.failed,
+      committing: true,
+    );
   }
 
   Future<bool> rollback() async {
-    final rc = await _backend.xaRollbackActive(xaId);
-    if (rc == 0) {
-      _state = XaState.rolledBack;
-      return true;
-    }
-    _state = XaState.failed;
-    return false;
+    return _phase(
+      'xaRollbackActive',
+      _backend.xaRollbackActive,
+      XaState.rolledBack,
+      XaState.failed,
+    );
   }
 
   static Future<T> runWithStart<T>(
@@ -131,19 +238,32 @@ class XaTransactionHandle {
     var committing = false;
     try {
       final result = await action(xa);
-      if (!await xa.end()) {
-        throw StateError(
-          'XaTransactionHandle.runWithStart: xa_end failed on xid=${xa.xid}',
-        );
+      if (xa.state == XaState.committed) return result;
+      if (xa.state == XaState.rolledBack ||
+          xa.outcomeUnknown ||
+          xa._commitAttempted) {
+        final error = xa.lastError;
+        if (error != null) throw error;
+        throw StateError('XA action already completed a phase');
       }
-      if (!await xa.prepare()) {
+      if (xa.state == XaState.active && !await xa.end()) {
+        if (xa.lastError case final error?) throw error;
+        throw StateError('xa_end failed on xid=${xa.xid}');
+      }
+      if (xa.state == XaState.idle && !await xa.prepare()) {
+        if (xa.lastError case final error?) throw error;
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_prepare failed '
           'on xid=${xa.xid}',
         );
       }
+      if (xa.state != XaState.prepared) {
+        if (xa.lastError case final error?) throw error;
+        throw StateError('XA branch is not prepared');
+      }
       committing = true;
       if (!await xa.commitPrepared()) {
+        if (xa.lastError case final error?) throw error;
         throw StateError(
           'XaTransactionHandle.runWithStart: xa_commit_prepared failed '
           'on xid=${xa.xid}',
@@ -151,7 +271,14 @@ class XaTransactionHandle {
       }
       return result;
     } on Object catch (error, stack) {
-      if (committing || xa.state == XaState.failedAfterPrepare) rethrow;
+      if (committing ||
+          xa._commitAttempted ||
+          xa.outcomeUnknown ||
+          xa.state == XaState.failedAfterPrepare ||
+          xa.state == XaState.committed ||
+          xa.state == XaState.rolledBack) {
+        rethrow;
+      }
       final cleanup = await _cleanup(xa, error, stack);
       if (cleanup != null) Error.throwWithStackTrace(cleanup, stack);
       rethrow;
@@ -172,8 +299,17 @@ class XaTransactionHandle {
     var committing = false;
     try {
       final result = await action(xa);
+      if (xa.state == XaState.committed) return result;
+      if (xa.state == XaState.rolledBack ||
+          xa.outcomeUnknown ||
+          xa._commitAttempted) {
+        final error = xa.lastError;
+        if (error != null) throw error;
+        throw StateError('XA action already completed a phase');
+      }
       committing = true;
       if (!await xa.commitOnePhase()) {
+        if (xa.lastError case final error?) throw error;
         throw StateError(
           'XaTransactionHandle.runWithStartOnePhase: xa_commit_one_phase '
           'failed on xid=${xa.xid}',
@@ -181,7 +317,14 @@ class XaTransactionHandle {
       }
       return result;
     } on Object catch (error, stack) {
-      if (committing || xa.state == XaState.failedAfterPrepare) rethrow;
+      if (committing ||
+          xa._commitAttempted ||
+          xa.outcomeUnknown ||
+          xa.state == XaState.failedAfterPrepare ||
+          xa.state == XaState.committed ||
+          xa.state == XaState.rolledBack) {
+        rethrow;
+      }
       final cleanup = await _cleanup(xa, error, stack);
       if (cleanup != null) Error.throwWithStackTrace(cleanup, stack);
       rethrow;

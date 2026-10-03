@@ -63,6 +63,8 @@ class StreamColumnarRunner {
     int fetchSize = 1000,
     int? chunkSize,
   }) async* {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) throw blocked;
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       yield const Failure<TypedColumnarResult, OdbcError>(

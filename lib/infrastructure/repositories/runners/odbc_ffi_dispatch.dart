@@ -33,6 +33,14 @@ class OdbcFfiDispatch {
           ),
       };
 
+  OdbcError _exception(Object cause, StackTrace stack, String operation) {
+    final captured = NativeCallContext.takeFailure();
+    return captured?.withDetails(
+          captured.details.copyWith(cause: cause, stackTrace: stack),
+        ) ??
+        translateOdbcError(cause, operation: operation, stackTrace: stack);
+  }
+
   Future<Result<Unit>> runBoolFfi({
     required bool Function(NativeOdbcConnection) sync,
     required Future<bool> Function(AsyncNativeOdbcConnection) async,
@@ -53,7 +61,7 @@ class OdbcFfiDispatch {
       );
     } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        translateOdbcError(e, operation: 'runBoolFfi', stackTrace: st),
+        _exception(e, st, 'runBoolFfi'),
       );
     }
   }
@@ -82,11 +90,7 @@ class OdbcFfiDispatch {
       );
     } on Exception catch (e, st) {
       return Failure<Unit, OdbcError>(
-        translateOdbcError(
-          e,
-          operation: 'runBoolFfiWithCleanup',
-          stackTrace: st,
-        ),
+        _exception(e, st, 'runBoolFfiWithCleanup'),
       );
     }
   }
@@ -112,7 +116,7 @@ class OdbcFfiDispatch {
       );
     } on Exception catch (e, st) {
       return Failure<int, OdbcError>(
-        translateOdbcError(e, operation: 'runIntFfi', stackTrace: st),
+        _exception(e, st, 'runIntFfi'),
       );
     }
   }

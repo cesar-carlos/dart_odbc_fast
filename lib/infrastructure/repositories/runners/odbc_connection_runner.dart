@@ -7,6 +7,7 @@ import 'package:odbc_fast/domain/entities/dart_side_metrics.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/domain/errors/odbc_error_boundary.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -41,8 +42,9 @@ class OdbcConnectionRunner {
       if (success) {
         return const Success(unit);
       }
-      return const Failure<Unit, OdbcError>(
-        EnvironmentNotInitializedError(),
+      return Failure<Unit, OdbcError>(
+        NativeCallContext.takeFailure() ??
+            const EnvironmentNotInitializedError(),
       );
     } on Exception catch (e, stack) {
       return Failure<Unit, OdbcError>(

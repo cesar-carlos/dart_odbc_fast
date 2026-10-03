@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-03
+
+### Breaking changes and migration
+
+- Reconnection no longer implies query replay. Applications that enabled
+  `autoReconnectOnConnectionLost` must explicitly set
+  `replayQueriesAfterReconnect: true` when their operation can safely be repeated.
+  Both reconnection and replay are prohibited inside local and XA transactions.
+- `Xid.fromStrings` now produces UTF-8 bytes for non-ASCII identifiers. To recover
+  branches created by older versions, construct `Xid` with their exact original
+  bytes. Do not reconstruct those branches with the corrected string factory.
+  The existing 64-byte limits apply to the encoded bytes; invalid UTF-16
+  surrogates now throw `ArgumentError`. ASCII and explicit binary XIDs are
+  unchanged.
+- Transaction completion with an unknown outcome blocks conflicting operations
+  and pool return. A failed or uncertain commit is never automatically repeated
+  or rolled back. Applications must inspect the structured error and reconcile
+  or recover explicitly; timeout alone does not confirm cancellation or rollback.
+
 ### Changed
 
+- Consolidated application examples around typed parameters, prepared reuse,
+  batched row/columnar reads, indexed result readers, bounded bulk payloads and
+  bounded pool concurrency. Removed eleven redundant or legacy walkthroughs;
+  the current entrypoints and migration guidance are indexed in
+  `example/README.md`. Transaction/XA examples use Result services and explicit
+  recovery policies. Shared example lifecycle helpers report clear failures and
+  cleanup diagnostics; numeric aggregation preserves integer precision and
+  summaries are visible in the CLI. Demo timing and parallel-bulk guidance no
+  longer imply universal performance gains or row-count thresholds.
 - Automatic reconnection now restores the connection for future operations
   without replaying the failed query. Set
   `ConnectionOptions.replayQueriesAfterReconnect` to opt in to one replay; the
@@ -41,6 +69,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ProtocolByteAccumulator` now advances read/write cursors instead of copying
   the unread remainder after every frame. Shared backing is detached only when
   required, preserving retained frames and lazy strings.
+- Exposed protocol backing is never automatically recycled, including after
+  the original frame is collected. Derived byte views, `ByteData` and lazy
+  strings remain stable. Explicit backing offers transfer exclusive ownership
+  and require that no consumer or live view still uses the memory; internal
+  unexposed abandoned buffers can still be pooled.
+- Worker timeouts complete the caller once while sent, unreconciled requests
+  continue to occupy configured capacity. Cleanup is serialized on the original
+  worker outside ordinary capacity. `maxPendingRequests: null` remains unlimited;
+  `requestTimeout: null` retains the 30-second default and `Duration.zero`
+  disables the deadline, including worker handshakes.
+- Local completion distinguishes confirmed success, consumed handles, busy
+  handles and unknown outcomes. Missing status or `false` alone no longer implies
+  terminal status `1`. Queries, savepoints, further completion, reconnect, replay
+  and pool return are blocked while completion is in progress or uncertain;
+  diagnostics, reconciliation and explicit shutdown remain available.
+- `Xid.fromStrings` now encodes identifiers as UTF-8, validates the existing
+  64-byte limits after encoding and rejects unpaired UTF-16 surrogates with
+  `ArgumentError`. No Unicode normalization is performed.
 
 ### Added
 
@@ -53,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precomputes exact/case-insensitive first-occurrence indices.
 - Dart-only hot-path benchmark covering frames, fragmentation, retained lazy
   strings and repeated column lookup.
+- Optional `AsyncNativeOdbcConnection.onDiagnostic(OdbcError)` callback for late
+  completion and cleanup diagnostics, with protected logging fallback. Returned
+  failures remain unchanged; later diagnostics identify the original request.
+- Read-only `XaTransactionHandle.outcomeUnknown` and `commitAttempted` flags.
+  Optional adapter evidence and reconciliation capabilities preserve compatibility
+  with backends implementing the existing interfaces.
+- Internal per-invocation execution evidence in worker replies and failure
+  snapshots: not started, started or completed; absent evidence remains unknown.
+- Complete fragmented framing benchmarks with pending-copy and backing-allocation
+  counters, plus a separate forced-GC ownership regression in CI, outside the
+  fast unit-test budget.
 
 ### Fixed
 
@@ -78,6 +135,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   may still be running in the backend set `details.outcomeUnknown`.
 - Boolean and integer worker replies contribute their captured failure snapshots
   to failure metrics, including resource, polling and XA failures.
+- Concurrent initialization now shares one attempt, publishes workers only after
+  all are ready and cleans up partial failures. Dispose invalidates provisional
+  and published workers immediately; a later explicit initialization uses a new
+  generation. Isolate error/exit monitoring terminates pending handshakes, and
+  recovery callbacks run only after successful initialization. Concurrent callers
+  retain the same loader failure's cause and stack trace.
+- Late replies no longer silently orphan allocations. Connections, pools,
+  checkouts, statements, streams, async executions and newly started local/XA
+  transactions receive checked compensation on their owning worker. Prepared XA
+  resumptions are retained by immutable generation/connection/XID key for explicit
+  adoption, without duplicate resumption or automatic prepared rollback.
+- Duplicate and obsolete-generation replies cannot repeat cleanup or republish
+  resources. Failed compensation retains identified resources in quarantine and
+  reports the timeout with secondary cleanup failures. Dispose or worker death
+  reports unconfirmed release instead of assuming blocked native work was freed.
+- Local commit/rollback preserves ownership and affinity for busy, pre-call
+  failures and unknown completion, while explicit terminal statuses consume the
+  handle. Late evidence reconciles the original connection lifetime; an invalid
+  native completion status reports a protocol failure. Timeout errors retain
+  their category, operation, request identifiers, cause and stack trace.
+- XA phase attempts are recorded before awaiting the backend, prohibit concurrent
+  phases and preserve thrown failures on `lastError`. Helpers and services respect
+  commits, prepare and rollbacks performed inside callbacks, never repeat commit
+  or automatically reverse uncertain decisions. Proven non-execution still permits
+  explicit rollback without falsely marking the outcome uncertain.
+- Successful late pool release/close and async free now clear repository metadata
+  as well as worker affinity, without changing the previously returned failure.
+- Fragmented framing uses bounded owned header copies and cached validated frame
+  lengths instead of repeatedly exposing and detaching backing. Pending-byte
+  assembly copies grow linearly; simple and multi-result paths validate framing
+  tags, fixed sizes and existing bounds consistently.
 
 ### Compatibility
 
@@ -85,6 +173,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields and low-level native sentinel conventions remain supported.
 - No native ABI, database wire format, generated binding or exported native
   symbol changed; failure snapshots are internal to the Dart worker protocol.
+- Existing error subclasses, XA state variants and backend method signatures
+  remain unchanged. Low-level exception and sentinel conventions are preserved.
+- ASCII XIDs and explicit binary identifiers remain compatible. Recover old
+  non-ASCII branches with the original bytes through `Xid`; reconstructing them
+  with the corrected `fromStrings` may identify a different branch.
+- Removing unsafe recycling can increase backing allocations for retained views;
+  the measured correctness/allocation tradeoff and comparison with `522dc45` are
+  documented in `doc/TESTING.md`. Dart cannot guarantee cancellation or native
+  cleanup of a blocked FFI call after worker death or dispose.
 
 ## [4.6.0] - 2026-09-24
 
@@ -4568,7 +4665,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.6.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.6.0...v5.0.0
 [4.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.1...v4.6.0
 [4.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...v4.5.1
 [4.5.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.4.0...v4.5.0

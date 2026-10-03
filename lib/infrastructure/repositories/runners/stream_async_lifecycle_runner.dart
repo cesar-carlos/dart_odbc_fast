@@ -2,6 +2,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/query_result.dart' show QueryResult;
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:odbc_fast/infrastructure/repositories/runners/odbc_ffi_dispatch.dart';
@@ -53,6 +54,8 @@ class StreamAsyncLifecycleRunner {
   }
 
   Future<Result<int>> executeAsyncStart(String connectionId, String sql) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) throw blocked;
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<int, OdbcError>(
@@ -200,6 +203,16 @@ class StreamAsyncLifecycleRunner {
       );
     }
 
+    final connectionId = state.asyncRequestConnectionById[requestId];
+    final lifetime = state.connectionLifetimes[connectionId];
+    NativeCallContext.current?.onReconciled = (status) {
+      if (status == 0 &&
+          state.asyncRequestConnectionById[requestId] == connectionId &&
+          identical(lifetime, state.connectionLifetimes[connectionId])) {
+        state.asyncRequestConnectionById.remove(requestId);
+      }
+    };
+
     try {
       final ok = ffi.isAsync
           ? await ffi.async.asyncFree(requestId)
@@ -217,8 +230,12 @@ class StreamAsyncLifecycleRunner {
         fallbackMessage: 'Failed to free async request',
       );
     } on Exception catch (e, st) {
+      final error = NativeCallContext.takeFailure() ??
+          translateOdbcError(e, operation: 'asyncFree', stackTrace: st);
       return Failure<Unit, OdbcError>(
-        translateOdbcError(e, operation: 'asyncFree', stackTrace: st),
+        error.withDetails(
+          error.details.copyWith(cause: e, stackTrace: st),
+        ),
       );
     }
   }
@@ -229,6 +246,8 @@ class StreamAsyncLifecycleRunner {
     int fetchSize = 1000,
     int? chunkSize,
   }) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) throw blocked;
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<int, OdbcError>(

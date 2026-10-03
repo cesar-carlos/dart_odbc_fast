@@ -10,7 +10,9 @@ Version-bump policy is canonical in `VERSIONING_STRATEGY.md`. This document focu
 2. Run local validation.
 3. Create and push tag `vX.Y.Z`.
 4. Release workflow builds Linux/Windows binaries and creates GitHub Release.
-5. Publish package to pub.dev.
+5. `publish.yml` waits for both binaries and their SHA-256 sidecars, then
+   publishes stable tags to pub.dev using GitHub OIDC. Do not run a second
+   manual publish while that workflow is active.
 
 ## Workflow triggers
 
@@ -54,6 +56,9 @@ Notes:
 - Checks out validated tag
 - Downloads artifacts
 - Validates both required files (`odbc_engine.dll`, `libodbc_engine.so`)
+- Waits for unit tests against the built DLL on Windows
+- Generates SHA-256 sidecars for both binaries
+- Extracts the matching CHANGELOG section as the release body
 - Publishes release via `softprops/action-gh-release`
 - Marks prerelease automatically for tags containing `-rc.`, `-beta.`, or `-dev.`
 
@@ -67,7 +72,9 @@ Notes:
 6. Create and push tag `vX.Y.Z`.
 7. Verify `release.yml` succeeds.
 8. Verify GitHub Release contains both artifacts.
-9. Publish to pub.dev.
+9. Verify `publish.yml` succeeds and pub.dev exposes the target version.
+   Prerelease tags build GitHub assets but do not trigger automatic pub.dev
+   publication.
 
 ## Pre-release smoke
 
@@ -75,9 +82,9 @@ Notes:
 2. `dart test`
 3. `cd native && cargo test -p odbc_engine --lib`
 4. `cd native && cargo build --release --target x86_64-pc-windows-msvc`
-5. `dart run example/async_demo.dart`
+5. `dart run example/quick_start_balanced_demo.dart`
 6. `dart run example/streaming_demo.dart`
-7. `dart run example/pool_demo.dart`
+7. `dart run example/high_concurrency_pool_demo.dart`
 
 Linux note on Windows host:
 
@@ -88,7 +95,8 @@ Linux note on Windows host:
 
 ```bash
 # commit
-git add pubspec.yaml CHANGELOG.md
+# Include the reviewed implementation and tests as well as release metadata.
+git add -A
 git commit -m "chore: release X.Y.Z"
 git push origin main
 
@@ -96,8 +104,8 @@ git push origin main
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin vX.Y.Z
 
-# publish
-dart pub publish
+# Stable tag publication is automatic; inspect its completion.
+gh run list --workflow publish.yml
 ```
 
 Python helper (cross-platform):
@@ -107,6 +115,11 @@ python scripts/create_release.py 1.1.0
 ```
 
 This helper validates tag format, validates `pubspec.yaml` and `CHANGELOG.md`, then creates and pushes the tag.
+
+If asset waiting times out while `release.yml` is still building, first verify
+the release workflow and all four required assets, then rerun the failed
+tag-triggered publish run. A new `workflow_dispatch` run is not a substitute:
+pub.dev OIDC requires a tag ref. Do not move or recreate a published version tag.
 
 ## Common failures
 

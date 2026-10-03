@@ -6,50 +6,50 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-## What's New in 4.6.x
+## Support
 
-Current package version: **4.6.0**. The 4.6 line adds bounded and
-parameterized multi-result streaming, optional prepared wire encoding,
-and faster pool/stream paths — still compatible for typical
-`IOdbcService` callers. Full history: [CHANGELOG.md](CHANGELOG.md).
+If this project helps you, consider supporting the maintainer via Pix:
+
+- `cesar_carlos@msn.com`
+
+## What's New in 5.0
+
+Current package version: **5.0.0**. This major release hardens error handling,
+transaction completion, worker lifecycle and protocol buffer ownership.
+Public Dart signatures and the native ABI remain supported, but recovery
+behavior and non-ASCII XID encoding require migration from 4.x.
+Full history: [CHANGELOG.md](CHANGELOG.md).
 Open work: [`doc/Features/PENDING_IMPLEMENTATIONS.md`](doc/Features/PENDING_IMPLEMENTATIONS.md).
 
 ### Highlights
 
-- **Binary float / bool wire** — native `Float`/`Double`/`Boolean` cells
-  emit LE IEEE-754 (8 bytes) / single `0|1` byte; Dart dual-decodes
-  legacy UTF-8 text and the binary payloads (`double` / `bool` at the
-  cell boundary).
-- **Prepared cache + NULLs** — inferable NULL param lists hit the
-  prepared LRU (typed `SQL_NULL_DATA`) instead of always falling through
-  to null-aware prepare.
-- **Stream prepared reuse** — batched `streamQuery*` reuses the
-  per-connection prepared LRU when params are cache-eligible.
-- **Pool checkout reset opt-out** — `PoolOptions.sessionResetOnCheckout`
-  / DSN `Pool_Session_Reset` / env `ODBC_POOL_SESSION_RESET` (default
-  still reset). Checkin reset stays unconditional. Checkout no longer
-  double-resets when `test_on_check_out` is on.
-- **Stream / buffer knobs** — additive `ConnectionOptions.streamChunkSizeBytes`,
-  `blockFetchBatchSize`, and `StatementOptions.initialBufferSize`;
-  `streamQuery*` `chunkSize` defaults through connection → 64 KiB.
-  Server presets set 1 MiB chunk + `lazyStrings` (use `.value` or keep
-  `lazyStrings: false` if you rely on `is String`).
-- **Streaming MULT hot path** — frames are encoded directly into their final
-  prefix buffer, columnar state is reused between cursor fetches, and the
-  compressed path avoids a second full-cell scan. `streamQueryMultiBatches`
-  exposes those fetches without retaining earlier continuation rows.
-- **FFI mid-size path** — `callWithBuffer` prefers transient allocation
-  from the 32 KiB zero-copy floor for medium frames; Dart-owned zero-copy
-  buffers no longer require an optional native release symbol.
-- **QueryResult encoding** — `executeQueryParam*` always requests
-  row-major wire (`forQueryResultWire`); use `executeQueryColumnar*` /
-  `streamQueryColumnar*` for columnar end-to-end.
-- **From 4.4.x** — async XA on the isolate path, `IDialectService`,
-  `streamQueryMulti` `fetchSize`/`chunkSize`, capability guards, Native
-  Assets prefer-local + SHA-256 sidecars. See the 4.4.0 section in the
-  changelog.
+- Request-scoped `OdbcErrorCode` / `OdbcErrorDetails`, clear `userMessage`,
+  and consistent service/repository `Result` failures.
+- Reconnection without query replay by default, and guarded local/XA
+  transaction completion when the outcome is uncertain.
+- Shared initialization, generation-safe disposal and late-reply cleanup
+  without completing the caller a second time.
+- Stable exposed buffer views, cursor-based frame assembly and indexed
+  `QueryResultReader` access.
+- UTF-8 XIDs with explicit original-byte recovery for older non-ASCII branches.
+- Consolidated performance examples using batches, typed arrays, prepared
+  reuse, bounded bulk payloads and bounded pool concurrency.
 
-Details: [`doc/PERFORMANCE.md`](doc/PERFORMANCE.md).
+### Migrating from 4.x
+
+- `autoReconnectOnConnectionLost` restores connections for future operations.
+  Set `replayQueriesAfterReconnect: true` only when repeating the failed query
+  is safe. Reconnection and replay are blocked inside local/XA transactions.
+- Recover older non-ASCII XA branches using `Xid` with their original bytes.
+  `Xid.fromStrings` now uses UTF-8, enforces limits after encoding and rejects
+  unpaired UTF-16 surrogates. ASCII and explicit binary identifiers are unchanged.
+- An uncertain transaction completion blocks queries, savepoints, further
+  completion and pool return. Inspect `OdbcError.details.outcomeUnknown` and XA
+  handle state; recover explicitly. A timeout does not confirm driver
+  cancellation, and a failed commit is not automatically rolled back or retried.
+
+Details: [5.0.0 migration notes](CHANGELOG.md#500---2026-10-03) and
+[doc/PERFORMANCE.md](doc/PERFORMANCE.md).
 
 ### XA / 2PC engines
 
@@ -98,9 +98,11 @@ capabilities, testing, and performance. Examples:
   `SlowQueryDetected`) for log/metric/observability pipelines
 - **Typed columnar results**: `executeQueryColumnarParamValues` /
   `streamQueryColumnar` return `TypedColumnarResult` with
-  `Int32List` / `Int64List` / `Float64List` per numeric column (zero boxing)
+  `Int32List` / `Int64List` / `Float64List` per numeric column, avoiding
+  a boxed row representation for numeric processing
 - **`QueryResultAccess`**: typed row/column navigation on
-  `QueryResult` without changing row storage (`cell`, `scalar`, `rowsAsMaps`, …)
+  `QueryResult` without changing row storage. Use `result.reader()` for repeated
+  column-name lookups; `rowsAsMaps` allocates a map for each row.
 - **Repository extensions**: columnar execute/stream,
   `…For(Connection)` overloads, `…FromObjects` typed-parameter bridges, and
   `runInTransaction` — same ergonomics as the service sub-interfaces
@@ -287,10 +289,11 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
   `rollbackTransaction`, `runInTransaction<T>` (begin → action →
   commit/rollback helper with throw-safe cleanup)
 - Savepoints: `createSavepoint`, `rollbackToSavepoint`, `releaseSavepoint`
-- X/Open XA / 2PC: `runInXaTransaction<T>` on the aggregate service
-  (orchestrates start → action → end/prepare/commit or 1RM `onePhase`).
-  Low-level `xaStart` / `xaRecover` / `xaResumePrepared` live on the
-  repository / native `XaTransactionHandle` path — see
+- X/Open XA / 2PC: `runInXaTransaction<T>`, `xaRecover` and
+  `xaResumePrepared` are available on `IOdbcService`. The helper orchestrates
+  start → action → end/prepare/commit or explicit single-RM `onePhase`.
+  Direct `xaStart` is a repository/native capability; prepared recovery requires
+  the transaction manager's durable XID and decision. See
   [`example/xa_2pc_demo.dart`](example/xa_2pc_demo.dart).
 - Pooling: `poolCreate` (with `PoolOptions`), `poolGetConnection`,
   `poolReleaseConnection`, `poolHealthCheck`, `poolGetState`,
@@ -325,8 +328,9 @@ overloads (`executeQueryFor`, `streamQueryFor`, `beginTransactionFor`,
   immediate interrupt when an ODBC driver is already blocked in a native call.
 - `cancelStream` is effective between stream batches/iterations and is followed
   by stream close during async cleanup.
-- Prefer query timeout (`ConnectionOptions.queryTimeout`, prepare/statement
-  timeout options) for reliable interruption.
+- Use driver-supported query timeouts (`ConnectionOptions.queryTimeout`,
+  prepare/statement timeout options) to bound execution where supported.
+  A worker/API timeout alone does not confirm driver cancellation or rollback.
 
 ### Parameterized execution
 
@@ -425,7 +429,7 @@ configured health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^4.6.0
+  odbc_fast: ^5.0.0
 ```
 
 Then:
@@ -441,7 +445,7 @@ Native binary resolution order is documented in [doc/BUILD.md](doc/BUILD.md).
 | Import | When to use |
 | ------ | ----------- |
 | `package:odbc_fast/odbc_fast.dart` | **Default** — domain types, `ServiceLocator`, `IOdbcService` / sub-interfaces, segregated `IQueryRepository` / `IPoolRepository` / etc., protocol helpers (`ParamValue`, `BulkInsertBuilder`, `ParsedRowBuffer`), and telemetry. Enough for most apps and examples. |
-| `package:odbc_fast/odbc_fast_native.dart` | **Opt-in** — direct FFI surfaces: `NativeOdbcConnection`, `AsyncNativeOdbcConnection`, `OdbcRepositoryImpl`, `OdbcPoolFactory`, `AsyncError` types, and OpenTelemetry FFI. Use when you bypass `ServiceLocator`, construct the repository yourself, or need low-level native types documented in examples such as [`simple_demo.dart`](example/simple_demo.dart) and [`async_demo.dart`](example/async_demo.dart). |
+| `package:odbc_fast/odbc_fast_native.dart` | **Opt-in** — direct FFI surfaces: `NativeOdbcConnection`, `AsyncNativeOdbcConnection`, `OdbcRepositoryImpl`, `OdbcPoolFactory`, `AsyncError` types, and OpenTelemetry FFI. Use when you bypass `ServiceLocator`, construct the repository yourself, or need low-level native types documented in examples such as [`execute_async_demo.dart`](example/execute_async_demo.dart) and [`backpressure_modes_demo.dart`](example/backpressure_modes_demo.dart). |
 | `package:odbc_fast/infrastructure/...` | **Internal / advanced** — only when a symbol is not re-exported by the barrels above (e.g. `BinaryProtocolParser` internals, `multi_result_parser.dart`). Prefer extending the public barrels over deep infrastructure imports in application code. |
 
 `odbc_fast.dart` deliberately does **not** export `OdbcRepositoryImpl` or
@@ -463,64 +467,79 @@ Use `locator.resolvedUsageProfile` when you want the effective config after
 explicit async overrides.
 
 ```dart
+import 'dart:io';
+
 import 'package:odbc_fast/odbc_fast.dart';
 
-Future<void> main() async {
-  final locator = ServiceLocator()
-    ..initialize(profile: OdbcUsageProfile.balanced);
-  final service = locator.service;
-  final tuning = locator.resolvedUsageProfile;
-
-  final init = await service.initialize();
-  if (init.isError()) return;
-
-  final connResult = await service.connect(
-    'DSN=MyDsn',
-    options: locator.recommendedConnectionOptions,
-  );
-  final conn = connResult.getOrNull();
-  if (conn == null) return;
-
-  try {
-    final query = await service.executeQuery(
-      "SELECT 1 AS id, 'ok' AS msg",
-      connectionId: conn.id,
-    );
-
-    query.fold(
-      (r) => print(
-        'profile=${tuning.profile.name} workers=${tuning.workerCount} '
-        'rows=${r.rowCount} columns=${r.columns}',
-      ),
-      (e) => print('query error: $e'),
-    );
-  } finally {
-    await service.disconnect(conn.id);
+void reportFailure(Object error) {
+  exitCode = 1;
+  if (error is OdbcError) {
+    stderr.writeln('${error.code.name}: ${error.userMessage}');
+  } else {
+    stderr.writeln('The database operation could not be completed.');
   }
+}
 
-  locator.shutdown();
+Future<void> main() async {
+  AppLogger.initialize();
+  final locator = ServiceLocator();
+  try {
+    locator.initialize(profile: OdbcUsageProfile.balanced);
+    final service = locator.service;
+    (await service.initialize()).getOrThrow();
+    final connection = (await service.connect(
+      'DSN=MyDsn',
+      options: locator.recommendedConnectionOptions,
+    )).getOrThrow();
+    try {
+      final result = (await locator.queryService.executeQueryParamValues(
+        connection.id,
+        'SELECT CAST(? AS INTEGER) AS id',
+        const [ParamValueInt32(1)],
+      )).getOrThrow();
+      final id = result.reader().scalar<int>('id', ignoreCase: true);
+      stdout.writeln('rows=${result.rowCount} id=$id');
+    } finally {
+      final disconnected = await service.disconnect(connection.id);
+      disconnected.fold((_) {}, reportFailure);
+    }
+  } on Object catch (error, stackTrace) {
+    reportFailure(error);
+    AppLogger.severe('Database operation failed', error, stackTrace);
+  } finally {
+    locator.shutdown();
+  }
 }
 ```
+
+The CLI boundary catches `getOrThrow()` failures, prints the presentation
+message and keeps technical diagnostics in the logger. Disconnect is checked
+separately, and shutdown runs after initialization or query failures.
+Adapt the sample SELECT for your driver's dialect; connection settings stay
+outside SQL parameter values. Runnable version:
+[quick_start_balanced_demo.dart](example/quick_start_balanced_demo.dart).
 
 ## Performance quick reference
 
 | Scenario | Prefer |
 | -------- | ------ |
-| Wide `SELECT *` (text-heavy scan) | `streamQueryBatched`, row-major, `fetchSize: 1000`, chunk 1 MiB |
-| Narrow typed analytics | `streamQueryColumnar` / `ResultEncoding.columnar` on `balancedServer` or `highThroughput` |
+| Large row/text scan | Service `streamQuery`, one batch at a time; start with `fetchSize: 1000` and the profile chunk recommendation |
+| Numeric analytics | Explicit `streamQueryColumnar` / `executeQueryColumnarParamValues`; resolve typed columns once per batch |
 | Repeated same SQL | Prepare once, execute many |
 | Large multi-result cursor | `streamQueryMultiBatches`; handle each fetch batch and use `isContinuationBatch` to group it when needed |
-| INSERT &lt; ~100 rows | Prepared `INSERT` in a loop |
-| INSERT 100–1k rows | `bulkInsert` / `bulkInsertArray` on one connection |
-| INSERT &gt; ~1k rows | `bulkInsertParallel` + native [`ConnectionPool`](lib/infrastructure/native/native_pool.dart) (about 3× array binding locally) |
+| Repeated individual writes | Prepare once and bind new values |
+| Batch writes | `bulkInsert` / `bulkInsertArray`, generate bounded payloads |
+| Independent parallel batches | `bulkInsertParallel` with a native pool; measure against single-connection bulk on the same driver and workload |
+| Repeated named-column reads | One `result.reader()` per result or batch |
 | Concurrency / worker tuning | [`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart) via `ServiceLocator.initialize(profile: ...)` |
 
 Rationale, how to reproduce, and opt-in perf flags:
 [doc/PERFORMANCE.md](doc/PERFORMANCE.md). Native snapshots:
 [native/doc/performance_comparison.md](native/doc/performance_comparison.md).
 
-### Typical local numbers
+### Historical benchmark snapshots
 
+These recorded measurements are not a fresh run of this checkout.
 Order-of-magnitude snapshots on a local SQL Server DSN (driver, schema, and
 hardware dominate). **Not** a portable contract or CI gate. Reproduce with
 `python scripts/run_dart_benchmarks.py --crud --heavy` and
@@ -544,9 +563,10 @@ Dart (same DSN):
 | `SELECT TOP 5000 * FROM Produto`, `streamQueryBatched` | ~19–20k rows/s |
 | `SELECT 1` prepared reuse (smoke) | ~3.5–3.9k q/s |
 
-Wide `SELECT *` is the honest scan number; the 300–650k rows/s lane is a
-two-column bench table. Optional native BCP (`sqlserver-bcp` + `sqlncli11.dll`)
-is a separate ~75× path — see the native comparison doc. Async p95 on the
+Wide text scans and narrow numeric scans have different costs; the
+300–650k rows/s sample uses a two-column bench table. Optional native BCP
+(`sqlserver-bcp` + `sqlncli11.dll`) is a separate path measured in the
+native comparison document. Async p95 on the
 heavy `Produto` lane is noisy across runs; prefer throughput and
 `fallbacksToBlocking` over a single p95 sample.
 
@@ -557,6 +577,17 @@ Use `streamQueryMulti` when its convenient coalesced result-set semantics are
 more valuable than retaining prior continuation rows. Let the usage profile
 choose `chunkSize` unless measurement shows a need to override it; server
 profiles start at 1 MiB while the base default remains 64 KiB.
+
+For a database-free comparison of buffer/framing/reader processing, run:
+
+```bash
+dart run benchmarks/dart_hot_paths.dart
+```
+
+Use warmup and repeated samples on the same SDK, without concurrent suites.
+The [measured comparison in doc/TESTING.md](doc/TESTING.md) covers Dart frame
+assembly against `522dc45`; it does not establish end-to-end SQL throughput.
+Batch memory depends on row width, fetch size and retained views.
 
 ## Async API (non-blocking)
 
@@ -606,16 +637,7 @@ final locator = ServiceLocator()
     asyncMaxPendingRequests: 16,
   );
 final service = locator.service;
-
-await service.initialize();
-final connResult = await service.connect('DSN=MyDsn');
-final conn = connResult.getOrNull();
-if (conn != null) {
-  await service.executeQuery('SELECT * FROM users', connectionId: conn.id);
-  await service.disconnect(conn.id);
-}
-
-locator.shutdown();
+// Use the initialization, Result handling and finally cleanup from Quick Start.
 ```
 
 For high-concurrency workloads, async mode accepts an optional worker pool:
@@ -629,14 +651,27 @@ final locator = ServiceLocator()
   );
 ```
 
+Profile recommendations (native pools must be created explicitly):
+
+| Profile | Async | Workers | Request cap | Pool size hint | Stream chunk |
+| --- | --- | --- | --- | --- | --- |
+| `legacy` | No | 1 if async enabled | Unlimited | 4 | 64 KiB |
+| `balanced` | Yes | 2 | 24 | 4 | 64 KiB |
+| `balancedFlutter` | Yes | 1 | 16 | 4 | 64 KiB |
+| `balancedServer` | Yes | 4 | 32 | 8 | 1 MiB |
+| `highThroughput` | Yes | 6 | 48 | 12 | 1 MiB |
+
 `asyncWorkerCount` defaults from the active **[`OdbcUsageProfile`](lib/domain/entities/odbc_usage_profile.dart)**
 (`2` for balanced, `1` for balancedFlutter, `4` for balancedServer, `6` for highThroughput, `1` for legacy).
 Values greater than
 `1` let independent connections or pool checkouts run on multiple Dart worker
 isolates. Operations on the same connection, statement, transaction, stream, or
 async request keep worker affinity so handle usage stays serialized.
-`asyncMaxPendingRequests` is optional and opt-in; use it as backpressure for
-high-concurrency services, typically a small multiple of native pool size.
+`asyncMaxPendingRequests` defaults to the selected profile's cap; legacy has no
+cap. A positive override changes that cap. Direct
+`AsyncNativeOdbcConnection(maxPendingRequests: null)` has no limit.
+Use a small multiple of pool size as a starting point, and bound application
+in-flight tasks separately so waiting Futures do not grow with the workload.
 This is the supported "thread opening" pattern for Dart consumers: configure
 workers with `workerCount` / `asyncWorkerCount` and open multiple real
 connections or pool checkouts. Do not spawn raw isolates around the same
@@ -645,43 +680,47 @@ serializes one connection for ODBC safety.
 
 If you use `AsyncNativeOdbcConnection` directly, you can also configure:
 
-- `requestTimeout` for worker response timeout
+- `requestTimeout` for worker response and handshake deadlines: `null` keeps
+  the 30-second default; only `Duration.zero` disables the deadline
 - `autoRecoverOnWorkerCrash` for automatic worker re-initialization
 - `workerCount` for an optional worker isolate pool (`1` if you construct
   `AsyncNativeOdbcConnection` with defaults; use `ServiceLocator.initialize` with
   an `OdbcUsageProfile` for preset worker counts)
-- `maxPendingRequests` for a global pending-request cap (`null` with legacy
+- `maxPendingRequests` for a global outstanding-request cap (`null` means no
+  limit, as with the legacy
   profile; bounded with balanced and `highThroughput` presets)
 - `backpressureMode` as `failFast` (legacy profile) or `waitForSlot` (balanced
   and `highThroughput` presets)
 - `backpressureTimeout` when `waitForSlot` is active
 - `getWorkerPoolStats()` for a Dart-side snapshot of routed, active, pending,
   timeout, cancel, latency, per-worker, and blocking-fallback counters
+- `onDiagnostic(OdbcError)` for late completion and cleanup diagnostics;
+  absent or failing callbacks fall back to `AppLogger`
 
-Direct async example (worker isolate, non-blocking):
+Concurrent `initialize()` calls share one attempt. Workers become available
+only after the whole attempt succeeds. `dispose()` immediately invalidates that
+generation, including workers still starting; a later explicit `initialize()`
+starts a new generation. Responses from older generations cannot restore handles.
 
-```dart
-final async = AsyncNativeOdbcConnection();
-await async.initialize();
+A request timeout ends the caller's wait once. Work may continue in the driver,
+so an outstanding request still counts toward `maxPendingRequests` until its
+late response and cleanup are reconciled. Maintenance runs on the original
+worker, independently of ordinary capacity. Late connection, pool, checkout,
+statement, stream, async execution and transaction allocations are released
+when their native results permit it. Failed cleanup leaves the identified
+resource quarantined and emits a diagnostic; the earlier failure remains unchanged.
+Prepared XA branches resumed after timeout are retained for explicit adoption
+by another `xaResumePrepared` with the same connection and XID. Pending adoption
+does not create a second handle or roll back a prepared branch. A blocked FFI
+call or dead worker prevents Dart from guaranteeing cancellation or native cleanup.
 
-final connId = await async.connect('DSN=MyDsn');
-final future = async.executeQueryParams(
-  connId,
-  'SELECT * FROM huge_table',
-  const [],
-);
-
-// UI/event loop stays responsive while the worker executes the query.
-final data = await future;
-await async.disconnect(connId);
-async.dispose();
-```
+For the low-level native polling API, import `odbc_fast_native.dart` and use
+the checked initialization/disconnect/dispose lifecycle in
+[execute_async_demo.dart](example/execute_async_demo.dart). Native APIs retain
+sentinel/exception contracts; application services provide `Result` values.
 
 High-concurrency examples:
 
-- [`example/high_concurrency_worker_pool_demo.dart`](example/high_concurrency_worker_pool_demo.dart)
-  uses `AsyncNativeOdbcConnection(workerCount: 4)` with multiple connections,
-  prints per-worker routing, and accepts `ODBC_CONCURRENCY_QUERY`.
 - [`example/high_concurrency_pool_demo.dart`](example/high_concurrency_pool_demo.dart)
   uses `ServiceLocator.initialize(profile: OdbcUsageProfile.highThroughput)`
   with a native pool, separate checkouts, an explicit in-flight task limit, and
@@ -694,7 +733,7 @@ Async streaming (`streamQuery` / `streamQueryBatched`) uses the native
 stream protocol through the worker isolate (`stream_start/fetch/close`),
 instead of fetching full result sets in a single call.
 
-Tuning defaults:
+Tuning starting points (measure on your driver/workload):
 
 - API/web with native pool: set `workerCount` near `min(poolSize, cores)` and
   `maxPendingRequests` near `poolSize * 2` to `poolSize * 4`.
@@ -706,23 +745,28 @@ Tuning defaults:
   only when there are multiple connections, native pool checkouts, or
   independent non-handle operations to route.
 
-For a wide scan, pass a 1 MiB chunk. `fetchSize` already defaults to 1000.
-Leaving `chunkSize` unset keeps the 64 KiB base default (server profiles
-raise it to 1 MiB through `recommendedStreamChunkSizeBytes`). Narrow typed
-reads should use `streamQueryColumnar` instead of `SELECT *`.
+For large scans, start with `fetchSize: 1000` and
+`chunkSize: locator.recommendedStreamChunkSizeBytes`. An omitted chunk size
+resolves from connection options, then falls back to 64 KiB; server profile
+connection options recommend 1 MiB. Pass recommended options on connect or pool
+creation/acquisition, or pass chunk size explicitly. Use columnar APIs for
+numeric column processing and project only the columns needed.
 
 ```dart
-await for (final chunkResult in service.streamQuery(
-  conn.id,
-  'SELECT * FROM big_table',
-  chunkSize: 1024 * 1024,
+var totalRows = 0;
+await for (final result in service.streamQuery(
+  connection.id,
+  'SELECT id, name FROM big_table',
+  chunkSize: locator.recommendedStreamChunkSizeBytes,
 )) {
-  chunkResult.fold(
-    (chunk) => print('chunk rows=${chunk.rowCount}'),
-    (err) => print('stream error: $err'),
-  );
+  final batch = result.getOrThrow(); // Inside the Quick Start error boundary.
+  // Process and await the consumer here; do not retain previous batches.
+  totalRows += batch.rowCount;
 }
+stdout.writeln('rows=$totalRows');
 ```
+
+## Errors, transactions and recovery
 
 Service and repository `Result` APIs return typed `OdbcError` failures, including
 unexpected exceptions from injected implementations. Streams emit one terminal
@@ -736,6 +780,29 @@ Instrumentation failures do not change database results. Configure
 `SimpleTelemetryService(onDiagnostic: ...)` to receive these diagnostics;
 without a callback they go to `AppLogger`. A failing diagnostic callback also
 falls back to logging.
+
+Local commit/rollback marks the transaction as completing before awaiting the
+worker. Status `0` confirms success; `1` consumes the handle but does not confirm
+the database outcome; `2` keeps the transaction active. Missing or invalid status
+keeps ownership and marks the outcome unknown, unless the adapter proves that
+the native call never started. While completion is in progress or uncertain,
+queries, savepoints, another completion, reconnection, replay and pool return
+are blocked. Diagnostics and explicit connection shutdown remain available.
+Late completion can reconcile this state; it does not repeat commit or rollback.
+
+`XaTransactionHandle.outcomeUnknown` exposes uncertain XA phases, and `lastError`
+retains phase, XID, cause and stack trace. Helpers respect phases completed inside
+the application callback and never automatically undo an uncertain confirmation.
+The read-only `commitAttempted` flag also prevents orchestration from repeating
+a commit decision rejected before the native call; explicit rollback remains
+possible when non-execution is proven.
+Prepared branch recovery requires an explicit application decision.
+
+`Xid.fromStrings` encodes `gtrid` and `bqual` as UTF-8, enforcing the existing
+64-byte limits after encoding. Invalid UTF-16 surrogates throw `ArgumentError`;
+no Unicode normalization is performed. ASCII identifiers are unchanged. To recover
+a non-ASCII XID created by an older version, use `Xid` with the original bytes;
+recreating it with `fromStrings` may identify a different branch.
 
 ## Connection options example
 
@@ -763,35 +830,45 @@ inside local and XA transactions. A timeout of buffered work may leave execution
 running in the driver; check `error.details.outcomeUnknown` before deciding what
 to do next.
 
-For repeated named-column reads, create `final reader = result.reader()` once.
-Its column names are a snapshot; rows remain live, as in the existing helpers.
-Duplicate names resolve to the first occurrence for cell lookup. Use
-`streamQueryMultiBatches` or `streamQueryColumnar` for large results;
-`streamQueryMulti` deliberately coalesces each complete result set.
-
 Validation rules:
 
 - timeouts/backoff must be non-negative
-- `maxResultBufferBytes` and `initialResultBufferBytes` must be `> 0`
+- `maxResultBufferBytes`, `initialResultBufferBytes`, `streamChunkSizeBytes`
+  and `sqlPointerCacheMaxSize` must be `> 0` when supplied
 - `initialResultBufferBytes` cannot be greater than `maxResultBufferBytes`
+
+## Result access and buffer ownership
+
+For repeated named-column reads, create
+`final reader = queryResult.reader()` once on a successful `QueryResult`.
+Its column names are a snapshot; rows remain live, as in the existing helpers.
+Duplicate names resolve to the first occurrence for cell lookup. Readers preserve
+nulls and runtime types; they do not coerce numeric or lazy string values.
+Avoid `rowsAsMaps` or copying `columnValues` when an aggregate is enough. Use
+`streamQueryMultiBatches` or `streamQueryColumnar` for large results;
+`streamQueryMulti` deliberately coalesces each complete result set.
+
+Protocol frames and lazy string slices remain zero-copy views with stable backing
+memory, including derived `Uint8List` and `ByteData` views. Exposed backing is
+never automatically returned to a pool. Internal, unexposed abandoned buffers
+can still be reused. Explicit `offerPooledBacking`/`offerDefaultBacking` calls
+transfer exclusive ownership: neither the buffer nor any live view may remain
+in use afterward. Fragmented frame headers use bounded copies and cached lengths;
+adding data copies only pending bytes when detachment or growth is necessary.
 
 ## Connection String Builder
 
-Fluent API for building ODBC connection strings. Seven builders ship by
-default — three from v1, four added in v3.0:
+Seven fluent builders are available:
 
-```dart
-// v1
-SqlServerBuilder()...build();
-PostgreSqlBuilder()...build();
-MySqlBuilder()...build();
-
-// v3.0 (NEW)
-MariaDbBuilder()...build();   // {MariaDB ODBC 3.1 Driver}, port 3306
-SqliteBuilder()...build();    // {SQLite3 ODBC Driver}, no Server/Port
-Db2Builder()...build();       // {IBM DB2 ODBC DRIVER}, port 50000
-SnowflakeBuilder()...build(); // {SnowflakeDSIIDriver}
-```
+| Database | Builder |
+| --- | --- |
+| SQL Server | `SqlServerBuilder` |
+| PostgreSQL | `PostgreSqlBuilder` |
+| MySQL | `MySqlBuilder` |
+| MariaDB | `MariaDbBuilder` |
+| SQLite | `SqliteBuilder` |
+| IBM Db2 | `Db2Builder` |
+| Snowflake | `SnowflakeBuilder` |
 
 ```dart
 final connStr = SqlServerBuilder()
@@ -821,440 +898,48 @@ Connection-string override takes precedence over environment value.
 
 ## Examples
 
-All examples require `ODBC_TEST_DSN` (or `ODBC_DSN`) configured via environment variable or `.env` in project root.
+See [example/README.md](example/README.md) for the current catalogue, environment
+settings and supported dialects.
 
-Start with the performance checklist when choosing APIs:
+| Workload | Example |
+| --- | --- |
+| Small query with typed parameters | [quick start](example/quick_start_balanced_demo.dart) |
+| API selection for throughput | [performance patterns](example/recommended_performance_patterns_demo.dart) |
+| Repeated SQL, prepare once | [prepared reuse](example/named_parameters_demo.dart) |
+| Large row scans, one batch at a time | [batched streaming](example/streaming_demo.dart) |
+| Large numeric scans, typed arrays | [columnar streaming](example/stream_query_columnar_demo.dart) |
+| Large multi-result cursors | [uncoalesced batches](example/multi_result_batches_demo.dart) |
+| Repeated column-name access | [indexed reader](example/query_result_access_demo.dart) |
+| Bounded bulk payloads | [bulk insert](example/bulk_insert_demo.dart) |
+| Independent parallel bulk | [parallel bulk](example/bulk_insert_parallel_demo.dart) |
+| Bounded pooled requests | [pool concurrency](example/high_concurrency_pool_demo.dart) |
+| Local transactions / savepoints | [transaction scope](example/run_in_transaction_demo.dart), [savepoints](example/savepoint_demo.dart) |
+| XA and recovery listing | [XA](example/xa_2pc_demo.dart) |
 
 ```bash
 dart run example/recommended_performance_patterns_demo.dart
-```
-
-| Workload | Prefer | Example |
-| --- | --- | --- |
-| Small or repeated query | `executeQueryParamValues`; prepare once when the SQL repeats | `recommended_performance_patterns_demo.dart`, `named_parameters_demo.dart` |
-| Wide scan | `streamQueryBatched` row-major, `fetchSize: 1000`, chunk 1 MiB | `streaming_demo.dart` throughput path |
-| Narrow typed read | `streamQueryColumnar` | `stream_query_columnar_demo.dart` |
-| Large multi-result cursor | `streamQueryMultiBatches` | `multi_result_batches_demo.dart` |
-| Medium insert (~hundreds) | `bulkInsert` | `bulk_insert_demo.dart` |
-| Large insert (>1k) | `bulkInsertParallel` | `bulk_insert_parallel_demo.dart` |
-| App default / async | `OdbcUsageProfile.balanced` | `quick_start_balanced_demo.dart` |
-| Server / columnar | `balancedServer` / `highThroughput` | `stream_query_columnar_demo.dart`, `high_concurrency_pool_demo.dart` |
-| Prepared reuse | prepare once, execute many | `named_parameters_demo.dart` |
-
-```bash
-# Core API
-dart run example/main.dart
-dart run example/recommended_performance_patterns_demo.dart  # workload → API checklist
-dart run example/service_api_coverage_demo.dart
-dart run example/advanced_entities_demo.dart
-dart run example/simple_demo.dart
-dart run example/quick_start_balanced_demo.dart        # OdbcUsageProfile.balanced
-dart run example/sub_interfaces_migration_demo.dart    # IQueryService et al
-dart run example/param_value_migration_demo.dart       # DSN-free ParamValue migration
-
-# Connection / pool
-dart run example/connection_string_builder_demo.dart   # 7 builders incl. MariaDB/SQLite/Db2/Snowflake
-dart run example/pool_demo.dart
-dart run example/pool_with_options_demo.dart           # PoolOptions
-
-# Async
-dart run example/async_demo.dart
-dart run example/quick_start_balanced_demo.dart
-dart run example/execute_async_demo.dart
-dart run example/high_concurrency_worker_pool_demo.dart
-dart run example/high_concurrency_pool_demo.dart
-dart run example/async_concurrency_benchmark.dart
-dart run example/backpressure_modes_demo.dart          # failFast / waitForSlot + recovery callback
-
-# Optional: override the demo query with a slower/larger workload
-ODBC_CONCURRENCY_QUERY="SELECT 1 AS value" dart run example/high_concurrency_worker_pool_demo.dart
-
-# Queries / parameters
-dart run example/named_parameters_demo.dart
-dart run example/stream_query_named_demo.dart          # streamQueryNamed
-dart run example/multi_result_demo.dart
-dart run example/multi_result_stream_demo.dart         # streamQueryMulti (coalesced result sets)
-dart run example/multi_result_batches_demo.dart        # streamQueryMultiBatches (bounded memory)
-dart run example/multi_result_performance_benchmark.dart # buffered vs coalesced vs batched MULT
-dart run example/output_param_directions_demo.dart     # DRT1 IN/OUT/INOUT
-dart run example/oracle_ref_cursor_demo.dart           # ParamValueRefCursorOut (opt-in)
-dart run example/columnar_result_encoding_demo.dart    # QueryResult clamp vs executeQueryColumnar*
-dart run example/typed_columnar_demo.dart              # TypedColumnarResult buffered consumption
-dart run example/stream_query_columnar_demo.dart       # balancedServer + recommended chunk size
 dart run example/streaming_demo.dart
-dart run example/streaming_performance_benchmark.dart  # streamQuery vs streamQueryBatched
-
-# Bulk insert
-dart run example/bulk_insert_demo.dart                 # single-connection bulk insert (~500 rows)
-dart run example/bulk_insert_parallel_demo.dart        # parallel bulk insert (>1k rows)
-
-# Transactions / savepoints / XA
-dart run example/run_in_transaction_demo.dart          # runInTransaction<T>
-dart run example/savepoint_demo.dart
-dart run example/transaction_helpers_demo.dart
-dart run example/xa_2pc_demo.dart                      # Sprint 4.3 (XA / 2PC across 5 engines)
-
-# Schema introspection
-dart run example/catalog_reflection_demo.dart
-dart run example/dbms_info_demo.dart                   # getConnectionDbmsInfo
-dart run example/driver_features_demo.dart             # UPSERT/RETURNING/SessionInit
-
-# Errors / observability
-dart run example/structured_errors_demo.dart           # typed OdbcError classes
-dart run example/event_bus_demo.dart                   # IAdminService.events
-dart run example/audit_example.dart
-dart run example/telemetry_demo.dart
-dart run example/otel_repository_demo.dart
+dart run example/stream_query_columnar_demo.dart
+dart run example/high_concurrency_pool_demo.dart
 ```
 
-Coverage-oriented examples:
-
-- `example/service_api_coverage_demo.dart`: exercises service methods that are
-  less visible in quick-start docs (`executeQueryParamValuesFromObjects`,
-  `prepare`, `executePreparedParamValuesFromObjects`, `cancelStatement`,
-  `closeStatement`, pool APIs, `bulkInsert`, `getVersion`,
-  `validateConnectionString`, `getDriverCapabilities`, metadata cache,
-  audit API, async request/stream lifecycle).
-- `example/advanced_entities_demo.dart`: demonstrates exported advanced types
-  and helpers (`RetryHelper`, `RetryOptions`, `PreparedStatementConfig`,
-  `StatementOptions`, `PrimaryKeyInfo`, `ForeignKeyInfo`, `IndexInfo`).
-- `example/audit_example.dart`: dedicated audit wrapper demo with
-  enable/status/events/clear flow.
-- `example/catalog_reflection_demo.dart`: focused schema reflection demo for
-  `catalogPrimaryKeys`, `catalogForeignKeys`, and `catalogIndexes`.
-- `example/execute_async_demo.dart`: low-level async execution and streaming
-  via worker isolate using raw payload parsing.
-- `example/high_concurrency_worker_pool_demo.dart` and
-  `example/high_concurrency_pool_demo.dart`: documented worker-pool and
-  native-pool patterns for high-concurrency scenarios.
-- `example/async_concurrency_benchmark.dart`: local Stopwatch-based benchmark
-  for worker pool, native pool and streaming choices.
-- `example/backpressure_modes_demo.dart`: contrasts `failFast` vs
-  `waitForSlot` and wires the `onWorkerRecovered` callback that fires
-  after auto-recovery.
-- `example/sub_interfaces_migration_demo.dart`: side-by-side `IOdbcService`
-  (aggregate) vs `IQueryService` (narrow sub-interface) plus the
-  `executeQueryFor(Connection, ...)` overload.
-- `example/event_bus_demo.dart`: subscribes to `IAdminService.events`
-  and pattern-matches the sealed `OdbcEvent` variants (`PoolResize`,
-  `SlowQueryDetected`, etc.).
-- `example/columnar_result_encoding_demo.dart` and
-  `example/streaming_performance_benchmark.dart`: QueryResult wire-clamp vs
-  typed columnar APIs, plus streaming throughput benchmark.
-- `example/multi_result_stream_demo.dart`: per-item multi-result streaming
-  via `streamQueryMulti`, which coalesces continuation fetches for each
-  logical result set.
-- `example/multi_result_batches_demo.dart`: bounded-memory multi-result
-  streaming via `streamQueryMultiBatches`; continuation batches stay separate
-  and are identified by `isContinuationBatch`.
-- `example/multi_result_performance_benchmark.dart`: compares buffered,
-  coalesced, and bounded-batch MULT consumption under the same workload.
-- `example/output_param_directions_demo.dart` and
-  `example/oracle_ref_cursor_demo.dart`: DRT1 directed parameters and
-  Oracle `REF CURSOR` materialization.
-- `example/run_in_transaction_demo.dart` and `example/xa_2pc_demo.dart`:
-  `runInTransaction<T>` and `runInXaTransaction` / native XA lifecycle
-  (supported engines).
-- `example/telemetry_demo.dart` and `example/otel_repository_demo.dart`:
-  telemetry service/buffer usage plus OTLP repository initialization.
-
-More details: [example/README.md](example/README.md)
-
-### Example Overview
-
-#### High-Level API (`OdbcService`)
-
-**[main.dart](example/main.dart)** - Complete API walkthrough
-
-- ✅ Sync and async service modes
-- ✅ Connection options with timeouts
-- ✅ Driver detection
-- ✅ Named parameters (@name, :name)
-- ✅ Multi-result queries (executeQueryMultiFull)
-- ✅ Catalog queries (tables, columns, types)
-- ✅ Prepared statement reuse
-- ✅ Statement cache management
-- ✅ Runtime metrics and observability
-
-**Advantages**:
-
-- 🎯 High-level abstraction for common use cases
-- 📊 Built-in metrics and telemetry hooks
-- 🔄 Automatic connection lifecycle management
-- ⚡ Optimized with prepared statement cache
-
-#### Catalog Reflection
-
-**[catalog_reflection_demo.dart](example/catalog_reflection_demo.dart)** -
-Primary keys, foreign keys, and indexes via `ServiceLocator`
-
-- ✅ `catalogTables` (pick a sample table) / optional `ODBC_EXAMPLE_TABLE`
-- ✅ `catalogPrimaryKeys`
-- ✅ `catalogForeignKeys`
-- ✅ `catalogIndexes`
-
-#### Low-Level API (`NativeOdbcConnection`)
-
-**[simple_demo.dart](example/simple_demo.dart)** - Native connection demo
-
-- ✅ Connection with timeout (`connectWithTimeout`)
-- ✅ Structured error handling (SQLSTATE + native codes)
-- ✅ Transaction handles for safe operations
-- ✅ Catalog queries for metadata introspection
-- ✅ Prepared statements with result parsing
-- ✅ Binary protocol parser for raw result handling
-
-**Advantages**:
-
-- 🔧 Direct control over ODBC driver manager
-- ⚡ Zero-allocation result parsing
-- 🛡️ Fine-grained error diagnostics
-- 📦 Type-safe parameter handling
-
-#### Async API
-
-**[async_demo.dart](example/async_demo.dart)** - Async worker isolate demo
-
-- ✅ Non-blocking operations (perfect for Flutter/UI)
-- ✅ Configurable request timeout
-- ✅ Automatic worker recovery on crash
-- ✅ Worker isolate lifecycle management
-
-**Advantages**:
-
-- 🚀 Non-blocking UI thread
-- 🔒 Configurable timeouts per request
-- 🔄 Automatic recovery from failures
-- 💪 Isolated worker for CPU-intensive tasks
-
-#### Named Parameters
-
-**[named_parameters_demo.dart](example/named_parameters_demo.dart)** - `@name` / `:name` via service API
-
-- ✅ `executeQueryNamed` and `prepareNamed` / `executePreparedNamed`
-- ✅ Mixed `@name` and `:name` syntax
-- ✅ Repeated placeholders reuse the same supplied value
-- ✅ Prepared named statement reuse
-
-**Advantages**:
-
-- 🛡 SQL injection protection (bound parameters)
-- ⚡ Reuse prepared statements for multiple executions
-- 📝 Clean call sites with named maps
-- 🔌 Database-agnostic placeholder syntax
-
-#### Multi-Result Queries
-
-**[multi_result_demo.dart](example/multi_result_demo.dart)** - Multiple result sets
-
-- ✅ Portable multi-`SELECT` batches
-- ✅ `executeQueryMultiFull` + `executeQueryMultiParamValues`
-- ✅ Ordered result sets and row-counts via `QueryResultMulti`
-- ✅ Coalesced streaming alternative: `streamQueryMulti` /
-  [`multi_result_stream_demo.dart`](example/multi_result_stream_demo.dart)
-- ✅ Bounded-memory streaming alternative: `streamQueryMultiBatches` /
-  [`multi_result_batches_demo.dart`](example/multi_result_batches_demo.dart)
-
-**Advantages**:
-
-- 📦 Fewer round trips to database
-- ⚡ Batch multiple operations in a single request
-- 🎯 Fits stored procedures with multiple results
-- 📊 Stable multi-item parsing on the service layer
-
-#### Connection Pooling
-
-**[pool_demo.dart](example/pool_demo.dart)** - Connection pool management
-
-- ✅ Pool creation with configurable size
-- ✅ Connection reuse (get/release pattern)
-- ✅ Parallel bulk insert via pool
-- ✅ Health checks and pool state monitoring
-- ✅ Concurrent connection testing
-
-**Advantages**:
-
-- 🚀 Reduced connection overhead (reuse established connections)
-- 🔄 Automatic connection recovery and validation
-- ⚡ Parallel bulk insert for high-throughput scenarios
-- 📊 Pool state monitoring and metrics
-- 🎯 Built-in health check on checkout
-
-Checked-out pooled connections can start local transactions directly,
-and `poolReleaseConnection(...)` rolls back leftover local work before
-the connection is reused.
-
-#### Streaming Queries
-
-**[streaming_demo.dart](example/streaming_demo.dart)** - Incremental data streaming
-
-- ✅ Batched streaming (`streamQueryBatched`) with configurable fetch size
-- ✅ Preferred demo path uses `streamQueryBatched`; `streamQuery` remains
-  available when its raw chunk semantics are specifically required
-- ✅ Process large datasets without loading all into memory
-- ✅ Low-memory footprint for big tables
-
-**Advantages**:
-
-- 💾 Process millions of rows without OOM errors
-- ⚡ Incremental processing reduces first-byte latency
-- 🎯 Perfect for UI lists and infinite scrolling
-- 🔒 Configurable chunk sizes for optimal performance
-- 📊 Memory-efficient for large datasets
-
-#### Transactions & Savepoints
-
-**[savepoint_demo.dart](example/savepoint_demo.dart)** - Advanced transaction control
-
-- ✅ Transaction begin/commit/rollback
-- ✅ Savepoint creation (`createSavepoint`)
-- ✅ Rollback to savepoint (`rollbackToSavepoint`)
-- ✅ Nested savepoints for complex operations
-- ✅ Release savepoint (`releaseSavepoint`)
-
-**Advantages**:
-
-- 🔒 Partial rollback support (undo specific changes)
-- 🎯 Complex operation support with nested savepoints
-- 🛡 Safe error recovery points
-- 📝 Clean transaction management patterns
-- 🔄 Granular control over transaction boundaries
-
-**[transaction_helpers_demo.dart](example/transaction_helpers_demo.dart)** -
-Fluent transaction helpers on top of `TransactionHandle`
-
-- `TransactionHandle.runWithBegin(...)`
-- `TransactionHandle.withSavepoint(...)`
-- Success only returns after commit succeeds
-- Commit failure throws instead of returning a false success path
-
-#### Pool with options (v3.0)
-
-**[pool_with_options_demo.dart](example/pool_with_options_demo.dart)** -
-Configurable pool eviction/timeouts
-
-- ✅ `PoolOptions(idleTimeout, maxLifetime, connectionTimeout,
-  sessionResetOnCheckout?)`
-- ✅ `OdbcPoolFactory.createPool(...)` with automatic legacy fallback
-- ✅ Supports detection of `supportsApi` for old native libraries
-- ✅ JSON-encoded options sent through `odbc_pool_create_with_options`
-- `poolSetSize(...)` preserves resolved pool options after resize.
-
-#### Live DBMS introspection (v2.1)
-
-**[dbms_info_demo.dart](example/dbms_info_demo.dart)** - Real
-`SQLGetInfo` discovery
-
-- ✅ `OdbcDriverCapabilities.getDbmsInfoForConnection`
-- ✅ Distinguishes MariaDB vs MySQL, ASE vs ASA via the live driver
-- ✅ Reports `dbms_name`, `engine` id, identifier limits, current catalog
-- ✅ Works for DSN-only connection strings
-
-#### Driver-specific SQL builders (v3.0)
-
-**[driver_features_demo.dart](example/driver_features_demo.dart)** -
-UPSERT, RETURNING, and SessionInit
-
-- ✅ `buildUpsertSql` for any of the 9 supported engines
-- ✅ `appendReturningClause` with INSERT/UPDATE/DELETE positioning
-- ✅ `getSessionInitSql` per dialect
-- ✅ No DB connection needed — pure SQL generation
-
-#### Structured error handling (v3.0)
-
-**[structured_errors_demo.dart](example/structured_errors_demo.dart)** -
-12+ typed error classes
-
-- ✅ `ConnectionError`, `QueryError`, `ValidationError`, ... (v1)
-- ✅ `NoMoreResultsError`, `MalformedPayloadError`, `RollbackFailedError`,
-  `ResourceLimitReachedError`, `CancelledError`, `WorkerCrashedError`,
-  `BulkPartialFailureError` (v3.0)
-- ✅ `ErrorCategory` enum (transient/fatal/validation/connectionLost)
-  for retry/abort/reconnect decision making
-
-#### Transaction orchestration
-
-**[run_in_transaction_demo.dart](example/run_in_transaction_demo.dart)** -
-High-level `runInTransaction<T>` helper
-
-- ✅ Begin → action → commit/rollback in a single call
-- ✅ Action `Failure` rolls back; throws are caught and converted to
-  `QueryError` (throw never escapes)
-- ✅ Forwards `IsolationLevel`, `TransactionAccessMode.readOnly`, and
-  `LockTimeout` to the underlying engine
-- ✅ Rollback failures during cleanup are swallowed so they never
-  overwrite the original cause
-
-#### XA / 2PC distributed transactions (Sprint 4.3 / v3.4.x)
-
-**[xa_2pc_demo.dart](example/xa_2pc_demo.dart)** - Full X/Open XA lifecycle
-
-- ✅ Phase 1 + Phase 2 commit (`xa_start` / `xa_end` / `xa_prepare` /
-  `xa_commit_prepared`)
-- ✅ 1RM optimization (`commit_one_phase`) when this RM is the sole
-  participant
-- ✅ Crash recovery via `xaRecover` + `xaResumePrepared`
-- ✅ Dedicated Oracle section (DML inside the branch so `xa_prepare`
-  doesn't return `XA_RDONLY`)
-- ✅ `XaTransactionHandle.runWithStart<T>` exception-safe helper
-
-#### Sub-interfaces + Connection-typed overloads
-
-**[sub_interfaces_migration_demo.dart](example/sub_interfaces_migration_demo.dart)** -
-ISP-friendly seams
-
-- ✅ Side-by-side `IOdbcService` (aggregate) vs `IQueryService` consumer
-- ✅ `executeQueryFor(Connection conn, ...)` overload that drops the
-  manual `conn.id` plumbing
-- ✅ DSN-free smoke run: works as a describe-only example
-
-#### Event bus
-
-**[event_bus_demo.dart](example/event_bus_demo.dart)** -
-`IAdminService.events` broadcast stream
-
-- ✅ Pattern-matches sealed `OdbcEvent` variants (`ConnectionLost`,
-  `WorkerRecovered`, `AutoReconnectAttempted`, `PoolResize`,
-  `SlowQueryDetected`)
-- ✅ Triggers real `PoolResize` via `poolSetSize` and real
-  `SlowQueryDetected` with `slowQueryThreshold: Duration.zero`
-- ✅ Best-effort observability — no back-pressure on the runtime
-  emission path
-
-#### Backpressure modes
-
-**[backpressure_modes_demo.dart](example/backpressure_modes_demo.dart)** -
-Async-pool flow control
-
-- ✅ `AsyncBackpressureMode.failFast` — extras rejected with
-  `AsyncErrorCode.resourceExhausted`
-- ✅ `AsyncBackpressureMode.waitForSlot` — FIFO queueing up to
-  `backpressureTimeout`
-- ✅ `onWorkerRecovered` callback wiring after auto-recovery
-
-#### Columnar result encoding
-
-**[columnar_result_encoding_demo.dart](example/columnar_result_encoding_demo.dart)** -
-QueryResult clamp vs typed columnar
-
-- ✅ Shows `forQueryResultWire` clamps columnar requests on QueryResult paths
-- ✅ Contrasts with `executeQueryColumnarParamValues` (true columnar wire)
-- ✅ Points to `async_concurrency_benchmark.dart` for `columnarCompressed`
-- ✅ Row-major remains the QueryResult default; use columnar-typed APIs for
-  end-to-end columnar
-
-#### Multi-result streaming
-
-**[multi_result_stream_demo.dart](example/multi_result_stream_demo.dart)** -
-`streamQueryMulti` per-item delivery
-
-- ✅ Streams `QueryResultMultiItem` (result set OR row count) one item
-  at a time
-- ✅ Lower peak memory than `executeQueryMultiFull` for big batches
-- ✅ Coalesces continuation fetches into each logical result set
-- ✅ For a cursor whose fetch batches can be processed independently, use
-  [`multi_result_batches_demo.dart`](example/multi_result_batches_demo.dart)
-  and `streamQueryMultiBatches` to bound decoded memory by `fetchSize`
+Large-read examples process batches without collecting all rows or logging each
+row. Server profiles supply the recommended chunk size; columnar results require
+the explicit columnar APIs. Parallel bulk has no universal row threshold and is
+not one atomic transaction. Benchmark your driver/schema before selecting
+batch size or concurrency.
+
+The examples also cover named/directional parameters, Oracle REF CURSOR,
+catalogs, typed errors, telemetry, events and native asset resolution.
+[common.dart](example/common.dart) centralizes the main examples' lifecycle and
+clear errors. A timeout does not confirm cancellation; no example should
+automatically replay SQL or reverse an uncertain transactional decision.
+
+For measured comparisons, use [the concurrency benchmark](example/async_concurrency_benchmark.dart),
+[streaming benchmark](example/streaming_performance_benchmark.dart) and
+[multi-result benchmark](example/multi_result_performance_benchmark.dart).
+The tiny demo queries and single stopwatch readings illustrate usage; they do
+not establish performance gains. See [doc/PERFORMANCE.md](doc/PERFORMANCE.md).
 
 ## Build from source
 
@@ -1291,13 +976,26 @@ The combined badge therefore understates native engine coverage; treat it as a
 Dart-layer gate, not whole-repo coverage.
 
 ```bash
-# Dart — CI-equivalent unit + docs (no live DSN)
-dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart test/documentation test/example
+# Dart — CI unit scope (disable live flags and DSNs as in doc/TESTING.md)
+dart test test/application test/domain test/infrastructure test/helpers/database_detection_test.dart
+
+# Dart — core / public barrel contracts
+dart test test/core test/public_api_exports_test.dart
+
+# Dart — DSN-free documentation and example scope
+dart test test/documentation test/example
+
+# Dart — performance guard; forced GC runs separately from unit budget
+dart test test/performance/protocol_performance_test.dart
+dart test test/integration/protocol_frame_ownership_gc_test.dart
+
+# Dart — FFI export synchronization
+dart tool/check_ffi_exports.dart
 
 # Dart — full suite (integration/e2e/stress self-skip without env)
 dart test
 
-# Dart — integration (requires ODBC_TEST_DSN)
+# Dart — integration (live cases require ODBC_TEST_DSN; includes DSN-free cases)
 dart test test/integration/
 
 # Dart — live DB tests gated by RUN_LIVE_TESTS=1 (see .env.example)
@@ -1313,13 +1011,15 @@ dart run benchmarks/m2_performance.dart
 # Rust — from native/ (lib unit tests; integration #[ignore] without env)
 cd native
 cargo test --workspace -- --test-threads=1
+cd ..
 
 # Rust E2E — ENABLE_E2E_TESTS=1 + ODBC_TEST_DSN in .env (25 e2e_* suites)
 powershell scripts/run_e2e_tests.ps1           # full incl. slow stress
 powershell scripts/run_e2e_tests.ps1 -Quick    # live E2E only
 ./scripts/run_e2e_tests.sh                     # Linux/macOS equivalent
 
-# Rust bulk insert benchmark (array vs parallel; from native/odbc_engine)
+# Rust bulk insert benchmark (array vs parallel)
+cd native/odbc_engine
 cargo test --test e2e_bulk_compare_benchmark_test -- --ignored --nocapture
 ```
 
@@ -1362,7 +1062,7 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 
 - [doc/README.md](doc/README.md) — documentation index (start here)
 - [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) — Dart layers, dual barrels, ServiceLocator, sealed `OdbcBackend`, sub-interfaces, runners, event bus
-- [doc/API_SURFACE.md](doc/API_SURFACE.md) — FFI surface (**100** exports), public Rust API, Dart bindings
+- [doc/API_SURFACE.md](doc/API_SURFACE.md) — FFI surface, public Rust API and Dart bindings; validate current exports with `dart tool/check_ffi_exports.dart`
 - [doc/CAPABILITIES_v3.md](doc/CAPABILITIES_v3.md) — driver capability traits × engine matrix
 - [doc/BUILD.md](doc/BUILD.md) — build, library resolution, scripts
 - [doc/TESTING.md](doc/TESTING.md) — test policy, CI scope, environment variables
@@ -1393,7 +1093,11 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 ## CI/CD
 
 - CI workflow: `.github/workflows/ci.yml`
-  - runs `cargo fmt`, `cargo clippy`, Rust build, `dart analyze`, and unit-only Dart tests (excluding `test/integration`, `test/e2e`, `test/stress`, `test/my_test`)
+  - runs `cargo fmt`, `cargo clippy`, Rust build, `dart analyze`, FFI export checks and the canonical Dart unit scope
+  - also runs documentation/example contracts, the protocol performance guard,
+    a separate DSN-free forced-GC regression and the slow-test budget
+  - live integration/E2E/stress scopes are opt-in; the separate GC regression
+    is the explicit DSN-free integration case in default CI
   - forces `ENABLE_E2E_TESTS=0` and `RUN_SKIPPED_TESTS=0`
 - Release workflow: `.github/workflows/release.yml`
   - Validates release metadata (tag/pubspec/changelog)
@@ -1406,28 +1110,14 @@ Native engine layout: [native/odbc_engine/ARCHITECTURE.md](native/odbc_engine/AR
 
 ### Automated Release Flow
 
-To publish a new version, follow these steps:
+Release preparation and publication commands are maintained in
+[RELEASE_AUTOMATION.md](doc/version/RELEASE_AUTOMATION.md).
+Update release metadata and the changelog before creating a matching version tag.
 
-1. \*\*Update `pubspec.yaml`: Set the new version (e.g., `version: 1.1.0`)
-2. \*\*Update `CHANGELOG.md`: Add a new section `## [1.1.0] - YYYY-MM-DD` with changes
-3. **Commit and push main branch**:
-   ```bash
-   git add .
-   git commit -m "Release v1.1.0"
-   git push origin main
-   ```
-4. **Create and push tag** (triggers automated release):
-   ```bash
-   git tag -a v1.1.0 -m "Release v1.1.0"
-   git push origin v1.1.0
-   ```
-
-The GitHub Actions will automatically:
-
-- Verify tag format and consistency with pubspec/changelog
-- Build native binaries for Linux and Windows
-- Create GitHub Release with binaries
-- **Publish to pub.dev** via OIDC (no manual intervention needed)
+The release workflow validates metadata, builds Windows/Linux assets and
+creates a GitHub Release. The publish workflow validates stable `vX.Y.Z`
+tags, waits for release binaries and SHA-256 sidecars, then publishes through
+OIDC. Prerelease tags are excluded from that automatic pub.dev path.
 
 ### Security
 
@@ -1436,12 +1126,6 @@ This project uses **OIDC (OpenID Connect)** for pub.dev authentication:
 - No long-lived secrets required
 - Temporary tokens are automatically managed by GitHub Actions
 - See [Automated publishing documentation](https://dart.dev/tools/pub/automated-publishing) for details
-
-## Support
-
-If this project helps you, consider supporting the maintainer via Pix:
-
-- `cesar_carlos@msn.com`
 
 ## License
 

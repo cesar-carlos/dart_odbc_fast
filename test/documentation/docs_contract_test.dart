@@ -82,6 +82,30 @@ void main() {
       }
     });
 
+    test('should_catalogue_every_example_entrypoint', () {
+      final catalogue = _readRepoFile('example/README.md');
+      final examples = Directory('example').listSync().whereType<File>().where(
+            (file) => file.path.endsWith('.dart'),
+          );
+      for (final example in examples) {
+        final name = example.uri.pathSegments.last;
+        expect(catalogue, contains(']($name)'), reason: '$name is not indexed');
+      }
+    });
+
+    test('should_keep_documented_example_commands_resolvable', () {
+      final command = RegExp(r'dart run (example/[a-z0-9_]+\.dart)');
+      for (final path in [
+        'README.md',
+        'example/README.md',
+        'doc/PERFORMANCE.md',
+      ]) {
+        for (final match in command.allMatches(_readRepoFile(path))) {
+          expect(File(match.group(1)!).existsSync(), isTrue, reason: path);
+        }
+      }
+    });
+
     test('should_keep_local_markdown_links_resolvable', () {
       final markdownFiles =
           Directory.current.listSync(recursive: true).whereType<File>().where(
@@ -117,8 +141,12 @@ void main() {
 
     test('should_keep_readme_on_current_package_line', () {
       final readme = _readRepoFile('README.md');
-      expect(readme, contains('**4.6.0**'));
-      expect(readme, contains('odbc_fast: ^4.6.0'));
+      final manifest = _readRepoFile('pubspec.yaml');
+      final version = RegExp(r'^version: (\S+)', multiLine: true)
+          .firstMatch(manifest)!
+          .group(1)!;
+      expect(readme, contains('**$version**'));
+      expect(readme, contains('odbc_fast: ^$version'));
       expect(readme, contains('odbc_fast_native.dart'));
       expect(readme, contains('doc/README.md'));
       expect(readme, isNot(contains("What's New in 3.10.x")));

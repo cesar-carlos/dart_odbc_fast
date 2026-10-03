@@ -174,6 +174,11 @@ class OdbcStreamRunner {
     List<ParamValue> params = const <ParamValue>[],
   }) async* {
     final nativeId = _state.connectionIds[connectionId];
+    final blocked = _state.transactionBlock(connectionId);
+    if (blocked != null) {
+      yield Failure(blocked);
+      return;
+    }
     if (nativeId == null) {
       yield Failure<T, OdbcError>(
         const ValidationError(message: 'Invalid connection ID'),

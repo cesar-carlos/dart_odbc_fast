@@ -1,4 +1,5 @@
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 
 enum WorkerErrorKind {
   connection,
@@ -34,6 +35,7 @@ class WorkerFailureSnapshot {
     this.failedChunks,
     this.bulkDetail,
     this.kind,
+    this.executionStage,
   });
   factory WorkerFailureSnapshot.fromError(
     OdbcError error, {
@@ -78,6 +80,7 @@ class WorkerFailureSnapshot {
   final int? failedChunks;
   final String? bulkDetail;
   final WorkerErrorKind? kind;
+  final NativeExecutionStage? executionStage;
 
   static WorkerErrorKind kindOf(OdbcError error) => switch (error) {
         ConnectionError() => WorkerErrorKind.connection,

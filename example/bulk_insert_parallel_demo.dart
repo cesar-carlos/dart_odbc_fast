@@ -1,117 +1,59 @@
-// Parallel bulk insert demo for large batches (>1k rows).
-//
-// Recommended when single-connection `bulkInsert` is CPU/driver-bound: use a
-// native pool + `bulkInsertParallel` (see also
-// example/recommended_performance_patterns_demo.dart for the decision map).
-//
+// Native parallel bulk via the async Result service and a bounded payload.
+// Measure against bulk_insert_demo.dart on the same driver/workload.
 // Run: dart run example/bulk_insert_parallel_demo.dart
-//
-// Requires ODBC_DSN or ODBC_TEST_DSN and a SQL Server–compatible driver for
-// the sample DDL (IDENTITY column). Adjust table DDL for other dialects.
+// SQL Server sample DDL. Creates/drops a uniquely named demo table.
+// Optional: ODBC_BULK_ROWS (10000), ODBC_BULK_BATCH_ROWS (5000),
+// ODBC_BULK_PARALLELISM (4). Parallel batches are not one atomic transaction.
 
-import 'dart:typed_data';
-
-import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
-
+import 'bulk_insert_demo.dart' show buildBulkDemoBatch, withBulkDemoTable;
 import 'common.dart';
 
-const _rowCount = 2000;
-const _parallelism = 4;
-const _poolSize = 4;
-const _table = 'bulk_parallel_demo';
-
-void main() async {
-  AppLogger.initialize();
-
-  final dsn = requireExampleDsn();
-  if (dsn == null) {
-    return;
-  }
-
-  final native = NativeOdbcConnection();
-  if (!native.initialize()) {
-    AppLogger.severe('ODBC environment initialization failed');
-    return;
-  }
-
-  final pool = native.createConnectionPool(dsn, _poolSize);
-  if (pool == null) {
-    AppLogger.severe('Pool creation failed: ${native.getError()}');
-    return;
-  }
-
-  try {
-    await _ensureTable(native, pool);
-    final payload = _buildPayload();
-    AppLogger.info(
-      'Payload ready: $_rowCount rows, ${payload.lengthInBytes} bytes',
-    );
-
-    final sw = Stopwatch()..start();
-    final inserted = pool.bulkInsertParallel(
-      _table,
-      const ['name'],
-      payload,
-      parallelism: _parallelism,
-    );
-    sw.stop();
-
-    if (inserted < 0) {
-      AppLogger.severe('bulkInsertParallel failed');
-      return;
-    }
-
-    AppLogger.info(
-      'bulkInsertParallel inserted $inserted rows in '
-      '${sw.elapsedMilliseconds} ms '
-      '(parallelism=$_parallelism, poolSize=$_poolSize)',
-    );
-  } finally {
-    pool.close();
-  }
-}
-
-Uint8List _buildPayload() {
-  final names = List<String>.generate(_rowCount, (i) => 'row-${i + 1}');
-  return BulkInsertBuilder()
-      .table(_table)
-      .addColumnText('name', names, maxLen: 64)
-      .build();
-}
-
-Future<void> _ensureTable(
-  NativeOdbcConnection native,
-  ConnectionPool pool,
-) async {
-  const ddl = '''
-    IF OBJECT_ID('bulk_parallel_demo', 'U') IS NOT NULL
-      DROP TABLE bulk_parallel_demo;
-
-    CREATE TABLE bulk_parallel_demo (
-      id INT IDENTITY(1,1) PRIMARY KEY,
-      name NVARCHAR(64) NOT NULL
-    )
-  ''';
-
-  final connId = pool.getConnection();
-  if (connId == 0) {
-    AppLogger.warning('Failed to get pooled connection: ${native.getError()}');
-    return;
-  }
-
-  try {
-    final stmt = native.prepare(connId, ddl);
-    if (stmt == 0) {
-      AppLogger.warning('Prepare failed: ${native.getError()}');
-      return;
-    }
-    try {
-      native.executePrepared(stmt, const <ParamValue>[], 0, 1000);
-    } finally {
-      native.closeStatement(stmt);
-    }
-  } finally {
-    pool.releaseConnection(connId);
-  }
-}
+Future<void> main() => withExamplePool((locator, service, poolId) async {
+      final rows = positiveExampleEnvInt('ODBC_BULK_ROWS', 10000);
+      final batchRows = positiveExampleEnvInt('ODBC_BULK_BATCH_ROWS', 5000);
+      final requested = positiveExampleEnvInt('ODBC_BULK_PARALLELISM', 4);
+      // Keep one checkout for setup/cleanup; the other slots execute native
+      // bulk.
+      final available = locator.recommendedPoolMaxSize - 1;
+      final parallelism = requested < available ? requested : available;
+      if (parallelism < 1) {
+        throw StateError('Parallel bulk needs at least two pool slots.');
+      }
+      final connection = (await service.poolGetConnection(poolId)).getOrThrow();
+      try {
+        final table =
+            'odbc_bulk_parallel_demo_${DateTime.now().microsecondsSinceEpoch}';
+        await withBulkDemoTable(service, connection.id, table, () async {
+          var inserted = 0;
+          var batches = 0;
+          final stopwatch = Stopwatch()..start();
+          for (var offset = 0; offset < rows; offset += batchRows) {
+            final remaining = rows - offset;
+            final count = remaining < batchRows ? remaining : batchRows;
+            final builder = buildBulkDemoBatch(table, offset, count);
+            inserted += (await service.bulkInsertParallel(
+              poolId,
+              table,
+              builder.columnNames,
+              builder.build(),
+              count,
+              parallelism: parallelism,
+            ))
+                .getOrThrow();
+            batches++;
+          }
+          stopwatch.stop();
+          reportExampleProgress(
+              'bulkInsertParallel rows=$inserted batches=$batches '
+              'parallelism=$parallelism batchRows=$batchRows '
+              'elapsedUs=${stopwatch.elapsedMicroseconds}');
+        });
+      } finally {
+        reportExampleCleanup(
+          await service.poolReleaseConnection(connection.id),
+          'poolReleaseConnection',
+        );
+      }
+      // Failures can contain partial insert counts. Do not automatically
+      // replay.
+    });

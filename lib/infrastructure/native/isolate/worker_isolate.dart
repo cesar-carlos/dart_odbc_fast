@@ -9,6 +9,7 @@ import 'package:odbc_fast/domain/entities/result_encoding.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_failure_snapshot.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
@@ -102,7 +103,10 @@ void _handleRequest(
   NativeOdbcConnection conn,
 ) =>
     NativeCallContext.capture(
-      () => _dispatchRequest(request, sendPort, conn),
+      () {
+        NativeCallContext.current?.resetInvocation();
+        _dispatchRequest(request, sendPort, conn);
+      },
       nativeConnectionId: _requestConnection(
         request,
         _workerResources[conn] ??= _WorkerResources(),
@@ -115,6 +119,27 @@ void _dispatchRequest(
   NativeOdbcConnection conn,
 ) {
   try {
+    final resources = _workerResources[conn] ??= _WorkerResources();
+    final connection = _requestConnection(request, resources);
+    final blocked = connection != null &&
+        (resources.uncertainConnections.contains(connection) ||
+            resources.uncertainTransactions
+                .any((id) => resources.transactions[id] == connection) ||
+            resources.uncertainXa.any((id) => resources.xa[id] == connection));
+    if (blocked &&
+        request is! DisconnectRequest &&
+        request is! GetStructuredErrorForConnectionRequest &&
+        request is! XaRecoverRequest &&
+        request is! GetErrorRequest &&
+        request is! GetStructuredErrorRequest) {
+      throw const QueryError(
+        message: 'The transaction outcome is not confirmed',
+        details: OdbcErrorDetails(
+          code: OdbcErrorCode.transaction,
+          outcomeUnknown: true,
+        ),
+      );
+    }
     switch (request) {
       case InitializeRequest():
       case SetLogLevelRequest():
@@ -244,7 +269,13 @@ void _sendWorkerResponse(
   final resources = _workerResources[conn] ??= _WorkerResources();
   if (!failed || response.failure != null) {
     _recordWorkerResources(request, response, resources);
-    sendPort.send(response);
+    sendPort.send(
+      WorkerReply(
+        response,
+        response.failure,
+        executionStage: NativeCallContext.current?.executionStage,
+      ),
+    );
     return;
   }
   final connectionId = _requestConnection(request, resources);
@@ -329,12 +360,21 @@ void _sendWorkerResponse(
     cause: captured?.details.cause?.toString() ?? cause?.toString(),
     stackTrace:
         stackTrace?.toString() ?? captured?.details.stackTrace?.toString(),
-    outcomeUnknown: captured?.details.outcomeUnknown ?? false,
+    outcomeUnknown: (captured?.details.outcomeUnknown ?? false) ||
+        (request is XaIdRequest &&
+            NativeCallContext.current?.executionStage !=
+                NativeExecutionStage.notStarted &&
+            (request.type == RequestType.xaCommitPrepared ||
+                request.type == RequestType.xaCommitOnePhase)) ||
+        (cause != null &&
+            NativeCallContext.current?.executionStage !=
+                NativeExecutionStage.notStarted),
     secondaryErrors: [
       for (final error in captured?.details.secondaryErrors ?? <OdbcError>[])
         WorkerFailureSnapshot.fromError(error, requestId: request.requestId),
     ],
     secondary: secondary,
+    executionStage: NativeCallContext.current?.executionStage,
   );
   _recordWorkerResources(request, response, resources);
   switch (response) {
@@ -382,6 +422,9 @@ class _WorkerResources {
   final statements = <int, int>{};
   final streams = <int, int>{};
   final asyncRequests = <int, int>{};
+  final uncertainTransactions = <int>{};
+  final uncertainXa = <int>{};
+  final uncertainConnections = <int>{};
 }
 
 int? _requestConnection(WorkerRequest request, _WorkerResources resources) =>
@@ -470,8 +513,35 @@ void _recordWorkerResources(
   switch (request) {
     case CommitTransactionRequest(:final txnId) ||
           RollbackTransactionRequest(:final txnId):
-      if (response is BoolResponse && response.completionStatus != 2) {
+      if (response is BoolResponse &&
+          (response.completionStatus == 0 || response.completionStatus == 1)) {
         resources.transactions.remove(txnId);
+        resources.uncertainTransactions.remove(txnId);
+        if (response.completionStatus == 1 && connection != null) {
+          resources.uncertainConnections.add(connection);
+        }
+      } else if (response is BoolResponse && response.completionStatus == 2) {
+        resources.uncertainTransactions.remove(txnId);
+      } else if (NativeCallContext.current?.executionStage !=
+          NativeExecutionStage.notStarted) {
+        resources.uncertainTransactions.add(txnId);
+      }
+    case XaIdRequest(:final xaId):
+      if (response is IntResponse &&
+          response.value == 0 &&
+          (request.type == RequestType.xaCommitPrepared ||
+              request.type == RequestType.xaCommitOnePhase ||
+              request.type == RequestType.xaRollbackPrepared ||
+              request.type == RequestType.xaRollbackActive)) {
+        resources.xa.remove(xaId);
+        resources.uncertainXa.remove(xaId);
+      } else if (NativeCallContext.current?.executionStage !=
+              NativeExecutionStage.notStarted &&
+          (NativeCallContext.current?.executionStage ==
+                  NativeExecutionStage.started ||
+              request.type == RequestType.xaCommitPrepared ||
+              request.type == RequestType.xaCommitOnePhase)) {
+        resources.uncertainXa.add(xaId);
       }
     case CloseStatementRequest(:final stmtId):
       if (response is BoolResponse && response.value) {
@@ -492,6 +562,7 @@ void _recordWorkerResources(
             .map((e) => e.key)
             .toSet();
         resources.pools.removeWhere((_, id) => id == poolId);
+        resources.uncertainConnections.removeAll(connections);
         for (final map in [
           resources.transactions,
           resources.xa,
@@ -505,6 +576,7 @@ void _recordWorkerResources(
     case DisconnectRequest(:final connectionId) ||
           PoolReleaseConnectionRequest(:final connectionId):
       if (response is BoolResponse && response.value) {
+        resources.uncertainConnections.remove(connectionId);
         resources.pools.remove(connectionId);
         for (final map in [
           resources.transactions,
@@ -519,6 +591,9 @@ void _recordWorkerResources(
     default:
       break;
   }
+  resources.uncertainTransactions
+      .removeWhere((id) => !resources.transactions.containsKey(id));
+  resources.uncertainXa.removeWhere((id) => !resources.xa.containsKey(id));
 }
 
 String _workerError(NativeOdbcConnection conn) {

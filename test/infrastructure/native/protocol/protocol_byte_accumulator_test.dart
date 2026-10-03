@@ -24,12 +24,13 @@ void main() {
       expect(lazy.value, 'de');
     });
 
-    test('should_retain_owner_for_lazy_slices_of_single_complete_frame', () {
+    test('should_keep_lazy_slices_stable_without_artificial_owner_retention',
+        () {
       final acc = ProtocolByteAccumulator()
         ..add(Uint8List(64 * 1024)..[2] = 97);
       final frame = acc.take(acc.length);
       final slice = Uint8List.sublistView(frame, 2, 3);
-      expect(ProtocolByteAccumulator.retainFrame(slice), same(frame));
+      expect(ProtocolByteAccumulator.retainFrame(slice), isNull);
       final lazy = LazyString(slice);
       expect(lazy.value, 'a');
       lazy.bytes;

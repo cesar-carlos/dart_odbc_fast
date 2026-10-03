@@ -113,6 +113,19 @@ class OdbcTransactionService {
             ),
           );
         }
+        if (xa.state == XaState.committed) return userResult;
+        if (xa.state == XaState.rolledBack ||
+            xa.commitAttempted ||
+            xa.outcomeUnknown ||
+            xa.state == XaState.failedAfterPrepare ||
+            xa.state == XaState.failed) {
+          return Failure(
+            xa.lastError ??
+                const ValidationError(
+                  message: 'The XA action did not leave an active transaction',
+                ),
+          );
+        }
         Future<OdbcError?> phase(
           String operation,
           Future<bool> Function() invoke,
@@ -135,21 +148,20 @@ class OdbcTransactionService {
                 operation: operation,
                 code: OdbcErrorCode.transaction,
                 transactionId: xid.toString(),
-                outcomeUnknown: operation == 'xaCommitPrepared' ||
-                    operation == 'xaCommitOnePhase',
+                outcomeUnknown: xa.outcomeUnknown,
               ),
             );
           } on Object catch (error, stack) {
-            final primary = normalizeOdbcError(
-              error,
-              operation: operation,
-              stackTrace: stack,
-            );
+            final primary = xa.lastError ??
+                normalizeOdbcError(
+                  error,
+                  operation: operation,
+                  stackTrace: stack,
+                );
             return primary.withDetails(
               primary.details.copyWith(
                 transactionId: xid.toString(),
-                outcomeUnknown: operation == 'xaCommitPrepared' ||
-                    operation == 'xaCommitOnePhase',
+                outcomeUnknown: xa.outcomeUnknown,
               ),
             );
           }
@@ -160,10 +172,14 @@ class OdbcTransactionService {
           if (error != null) return Failure(error);
           return userResult;
         }
-        final end = await phase('xaEnd', xa.end);
-        if (end != null) return Failure(await _xaAbort(xa, end));
-        final prepare = await phase('xaPrepare', xa.prepare);
-        if (prepare != null) return Failure(await _xaAbort(xa, prepare));
+        if (xa.state == XaState.active) {
+          final end = await phase('xaEnd', xa.end);
+          if (end != null) return Failure(await _xaAbort(xa, end));
+        }
+        if (xa.state == XaState.idle) {
+          final prepare = await phase('xaPrepare', xa.prepare);
+          if (prepare != null) return Failure(await _xaAbort(xa, prepare));
+        }
         final commit = await phase('xaCommitPrepared', xa.commitPrepared);
         if (commit != null) return Failure(commit);
         return userResult;
@@ -221,6 +237,19 @@ class OdbcTransactionService {
       );
 
   Future<OdbcError> _xaAbort(XaTransactionHandle xa, OdbcError primary) async {
+    if (xa.commitAttempted ||
+        xa.outcomeUnknown ||
+        xa.state == XaState.failedAfterPrepare ||
+        xa.state == XaState.committed ||
+        xa.state == XaState.rolledBack) {
+      final original = xa.lastError ?? primary;
+      return original.withDetails(
+        original.details.copyWith(
+          outcomeUnknown: xa.outcomeUnknown || original.details.outcomeUnknown,
+          transactionId: xa.xid.toString(),
+        ),
+      );
+    }
     var combined = primary;
     try {
       if (xa.state == XaState.active && !await xa.end()) {

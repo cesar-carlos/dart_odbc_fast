@@ -56,6 +56,7 @@ class MultiResultStreamDecoder {
   final bool lazyStrings;
 
   final ProtocolByteAccumulator _buffer = ProtocolByteAccumulator();
+  (int, int)? _pendingHeader;
 
   /// Number of items decoded so far across all `feed` calls.
   int _itemsDecoded = 0;
@@ -82,6 +83,7 @@ class MultiResultStreamDecoder {
       while (chunk.length - offset >= _frameHeaderSize) {
         final tag = chunk[offset];
         final len = _readUint32Le(chunk, offset + 1);
+        _validateHeader(tag, len);
         final frameEnd = offset + _frameHeaderSize + len;
         if (frameEnd > chunk.length) break;
 
@@ -119,11 +121,14 @@ class MultiResultStreamDecoder {
     final items = <MultiResultItem>[];
 
     while (_buffer.length >= _frameHeaderSize) {
-      final headerView = _buffer.peek(_frameHeaderSize);
-      final tag = headerView[0];
-      final len = _readUint32Le(headerView, 1);
+      final header = _pendingHeader ?? _readHeader();
+      final (tag, len) = header;
       final frameBytes = _frameHeaderSize + len;
-      if (_buffer.length < frameBytes) break;
+      if (_buffer.length < frameBytes) {
+        _pendingHeader = header;
+        break;
+      }
+      _pendingHeader = null;
 
       final Uint8List payload;
       if (len == 0) {
@@ -137,6 +142,26 @@ class MultiResultStreamDecoder {
     }
 
     return items;
+  }
+
+  (int, int) _readHeader() {
+    final header = _buffer.copyPrefix(_frameHeaderSize);
+    final tag = header[0];
+    final len = _readUint32Le(header, 1);
+    _validateHeader(tag, len);
+    return (tag, len);
+  }
+
+  void _validateHeader(int tag, int length) {
+    if (tag != multiStreamItemTagResultSet &&
+        tag != multiStreamItemTagResultSetBatch &&
+        tag != multiStreamItemTagRowCount) {
+      throw FormatException('Streaming multi-result: unknown frame tag $tag');
+    }
+    if (tag == multiStreamItemTagRowCount && length != 8) {
+      throw FormatException('Streaming multi-result: RowCount frame expected '
+          '8-byte payload, got $length');
+    }
   }
 
   void _decodeItem(

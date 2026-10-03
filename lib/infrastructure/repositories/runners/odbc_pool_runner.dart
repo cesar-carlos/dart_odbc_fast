@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/connection_options.dart';
 import 'package:odbc_fast/domain/entities/odbc_event.dart';
 import 'package:odbc_fast/domain/entities/pool_state.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/pool_options.dart';
 import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
@@ -156,6 +157,8 @@ class OdbcPoolRunner {
   }
 
   Future<Result<Unit>> poolReleaseConnection(String connectionId) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     void releaseMetadata() {
       state.clearStatementMetadataForConnection(connectionId);
       state.connectionIds.remove(connectionId);
@@ -179,7 +182,18 @@ class OdbcPoolRunner {
         ValidationError(message: 'Invalid connection ID'),
       );
     }
+    final poolId = state.connectionPoolId[connectionId];
+    final checkouts = state.poolCheckouts[poolId];
     state.connectionLifetimes.remove(connectionId);
+    NativeCallContext.current?.onReconciled = (status) {
+      if (status == 0 &&
+          state.connectionIds[connectionId] == nativeId &&
+          !state.connectionLifetimes.containsKey(connectionId) &&
+          state.connectionPoolId[connectionId] == poolId &&
+          identical(checkouts, state.poolCheckouts[poolId])) {
+        releaseMetadata();
+      }
+    };
     return ffi.runBoolFfiWithCleanup(
       sync: (n) => n.poolReleaseConnection(nativeId),
       async: (a) => a.poolReleaseConnection(nativeId),
@@ -243,24 +257,30 @@ class OdbcPoolRunner {
         ValidationError(message: 'Invalid pool ID'),
       );
     }
-    (state.poolCheckouts[poolId] ?? const <String>{})
+    final originalCheckouts = state.poolCheckouts[poolId];
+    void closeMetadata() {
+      if (!identical(originalCheckouts, state.poolCheckouts[poolId])) return;
+      state.poolConnectionOptions.remove(poolId);
+      final checkouts = state.poolCheckouts.remove(poolId) ?? const <String>{};
+      for (final cId in checkouts) {
+        state.clearStatementMetadataForConnection(cId);
+        state.connectionIds.remove(cId);
+        state.connectionLifetimes.remove(cId);
+        state.connectionStrings.remove(cId);
+        state.connectionOptions.remove(cId);
+        state.connectionPoolId.remove(cId);
+      }
+    }
+
+    NativeCallContext.current?.onReconciled = (status) {
+      if (status == 0) closeMetadata();
+    };
+    (originalCheckouts ?? const <String>{})
         .forEach(state.connectionLifetimes.remove);
     return ffi.runBoolFfiWithCleanup(
       sync: (n) => n.poolClose(poolId),
       async: (a) => a.poolClose(poolId),
-      onSuccess: () {
-        state.poolConnectionOptions.remove(poolId);
-        final checkouts =
-            state.poolCheckouts.remove(poolId) ?? const <String>{};
-        for (final cId in checkouts) {
-          state.clearStatementMetadataForConnection(cId);
-          state.connectionIds.remove(cId);
-          state.connectionLifetimes.remove(cId);
-          state.connectionStrings.remove(cId);
-          state.connectionOptions.remove(cId);
-          state.connectionPoolId.remove(cId);
-        }
-      },
+      onSuccess: closeMetadata,
       errorFactory: odbcConnectionErrorFactory,
       fallbackMessage: 'Failed to close pool',
     );

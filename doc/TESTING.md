@@ -194,14 +194,21 @@ canonical spelling and opt-in meaning for live-driver flags.
 ## Dart hot-path comparison
 
 Run `dart run benchmarks/dart_hot_paths.dart` for cursor consumption and indexed
-column access; `--linear` retains the old column helper for comparison. Output
+column access and complete fragmented framing; `--linear` retains the old
+column helper for comparison. Output
 contains 15 measured samples after six warmups, in microseconds. Each sample
 uses eight rounds, except the single full frame which uses 64 rounds to reduce
-timer noise. Compare the same SDK, machine and workload. Frames cover small
+timer noise. Complete framing uses one round per sample. Compare the same SDK,
+machine and workload. Frames cover small
 coalesced inputs, large/full-capacity inputs, fragmentation and retained lazy
 text. When comparing revisions, copy the original accumulator into an ignored
-working directory and substitute only its import in this benchmark. No DSN or
-native ABI change is involved. Check the full distributions, not a single run.
+working directory for accumulator-only comparisons. For end-to-end framing,
+archive the baseline `lib/` tree and use a separate package configuration that
+maps `package:odbc_fast` to that tree, keeping dependency and SDK paths fixed.
+Copy the same benchmark to that directory; instrument only backing allocation
+and pending-byte copy counters, without changing baseline algorithms. No DSN
+or native ABI change is involved. Check distributions and repeat in reverse
+execution order to assess noisy cases.
 
 ### Measured comparison (2026-09-30)
 
@@ -238,8 +245,96 @@ tests. Local integration cases run without a DSN; live-driver cases explicitly
 skip when their prerequisites are unavailable. No live database result is
 claimed by this comparison.
 
-Validation for this revision: `dart analyze` reports no issues; the CI unit
+Validation recorded for the earlier cursor/reader revision: `dart analyze`
+reports no issues; the CI unit
 command passes 1,607 tests with three explicit skips. The complementary core,
 exports, documentation and examples suite passes 85 tests, and the CI protocol
 performance suite passes 10. Local integration passes 16 cases with 25 explicit
 live-driver skips. The CI slow-test check also passes its 1,500 ms threshold.
+
+### Buffer and lifecycle safety comparison (2026-10-03)
+
+Baseline `522dc45`, Windows x64, Dart 3.13.4 stable, sequential JIT processes
+with no concurrent test suites. Each process uses six warmups and 15 measured
+samples. The repeated run reverses process order. The following medians are
+from that repeated run; bootstrap intervals resample the two median
+distributions independently 2,000 times with seed 42. Ratios above 1 favor
+the revision. They describe this machine, rather than a portable guarantee.
+
+| Scenario | Baseline (microseconds) | Revised (microseconds) | Baseline/revised 95% interval |
+| --- | ---: | ---: | --- |
+| 500 frames, 32 bytes | 105 | 95 | 0.46–1.96 |
+| 2,000 frames, 32 bytes | 236 | 239 | 0.71–1.23 |
+| 8,000 frames, 32 bytes | 3,094 | 2,887 | 0.81–1.17 |
+| 16 frames, 65,536 bytes | 3,251 | 3,277 | 0.86–1.15 |
+| Single 65,536-byte frame, 64 rounds | 682 | 450 | 1.15–3.45 |
+| 13-byte fragments | 35,645 | 18,060 | 1.91–2.03 |
+| Complete 128 KiB frame, 1 KiB fragments | 6,104 | 200 | 15.12–43.25 |
+| Complete 256 KiB frame, 1 KiB fragments | 19,283 | 193 | 56.80–110.98 |
+| Complete 512 KiB frame, 1 KiB fragments | 58,963 | 222 | 110.28–363.22 |
+| Complete 1 MiB frame, 1 KiB fragments | 191,704 | 366 | 400.32–626.79 |
+| Retained lazy text | 1,095 | 882 | 1.18–1.37 |
+| Indexed column lookup | 6,074 | 5,616 | 1.04–1.19 |
+
+The small-frame/full-frame intervals include 1 for four retained scenarios;
+the repeated run provides no statistically significant regression there.
+The initial 500-frame sample looked slower, but that change did not persist
+when execution order was reversed. Complete 1 MiB framing improved about
+524 times in this local run.
+
+| Complete framing size | Baseline pending bytes copied | Revised pending bytes copied |
+| --- | ---: | ---: |
+| 128 KiB | 8,323,072 | 65,536 |
+| 256 KiB | 33,423,360 | 65,536 |
+| 512 KiB | 133,955,584 | 65,536 |
+| 1 MiB | 536,346,624 | 65,536 |
+
+Owned header prefixes no longer expose backing on every fragment, and the
+validated length is cached until completion. Pending bytes are copied once
+when capacity grows from 64 KiB to 1 MiB in these cases. Further growth doubles
+capacity, so assembly copies grow linearly rather than quadratically.
+Backing allocation counters include all warmup and measured rounds, not live
+heap size or every Dart object. For complete 1 MiB framing they fell from
+21,227,372,544 to 22,020,096 bytes across 21 rounds.
+
+The safety policy also has a measurable cost: after forced GC with only a
+derived byte view, `ByteData` or lazy string retained, the old finalizer could
+reuse the backing and corrupt the consumer's data. The separate allocation
+probe reported zero new backing bytes and invalid retained data for `522dc45`;
+the revision allocated 65,536 new backing bytes and preserved every view.
+Automatic recycling of exposed backing is therefore removed. Only unexposed
+abandoned buffers and explicit exclusive-ownership offers may enter the pool.
+
+Run the ownership check separately from the fast unit budget:
+
+```sh
+dart test test/integration/protocol_frame_ownership_gc_test.dart
+```
+
+It launches a child Dart VM with a local service, requests GC through the VM
+service, checks independent derived views after their original frames become
+unreachable, and always kills the child on exit or its 30-second deadline.
+The CI runs this as a separate step. It requires no DSN or native library.
+
+Deterministic fakes cover concurrent initialization, interrupted spawn/handshake,
+worker exit, partial failure, generation changes, completion evidence and late
+resources. Native evidence is per invocation: missing status does not imply
+consumption. A timeout completes the caller once while unresolved work retains
+capacity; maintenance runs on its owning worker and checks every cleanup result.
+Prepared XA resumption is adopted explicitly by immutable XID key. Unknown
+transaction outcomes prohibit conflicting work and automatic transaction
+decisions, including phases attempted inside a helper's callback. Dispose or
+worker death reports unconfirmed cleanup, because a blocked FFI call cannot be
+guaranteed to cancel from Dart. UTF-8 XID tests cover byte limits and invalid
+surrogates; recovery of old non-ASCII branches requires their original bytes.
+
+Validation of this safety revision: `dart analyze` reports no issues. The CI
+unit command passes 1,668 tests with three explicit skips; core, public exports,
+documentation and examples pass 85. FFI export verification confirms 111 symbols.
+The protocol performance guard passes 10 tests and the standalone GC process
+passes its ownership check. Local integration passes 17 cases with 25 explicit
+live-driver skips. The slow-test budget passes its 1,500 ms threshold (the
+slowest reported case was 1,023 ms); GC runs outside that unit budget. No live
+database result is claimed. Late successful pool release/close and async free
+also remove repository metadata, while the previously returned timeout remains
+a failure with its original operation and request identifiers.

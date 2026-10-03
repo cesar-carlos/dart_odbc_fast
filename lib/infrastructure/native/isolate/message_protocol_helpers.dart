@@ -526,7 +526,8 @@ class ValidateConnectionStringResponse extends WorkerResponse {
 
 /// Carries snapshots for legacy responses that have no metadata constructor.
 class WorkerReply {
-  const WorkerReply(this.response, this.failure);
+  const WorkerReply(this.response, this.failure, {this.executionStage});
   final WorkerResponse response;
   final WorkerFailureSnapshot? failure;
+  final NativeExecutionStage? executionStage;
 }

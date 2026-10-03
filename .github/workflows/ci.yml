@@ -118,6 +118,9 @@ jobs:
       - name: Dart protocol performance guard (no DSN)
         run: dart test test/performance/protocol_performance_test.dart
 
+      - name: Retained protocol views with forced GC (no DSN)
+        run: dart test test/integration/protocol_frame_ownership_gc_test.dart
+
       - name: Dart slow-test budget
         run: >
           dart run tool/test_slow_report.dart

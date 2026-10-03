@@ -46,6 +46,8 @@ class OdbcQueryMultiRunner {
     Uint8List? paramBuffer, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResult, OdbcError>(
@@ -56,6 +58,8 @@ class OdbcQueryMultiRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<QueryResult>> run() async {
+      final blocked = state.transactionBlock(connectionId);
+      if (blocked != null) return Failure(blocked);
       final nativeId = state.connectionIds[connectionId];
       if (nativeId == null) {
         return const Failure(
@@ -170,6 +174,8 @@ class OdbcQueryMultiRunner {
     String connectionId,
     String sql,
   ) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResultMulti, OdbcError>(
@@ -184,6 +190,8 @@ class OdbcQueryMultiRunner {
     final lazyStrings = opts?.lazyStrings ?? false;
 
     Future<Result<QueryResultMulti>> run() async {
+      final blocked = state.transactionBlock(connectionId);
+      if (blocked != null) return Failure(blocked);
       final nativeId = state.connectionIds[connectionId];
       if (nativeId == null) {
         return const Failure(
@@ -264,6 +272,8 @@ class OdbcQueryMultiRunner {
     String sql,
     List<ParamValue> params,
   ) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResultMulti, OdbcError>(
@@ -277,6 +287,8 @@ class OdbcQueryMultiRunner {
         opts?.initialResultBufferBytes ?? defaultInitialResultBufferBytes;
 
     Future<Result<QueryResultMulti>> run() async {
+      final blocked = state.transactionBlock(connectionId);
+      if (blocked != null) return Failure(blocked);
       final nativeId = state.connectionIds[connectionId];
       if (nativeId == null) {
         return const Failure(

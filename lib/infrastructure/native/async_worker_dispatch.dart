@@ -1,6 +1,18 @@
 part of 'async_native_odbc_connection.dart';
 
 mixin _AsyncWorkerDispatch on _AsyncOdbcState {
+  _AbandonedRequest _describe(
+    WorkerRequest request,
+    _WorkerChannel worker, {
+    bool maintenance = false,
+  });
+  void _validateRequest(WorkerRequest request);
+  Future<void> _reconcileLate(
+    _WorkerChannel worker,
+    _AbandonedRequest entry,
+    WorkerResponse response,
+  );
+
   Future<T> _sendRequest<T extends WorkerResponse>(
     WorkerRequest request,
   ) async {
@@ -18,9 +30,14 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
     _WorkerChannel worker,
     WorkerRequest request, {
     bool rerouteAfterBackpressure = false,
+    bool maintenance = false,
   }) async {
     final queueStopwatch = Stopwatch()..start();
-    final acquiredSlot = _acquireBackpressureSlot(request);
+    final context = NativeCallContext.current;
+    context?.resetInvocation();
+    if (!maintenance) _validateRequest(request);
+    final acquiredSlot =
+        maintenance ? false : _acquireBackpressureSlot(request);
     final bool waitedForSlot;
     final bool reservedSlot;
     if (acquiredSlot is Future<bool>) {
@@ -30,6 +47,13 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       waitedForSlot = false;
       reservedSlot = acquiredSlot;
     }
+    if (worker.generation != _generation || _isShuttingDown) {
+      if (reservedSlot) _releaseReservedBackpressureSlot();
+      throw const AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'The worker generation changed while awaiting capacity',
+      );
+    }
     final queueWaitMicros = (queueStopwatch..stop()).elapsedMicroseconds;
     final targetWorker = waitedForSlot && rerouteAfterBackpressure
         ? _resolveWorker(request)
@@ -37,14 +61,36 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
     final stopwatch = Stopwatch()..start();
     Completer<WorkerResponse>? completer;
     var slotReleased = false;
+    var counted = false;
     try {
       if (reservedSlot) {
         _releaseReservedBackpressureSlot();
         slotReleased = true;
       }
+      if (targetWorker.closed ||
+          targetWorker.generation != _generation ||
+          _isShuttingDown) {
+        throw const AsyncError(
+          code: AsyncErrorCode.workerTerminated,
+          message: 'The worker generation is no longer available',
+        );
+      }
+      if (!maintenance) _validateRequest(request);
+      final descriptor =
+          _describe(request, targetWorker, maintenance: maintenance);
+      targetWorker.requests[request.requestId] = descriptor;
+      if (!maintenance && request is CommitTransactionRequest) {
+        _blockedTransactions.add(request.txnId);
+      }
+      if (!maintenance && request is RollbackTransactionRequest) {
+        _blockedTransactions.add(request.txnId);
+      }
+      if (!maintenance && request is XaIdRequest) _blockedXa.add(request.xaId);
       completer = (targetWorker..recordQueueWait(queueWaitMicros)).send(
         request,
+        maintenance: maintenance,
       );
+      if (context != null) context.executionStage = null;
       _recordCancelAttempt(request, targetWorker);
       final effectiveTimeout = _requestTimeout ?? _defaultRequestTimeout;
       final response = effectiveTimeout == Duration.zero
@@ -53,7 +99,20 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
               effectiveTimeout,
               onTimeout: () {
                 targetWorker.removePending(request.requestId);
+                targetWorker.abandoned[request.requestId] = descriptor;
+                descriptor.timeout = QueryError(
+                  message: 'The worker operation timed out',
+                  details: OdbcErrorDetails(
+                    code: OdbcErrorCode.timeout,
+                    operation: request.type.name,
+                    requestId: request.requestId,
+                    workerId: targetWorker.index,
+                    connectionId: descriptor.connectionId?.toString(),
+                    outcomeUnknown: true,
+                  ),
+                );
                 targetWorker.timeouts++;
+                NativeCallContext.record(descriptor.timeout!);
                 final error = AsyncError(
                   code: AsyncErrorCode.requestTimeout,
                   message:
@@ -61,48 +120,88 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
                       '${effectiveTimeout.inSeconds}s',
                 );
                 // Complete the underlying Completer with the same error so any
-                // external listener on completer.future also resolves rather
-                // than dangling. Late worker responses are a no-op because the
-                // pendingRequests entry is already removed.
+                // external listener resolves. The abandoned descriptor retains
+                // late completion evidence separately from the returned Future.
                 if (!completer!.isCompleted) {
                   completer.completeError(error);
                 }
                 throw error;
               },
             );
+      if (targetWorker.closed ||
+          targetWorker.generation != _generation ||
+          _isShuttingDown) {
+        throw const AsyncError(
+          code: AsyncErrorCode.workerTerminated,
+          message: 'The worker generation ended before delivery',
+        );
+      }
       final snapshot =
           targetWorker.failureSnapshots.remove(request.requestId) ??
               response.failure;
-      final context = NativeCallContext.current;
       if (context != null) {
-        context.receivedResponse = true;
+        context
+          ..executionStage =
+              targetWorker.executionStages.remove(request.requestId) ??
+                  snapshot?.executionStage
+          ..receivedResponse = true;
         if (response is BoolResponse) {
-          context.completionStatus = response.completionStatus;
+          context.completionStatus =
+              response.completionStatus ?? (response.value ? 0 : null);
         }
       }
       if (snapshot != null) {
         NativeCallContext.record(snapshot.toError(targetWorker.index));
       }
-      if (snapshot != null || _responseHasError(response)) {
+      if (request is CommitTransactionRequest ||
+          request is RollbackTransactionRequest) {
+        final id = descriptor.resourceId;
+        final status = response is BoolResponse
+            ? response.completionStatus ?? (response.value ? 0 : null)
+            : null;
+        if (status == 0 ||
+            status == 1 ||
+            status == 2 ||
+            snapshot?.executionStage == NativeExecutionStage.notStarted) {
+          _blockedTransactions.remove(id);
+        }
+        if (status == 1 && descriptor.connectionId != null) {
+          _quarantinedConnections.add(descriptor.connectionId!);
+        }
+      } else if (request is XaIdRequest &&
+          (snapshot?.executionStage == NativeExecutionStage.notStarted ||
+              (response is IntResponse &&
+                  !(snapshot?.outcomeUnknown ?? false)))) {
+        _blockedXa.remove(request.xaId);
+      }
+      counted = true;
+      if (!maintenance && (snapshot != null || _responseHasError(response))) {
         targetWorker.failedRequests++;
-      } else {
+      } else if (!maintenance) {
         targetWorker.completedRequests++;
       }
       _recordCancelResponse(request, response, targetWorker);
       _recordAffinity(request, response, targetWorker);
       return response as T;
     } catch (_) {
-      targetWorker.failedRequests++;
+      if (!maintenance && !counted) targetWorker.failedRequests++;
       rethrow;
     } finally {
       final elapsedMicros = stopwatch.elapsedMicroseconds;
       if (reservedSlot && !slotReleased && completer == null) {
         _releaseReservedBackpressureSlot();
       }
-      targetWorker
-        ..recordLatency(elapsedMicros)
-        ..recordExecution(elapsedMicros)
-        ..finishRequest();
+      targetWorker.requests.remove(request.requestId);
+      if (!maintenance) {
+        targetWorker
+          ..recordLatency(elapsedMicros)
+          ..recordExecution(elapsedMicros);
+        if (!targetWorker.abandoned.containsKey(request.requestId) &&
+            completer != null) {
+          targetWorker.finishRequest();
+        }
+      }
+      targetWorker.executionStages.remove(request.requestId);
       _drainBackpressureWaiters();
     }
   }
@@ -122,7 +221,29 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
   }
 
   void _handleResponse(WorkerResponse response, _WorkerChannel worker) {
-    worker.complete(response);
+    final entry = worker.abandoned[response.requestId];
+    if (entry != null) {
+      if (entry.responded) return;
+      entry.responded = true;
+      worker.maintenance = worker.maintenance
+          .then((_) => _reconcileLate(worker, entry, response))
+          .catchError((Object error, StackTrace stack) {
+        _diagnose(
+          translateOdbcError(
+            error,
+            operation: 'reconcileLate',
+            stackTrace: stack,
+          ),
+        );
+      });
+      return;
+    }
+    if (worker.pendingRequests.containsKey(response.requestId)) {
+      worker.complete(response);
+    } else {
+      worker.failureSnapshots.remove(response.requestId);
+      worker.executionStages.remove(response.requestId);
+    }
   }
 
   FutureOr<bool> _acquireBackpressureSlot(WorkerRequest request) {
@@ -168,7 +289,14 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
   int get _pendingOrReservedRequests {
     return _workers.fold<int>(
           0,
-          (total, worker) => total + worker.pendingRequests.length,
+          (total, worker) =>
+              total +
+              worker.pendingRequests.keys
+                  .where((id) => !(worker.requests[id]?.maintenance ?? false))
+                  .length +
+              worker.abandoned.values
+                  .where((entry) => !entry.maintenance)
+                  .length,
         ) +
         _backpressureSlotsReserved;
   }
@@ -259,7 +387,14 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
   int _nextRequestId() => _requestIdCounter++;
 
   _WorkerChannel _leastLoadedWorker() {
-    return _workers.reduce((a, b) {
+    final ready = _workers.where((worker) => worker.isReady);
+    if (ready.isEmpty) {
+      throw const AsyncError(
+        code: AsyncErrorCode.workerTerminated,
+        message: 'No worker is available',
+      );
+    }
+    return ready.reduce((a, b) {
       final activeComparison = a.activeRequests.compareTo(b.activeRequests);
       if (activeComparison < 0) return a;
       if (activeComparison > 0) return b;
@@ -439,13 +574,17 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
       case (ConnectRequest(), ConnectResponse(:final connectionId))
           when connectionId > 0:
         _connectionWorkerById[connectionId] = worker.index;
+        _nativeConnectionLifetimes[connectionId] = Object();
+        _deadConnections.remove(connectionId);
       case (
             PoolGetConnectionRequest(:final poolId),
             IntResponse(value: final connectionId)
           )
           when connectionId > 0:
         _connectionWorkerById[connectionId] = worker.index;
+        _nativeConnectionLifetimes[connectionId] = Object();
         _connectionPoolById[connectionId] = poolId;
+        _deadConnections.remove(connectionId);
       case (PoolCloseRequest(:final poolId), BoolResponse(value: true)):
         _connectionPoolById.entries
             .where((entry) => entry.value == poolId)
@@ -480,14 +619,19 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         _transactionConnectionById[id] = connectionId;
       case (
             CommitTransactionRequest(:final txnId),
-            BoolResponse(:final completionStatus)
+            BoolResponse(:final completionStatus, :final value)
           )
-          when completionStatus != 2:
+          when completionStatus == 0 ||
+              completionStatus == 1 ||
+              (completionStatus == null && value):
       case (
             RollbackTransactionRequest(:final txnId),
-            BoolResponse(:final completionStatus)
+            BoolResponse(:final completionStatus, :final value)
           )
-          when completionStatus != 2:
+          when completionStatus == 0 ||
+              completionStatus == 1 ||
+              (completionStatus == null && value):
+        _blockedTransactions.remove(txnId);
         _transactionWorkerById.remove(txnId);
         _transactionConnectionById.remove(txnId);
       case (XaStartRequest(:final connectionId), IntResponse(value: final id))
@@ -505,6 +649,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
                   request.type == RequestType.xaRollbackPrepared ||
                   request.type == RequestType.xaCommitOnePhase ||
                   request.type == RequestType.xaRollbackActive):
+        _blockedXa.remove(xaId);
         _xaWorkerById.remove(xaId);
         _xaConnectionById.remove(xaId);
       case (
@@ -560,6 +705,12 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
   }
 
   void _clearConnectionAffinity(int connectionId) {
+    _nativeConnectionLifetimes.remove(connectionId);
+    _quarantinedConnections.remove(connectionId);
+    _resumedXa
+        .removeWhere((key, _) => key.startsWith('$_generation:$connectionId:'));
+    _pendingXaResume
+        .removeWhere((key) => key.startsWith('$_generation:$connectionId:'));
     _connectionWorkerById.remove(connectionId);
     _connectionPoolById.remove(connectionId);
     for (final entry in [
@@ -592,6 +743,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         .map((entry) => entry.key)
         .toList(growable: false);
     for (final txnId in txnIds) {
+      _blockedTransactions.remove(txnId);
       _transactionWorkerById.remove(txnId);
       _transactionConnectionById.remove(txnId);
     }
@@ -600,6 +752,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         .map((entry) => entry.key)
         .toList(growable: false);
     for (final xaId in xaIds) {
+      _blockedXa.remove(xaId);
       _xaWorkerById.remove(xaId);
       _xaConnectionById.remove(xaId);
     }
@@ -618,6 +771,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         .map((e) => e.key)
         .toList(growable: false);
     for (final txnId in txnIdsForWorker) {
+      _blockedTransactions.remove(txnId);
       _transactionWorkerById.remove(txnId);
       _transactionConnectionById.remove(txnId);
     }
@@ -626,6 +780,7 @@ mixin _AsyncWorkerDispatch on _AsyncOdbcState {
         .map((e) => e.key)
         .toList(growable: false);
     for (final xaId in xaIdsForWorker) {
+      _blockedXa.remove(xaId);
       _xaWorkerById.remove(xaId);
       _xaConnectionById.remove(xaId);
     }

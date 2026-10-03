@@ -5,6 +5,9 @@ import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:result_dart/result_dart.dart';
 
+/// Local ownership is retained while completion lacks native evidence.
+enum LocalTransactionState { active, finishing, unknown }
+
 /// Mutable Dart-side state owned by `OdbcRepositoryImpl`.
 ///
 /// Step 1 of the repository split (see
@@ -28,6 +31,33 @@ class OdbcRepositoryState {
 
   final Map<String, Object> connectionLifetimes = {};
   final Map<int, String> transactionOwners = {};
+  final Map<int, LocalTransactionState> transactionStates = {};
+  final Set<String> uncertainConnections = {};
+
+  OdbcError? transactionBlock(String connectionId) {
+    final blocked = transactionOwners.entries.any(
+      (entry) =>
+          entry.value == connectionId &&
+          transactionStates[entry.key] != null &&
+          transactionStates[entry.key] != LocalTransactionState.active,
+    );
+    final xaBlocked =
+        xaTransactions[connectionId]?.any((h) => h.outcomeUnknown) ?? false;
+    if (!blocked &&
+        !xaBlocked &&
+        !uncertainConnections.contains(connectionId)) {
+      return null;
+    }
+    return QueryError(
+      message: 'The transaction outcome is not confirmed',
+      details: OdbcErrorDetails(
+        code: OdbcErrorCode.transaction,
+        connectionId: connectionId,
+        outcomeUnknown: true,
+      ),
+    );
+  }
+
   final Map<String, List<XaTransactionHandle>> xaTransactions = {};
 
   void registerXa(String connectionId, XaTransactionHandle handle) {
@@ -39,6 +69,7 @@ class OdbcRepositoryState {
   }
 
   bool hasTransaction(String connectionId) =>
+      uncertainConnections.contains(connectionId) ||
       transactionOwners.containsValue(connectionId) ||
       (xaTransactions[connectionId]?.any(
             (h) =>
@@ -85,6 +116,7 @@ class OdbcRepositoryState {
   /// Drops every cached metadata entry that belongs to [connectionId].
   /// Called from `disconnect()` and `_onUnderlyingWorkerRecovered`.
   void clearStatementMetadataForConnection(String connectionId) {
+    uncertainConnections.remove(connectionId);
     final stmtIdsToRemove = statementConnectionByStmtId.entries
         .where((entry) => entry.value == connectionId)
         .map((entry) => entry.key)
@@ -93,6 +125,8 @@ class OdbcRepositoryState {
       statementConnectionByStmtId.remove(stmtId);
       namedParamOrderByStmtId.remove(stmtId);
     }
+    transactionStates
+        .removeWhere((txnId, _) => transactionOwners[txnId] == connectionId);
     transactionOwners.removeWhere((_, id) => id == connectionId);
     xaTransactions.remove(connectionId);
     asyncRequestConnectionById.removeWhere((_, id) => id == connectionId);
@@ -110,6 +144,8 @@ class OdbcRepositoryState {
   void clearAll() {
     connectionLifetimes.clear();
     transactionOwners.clear();
+    transactionStates.clear();
+    uncertainConnections.clear();
     xaTransactions.clear();
     connectionIds.clear();
     connectionOptions.clear();

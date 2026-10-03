@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
@@ -57,10 +58,26 @@ class Xid {
     String bqual = '',
   }) {
     return Xid(
-      gtrid: Uint8List.fromList(gtrid.codeUnits),
+      gtrid: _encode(gtrid),
       formatId: formatId,
-      bqual: Uint8List.fromList(bqual.codeUnits),
+      bqual: _encode(bqual),
     );
+  }
+
+  static Uint8List _encode(String value) {
+    for (var i = 0; i < value.length; i++) {
+      final unit = value.codeUnitAt(i);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        if (++i >= value.length ||
+            value.codeUnitAt(i) < 0xDC00 ||
+            value.codeUnitAt(i) > 0xDFFF) {
+          throw ArgumentError('XID contains an unpaired UTF-16 surrogate');
+        }
+      } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        throw ArgumentError('XID contains an unpaired UTF-16 surrogate');
+      }
+    }
+    return Uint8List.fromList(utf8.encode(value));
   }
 
   final int formatId;

@@ -1,15 +1,14 @@
-// Structured error handling — 12+ typed Dart classes (v3.0).
+// Typed errors, stable presentation codes and explicit recovery policy.
 // Run: dart run example/structured_errors_demo.dart
 //
-// No database required — exercises every concrete `OdbcError` subclass
-// added since v1, including the seven new variants from v3.0.
+// No database required. Technical driver messages stay out of userMessage.
 
 import 'package:odbc_fast/odbc_fast.dart';
 
 void main() {
   AppLogger.initialize();
 
-  AppLogger.info('--- v1 error classes --------------------------------');
+  AppLogger.info('--- Core errors -------------------------------------');
   _show(
     const ConnectionError(message: 'TCP connect failed', sqlState: '08S01'),
   );
@@ -26,7 +25,7 @@ void main() {
   _show(const EnvironmentNotInitializedError());
 
   AppLogger.info('');
-  AppLogger.info('--- v3.0 error classes ------------------------------');
+  AppLogger.info('--- Resource and cleanup errors ---------------------');
   _show(const NoMoreResultsError());
   _show(const MalformedPayloadError(message: 'truncated null bitmap'));
   _show(
@@ -57,10 +56,10 @@ void main() {
   ];
   for (final e in examples) {
     final action = switch (e.category) {
-      ErrorCategory.transient => 'retry with backoff',
+      ErrorCategory.transient => 'evaluate explicit idempotency policy',
       ErrorCategory.fatal => 'abort and surface to caller',
       ErrorCategory.validation => 'fix caller input — never retry',
-      ErrorCategory.connectionLost => 'reconnect and retry once',
+      ErrorCategory.connectionLost => 'restore connection; no automatic replay',
     };
     final type = e.runtimeType.toString().padRight(28);
     final cat = e.category.name.padRight(16);
@@ -71,5 +70,6 @@ void main() {
 void _show(OdbcError e) {
   final type = e.runtimeType.toString().padRight(28);
   final cat = e.category.name.padRight(16);
-  AppLogger.info('$type | category=$cat | $e');
+  AppLogger.info('$type | category=$cat | code=${e.code.name}');
+  AppLogger.info('  userMessage=${e.userMessage}');
 }

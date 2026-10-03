@@ -51,6 +51,8 @@ class OdbcQuerySyncRunner {
     List<ParamValue> params, {
     ResultEncoding resultEncoding = ResultEncoding.rowMajor,
   }) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<QueryResult, OdbcError>(
@@ -61,6 +63,8 @@ class OdbcQuerySyncRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<QueryResult>> run() async {
+      final blocked = state.transactionBlock(connectionId);
+      if (blocked != null) return Failure(blocked);
       final nativeId = state.connectionIds[connectionId];
       if (nativeId == null) {
         return const Failure(
@@ -153,6 +157,8 @@ class OdbcQuerySyncRunner {
     String sql,
     List<ParamValue> params,
   ) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<TypedColumnarResult, OdbcError>(
@@ -163,6 +169,8 @@ class OdbcQuerySyncRunner {
     final opts = state.optionsFor(connectionId);
 
     Future<Result<TypedColumnarResult>> run() async {
+      final blocked = state.transactionBlock(connectionId);
+      if (blocked != null) return Failure(blocked);
       final nativeId = state.connectionIds[connectionId];
       if (nativeId == null) {
         return const Failure(

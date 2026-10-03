@@ -32,6 +32,8 @@ class OdbcQueryPreparedRunner {
     String sql, {
     int timeoutMs = 0,
   }) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<int, OdbcError>(

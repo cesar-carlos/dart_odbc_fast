@@ -1,419 +1,54 @@
-// X/Open XA / 2PC demo (Sprint 4.3 + 4.3c).
-//
-// Showcases the full Two-Phase Commit lifecycle via the
-// `XaTransactionHandle` + `Xid` API. Demonstrated:
-//
-//   1. Phase 1 + Phase 2 commit:
-//        xaStart → end → prepare → commitPrepared
-//   2. 1RM optimisation (fuses prepare + commit on a single RM):
-//        xaStart → commitOnePhase
-//   3. Crash-recovery flow:
-//        xaStart → end → prepare → (process restart) →
-//        xaRecover → xaResumePrepared → commitPrepared
-//   4. (Bonus) DML-inside-branch — relevant for Oracle, where a
-//        branch with no DML returns XA_RDONLY=3 from xa_prepare and
-//        Oracle silently auto-completes it (no entry in
-//        DBA_PENDING_TRANSACTIONS, nothing to commit prepared).
-//
-// Engine matrix:
-//
-//   - PostgreSQL (BEGIN + PREPARE TRANSACTION + pg_prepared_xacts) ✅
-//   - MySQL / MariaDB (XA START / END / PREPARE / COMMIT / RECOVER) ✅
-//   - DB2 (same SQL grammar as MySQL) ✅
-//   - Oracle 10g+ (SYS.DBMS_XA PL/SQL + DBA_PENDING_TRANSACTIONS) ✅ (v3.4.1)
-//   - SQL Server (MSDTC; Windows build with `--features xa-dtc`) ✅
-//     Basic lifecycle is supported; `Reenlist` / RM recovery remains
-//     operational follow-up work.
-//   - SQLite / Snowflake / others — UnsupportedFeature (no 2PC)
-//
+// XA through Result services: one decision per branch, no automatic recovery.
 // Run: dart run example/xa_2pc_demo.dart
-//
-// Requires `ODBC_TEST_DSN` (or `ODBC_DSN`) pointing at PostgreSQL,
-// MySQL, DB2, MariaDB, Oracle, or SQL Server on a Windows `xa-dtc` build.
-// The demo gates on `supportsXa` and skips with a friendly message when the
-// loaded native library predates Sprint 4.3.
-//
-// Section 6 also shows the high-level service helper
-// `IOdbcService.runInXaTransaction` (preferred for application code).
-//
-// Required Oracle privileges (when DSN points at Oracle): the
-// connecting user needs EXECUTE on SYS.DBMS_XA (default for SYSTEM),
-// FORCE [ANY] TRANSACTION (for crash-recovery), and SELECT on
-// DBA_PENDING_TRANSACTIONS. The gvenzl/oracle-xe image used by
-// docker compose ships with these enabled out of the box for SYSTEM.
+// Requires a driver/native build with XA support.
+// Optional: ODBC_XA_ONE_PHASE=1 (only one participating resource manager),
+// ODBC_XA_SQL (statement inside the branch), ODBC_XA_RECOVER_ONLY=1.
+// Oracle needs DML for a meaningful prepared branch; supply suitable SQL.
+// The transaction manager must durably record the XID and its decision.
 
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:odbc_fast/odbc_fast.dart';
-import 'package:odbc_fast/odbc_fast_native.dart';
-import 'package:result_dart/result_dart.dart';
 
 import 'common.dart';
 
-void main() async {
-  AppLogger.initialize();
+Future<void> main() =>
+    withExampleConnection((locator, service, connection) async {
+      if (Platform.environment['ODBC_XA_RECOVER_ONLY'] == '1') {
+        final branches = (await service.xaRecover(connection.id)).getOrThrow();
+        for (final xid in branches) {
+          reportExampleProgress('Prepared branch: $xid');
+        }
+        reportExampleProgress(
+          'Recovery listing only; no decision was applied.',
+        );
+        // A transaction manager can explicitly call xaResumePrepared with an
+        // original XID, then apply its durable commit/rollback decision once.
+        // Never commit every branch returned by xaRecover.
+        return;
+      }
 
-  final dsn = requireExampleDsn();
-  if (dsn == null) {
-    AppLogger.info('ODBC_TEST_DSN not set; skipping live XA demo.');
-    return;
-  }
-
-  final native = NativeOdbcConnection()..initialize();
-
-  if (!native.supportsXa) {
-    AppLogger.info(
-      'The loaded native library does not export the XA / 2PC FFI '
-      'family (Sprint 4.3+). Rebuild the engine from a 3.4+ source '
-      'tree or skip this demo.',
-    );
-    native.dispose();
-    return;
-  }
-
-  final connId = native.connect(dsn);
-  if (connId == 0) {
-    AppLogger.severe('Connect failed: ${native.getError()}');
-    native.dispose();
-    return;
-  }
-  AppLogger.info('Connected (native conn id $connId)');
-
-  try {
-    // -----------------------------------------------------------------
-    // 1. Full 2PC lifecycle: xa_start → end → prepare → commitPrepared.
-    //
-    // The XID identifies this branch globally; `Xid.fromStrings` UTF-8
-    // encodes the gtrid/bqual for you. In a real distributed
-    // transaction the Transaction Manager generates the XID and shares
-    // it with every Resource Manager.
-    // -----------------------------------------------------------------
-    AppLogger.info('--- 1. Full 2PC lifecycle (commit) ---');
-    final xidA = Xid.fromStrings(
-      gtrid: 'demo-2pc-${DateTime.now().microsecondsSinceEpoch}',
-      bqual: 'branch-A',
-    );
-    final xa = native.xaStart(connId, xidA);
-    if (xa == null) {
-      AppLogger.severe('xaStart failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  Active branch xa_id=${xa.xaId}, state=${xa.state}');
-
-    // ... your DML would run here, on this connection ...
-
-    if (!await xa.end()) {
-      AppLogger.severe('xa_end failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  After xa_end → state=${xa.state}');
-
-    if (!await xa.prepare()) {
-      AppLogger.severe('xa_prepare failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  After xa_prepare → state=${xa.state}');
-
-    if (!await xa.commitPrepared()) {
-      AppLogger.severe('xa_commit_prepared failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  After commit → state=${xa.state}');
-
-    // -----------------------------------------------------------------
-    // 2. 1RM optimisation: fuse prepare + commit when this branch is
-    //    the sole participant in the global transaction. Avoids the
-    //    disk write of the prepare log.
-    //
-    // **Only safe when no other RM has enlisted in the same global
-    // transaction.** A normal Transaction Manager will not pick this
-    // path; it's an explicit single-RM shortcut.
-    // -----------------------------------------------------------------
-    AppLogger.info('--- 2. 1RM optimisation (commit_one_phase) ---');
-    final xidB = Xid.fromStrings(
-      gtrid: 'demo-1rm-${DateTime.now().microsecondsSinceEpoch}',
-      bqual: 'branch-B',
-    );
-    final xa1rm = native.xaStart(connId, xidB);
-    if (xa1rm == null) {
-      AppLogger.severe('xaStart failed: ${native.getError()}');
-      return;
-    }
-    if (!await xa1rm.commitOnePhase()) {
-      AppLogger.severe('commit_one_phase failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  After commit_one_phase → state=${xa1rm.state}');
-
-    // -----------------------------------------------------------------
-    // 3. Crash-recovery flow.
-    //
-    // Simulate the interesting half: prepare a branch, leave it
-    // pending, then enumerate it via xaRecover and resume it on a
-    // different XaTransactionHandle. In production this is exactly
-    // what the Transaction Manager does after a process restart.
-    // -----------------------------------------------------------------
-    AppLogger.info('--- 3. Crash-recovery flow ---');
-    final xidC = Xid(
-      formatId: 0,
-      gtrid: Uint8List.fromList(
-        'demo-recover-${DateTime.now().microsecondsSinceEpoch}'.codeUnits,
-      ),
-      bqual: Uint8List.fromList('branch-C'.codeUnits),
-    );
-    final pending = native.xaStart(connId, xidC);
-    if (pending == null) {
-      AppLogger.severe('xaStart (recovery prep) failed: ${native.getError()}');
-      return;
-    }
-    await pending.end();
-    await pending.prepare();
-    AppLogger.info('  Prepared but NOT committed: ${pending.xid}');
-
-    // In a real crash-recovery scenario the process would die here.
-    // We simulate it by enumerating pending XIDs and resuming xidC by
-    // value (not by reusing the `pending` handle).
-    final recovered = native.xaRecover(connId);
-    if (recovered == null) {
-      AppLogger.severe('xaRecover failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info('  xaRecover returned ${recovered.length} prepared XID(s):');
-    for (final x in recovered) {
-      AppLogger.info('    - $x');
-    }
-
-    final resumed = native.xaResumePrepared(connId, xidC);
-    if (resumed == null) {
-      AppLogger.severe('xaResumePrepared failed: ${native.getError()}');
-      return;
-    }
-    AppLogger.info(
-      '  Resumed handle xa_id=${resumed.xaId}, state=${resumed.state}',
-    );
-
-    if (!await resumed.commitPrepared()) {
-      AppLogger.severe(
-        'commitPrepared after resume failed: ${native.getError()}',
+      final xid = Xid.fromStrings(
+        gtrid: 'odbc-demo-${DateTime.now().microsecondsSinceEpoch}',
+        bqual: 'branch-1',
       );
-      return;
-    }
-    AppLogger.info('  Recovery commit OK → state=${resumed.state}');
-
-    // -----------------------------------------------------------------
-    // 4. Bonus: DML inside the branch.
-    //
-    // On Oracle a branch with no DML returns XA_RDONLY=3 from
-    // xa_prepare and is silently auto-completed by the engine — it
-    // never appears in DBA_PENDING_TRANSACTIONS, and the follow-up
-    // commitPrepared returns XAER_NOTA which we tolerate as a no-op.
-    // For a meaningful 2PC log entry the branch needs at least one
-    // INSERT/UPDATE/DELETE. PG / MySQL / MariaDB / DB2 always log,
-    // so the same code path works for all engines.
-    //
-    // The demo creates a tiny scratch table, runs an INSERT inside
-    // the branch, prepares + commits, then verifies the row landed.
-    // -----------------------------------------------------------------
-    AppLogger.info('--- 4. Bonus: DML inside the XA branch ---');
-    final tableName = 'xa_demo_${DateTime.now().millisecondsSinceEpoch}';
-
-    // CREATE TABLE outside the XA branch (DDL inside an XA branch is
-    // engine-dependent and not what this demo is showing). Wrap in
-    // try-finally so we always clean up.
-    final created = native.executeQueryParams(
-      connId,
-      'CREATE TABLE $tableName (k VARCHAR(64))',
-      const [],
-    );
-    if (created == null) {
-      AppLogger.severe('  CREATE TABLE failed: ${native.getError()}');
-    } else {
-      try {
-        final xidD = Xid.fromStrings(
-          gtrid: 'demo-dml-${DateTime.now().microsecondsSinceEpoch}',
-          bqual: 'branch-D',
-        );
-        final xaDml = native.xaStart(connId, xidD);
-        if (xaDml == null) {
-          AppLogger.severe('  xaStart (DML) failed: ${native.getError()}');
-        } else {
-          // The INSERT runs on the same connection that's attached to
-          // the branch, so it's recorded against this XID.
-          final inserted = native.executeQueryParams(
-            connId,
-            "INSERT INTO $tableName (k) VALUES ('committed-via-xa')",
-            const [],
-          );
-          if (inserted == null) {
-            AppLogger.severe(
-              '  INSERT inside XA branch failed: ${native.getError()}',
-            );
-          } else {
-            AppLogger.info('  INSERT inside XA branch OK');
-          }
-
-          await xaDml.end();
-          await xaDml.prepare();
-
-          // After PREPARE the row exists logically but is not visible
-          // to other sessions. xaRecover should now list xidD.
-          final recoveredAfter = native.xaRecover(connId);
-          final present = recoveredAfter?.any((x) => x == xidD) ?? false;
-          AppLogger.info(
-            '  After prepare: branch is in DBA_PENDING_TRANSACTIONS = $present',
-          );
-
-          if (!await xaDml.commitPrepared()) {
-            AppLogger.severe(
-              '  commitPrepared (DML) failed: ${native.getError()}',
-            );
-          } else {
-            AppLogger.info('  commitPrepared OK → row is now visible');
-          }
-
-          // Verify the row landed.
-          final verified = native.executeQueryParams(
-            connId,
-            "SELECT COUNT(*) FROM $tableName WHERE k = 'committed-via-xa'",
-            const [],
-          );
-          AppLogger.info(
-            '  SELECT COUNT(*) returned ${verified?.lengthInBytes ?? 0} bytes '
-            '(non-zero ⇒ row visible)',
-          );
-        }
-      } finally {
-        native.executeQueryParams(connId, 'DROP TABLE $tableName', const []);
-      }
-    }
-
-    // -----------------------------------------------------------------
-    // 5. The exception-safe helper: XaTransactionHandle.runWithStart.
-    //
-    // Mirrors `TransactionHandle.runWithBegin` for local transactions.
-    // Runs the action inside a fresh branch and drives the full 2PC
-    // lifecycle (end → prepare → commit_prepared) on success, or the
-    // appropriate rollback path on any throw — without you having to
-    // chase every step manually. Same engine matrix as the rest of
-    // the demo (PG / MySQL / MariaDB / DB2 / Oracle).
-    //
-    // For the 1RM optimisation use `runWithStartOnePhase`, which
-    // collapses the lifecycle into `xa_commit_one_phase`.
-    // -----------------------------------------------------------------
-    AppLogger.info('--- 5. Helper: XaTransactionHandle.runWithStart ---');
-    final tableHelper = 'xa_helper_${DateTime.now().millisecondsSinceEpoch}';
-    final created2 = native.executeQueryParams(
-      connId,
-      'CREATE TABLE $tableHelper (k VARCHAR(64))',
-      const [],
-    );
-    if (created2 == null) {
-      AppLogger.severe('  CREATE TABLE failed: ${native.getError()}');
-    } else {
-      try {
-        final xidE = Xid.fromStrings(
-          gtrid: 'demo-helper-${DateTime.now().microsecondsSinceEpoch}',
-          bqual: 'branch-E',
-        );
-
-        final committedRows = await XaTransactionHandle.runWithStart<int>(
-          () => native.xaStart(connId, xidE),
-          (xa) async {
-            // The closure runs while the branch is Active. The helper
-            // takes care of end → prepare → commit_prepared on return,
-            // and best-effort rollback on any throw.
-            final inserted = native.executeQueryParams(
-              connId,
-              "INSERT INTO $tableHelper (k) VALUES ('via-helper')",
-              const [],
-            );
-            if (inserted == null) {
-              throw StateError(
-                'INSERT failed inside helper: ${native.getError()}',
-              );
-            }
-            return 1;
-          },
-        );
-        AppLogger.info('  Helper committed $committedRows row(s) via 2PC');
-
-        // Demonstrate the rollback path: any throw inside the closure
-        // unwinds the branch (xa_end + xa_rollback{,_prepared}) and
-        // rethrows, so the caller can react with normal try / catch.
-        final xidF = Xid.fromStrings(
-          gtrid: 'demo-helper-roll-${DateTime.now().microsecondsSinceEpoch}',
-          bqual: 'branch-F',
-        );
-        try {
-          await XaTransactionHandle.runWithStart<void>(
-            () => native.xaStart(connId, xidF),
-            (xa) async {
-              native.executeQueryParams(
-                connId,
-                "INSERT INTO $tableHelper (k) VALUES ('rolled-back')",
-                const [],
-              );
-              throw Exception('simulated business-rule failure');
-            },
-          );
-        } on Exception catch (e) {
-          AppLogger.info('  Helper rolled back as expected: $e');
-        }
-      } finally {
-        native.executeQueryParams(connId, 'DROP TABLE $tableHelper', const []);
-      }
-    }
-  } finally {
-    native
-      ..disconnect(connId)
-      ..dispose();
-    AppLogger.info('Disconnected (native).');
-  }
-
-  // -----------------------------------------------------------------
-  // 6. High-level service API: IOdbcService.runInXaTransaction.
-  //
-  // Prefer this path in application code: begin/end/prepare/commit (or
-  // one-phase) and rollback-on-failure are handled by the service.
-  // -----------------------------------------------------------------
-  AppLogger.info('--- 6. Service helper: runInXaTransaction ---');
-  final locator = ServiceLocator()..initialize();
-  final service = locator.syncService;
-  final init = await service.initialize();
-  if (init.isError()) {
-    AppLogger.warning('Service init failed: ${init.exceptionOrNull()}');
-    locator.shutdown();
-    return;
-  }
-
-  final connResult = await service.connect(dsn);
-  final conn = connResult.getOrNull();
-  if (conn == null) {
-    AppLogger.warning(
-      'Service connect failed: ${connResult.exceptionOrNull()}',
-    );
-    locator.shutdown();
-    return;
-  }
-
-  try {
-    final xid = Xid.fromStrings(
-      gtrid: 'demo-svc-${DateTime.now().microsecondsSinceEpoch}',
-      bqual: 'branch-svc',
-    );
-    final onePhase = await service.runInXaTransaction<String>(
-      conn.id,
-      xid,
-      (xa) async => const Success('ok-via-service'),
-      onePhase: true,
-    );
-    onePhase.fold(
-      (value) => AppLogger.info('  runInXaTransaction(onePhase) → $value'),
-      (error) => AppLogger.warning('  runInXaTransaction failed: $error'),
-    );
-  } finally {
-    await service.disconnect(conn.id);
-    locator.shutdown();
-    AppLogger.info('Disconnected (service).');
-  }
-}
+      reportExampleProgress('Starting branch: $xid');
+      final result = await service.runInXaTransaction<int>(
+        connection.id,
+        xid,
+        (handle) async {
+          final sql =
+              Platform.environment['ODBC_XA_SQL'] ?? 'SELECT 1 AS value';
+          final query =
+              await service.executeQuery(sql, connectionId: connection.id);
+          return query.map((rows) => rows.rowCount);
+        },
+        onePhase: Platform.environment['ODBC_XA_ONE_PHASE'] == '1',
+      );
+      reportExampleProgress('XA committed: rows=${result.getOrThrow()}');
+      // Manual phases inside the callback are tracked by the handle. Helpers
+      // respect commitAttempted/outcomeUnknown and do not reverse uncertain
+      // phases.
+      // Xid.fromStrings uses UTF-8 (64-byte parts). Recover old non-ASCII XIDs
+      // with the exact original bytes via Xid, not re-encoded strings.
+    });

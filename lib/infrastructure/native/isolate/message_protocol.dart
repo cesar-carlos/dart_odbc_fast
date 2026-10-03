@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 
 import 'package:odbc_fast/infrastructure/native/isolate/worker_failure_snapshot.dart';
 

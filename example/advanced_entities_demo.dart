@@ -51,6 +51,8 @@ void main() async {
   AppLogger.info('IndexInfo: ${index.indexName} unique=${index.isUnique}');
 
   var attempt = 0;
+  // Synthetic failures illustrate the helper. Retrying real SQL requires an
+  // explicit idempotency policy and is forbidden for uncertain transactions.
   final retryResult = await RetryHelper.execute<String>(
     () async {
       attempt++;

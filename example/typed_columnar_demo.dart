@@ -1,16 +1,6 @@
-// Buffered typed columnar query: `executeQueryColumnarParamValues` +
-// `TypedColumnarResult` column access (`Int32List` / `Float64List` / strings).
-//
-// This demo stays on `OdbcUsageProfile.balanced` to show the **explicit** typed
-// API (columnar wire even when the profile still recommends row-major for
-// QueryResult paths). For the recommended server streaming path, use
-// `OdbcUsageProfile.balancedServer` + example/stream_query_columnar_demo.dart
-// (`streamQueryColumnar` + `recommendedStreamChunkSizeBytes`).
-//
+// Buffered numeric analytics. Large scans: stream_query_columnar_demo.dart.
 // Run: dart run example/typed_columnar_demo.dart
-//
-// Requires ODBC_TEST_DSN or ODBC_DSN in .env or the environment.
-// Optional: ODBC_COLUMNAR_QUERY="SELECT 1 AS id, 42.5 AS score"
+// Optional: ODBC_COLUMNAR_QUERY returning a numeric score column.
 
 import 'dart:io';
 
@@ -18,72 +8,57 @@ import 'package:odbc_fast/odbc_fast.dart';
 
 import 'common.dart';
 
-Future<void> main() async {
-  AppLogger.initialize();
+const defaultColumnarQuery =
+    'SELECT CAST(1 AS INTEGER) AS id, CAST(42.5 AS FLOAT) AS score '
+    'UNION ALL SELECT 2, CAST(NULL AS FLOAT)';
 
-  final dsn = requireExampleDsn();
-  if (dsn == null) {
-    return;
-  }
-
-  final sql = Platform.environment['ODBC_COLUMNAR_QUERY'] ??
-      "SELECT 1 AS id, 42.5 AS score, 'alpha' AS label";
-
-  final locator = ServiceLocator()
-    ..initialize(profile: OdbcUsageProfile.balanced);
-  final service = locator.service;
-
-  final init = await service.initialize();
-  if (init.isError()) {
-    AppLogger.severe('initialize failed: ${init.exceptionOrNull()}');
-    locator.shutdown();
-    return;
-  }
-
-  final connect = await service.connect(
-    dsn,
-    options: locator.recommendedConnectionOptions,
-  );
-  if (connect.isError()) {
-    AppLogger.severe('connect failed: ${connect.exceptionOrNull()}');
-    locator.shutdown();
-    return;
-  }
-
-  final connId = connect.getOrThrow().id;
-  try {
-    final result = await service.executeQueryColumnarParamValues(
-      connId,
-      sql,
-      params: const <ParamValue>[],
-    );
-
-    result.fold(
-      (typed) {
-        AppLogger.info('rowCount=${typed.rowCount}');
-        final columnSummary =
-            typed.columns.map((c) => '${c.name}:${c.kind.name}').join(', ');
-        AppLogger.info('columns=$columnSummary');
-
-        final ids = typed.column<TypedColumnInt32>('id');
-        final scores = typed.column<TypedColumnFloat64>('score');
-        final labels = typed.column<TypedColumnObject<String>>('label');
-
-        for (var i = 0; i < typed.rowCount; i++) {
-          final id = ids.isNullAt(i) ? null : ids.values[i];
-          final score = scores.isNullAt(i) ? null : scores.values[i];
-          final label = labels.values[i];
-          AppLogger.info('  row $i: id=$id score=$score label=$label');
-        }
+Future<void> main() => withExampleConnection(
+      (locator, service, connection) async {
+        final result = (await service.executeQueryColumnarParamValues(
+          connection.id,
+          Platform.environment['ODBC_COLUMNAR_QUERY'] ?? defaultColumnarQuery,
+          params: const <ParamValue>[],
+        ))
+            .getOrThrow();
+        final total = sumNonNullScores(result);
+        reportExampleProgress(
+          'rows=${result.rowCount} columns=${result.columnCount} '
+          'scoreSum=$total',
+        );
       },
-      (error) => AppLogger.warning('columnar query failed: $error'),
+      profile: OdbcUsageProfile.balancedServer,
     );
 
-    AppLogger.info(
-      'Streaming columnar: dart run example/stream_query_columnar_demo.dart',
-    );
-  } finally {
-    await service.disconnect(connId);
-    locator.shutdown();
+/// Resolves a column once and consumes typed arrays without row maps.
+/// Decimal columns may be string-backed; request FLOAT/DOUBLE for this path.
+num sumNonNullScores(TypedColumnarResult result) {
+  final column = result.columns.firstWhere(
+    (column) => column.name.toLowerCase() == 'score',
+    orElse: () => throw StateError('Expected a numeric score column.'),
+  );
+  switch (column) {
+    case TypedColumnFloat64():
+      var total = 0.0;
+      final values = column.values;
+      for (var row = 0; row < values.length; row++) {
+        if (!column.isNullAt(row)) total += values[row];
+      }
+      return total;
+    case TypedColumnInt32():
+      var total = 0;
+      final values = column.values;
+      for (var row = 0; row < values.length; row++) {
+        if (!column.isNullAt(row)) total += values[row];
+      }
+      return total;
+    case TypedColumnInt64():
+      var total = 0;
+      final values = column.values;
+      for (var row = 0; row < values.length; row++) {
+        if (!column.isNullAt(row)) total += values[row];
+      }
+      return total;
+    case TypedColumnObject():
+      throw StateError('Expected FLOAT/DOUBLE or integer score values.');
   }
 }

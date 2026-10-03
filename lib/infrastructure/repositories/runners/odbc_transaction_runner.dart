@@ -5,6 +5,7 @@ import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
 import 'package:odbc_fast/infrastructure/native/async_native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_execution_stage.dart';
 import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/native_odbc_connection.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/xa_transaction_handle.dart';
@@ -72,6 +73,7 @@ class OdbcTransactionRunner {
         );
       }
       state.transactionOwners[txnId] = connectionId;
+      state.transactionStates[txnId] = LocalTransactionState.active;
       return Success(txnId);
     } on OdbcError catch (e) {
       return Failure<int, OdbcError>(e);
@@ -83,6 +85,14 @@ class OdbcTransactionRunner {
   }
 
   Future<Result<Unit>> commitTransaction(String connectionId, int txnId) async {
+    return _finish(connectionId, txnId, commit: true);
+  }
+
+  Future<Result<Unit>> _finish(
+    String connectionId,
+    int txnId, {
+    required bool commit,
+  }) async {
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<Unit, OdbcError>(
@@ -94,29 +104,96 @@ class OdbcTransactionRunner {
         ValidationError(message: 'Invalid transaction ID'),
       );
     }
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
+    state.transactionStates[txnId] = LocalTransactionState.finishing;
+    final lifetime = state.connectionLifetimes[connectionId];
+    final context = NativeCallContext.current;
+    context?.resetInvocation();
+    void reconcile(int? status) {
+      if (state.connectionIds[connectionId] != nativeId ||
+          state.transactionOwners[txnId] != connectionId ||
+          !identical(state.connectionLifetimes[connectionId], lifetime)) {
+        return;
+      }
+      if (status == 0 || status == 1) {
+        if (status == 1) state.uncertainConnections.add(connectionId);
+        if (status == 0) state.uncertainConnections.remove(connectionId);
+        state.transactionOwners.remove(txnId);
+        state.transactionStates.remove(txnId);
+      } else if (status == null &&
+          context?.executionStage == NativeExecutionStage.notStarted) {
+        state.transactionStates[txnId] = LocalTransactionState.active;
+      } else {
+        state.transactionStates[txnId] = status == 2
+            ? LocalTransactionState.active
+            : LocalTransactionState.unknown;
+      }
+    }
+
+    if (context != null) context.onReconciled = reconcile;
     int? status;
-    final result = await ffi.runBoolFfi(
-      sync: (n) {
-        status = n.commitTransactionStatus(txnId);
-        return status == 0;
-      },
-      async: (a) async {
-        final ok = await a.commitTransaction(txnId);
-        status = NativeCallContext.current?.completionStatus ?? (ok ? 0 : 1);
-        return ok;
-      },
-      errorFactory: odbcQueryErrorFactory,
-      fallbackMessage: 'Failed to commit transaction',
-      nativeConnectionId: nativeId,
-    );
-    if (status != null && status != 2) state.transactionOwners.remove(txnId);
+    Result<Unit> result;
+    try {
+      result = await ffi.runBoolFfi(
+        sync: (n) {
+          if (context != null) context.executionStage = null;
+          status = commit
+              ? n.commitTransactionStatus(txnId)
+              : n.rollbackTransactionStatus(txnId);
+          return status == 0;
+        },
+        async: (a) async {
+          if (context != null) context.executionStage = null;
+          final ok = commit
+              ? await a.commitTransaction(txnId)
+              : await a.rollbackTransaction(txnId);
+          status =
+              NativeCallContext.current?.completionStatus ?? (ok ? 0 : null);
+          return ok;
+        },
+        errorFactory: odbcQueryErrorFactory,
+        fallbackMessage: commit
+            ? 'Failed to commit transaction'
+            : 'Failed to rollback transaction',
+        nativeConnectionId: nativeId,
+      );
+    } on Object catch (error, stack) {
+      result = Failure(
+        translateOdbcError(
+          error,
+          operation: commit ? 'commitTransaction' : 'rollbackTransaction',
+          stackTrace: stack,
+        ),
+      );
+    }
+    if (status == null &&
+        context?.executionStage == NativeExecutionStage.notStarted) {
+      state.transactionStates[txnId] = LocalTransactionState.active;
+    } else {
+      reconcile(status);
+    }
     final error = result.exceptionOrNull();
+    if (status != null && status != 0 && status != 1 && status != 2) {
+      OdbcError protocol = MalformedPayloadError(
+        message: 'Invalid transaction completion status',
+        details: OdbcErrorDetails(
+          operation: commit ? 'commitTransaction' : 'rollbackTransaction',
+          outcomeUnknown: true,
+        ),
+      );
+      if (error is OdbcError) protocol = protocol.withSecondary(error);
+      return Failure(protocol);
+    }
     if (error is OdbcError) {
       return Failure(
         error.withDetails(
           error.details.copyWith(
-            code: OdbcErrorCode.transaction,
-            outcomeUnknown: status != 2,
+            code: error.code == OdbcErrorCode.query
+                ? OdbcErrorCode.transaction
+                : error.code,
+            outcomeUnknown: status != 2 &&
+                context?.executionStage != NativeExecutionStage.notStarted,
           ),
         ),
       );
@@ -128,51 +205,15 @@ class OdbcTransactionRunner {
     String connectionId,
     int txnId,
   ) async {
-    final nativeId = state.connectionIds[connectionId];
-    if (nativeId == null) {
-      return const Failure<Unit, OdbcError>(
-        ValidationError(message: 'Invalid connection ID'),
-      );
-    }
-    if (txnId <= 0 || state.transactionOwners[txnId] != connectionId) {
-      return const Failure<Unit, OdbcError>(
-        ValidationError(message: 'Invalid transaction ID'),
-      );
-    }
-    int? status;
-    final result = await ffi.runBoolFfi(
-      sync: (n) {
-        status = n.rollbackTransactionStatus(txnId);
-        return status == 0;
-      },
-      async: (a) async {
-        final ok = await a.rollbackTransaction(txnId);
-        status = NativeCallContext.current?.completionStatus ?? (ok ? 0 : 1);
-        return ok;
-      },
-      errorFactory: odbcQueryErrorFactory,
-      fallbackMessage: 'Failed to rollback transaction',
-      nativeConnectionId: nativeId,
-    );
-    if (status != null && status != 2) state.transactionOwners.remove(txnId);
-    final error = result.exceptionOrNull();
-    if (error is OdbcError) {
-      return Failure(
-        error.withDetails(
-          error.details.copyWith(
-            code: OdbcErrorCode.transaction,
-            outcomeUnknown: status != 2,
-          ),
-        ),
-      );
-    }
-    return result;
+    return _finish(connectionId, txnId, commit: false);
   }
 
   Future<Result<XaTransactionHandle>> xaStart(
     String connectionId,
     Xid xid,
   ) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     try {
       if (!state.connectionIds.containsKey(connectionId)) {
         return const Failure<XaTransactionHandle, OdbcError>(
@@ -385,6 +426,8 @@ class OdbcTransactionRunner {
     required Future<bool> Function(AsyncNativeOdbcConnection a) async,
     required String fallbackMessage,
   }) async {
+    final blocked = state.transactionBlock(connectionId);
+    if (blocked != null) return Failure(blocked);
     final nativeId = state.connectionIds[connectionId];
     if (nativeId == null) {
       return const Failure<Unit, OdbcError>(

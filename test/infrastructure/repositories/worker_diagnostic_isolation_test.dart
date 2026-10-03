@@ -100,6 +100,26 @@ void _missingLibraryWorker(SendPort parent) {
 }
 
 void main() {
+  test('should_preserve_loader_diagnostic_for_concurrent_initialization',
+      () async {
+    final repository = OdbcRepositoryImpl(
+      AsyncNativeOdbcConnection(
+        isolateEntry: _missingLibraryWorker,
+        requestTimeout: const Duration(milliseconds: 100),
+      ),
+    );
+    addTearDown(repository.dispose);
+    final results = await Future.wait([
+      repository.initialize(),
+      repository.initialize(),
+    ]);
+    for (final result in results) {
+      final error = result.exceptionOrNull()! as OdbcError;
+      expect(error.code, OdbcErrorCode.environmentUnavailable);
+      expect(error.details.cause, 'Library loader failed');
+      expect(error.details.stackTrace.toString(), 'loader trace');
+    }
+  });
   test('snapshot preserves sealed variants and partial insert information', () {
     const errors = <OdbcError>[
       QueryError(message: 'SQL lost connection', sqlState: '08006'),

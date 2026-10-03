@@ -239,7 +239,7 @@ void main() {
 
     test('assertExhausted throws when bytes are buffered', () {
       final decoder = MultiResultStreamDecoder()
-        ..feed(Uint8List.fromList([multiStreamItemTagRowCount, 1, 0, 0, 0]));
+        ..feed(Uint8List.fromList([multiStreamItemTagRowCount, 8, 0, 0, 0]));
       expect(decoder.assertExhausted, throwsFormatException);
     });
 

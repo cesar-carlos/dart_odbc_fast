@@ -21,38 +21,25 @@ class ProtocolByteAccumulator {
 
   /// Free-list of large-capacity (1 MiB) buffers.
   static final List<Uint8List> _largePool = <Uint8List>[];
+  static int _allocatedBackingBytes = 0;
 
-  /// Recycles fixed-capacity frames that were fully transferred by [take]
-  /// once the caller drops the last reference.
-  static final Finalizer<Uint8List> _recycleFinalizer =
-      Finalizer<Uint8List>((backing) {
-    _frameOwners.remove(backing.buffer);
-    offerPooledBacking(backing);
-  });
+  /// Cumulative newly allocated backing bytes, excluding reused pool buffers.
+  static int get allocatedBackingBytes => _allocatedBackingBytes;
 
-  static final Map<ByteBuffer, WeakReference<Uint8List>> _frameOwners = {};
+  /// Compatibility helper. Views now own their backing without recycling.
+  static Uint8List? retainFrame(Uint8List slice) => null;
 
-  /// Keeps the sole handed-off frame alive while a lazy cell uses a slice.
-  static Uint8List? retainFrame(Uint8List slice) =>
-      _frameOwners[slice.buffer]?.target;
-
-  /// Public binary views can outlive their parent; exclude their backing
-  /// from automatic recycling before exposing them.
-  static void protectBacking(Uint8List slice) {
-    final owner = _frameOwners.remove(slice.buffer)?.target;
-    if (owner != null) _recycleFinalizer.detach(owner);
-  }
-
-  static void _watchFrame(Uint8List view, Uint8List backing) {
-    _frameOwners[backing.buffer] = WeakReference(view);
-    _recycleFinalizer.attach(view, backing, detach: view);
-  }
+  /// Compatibility helper. Every exposed backing is already protected.
+  static void protectBacking(Uint8List slice) {}
 
   Uint8List _data;
   int _length = 0;
   int _read = 0;
   bool _shared = false;
-  int _views = 0;
+  int _bytesCopied = 0;
+
+  /// Bytes copied when growing or detaching pending buffered data.
+  int get bytesCopied => _bytesCopied;
 
   int get length => _length;
 
@@ -81,8 +68,15 @@ class ProtocolByteAccumulator {
   Uint8List peek(int count) {
     _checkRange(count);
     _shared = true;
-    _views++;
     return Uint8List.sublistView(_data, _read, _read + count);
+  }
+
+  /// Copies only a header prefix without exposing the accumulator backing.
+  Uint8List copyPrefix(int count) {
+    _checkRange(count);
+    return Uint8List.fromList(
+      Uint8List.sublistView(_data, _read, _read + count),
+    );
   }
 
   /// Returns a view of the leading [count] bytes and releases them from this
@@ -105,20 +99,10 @@ class ProtocolByteAccumulator {
     final end = start + count;
     final old = _data;
     final view = Uint8List.sublistView(old, start, end);
-    _views++;
     _shared = true;
     _read = end;
     _length -= prefix + count;
     if (_length == 0) {
-      // A finalizer on one view cannot recycle backing still used by others.
-      if (_views == 1 && end == old.length && start == prefix) {
-        if (prefix == 0) {
-          if (_isPooledCapacity(old.length)) _watchFrame(view, old);
-          _resetBacking();
-          return view;
-        }
-        _watchFrame(view, old);
-      }
       _resetBacking();
     }
     return view;
@@ -131,7 +115,6 @@ class ProtocolByteAccumulator {
     _length = 0;
     _read = 0;
     _shared = false;
-    _views = 0;
   }
 
   void drop(int count) => _dropLeading(count);
@@ -153,6 +136,7 @@ class ProtocolByteAccumulator {
     if (!_shared && _read + needed <= _data.length) return;
     if (!_shared && needed <= _data.length) {
       _data.setRange(0, _length, _data, _read);
+      _bytesCopied += _length;
       _read = 0;
       return;
     }
@@ -171,6 +155,7 @@ class ProtocolByteAccumulator {
     final grown = _acquireBacking(newCap);
     if (_length > 0) {
       grown.setRange(0, _length, _data, _read);
+      _bytesCopied += _length;
     }
     final abandoned = _data;
     _data = grown;
@@ -178,11 +163,7 @@ class ProtocolByteAccumulator {
     if (!_shared) offerPooledBacking(abandoned);
     _read = 0;
     _shared = false;
-    _views = 0;
   }
-
-  static bool _isPooledCapacity(int capacity) =>
-      capacity == _defaultInitialCapacity || capacity == _largeCapacity;
 
   static Uint8List _acquireBacking(int capacity) {
     if (capacity == _defaultInitialCapacity && _defaultPool.isNotEmpty) {
@@ -191,6 +172,7 @@ class ProtocolByteAccumulator {
     if (capacity == _largeCapacity && _largePool.isNotEmpty) {
       return _largePool.removeLast();
     }
+    _allocatedBackingBytes += capacity;
     return Uint8List(capacity);
   }
 
@@ -198,6 +180,7 @@ class ProtocolByteAccumulator {
   ///
   /// Only exact 64 KiB / 1 MiB buffers are recycled so other grown
   /// allocations cannot pin large heaps in the pool.
+  /// Transfers exclusive ownership: no live views may reference this backing.
   static void offerPooledBacking(Uint8List buffer) {
     if (buffer.length == _defaultInitialCapacity) {
       if (_defaultPool.length >= _maxPooledDefaultBackings) return;

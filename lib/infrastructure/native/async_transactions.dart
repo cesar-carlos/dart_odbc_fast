@@ -146,15 +146,39 @@ mixin _AsyncTransactions on _AsyncOdbcState, _AsyncWorkerDispatch {
 
   /// Resumes a prepared XID; returns native `xa_id` or `0` on failure.
   Future<int> xaResumePrepared(int connectionId, Xid xid) async {
-    final r = await _sendRequest<IntResponse>(
-      XaResumePreparedRequest(
-        _nextRequestId(),
-        connectionId,
-        formatId: xid.formatId,
-        gtrid: xid.gtrid,
-        bqual: xid.bqual,
-      ),
-    );
-    return r.value;
+    final key = _xaResumeKey(connectionId, xid.formatId, xid.gtrid, xid.bqual);
+    final adopted = _resumedXa.remove(key);
+    if (adopted != null) return adopted;
+    if (!_pendingXaResume.add(key)) {
+      throw const QueryError(
+        message: 'XA recovery is still pending',
+        details: OdbcErrorDetails(
+          code: OdbcErrorCode.transaction,
+          operation: 'xaResumePrepared',
+          outcomeUnknown: true,
+        ),
+      );
+    }
+    try {
+      final r = await _sendRequest<IntResponse>(
+        XaResumePreparedRequest(
+          _nextRequestId(),
+          connectionId,
+          formatId: xid.formatId,
+          gtrid: Uint8List.fromList(xid.gtrid),
+          bqual: Uint8List.fromList(xid.bqual),
+        ),
+      );
+      _pendingXaResume.remove(key);
+      return r.value;
+    } on AsyncError catch (error) {
+      if (error.code != AsyncErrorCode.requestTimeout) {
+        _pendingXaResume.remove(key);
+      }
+      rethrow;
+    } on Object {
+      _pendingXaResume.remove(key);
+      rethrow;
+    }
   }
 }
