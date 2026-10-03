@@ -72,7 +72,7 @@ jobs:
           echo "release_version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Validate pub.dev changelog content size
-        run: python3 scripts/prepare_pub_changelog.py --check
+        run: python3 scripts/prepare_pub_changelog.py --require-ready
 
       - name: Setup Dart
         uses: dart-lang/setup-dart@v1
@@ -305,7 +305,7 @@ jobs:
           tag_name: ${{ needs.verify.outputs.release_tag }}
           name: Release ${{ needs.verify.outputs.release_tag }}
           body_path: CHANGELOG_SECTION.md
-          append_body: true
+          append_body: false
           files: uploads/*
           fail_on_unmatched_files: true
           generate_release_notes: true

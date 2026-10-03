@@ -41,9 +41,18 @@ def compact_changelog(original: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='Validate without writing')
+    parser.add_argument(
+        '--require-ready', action='store_true',
+        help='Require the committed changelog to already fit the content limit',
+    )
     args = parser.parse_args()
     path = Path('CHANGELOG.md')
     original = path.read_bytes()
+    if args.require_ready and len(original) > MAX_CONTENT_BYTES:
+        raise SystemExit(
+            'Run python scripts/prepare_pub_changelog.py before committing '
+            f'the release: CHANGELOG.md is {len(original)} bytes'
+        )
     prepared = original
     if len(original) > MAX_CONTENT_BYTES:
         prepared = compact_changelog(original.decode('utf-8')).encode('utf-8')
@@ -52,7 +61,7 @@ def main() -> None:
             f'CHANGELOG.md remains {len(prepared)} bytes after whitespace '
             f'compaction; pub.dev permits {MAX_CONTENT_BYTES}'
         )
-    if not args.check and prepared != original:
+    if not args.check and not args.require_ready and prepared != original:
         path.write_bytes(prepared)
     print(f'pub.dev changelog: {len(original)} -> {len(prepared)} bytes')
 

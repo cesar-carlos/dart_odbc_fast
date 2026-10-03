@@ -14,12 +14,14 @@ Version-bump policy is canonical in `VERSIONING_STRATEGY.md`. This document focu
    publishes stable tags to pub.dev using GitHub OIDC. Do not run a second
    manual publish while that workflow is active.
 
-pub.dev limits `CHANGELOG.md` content to 262,144 bytes. Both metadata gates
-validate `scripts/prepare_pub_changelog.py --check` before builds or asset
-waiting. The publish job compacts wrapped prose only when needed; it preserves
-all words, version history, fenced code and explicit Markdown line breaks.
-The repository and version tag retain the original changelog formatting. If
-whitespace compaction is insufficient, publication stops for editorial repair.
+pub.dev limits `CHANGELOG.md` content to 262,144 bytes. Before committing release
+metadata, run `python scripts/prepare_pub_changelog.py`. It compacts wrapped
+prose only when needed and preserves all words, version history, fenced code
+and explicit Markdown line breaks. Both metadata gates and the publish job
+use `--require-ready` to require an already prepared file, without changing
+tracked files during upload. If whitespace compaction is insufficient,
+publication stops for editorial repair. `--check` previews the prepared size
+without writing.
 
 ## Workflow triggers
 
@@ -75,6 +77,7 @@ Notes:
 2. Update `CHANGELOG.md` with section `## [X.Y.Z] - YYYY-MM-DD`.
 3. Run local smoke checks.
 4. `dart pub publish --dry-run`.
+   Prepare the changelog before this check if it exceeds the server limit.
 5. Commit release changes.
 6. Create and push tag `vX.Y.Z`.
 7. Verify `release.yml` succeeds.

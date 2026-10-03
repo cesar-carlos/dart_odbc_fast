@@ -168,7 +168,7 @@ void main() {
       final before = _readRepoFile('CHANGELOG.md');
       final result = Process.runSync(
         Platform.isWindows ? 'python' : 'python3',
-        ['scripts/prepare_pub_changelog.py', '--check'],
+        ['scripts/prepare_pub_changelog.py', '--require-ready'],
       );
       expect(result.exitCode, 0, reason: '${result.stderr}');
       expect(result.stdout, contains('pub.dev changelog:'));
@@ -177,7 +177,7 @@ void main() {
       expect(publish, contains('python3 scripts/prepare_pub_changelog.py'));
       expect(
         _readRepoFile('.github/workflows/release.yml'),
-        contains('python3 scripts/prepare_pub_changelog.py --check'),
+        contains('python3 scripts/prepare_pub_changelog.py --require-ready'),
       );
     });
 
