@@ -1,5 +1,6 @@
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
+import 'package:odbc_fast/src/native_assets/native_library_override.dart';
 import 'package:odbc_fast/src/native_assets/native_library_resolver.dart';
 
 void main(List<String> args) async {
@@ -13,17 +14,23 @@ void main(List<String> args) async {
     final targetArchitecture = input.config.code.targetArchitecture;
     final libName = libraryNameForOs(targetOS);
 
-    final libPath = await resolveNativeLibraryPath(
-      os: targetOS,
-      arch: targetArchitecture,
-      packageRoot: input.packageRoot,
+    final configured = configuredNativeLibraryUri(
+      input.userDefines.path('native_library_directory'),
+      libName,
     );
+    final libPath = configured ??
+        await resolveNativeLibraryPath(
+          os: targetOS,
+          arch: targetArchitecture,
+          packageRoot: input.packageRoot,
+        );
 
     // If library is not found, do not add the asset (allows tests without
     // a native library).
     if (libPath == null) {
       return;
     }
+    output.dependencies.add(libPath);
 
     output.assets.code.add(
       CodeAsset(
