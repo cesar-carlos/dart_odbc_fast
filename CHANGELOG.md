@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-10-05
+
 ### Fixed
 
 - Compressed columnar buffers now attach `NativeFinalizer` to the native `void(void*)` release entry point. The allocation registry supplies the correct layout on GC threads; legacy engines use a Dart copy followed by immediate native release. Partial view registration detaches the finalizer and releases the buffer. Allocation diagnostics and isolated lifecycle regressions cover explicit release, GC and isolate shutdown.
@@ -2472,7 +2474,8 @@ have breaking adjustments.
 - Bulk insert operations
 - Metrics and observability
 
-[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.1...HEAD
+[5.0.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.0...v5.0.1
 [5.0.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.6.0...v5.0.0
 [4.6.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.1...v4.6.0
 [4.5.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v4.5.0...v4.5.1
