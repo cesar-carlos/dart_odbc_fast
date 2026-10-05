@@ -14,6 +14,8 @@ import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
 ColumnarDecompressBindings? _bindings;
 ffi.NativeFinalizer? _decompressFinalizer;
+int Function()? _allocationCount;
+void Function(String)? _registrationHookForTest;
 
 var _tried = false;
 
@@ -103,6 +105,7 @@ Uint8List? _columnarDecompressNativeInput(
       final owner = _DecompressZeroCopyOwner(ptr.address);
       Uint8List? view;
       try {
+        _registrationHookForTest?.call('create_view');
         view = ptr.asTypedList(len);
         _decompressZeroCopyOwners[view] = owner;
         _decompressFinalizer!.attach(
@@ -111,6 +114,7 @@ Uint8List? _columnarDecompressNativeInput(
           detach: owner,
           externalSize: len,
         );
+        _registrationHookForTest?.call('register_view');
         registerNativeByteBacking(view, ptr, owner);
       } on Object {
         _decompressFinalizer!.detach(owner);
@@ -146,6 +150,9 @@ void _bindOnce() {
     }
     final bindings = ColumnarDecompressBindings(library);
     _bindings = bindings;
+    if (library.providesSymbol('odbc_columnar_decompress_allocation_count')) {
+      _allocationCount = bindings.odbc_columnar_decompress_allocation_count;
+    }
     if (library.providesSymbol('odbc_columnar_decompress_release')) {
       _decompressFinalizer = ffi.NativeFinalizer(
         bindings.addresses.odbc_columnar_decompress_release,
@@ -154,6 +161,7 @@ void _bindOnce() {
   } on Object {
     _bindings = null;
     _decompressFinalizer = null;
+    _allocationCount = null;
   }
 }
 
@@ -161,6 +169,20 @@ void resetColumnarDecompressForTest() {
   _tried = false;
   _bindings = null;
   _decompressFinalizer = null;
+  _allocationCount = null;
+  _registrationHookForTest = null;
+}
+
+/// Native allocation diagnostics; null means the old ABI has no counter.
+@visibleForTesting
+int? columnarDecompressAllocationCountForTest() {
+  _bindOnce();
+  return _allocationCount?.call();
+}
+
+@visibleForTesting
+void setColumnarDecompressRegistrationHookForTest(void Function(String)? hook) {
+  _registrationHookForTest = hook;
 }
 
 /// True when [view] is a zero-copy native decompress buffer (tests only).

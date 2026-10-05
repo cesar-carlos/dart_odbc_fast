@@ -77,14 +77,16 @@ pub(super) fn pool_get_state_json(
     let active = total.saturating_sub(idle);
     let max_size = pool.max_size();
 
-    let lifecycle = state::with_pool_maps_mut(|maps| {
+    let Some(lifecycle) = state::with_pool_maps_mut(|maps| {
         (
             maps.pooled_connection_ids_for_pool(pool_id).len(),
             maps.has_pending_checkout(pool_id),
             maps.has_pending_release(pool_id),
         )
-    })
-    .unwrap_or_default();
+    }) else {
+        set_out_written_zero(out_written);
+        return -1;
+    };
     let json = format!(
         r#"{{"total_connections":{},"idle_connections":{},"active_connections":{},"max_size":{},"wait_count":0,"wait_time_ms":0,"max_wait_time_ms":0,"avg_wait_time_ms":0,"checked_out_count":{},"checkout_pending":{},"release_pending":{}}}"#,
         total, idle, active, max_size, lifecycle.0, lifecycle.1, lifecycle.2

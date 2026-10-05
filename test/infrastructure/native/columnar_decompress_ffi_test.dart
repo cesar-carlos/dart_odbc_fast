@@ -97,6 +97,22 @@ void main() {
     );
   });
 
+  test('should_release_after_partial_registration_and_explicit_release',
+      skip: columnarDecompressAllocationCountForTest() == null
+          ? 'Native allocation diagnostics unavailable'
+          : null, () async {
+    final result = await Process.run(
+      Platform.resolvedExecutable,
+      [
+        'run',
+        'test/infrastructure/native/fixtures/decompress_lifecycle.dart',
+        'test/fixtures/columnar_decompress_large_zstd.bin',
+        '--fault-registration',
+      ],
+    );
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+  });
+
   test(
     'should_decompress_from_existing_native_input_without_a_dart_copy',
     skip: skipNative,

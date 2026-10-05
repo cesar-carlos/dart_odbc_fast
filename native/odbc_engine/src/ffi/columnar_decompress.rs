@@ -118,6 +118,15 @@ pub extern "C" fn odbc_columnar_decompress_release(pointer: *mut std::ffi::c_voi
     odbc_columnar_decompress_free(pointer.cast(), 0, 0);
 }
 
+/// Diagnostic count of buffers still owned by the decompression registry.
+/// A poisoned registry never reports a successful zero snapshot.
+#[no_mangle]
+pub extern "C" fn odbc_columnar_decompress_allocation_count() -> u64 {
+    decompress_allocations()
+        .lock()
+        .map_or(u64::MAX, |allocations| allocations.len() as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,6 +8,7 @@ void main(List<String> args) {
     'odbc_columnar_decompress',
     'odbc_columnar_decompress_free',
     'odbc_columnar_decompress_release',
+    'odbc_columnar_decompress_allocation_count',
   };
   FfiGenerator(
     headers: Headers(

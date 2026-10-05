@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Compressed columnar buffers now attach `NativeFinalizer` to the native `void(void*)` release entry point. The allocation registry supplies the correct layout on GC threads; legacy engines use a Dart copy followed by immediate native release. Partial view registration detaches the finalizer and releases the buffer. Allocation diagnostics and isolated lifecycle regressions cover explicit release, GC and isolate shutdown.
+- Each pool checkout receives a unique opaque Dart ID, so a delayed release cannot erase a newer checkout when Rust reuses its numeric handle. Detailed pool metrics use one native state snapshot and distinguish checked-out handles from pending checkout/release operations; unavailable lifecycle state is an error, not a zero snapshot.
+- Native asset hooks accept `native_library_directory` through package user defines and register the binary as a build dependency. An explicit runtime artifact that is missing fails instead of selecting a cached binary. The native Cargo lockfile is tracked to make source builds reproducible.
+- Synchronous connection failures retain the `ConnectionError` type and native diagnostics at the repository boundary.
+
 ## [5.0.0] - 2026-10-03
 
 ### Breaking changes and migration

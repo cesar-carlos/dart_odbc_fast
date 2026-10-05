@@ -102,6 +102,19 @@ class ColumnarDecompressBindings {
       _odbc_columnar_decompress_releasePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
+  /// Diagnostic count of buffers still owned by the decompression registry.
+  /// A poisoned registry never reports a successful zero snapshot.
+  int odbc_columnar_decompress_allocation_count() {
+    return _odbc_columnar_decompress_allocation_count();
+  }
+
+  late final _odbc_columnar_decompress_allocation_countPtr =
+      _lookup<ffi.NativeFunction<ffi.Uint64 Function()>>(
+          'odbc_columnar_decompress_allocation_count');
+  late final _odbc_columnar_decompress_allocation_count =
+      _odbc_columnar_decompress_allocation_countPtr
+          .asFunction<int Function()>();
+
   late final addresses = _SymbolAddresses(this);
 }
 

@@ -14,6 +14,7 @@ target/
 target_test/
 target_release_new/
 Cargo.lock
+!native/Cargo.lock
 **/*.rs.bk
 
 # Generated files
