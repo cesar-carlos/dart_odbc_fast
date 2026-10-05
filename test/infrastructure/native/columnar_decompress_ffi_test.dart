@@ -73,8 +73,29 @@ void main() {
       expect(decompressed.first, equals(0x74)); // 't' from repeated phrase
       expect(isColumnarDecompressZeroCopyViewForTest(decompressed), isTrue);
       releaseColumnarDecompressZeroCopyViewForTest(decompressed);
+      releaseColumnarDecompressZeroCopyViewForTest(decompressed);
     },
   );
+
+  test('should_survive_gc_and_repeated_isolate_shutdown', skip: skipNative,
+      () async {
+    final result = await Process.run(
+      Platform.resolvedExecutable,
+      [
+        'run',
+        'test/infrastructure/native/fixtures/decompress_lifecycle.dart',
+        'test/fixtures/columnar_decompress_large_zstd.bin',
+      ],
+    );
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+  });
+
+  test('should_reject_invalid_payload', skip: skipNative, () {
+    expect(
+      columnarDecompressWithNative(Uint8List.fromList([1, 2, 3]), 1),
+      isNull,
+    );
+  });
 
   test(
     'should_decompress_from_existing_native_input_without_a_dart_copy',

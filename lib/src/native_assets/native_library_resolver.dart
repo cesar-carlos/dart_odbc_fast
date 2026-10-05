@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:code_assets/code_assets.dart';
 import 'package:crypto/crypto.dart';
+import 'package:odbc_fast/src/native_assets/native_library_override.dart';
 
 /// Architectures published as GitHub Release assets today
 /// (flat names, x64 only).
@@ -267,6 +268,8 @@ Future<Uri?> resolveNativeLibraryPath({
 }) async {
   final env = environment ?? Platform.environment;
   final libName = libraryNameForOs(os);
+  final explicit = explicitNativeLibraryUri(env);
+  if (explicit != null) return explicit;
   final version = await extractVersion(
     File.fromUri(packageRoot.resolve('pubspec.yaml')),
   );

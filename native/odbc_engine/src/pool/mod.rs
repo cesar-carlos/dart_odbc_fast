@@ -134,9 +134,10 @@ impl ConnectionPool {
     }
 
     pub fn state(&self) -> PoolState {
+        let state = self.pool.state();
         PoolState {
-            size: self.pool.state().connections,
-            idle: self.pool.state().idle_connections,
+            size: state.connections,
+            idle: state.idle_connections,
         }
     }
 

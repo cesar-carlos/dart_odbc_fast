@@ -1,54 +1,20 @@
 // Columnar v2: decompress a column block using the same algorithms as
 // `native/odbc_engine` (`odbc_columnar_decompress` / _free`).
 
-// NativeFunction/typedef C shapes are intentionally paired; malloc frees
-// are clearer as separate lines than cascades.
-// ignore_for_file: avoid_private_typedef_functions, cascade_invocations
-
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/columnar_decompress.g.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart'
     show zeroCopyResultThresholdBytes;
 import 'package:odbc_fast/infrastructure/native/bindings/library_loader.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
-// ---------------------------------------------------------------------------
-// Native (C) signatures — `NativeFunction<…>` and `asFunction<…>` differ.
-// ---------------------------------------------------------------------------
-typedef _OdbcDecompressC = ffi.Int32 Function(
-  ffi.Uint8,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Uint32,
-  ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-  ffi.Pointer<ffi.Uint32>,
-  ffi.Pointer<ffi.Uint32>,
-);
-typedef _OdbcDecompressD = int Function(
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-  ffi.Pointer<ffi.Uint32>,
-  ffi.Pointer<ffi.Uint32>,
-);
-typedef _OdbcDecompressFreeC = ffi.Void Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Uint32,
-  ffi.Uint32,
-);
-typedef _OdbcDecompressFreeD = void Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  int,
-);
-
-_OdbcDecompressD? _decomp;
-_OdbcDecompressFreeD? _decompFree;
+ColumnarDecompressBindings? _bindings;
 ffi.NativeFinalizer? _decompressFinalizer;
-final Map<int, (int len, int cap)> _pendingDecompressRelease = {};
+
 var _tried = false;
 
 final class _DecompressZeroCopyOwner implements ffi.Finalizable {
@@ -63,7 +29,7 @@ final Expando<ffi.Finalizable> _decompressZeroCopyOwners =
 /// True if `odbc_columnar_decompress` / _free` resolved after [loadOdbcLibrary].
 bool get isColumnarNativeDecompressAvailable {
   _bindOnce();
-  return _decomp != null && _decompFree != null;
+  return _bindings != null;
 }
 
 /// [algorithm] is `1` = zstd, `2` = lz4 (see Rust `CompressionType`).
@@ -113,16 +79,15 @@ Uint8List? _columnarDecompressNativeInput(
   int algorithm,
 ) {
   _bindOnce();
-  final d = _decomp;
-  final freeFn = _decompFree;
+  final d = _bindings?.odbc_columnar_decompress;
+  final freeFn = _bindings?.odbc_columnar_decompress_free;
   if (d == null || freeFn == null) {
     return null;
   }
 
-  final outP = malloc<ffi.Pointer<ffi.Uint8>>();
-  outP.value = ffi.Pointer<ffi.Uint8>.fromAddress(0);
-  final oLen = malloc<ffi.Uint32>();
-  final oCap = malloc<ffi.Uint32>();
+  final outP = malloc<ffi.Pointer<ffi.Uint8>>()..value = ffi.nullptr;
+  final oLen = malloc<ffi.UnsignedInt>();
+  final oCap = malloc<ffi.UnsignedInt>();
   try {
     final st = d(algorithm, inP, inLen, outP, oLen, oCap);
     if (st != 0) {
@@ -135,9 +100,10 @@ Uint8List? _columnarDecompressNativeInput(
     final len = oLen.value;
     final cap = oCap.value;
     if (len >= zeroCopyResultThresholdBytes && _decompressFinalizer != null) {
-      final view = ptr.asTypedList(len);
       final owner = _DecompressZeroCopyOwner(ptr.address);
+      Uint8List? view;
       try {
+        view = ptr.asTypedList(len);
         _decompressZeroCopyOwners[view] = owner;
         _decompressFinalizer!.attach(
           owner,
@@ -147,28 +113,23 @@ Uint8List? _columnarDecompressNativeInput(
         );
         registerNativeByteBacking(view, ptr, owner);
       } on Object {
+        _decompressFinalizer!.detach(owner);
+        if (view != null) _decompressZeroCopyOwners[view] = null;
         freeFn(ptr, len, cap);
         rethrow;
       }
-      _pendingDecompressRelease[ptr.address] = (len, cap);
       return view;
     }
-    final out = Uint8List.fromList(ptr.asTypedList(len));
-    freeFn(ptr, len, cap);
-    return out;
+    try {
+      return Uint8List.fromList(ptr.asTypedList(len));
+    } finally {
+      freeFn(ptr, len, cap);
+    }
   } finally {
-    malloc.free(outP);
-    malloc.free(oLen);
-    malloc.free(oCap);
-  }
-}
-
-void _columnarDecompressNativeFree(ffi.Pointer<ffi.Void> pointer) {
-  final ptr = pointer.cast<ffi.Uint8>();
-  final meta = _pendingDecompressRelease.remove(ptr.address);
-  final freeFn = _decompFree;
-  if (meta != null && freeFn != null) {
-    freeFn(ptr, meta.$1, meta.$2);
+    malloc
+      ..free(outP)
+      ..free(oLen)
+      ..free(oCap);
   }
 }
 
@@ -178,33 +139,28 @@ void _bindOnce() {
   }
   _tried = true;
   try {
-    final lib = loadOdbcLibrary();
-    _decomp = lib
-        .lookup<ffi.NativeFunction<_OdbcDecompressC>>(
-          'odbc_columnar_decompress',
-        )
-        .asFunction<_OdbcDecompressD>();
-    _decompFree = lib
-        .lookup<ffi.NativeFunction<_OdbcDecompressFreeC>>(
-          'odbc_columnar_decompress_free',
-        )
-        .asFunction<_OdbcDecompressFreeD>();
-    _decompressFinalizer = ffi.NativeFinalizer(
-      ffi.Pointer.fromFunction(_columnarDecompressNativeFree),
-    );
+    final library = loadOdbcLibrary();
+    if (!library.providesSymbol('odbc_columnar_decompress') ||
+        !library.providesSymbol('odbc_columnar_decompress_free')) {
+      return;
+    }
+    final bindings = ColumnarDecompressBindings(library);
+    _bindings = bindings;
+    if (library.providesSymbol('odbc_columnar_decompress_release')) {
+      _decompressFinalizer = ffi.NativeFinalizer(
+        bindings.addresses.odbc_columnar_decompress_release,
+      );
+    }
   } on Object {
-    _decomp = null;
-    _decompFree = null;
+    _bindings = null;
     _decompressFinalizer = null;
   }
 }
 
 void resetColumnarDecompressForTest() {
   _tried = false;
-  _decomp = null;
-  _decompFree = null;
+  _bindings = null;
   _decompressFinalizer = null;
-  _pendingDecompressRelease.clear();
 }
 
 /// True when [view] is a zero-copy native decompress buffer (tests only).
@@ -220,7 +176,10 @@ void releaseColumnarDecompressZeroCopyViewForTest(Uint8List view) {
     return;
   }
   _decompressFinalizer!.detach(owner);
-  _columnarDecompressNativeFree(
-    ffi.Pointer<ffi.Void>.fromAddress(owner.pointerAddress),
+  _decompressZeroCopyOwners[view] = null;
+  _bindings!.odbc_columnar_decompress_free(
+    ffi.Pointer<ffi.Uint8>.fromAddress(owner.pointerAddress),
+    0,
+    0,
   );
 }

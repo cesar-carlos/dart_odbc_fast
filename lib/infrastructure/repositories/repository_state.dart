@@ -79,6 +79,12 @@ class OdbcRepositoryState {
 
   /// Domain `connectionId` (string) → native id (int).
   final Map<String, int> connectionIds = {};
+  int _nextPoolCheckout = 0;
+
+  /// Native IDs are recycled before worker replies reach the Dart repository.
+  /// A logical ID therefore identifies one checkout, not a native slot.
+  String allocatePoolCheckoutId(int nativeId) =>
+      'pool-$nativeId-${_nextPoolCheckout++}';
 
   /// Domain `connectionId` → connection options snapshot used by query
   /// timeout / buffer-size routing.

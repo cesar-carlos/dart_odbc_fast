@@ -18,6 +18,7 @@ class _FakeNativeForPool extends NativeOdbcConnection {
   int poolCreateResult = 5;
   int poolGetConnectionResult = 11;
   bool poolReleaseConnectionResult = true;
+  void Function()? onRelease;
   bool poolSetSizeResult = true;
   ({int size, int idle})? poolGetStateResult = (size: 4, idle: 2);
 
@@ -36,7 +37,10 @@ class _FakeNativeForPool extends NativeOdbcConnection {
   int poolGetConnection(int poolId) => poolGetConnectionResult;
 
   @override
-  bool poolReleaseConnection(int connectionId) => poolReleaseConnectionResult;
+  bool poolReleaseConnection(int connectionId) {
+    onRelease?.call();
+    return poolReleaseConnectionResult;
+  }
 
   @override
   bool poolSetSize(int poolId, int newMaxSize) => poolSetSizeResult;
@@ -94,6 +98,30 @@ void main() {
       expect(state.connectionIds[conn.id], equals(11));
       expect(state.connectionPoolId[conn.id], equals(5));
       expect(state.poolCheckouts[5], contains(conn.id));
+    });
+
+    test('should_preserve_reacquisition_before_previous_release_reply',
+        () async {
+      final first = (await runner.poolGetConnection(5)).getOrThrow();
+      // Native slot 11 is recycled before the old worker reply is processed.
+      final reacquired = <Future<String>>[];
+      native.onRelease = () {
+        reacquired.add(
+          runner.poolGetConnection(5).then((r) => r.getOrThrow().id),
+        );
+      };
+      expect(
+        (await runner.poolReleaseConnection(first.id)).isSuccess(),
+        isTrue,
+      );
+      final nextId = await reacquired.single;
+      expect(nextId, isNot(first.id));
+      expect(state.connectionIds[nextId], 11);
+      expect(state.connectionLifetimes[nextId], isNotNull);
+      expect(state.poolCheckouts[5], contains(nextId));
+      native.onRelease = null;
+      expect((await runner.poolReleaseConnection(nextId)).isSuccess(), isTrue);
+      expect(state.connectionIds, isEmpty);
     });
 
     test('should_apply_pool_connection_options_on_checkout', () async {

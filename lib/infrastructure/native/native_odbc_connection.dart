@@ -99,6 +99,14 @@ abstract class _NativeOdbcState {
         ),
       );
     }
+    if (operation == 'connect' || operation == 'connectWithTimeout') {
+      error = ConnectionError(
+        message: error.message,
+        sqlState: error.sqlState,
+        nativeCode: error.nativeCode,
+        details: error.details.copyWith(code: OdbcErrorCode.connection),
+      );
+    }
     NativeCallContext.record(error);
     return result;
   }

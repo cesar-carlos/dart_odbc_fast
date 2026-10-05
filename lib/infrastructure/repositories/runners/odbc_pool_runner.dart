@@ -132,7 +132,7 @@ class OdbcPoolRunner {
         );
       }
       final c = Connection(
-        id: connId.toString(),
+        id: state.allocatePoolCheckoutId(connId),
         connectionString: '',
         createdAt: DateTime.now(),
         isActive: true,

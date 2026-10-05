@@ -111,12 +111,54 @@ pub extern "C" fn odbc_columnar_decompress_free(p: *mut u8, len: c_uint, cap: c_
     });
 }
 
+/// NativeFinalizer callback. The allocation registry owns the buffer layout;
+/// this entry point may run on a GC thread and never calls into Dart.
+#[no_mangle]
+pub extern "C" fn odbc_columnar_decompress_release(pointer: *mut std::ffi::c_void) {
+    odbc_columnar_decompress_free(pointer.cast(), 0, 0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::columnar::CompressionType as Ct;
     use crate::protocol::compress;
     use std::os::raw::c_uint;
+
+    #[test]
+    fn finalizer_release_works_on_another_thread() {
+        let raw = b"native finalizer".repeat(4096);
+        let comp = compress(&raw, Ct::Zstd).expect("compress fixture");
+        let mut pointer = std::ptr::null_mut();
+        let mut len = 0;
+        let mut cap = 0;
+        assert_eq!(
+            odbc_columnar_decompress(
+                1,
+                comp.as_ptr(),
+                comp.len() as u32,
+                &mut pointer,
+                &mut len,
+                &mut cap
+            ),
+            0
+        );
+        let address = pointer as usize;
+        assert!(decompress_allocations()
+            .lock()
+            .expect("registry")
+            .contains_key(&address));
+        std::thread::spawn(move || {
+            odbc_columnar_decompress_release(address as *mut std::ffi::c_void)
+        })
+        .join()
+        .expect("finalizer thread");
+        assert!(!decompress_allocations()
+            .lock()
+            .expect("registry")
+            .contains_key(&address));
+        odbc_columnar_decompress_release(std::ptr::null_mut());
+    }
 
     #[test]
     fn odbc_decompress_zstd_roundtrip() {
@@ -230,6 +272,41 @@ mod tests {
         let got = unsafe { std::slice::from_raw_parts(pout, olen as usize) };
         assert_eq!(got, raw.as_slice());
         odbc_columnar_decompress_free(pout, olen, ocap);
+    }
+
+    #[test]
+    fn release_large_lz4_and_zstd_allocations_repeatedly() {
+        for (algorithm, compression) in [(1u8, Ct::Zstd), (2u8, Ct::Lz4)] {
+            let raw = b"large native decoder lifetime ".repeat(3000);
+            let compressed = compress(&raw, compression).expect("fixture compression");
+            for _ in 0..100 {
+                let mut pointer = std::ptr::null_mut();
+                let mut length = 0;
+                let mut capacity = 0;
+                assert_eq!(
+                    odbc_columnar_decompress(
+                        algorithm,
+                        compressed.as_ptr(),
+                        compressed.len() as c_uint,
+                        &mut pointer,
+                        &mut length,
+                        &mut capacity
+                    ),
+                    0
+                );
+                // SAFETY: the successful call owns this allocation until release.
+                assert_eq!(
+                    unsafe { std::slice::from_raw_parts(pointer, length as usize) },
+                    raw
+                );
+                let address = pointer as usize;
+                odbc_columnar_decompress_release(pointer.cast());
+                assert!(!decompress_allocations()
+                    .lock()
+                    .expect("registry")
+                    .contains_key(&address));
+            }
+        }
     }
 
     #[test]

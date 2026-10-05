@@ -2,6 +2,7 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:meta/meta.dart';
+import 'package:odbc_fast/src/native_assets/native_library_override.dart';
 
 /// Gets the platform-specific ODBC engine library name.
 ///
@@ -186,6 +187,8 @@ String? resolvePreferredOdbcEngineFilePath({
 /// 2. Native Assets — `package:odbc_fast/<lib>` (hook-registered asset)
 /// 3. System library paths — PATH / LD_LIBRARY_PATH
 DynamicLibrary loadOdbcLibrary() {
+  final explicit = explicitNativeLibraryUri();
+  if (explicit != null) return DynamicLibrary.open(explicit.toFilePath());
   final name = _libraryName();
   final packageRoot = _findPackageRoot();
   final preferred = resolvePreferredOdbcEngineFilePath(
