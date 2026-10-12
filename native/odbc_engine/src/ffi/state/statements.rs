@@ -117,13 +117,6 @@ pub(crate) fn retain_statements_not_for_connection(conn_id: u32) {
 }
 
 #[cfg(test)]
-pub(crate) fn statement_count_for_test() -> usize {
-    try_lock_statement_maps()
-        .map(|maps| maps.statements.len())
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
 pub(crate) fn statements_empty_for_test() -> bool {
     try_lock_statement_maps()
         .map(|maps| maps.statements.is_empty())

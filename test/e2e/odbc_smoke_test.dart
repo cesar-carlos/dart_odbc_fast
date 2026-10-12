@@ -88,6 +88,7 @@ void main() {
       test('should complete full audit cycle (sync)', () async {
         if (!locator!.nativeConnection.supportsAuditApi) {
           markTestSkipped('Audit API not supported by loaded native library');
+          return;
         }
 
         final audit = locator!.auditLogger;
@@ -124,6 +125,7 @@ void main() {
       test('should complete full audit cycle (async)', () async {
         if (!locator!.nativeConnection.supportsAuditApi) {
           markTestSkipped('Audit API not supported by loaded native library');
+          return;
         }
 
         final audit = locator!.asyncAuditLogger;
@@ -162,6 +164,7 @@ void main() {
           markTestSkipped(
             'Driver capabilities API not supported by loaded native library',
           );
+          return;
         }
 
         final caps = locator!.nativeConnection.getDriverCapabilities(dsn);

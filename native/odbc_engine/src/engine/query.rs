@@ -60,6 +60,14 @@ pub fn execute_query_with_cached_connection(
     shared_row_major_pipeline().execute_direct_cached(cached, sql)
 }
 
+pub fn execute_query_with_cached_connection_into<W: std::io::Write>(
+    cached: &mut CachedConnection,
+    sql: &str,
+    writer: &mut W,
+) -> Result<()> {
+    shared_row_major_pipeline().execute_direct_cached_into(cached, sql, writer)
+}
+
 /// Cached counterpart of [`execute_query_with_params`].
 ///
 /// Sprint 4.2: when the FFI call originates from a regular (non-pooled)
@@ -122,8 +130,30 @@ fn dispatch_param_buffer(
     fetch_size: Option<u32>,
     encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    dispatch_param_buffer_into(
+        conn,
+        sql,
+        param_bytes,
+        timeout_sec,
+        fetch_size,
+        encoding,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+fn dispatch_param_buffer_into<W: std::io::Write>(
+    conn: &Connection<'static>,
+    sql: &str,
+    param_bytes: &[u8],
+    timeout_sec: Option<usize>,
+    fetch_size: Option<u32>,
+    encoding: ResultEncoding,
+    writer: &mut W,
+) -> Result<()> {
     let list = deserialize_param_buffer(param_bytes)?;
-    dispatch_parsed_params(conn, sql, list, timeout_sec, fetch_size, encoding)
+    dispatch_parsed_params_into(conn, sql, list, timeout_sec, fetch_size, encoding, writer)
 }
 
 pub(crate) fn execute_query_with_parsed_params_encoding(
@@ -144,23 +174,62 @@ fn dispatch_parsed_params(
     fetch_size: Option<u32>,
     encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    dispatch_parsed_params_into(
+        conn,
+        sql,
+        list,
+        timeout_sec,
+        fetch_size,
+        encoding,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+fn dispatch_parsed_params_into<W: std::io::Write>(
+    conn: &Connection<'static>,
+    sql: &str,
+    list: ParamList,
+    timeout_sec: Option<usize>,
+    fetch_size: Option<u32>,
+    encoding: ResultEncoding,
+    writer: &mut W,
+) -> Result<()> {
     let pipeline = encoding.pipeline();
     match list {
-        ParamList::Legacy(p) => {
-            pipeline.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
-        }
+        ParamList::Legacy(p) => pipeline.execute_with_params_and_timeout_into(
+            conn,
+            sql,
+            &p,
+            timeout_sec,
+            fetch_size,
+            writer,
+        ),
         ParamList::Directed(b) => {
             if b.iter().all(|x| x.direction == ParamDirection::Input) {
                 let p: Vec<ParamValue> = b.into_iter().map(|x| x.value).collect();
-                pipeline.execute_with_params_and_timeout(conn, sql, &p, timeout_sec, fetch_size)
+                pipeline.execute_with_params_and_timeout_into(
+                    conn,
+                    sql,
+                    &p,
+                    timeout_sec,
+                    fetch_size,
+                    writer,
+                )
             } else {
-                pipeline.execute_with_bound_params_and_timeout(
+                let encoded = pipeline.execute_with_bound_params_and_timeout(
                     conn,
                     sql,
                     &b,
                     timeout_sec,
                     fetch_size,
-                )
+                )?;
+                writer.write_all(&encoded).map_err(|err| {
+                    crate::error::OdbcError::InternalError(format!(
+                        "bound-param encode write failed: {err}"
+                    ))
+                })
             }
         }
     }
@@ -209,6 +278,26 @@ pub fn execute_query_with_param_buffer_timeout_encoding(
     encoding: ResultEncoding,
 ) -> Result<Vec<u8>> {
     dispatch_param_buffer(conn, sql, param_bytes, timeout_sec, fetch_size, encoding)
+}
+
+pub fn execute_query_with_param_buffer_timeout_encoding_into<W: std::io::Write>(
+    conn: &Connection<'static>,
+    sql: &str,
+    param_bytes: &[u8],
+    timeout_sec: Option<usize>,
+    fetch_size: Option<u32>,
+    encoding: ResultEncoding,
+    writer: &mut W,
+) -> Result<()> {
+    dispatch_param_buffer_into(
+        conn,
+        sql,
+        param_bytes,
+        timeout_sec,
+        fetch_size,
+        encoding,
+        writer,
+    )
 }
 
 pub fn execute_multi_result(conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {

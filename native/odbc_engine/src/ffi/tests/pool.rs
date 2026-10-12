@@ -26,8 +26,8 @@ use std::time::Duration;
 use super::support::{
     ffi_test_dsn, ffi_test_dsn_is_sql_server, get_last_error, next_test_invalid_id,
     run_pooled_stream_case, structured_error_test_lock,
-    trigger_structured_cancel_unsupported_error, with_structured_error_test_isolation,
-    TEST_INVALID_ID,
+    trigger_structured_cancel_unsupported_error, with_statement_map_test_isolation,
+    with_structured_error_test_isolation, TEST_INVALID_ID,
 };
 
 #[test]
@@ -468,40 +468,42 @@ fn test_ffi_pool_release_cleans_statements() {
         return;
     };
 
-    odbc_init();
-    let conn_cstr = CString::new(dsn.as_str()).unwrap();
-    let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
-    assert!(pool_id > 0);
+    with_statement_map_test_isolation(|| {
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let pool_id = odbc_pool_create(conn_cstr.as_ptr(), 2);
+        assert!(pool_id > 0);
 
-    let pooled_id = odbc_pool_get_connection(pool_id);
-    assert!(pooled_id > 0);
+        let pooled_id = odbc_pool_get_connection(pool_id);
+        assert!(pooled_id > 0);
 
-    let sql = CString::new("SELECT 1 AS n").unwrap();
-    let stmt_id = odbc_prepare(pooled_id, sql.as_ptr(), 0);
-    assert!(stmt_id > 0, "Prepare should succeed");
+        let sql = CString::new("SELECT 1 AS n").unwrap();
+        let stmt_id = odbc_prepare(pooled_id, sql.as_ptr(), 0);
+        assert!(stmt_id > 0, "Prepare should succeed");
 
-    let pr = odbc_pool_release_connection(pooled_id);
-    assert_eq!(pr, 0, "Release should succeed");
+        let pr = odbc_pool_release_connection(pooled_id);
+        assert_eq!(pr, 0, "Release should succeed");
 
-    let mut buffer = vec![0u8; 2048];
-    let mut written: c_uint = 0;
-    let exec_result = odbc_execute(
-        stmt_id,
-        std::ptr::null(),
-        0,
-        0,
-        0,
-        buffer.as_mut_ptr(),
-        buffer.len() as c_uint,
-        &mut written,
-    );
-    assert_ne!(
-        exec_result, 0,
-        "Execute with stale stmt_id after release should fail"
-    );
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let exec_result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            0,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_ne!(
+            exec_result, 0,
+            "Execute with stale stmt_id after release should fail"
+        );
 
-    let cr = odbc_pool_close(pool_id);
-    assert_eq!(cr, 0);
+        let cr = odbc_pool_close(pool_id);
+        assert_eq!(cr, 0);
+    });
 }
 
 #[test]

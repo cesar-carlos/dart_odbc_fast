@@ -30,6 +30,23 @@ void main() {
       expect(slice.pointerAt(0)!.address, (pointer + 2).address);
       expect(nestedSlice.pointerAt(0)!.address, (pointer + 3).address);
       expect(nestedSlice.bytes, equals([13, 14]));
+      expect(slice.pointerAt(0), isNotNull);
+    } finally {
+      malloc.free(pointer);
+    }
+  });
+
+  test('exposes native pointer for FFI param calls without copying', () {
+    final pointer = malloc<ffi.Uint8>(4);
+    final bytes = pointer.asTypedList(4)..setAll(0, [1, 2, 3, 4]);
+    final owner = _TestNativeOwner();
+    registerNativeByteBacking(bytes, pointer, owner);
+
+    try {
+      final view = NativeByteView.fromBytes(bytes);
+      expect(view.hasNativeBacking, isTrue);
+      expect(view.pointerAt(0)!.address, pointer.address);
+      expect(view.finalizerOwner, same(owner));
     } finally {
       malloc.free(pointer);
     }

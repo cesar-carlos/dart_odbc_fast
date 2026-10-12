@@ -9,12 +9,23 @@
 //! never hold this lock while acquiring `GLOBAL_STATE`.
 
 use super::super::global_state::{set_out_written_needed, FFI_ERR_BUFFER_TOO_SMALL, FFI_OK};
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_int;
 use std::os::raw::c_uint;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+thread_local! {
+    static HASH_BYTES_CALLS: Cell<u64> = const { Cell::new(0) };
+    /// Depth of `PendingMapsGuard` on this thread. Buffer drops check it so a
+    /// sibling test holding the process-wide mutex is not mistaken for a drop
+    /// that still owns the lock.
+    static PENDING_LOCK_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 const PENDING_RESULT_TTL: Duration = Duration::from_secs(2);
 
@@ -52,10 +63,8 @@ struct PendingResultBuffer {
 impl Drop for PendingResultBuffer {
     fn drop(&mut self) {
         if let Some(observer) = &self.drop_observer {
-            observer.store(
-                pending_maps().try_lock().is_ok(),
-                std::sync::atomic::Ordering::SeqCst,
-            );
+            let dropped_outside_lock = PENDING_LOCK_DEPTH.with(|depth| depth.get() == 0);
+            observer.store(dropped_outside_lock, std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
@@ -73,27 +82,81 @@ fn pending_maps() -> &'static Mutex<PendingMaps> {
     })
 }
 
-fn try_lock_pending_maps() -> Option<MutexGuard<'static, PendingMaps>> {
-    match pending_maps().lock() {
-        Ok(guard) => Some(guard),
+struct PendingMapsGuard {
+    inner: MutexGuard<'static, PendingMaps>,
+}
+
+impl std::ops::Deref for PendingMapsGuard {
+    type Target = PendingMaps;
+
+    fn deref(&self) -> &PendingMaps {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for PendingMapsGuard {
+    fn deref_mut(&mut self) -> &mut PendingMaps {
+        &mut self.inner
+    }
+}
+
+#[cfg(test)]
+impl Drop for PendingMapsGuard {
+    fn drop(&mut self) {
+        PENDING_LOCK_DEPTH.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
+}
+
+fn try_lock_pending_maps() -> Option<PendingMapsGuard> {
+    let inner = match pending_maps().lock() {
+        Ok(guard) => guard,
         Err(poisoned) => {
             #[cfg(test)]
             {
-                Some(poisoned.into_inner())
+                poisoned.into_inner()
             }
             #[cfg(not(test))]
             {
                 let _ = poisoned;
-                None
+                return None;
             }
         }
-    }
+    };
+    #[cfg(test)]
+    PENDING_LOCK_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    Some(PendingMapsGuard { inner })
 }
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
+    #[cfg(test)]
+    HASH_BYTES_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     hasher.finish()
+}
+
+/// True when no `-2` payload is waiting. Callers skip hashing SQL/params.
+pub(crate) fn pending_buffers_is_empty() -> bool {
+    try_lock_pending_maps()
+        .map(|maps| maps.buffers.is_empty())
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+pub(crate) fn hash_bytes_call_count() -> u64 {
+    HASH_BYTES_CALLS.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_hash_bytes_call_count() {
+    HASH_BYTES_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+fn pending_has_key(key: &PendingResultKey) -> bool {
+    try_lock_pending_maps().is_some_and(|maps| maps.buffers.contains_key(key))
 }
 
 /// Try to deliver a previously stashed payload for `key`.
@@ -126,6 +189,7 @@ pub(crate) fn try_write_pending_result(
     }
     drop(maps);
 
+    crate::ffi::global_state::record_ffi_memcpy_bytes(entry.data.len());
     // SAFETY: null pointers rejected above; `entry.data.len() <= buffer_len`.
     unsafe {
         std::ptr::copy_nonoverlapping(entry.data.as_ptr(), out_buffer, entry.data.len());
@@ -324,10 +388,12 @@ mod tests {
         }
         let mut output = vec![0; 4096];
         let mut written = 0;
+        crate::ffi::global_state::reset_ffi_memcpy_bytes();
         assert_eq!(
             try_write_pending_result(&key, output.as_mut_ptr(), 4096, &mut written),
             Some(FFI_OK)
         );
+        assert_eq!(crate::ffi::global_state::ffi_memcpy_bytes(), 4096);
         assert_eq!(written, 4096);
         assert!(output.iter().all(|byte| *byte == 7));
         assert!(!try_lock_pending_maps()
@@ -367,5 +433,41 @@ mod tests {
                 worker.join().expect("pending worker");
             }
         });
+    }
+
+    #[test]
+    fn empty_pending_map_is_reported_until_stash() {
+        reset_hash_bytes_call_count();
+        let conn_id = u32::MAX - 77;
+        clear_pending_for_connection(conn_id);
+        let hashed = hash_bytes(b"SELECT 1");
+        let key = PendingResultKey::ExecQuery {
+            conn_id,
+            sql_hash: hashed,
+        };
+        assert!(!pending_has_key(&key));
+        stash_pending_result(key.clone(), vec![9; 8]);
+        assert!(!pending_buffers_is_empty());
+        assert!(pending_has_key(&key));
+        clear_pending_for_connection(conn_id);
+        assert!(!pending_has_key(&key));
+        assert!(hash_bytes_call_count() >= 1);
+    }
+
+    #[test]
+    fn empty_pending_map_skips_hashing_until_overflow_stash() {
+        reset_hash_bytes_call_count();
+        let conn_id = u32::MAX - 78;
+        clear_pending_for_connection(conn_id);
+        assert_eq!(hash_bytes_call_count(), 0);
+        let sql_hash = hash_bytes(b"SELECT overflow");
+        assert_eq!(hash_bytes_call_count(), 1);
+        let key = PendingResultKey::ExecQuery { conn_id, sql_hash };
+        assert!(!pending_has_key(&key));
+        stash_pending_result(key.clone(), vec![1; 8]);
+        assert!(pending_has_key(&key));
+        assert!(!pending_buffers_is_empty());
+        clear_pending_for_connection(conn_id);
+        assert!(!pending_has_key(&key));
     }
 }

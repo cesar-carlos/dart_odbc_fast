@@ -8,6 +8,7 @@ use crate::protocol::{
     row_buffer_to_columnar, ColumnarEncoder, OdbcType, RowBuffer, RowBufferEncoder,
 };
 use odbc_api::{Cursor, ResultSetMetadata};
+use std::io::Write;
 
 /// Resolve the effective ODBC block-fetch batch size: per-query override when
 /// provided, otherwise the process-wide default from `configured_batch_size`.
@@ -39,6 +40,23 @@ pub(crate) fn encode_optional_cursor_with_encoding<C>(
 where
     C: Cursor + ResultSetMetadata,
 {
+    let mut output = Vec::new();
+    encode_optional_cursor_with_encoding_into(cursor, encoding, plugin, fetch_size, &mut output)?;
+    Ok(output)
+}
+
+/// Same as [`encode_optional_cursor_with_encoding`] writing into `writer`.
+pub(crate) fn encode_optional_cursor_with_encoding_into<C, W>(
+    cursor: Option<C>,
+    encoding: ResultEncoding,
+    plugin: Option<&dyn DriverPlugin>,
+    fetch_size: Option<u32>,
+    writer: &mut W,
+) -> Result<()>
+where
+    C: Cursor + ResultSetMetadata,
+    W: Write,
+{
     let use_columnar = encoding.use_columnar();
     let use_compression = encoding.use_compression();
     let batch_size = resolve_batch_size(fetch_size);
@@ -46,7 +64,7 @@ where
     let mut row_buffer = RowBuffer::new();
 
     let Some(mut cursor) = cursor else {
-        return encode_query_result_payload(row_buffer, use_columnar, use_compression);
+        return encode_query_result_payload_into(row_buffer, use_columnar, use_compression, writer);
     };
 
     #[cfg(feature = "block-cursor-fetch")]
@@ -81,7 +99,11 @@ where
                     descs,
                     batch_size,
                 )?;
-                return ColumnarEncoder::encode(&v2, use_compression);
+                let encoded = ColumnarEncoder::encode(&v2, use_compression)?;
+                writer.write_all(&encoded).map_err(|err| {
+                    OdbcError::InternalError(format!("columnar encode write failed: {err}"))
+                })?;
+                return Ok(());
             }
         }
     }
@@ -96,7 +118,7 @@ where
 
     coalesce_for_json_rows(&mut row_buffer);
 
-    encode_query_result_payload(row_buffer, use_columnar, use_compression)
+    encode_query_result_payload_into(row_buffer, use_columnar, use_compression, writer)
 }
 
 fn describe_columns_for_encode<C: ResultSetMetadata>(
@@ -140,11 +162,26 @@ pub(crate) fn encode_query_result_payload(
     use_columnar: bool,
     use_compression: bool,
 ) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    encode_query_result_payload_into(row_buffer, use_columnar, use_compression, &mut output)?;
+    Ok(output)
+}
+
+pub(crate) fn encode_query_result_payload_into<W: Write>(
+    row_buffer: RowBuffer,
+    use_columnar: bool,
+    use_compression: bool,
+    writer: &mut W,
+) -> Result<()> {
     if use_columnar {
         let columnar_buffer = row_buffer_to_columnar(row_buffer)?;
-        ColumnarEncoder::encode(&columnar_buffer, use_compression)
+        let encoded = ColumnarEncoder::encode(&columnar_buffer, use_compression)?;
+        writer.write_all(&encoded).map_err(|err| {
+            OdbcError::InternalError(format!("columnar encode write failed: {err}"))
+        })?;
+        Ok(())
     } else {
-        RowBufferEncoder::encode_result(&row_buffer)
+        RowBufferEncoder::encode_to_writer_result(&row_buffer, writer)
     }
 }
 
@@ -157,16 +194,7 @@ impl ExecutionEngine {
     where
         C: Cursor + ResultSetMetadata,
     {
-        let encoding = if self.use_columnar {
-            if self.use_compression {
-                ResultEncoding::ColumnarCompressed
-            } else {
-                ResultEncoding::Columnar
-            }
-        } else {
-            ResultEncoding::RowMajor
-        };
-        encode_optional_cursor_with_encoding(cursor, encoding, plugin, None)
+        self.encode_optional_cursor_with_fetch_size(cursor, plugin, None)
     }
 
     pub(super) fn encode_optional_cursor_with_fetch_size<C>(
@@ -188,6 +216,29 @@ impl ExecutionEngine {
             ResultEncoding::RowMajor
         };
         encode_optional_cursor_with_encoding(cursor, encoding, plugin, fetch_size)
+    }
+
+    pub(super) fn encode_optional_cursor_with_fetch_size_into<C, W>(
+        &self,
+        cursor: Option<C>,
+        plugin: Option<&dyn DriverPlugin>,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()>
+    where
+        C: Cursor + ResultSetMetadata,
+        W: Write,
+    {
+        let encoding = if self.use_columnar {
+            if self.use_compression {
+                ResultEncoding::ColumnarCompressed
+            } else {
+                ResultEncoding::Columnar
+            }
+        } else {
+            ResultEncoding::RowMajor
+        };
+        encode_optional_cursor_with_encoding_into(cursor, encoding, plugin, fetch_size, writer)
     }
 
     /// Same as [`Self::encode_cursor`], but always row-major v1 (required

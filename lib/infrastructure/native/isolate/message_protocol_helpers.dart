@@ -247,11 +247,18 @@ TransferableTypedData? transferableIsolatePayload(Uint8List bytes) {
   if (bytes.length <= isolateTransferablePayloadThresholdBytes) {
     return null;
   }
+  recordFfiIsolateTransferCopy(bytes.length);
   return TransferableTypedData.fromList([bytes]);
 }
 
-/// Builds a worker [QueryResponse] with inline or transferable payload.
+/// Builds a worker [QueryResponse] with inline, adopted, or transferable
+/// payload.
 QueryResponse isolateQueryDataResponse(int requestId, Uint8List data) {
+  final adopted = detachZeroCopyPayload(data);
+  if (adopted != null) {
+    recordFfiIsolateAdopt(data.length);
+    return QueryResponse(requestId, adoptedNative: adopted);
+  }
   final transferable = transferableIsolatePayload(data);
   if (transferable != null) {
     return QueryResponse(requestId, transferableData: transferable);
@@ -271,6 +278,17 @@ StreamFetchResponse isolateStreamDataResponse({
     return StreamFetchResponse(
       requestId,
       success: success,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
+  final adopted = detachZeroCopyPayload(data);
+  if (adopted != null) {
+    recordFfiIsolateAdopt(data.length);
+    return StreamFetchResponse(
+      requestId,
+      success: success,
+      adoptedNative: adopted,
       hasMore: hasMore,
       error: error,
     );
@@ -313,6 +331,18 @@ StreamPollFetchResponse isolateStreamPollFetchResponse({
       error: error,
     );
   }
+  final adopted = detachZeroCopyPayload(data);
+  if (adopted != null) {
+    recordFfiIsolateAdopt(data.length);
+    return StreamPollFetchResponse(
+      requestId,
+      status: status,
+      success: success,
+      adoptedNative: adopted,
+      hasMore: hasMore,
+      error: error,
+    );
+  }
   final transferable = transferableIsolatePayload(data);
   if (transferable != null) {
     return StreamPollFetchResponse(
@@ -332,6 +362,57 @@ StreamPollFetchResponse isolateStreamPollFetchResponse({
     hasMore: hasMore,
     error: error,
   );
+}
+
+Uint8List? _materializeWorkerBytes({
+  Uint8List? data,
+  TransferableTypedData? transferableData,
+  AdoptedNativePayload? adoptedNative,
+}) {
+  if (data != null) {
+    return data;
+  }
+  if (adoptedNative != null) {
+    return attachAdoptedNativePayload(adoptedNative);
+  }
+  if (transferableData == null) {
+    return null;
+  }
+  return transferableData.materialize().asUint8List();
+}
+
+/// Frees adopted mallocs that were never delivered to another isolate.
+void releaseUnsentAdoptedNativePayloads(WorkerResponse response) {
+  switch (response) {
+    case QueryResponse(:final adoptedNative):
+      if (adoptedNative != null) {
+        releaseAdoptedNativePayload(adoptedNative);
+      }
+    case StreamFetchResponse(:final adoptedNative):
+      if (adoptedNative != null) {
+        releaseAdoptedNativePayload(adoptedNative);
+      }
+    case StreamPollFetchResponse(:final adoptedNative):
+      if (adoptedNative != null) {
+        releaseAdoptedNativePayload(adoptedNative);
+      }
+    default:
+      break;
+  }
+}
+
+/// Clears adopted handles after a successful send so the worker does not free.
+void markAdoptedNativePayloadTransferred(WorkerResponse response) {
+  switch (response) {
+    case QueryResponse():
+      response.clearAdoptedNativeAfterSend();
+    case StreamFetchResponse():
+      response.clearAdoptedNativeAfterSend();
+    case StreamPollFetchResponse():
+      response.clearAdoptedNativeAfterSend();
+    default:
+      break;
+  }
 }
 
 /// Base class for worker responses. All subclasses must be sendable.
@@ -381,35 +462,47 @@ class QueryResponse extends WorkerResponse {
     super.requestId, {
     Uint8List? data,
     TransferableTypedData? transferableData,
+    AdoptedNativePayload? adoptedNative,
     this.error,
     super.failure,
   })  : _data = data,
-        _transferableData = transferableData;
+        _transferableData = transferableData,
+        _adoptedNative = adoptedNative;
 
   QueryResponse withFailure(WorkerFailureSnapshot snapshot) => QueryResponse(
         requestId,
         data: _data,
         transferableData: _transferableData,
+        adoptedNative: _adoptedNative,
         error: error,
         failure: snapshot,
       );
 
   Uint8List? _data;
   final TransferableTypedData? _transferableData;
+  AdoptedNativePayload? _adoptedNative;
   final String? error;
 
-  bool get hasData => _data != null || _transferableData != null;
+  AdoptedNativePayload? get adoptedNative => _adoptedNative;
+
+  bool get hasData =>
+      _data != null || _transferableData != null || _adoptedNative != null;
 
   Uint8List? get data {
-    final data = _data;
-    if (data != null) {
-      return data;
+    final materialized = _materializeWorkerBytes(
+      data: _data,
+      transferableData: _transferableData,
+      adoptedNative: _adoptedNative,
+    );
+    if (materialized != null) {
+      _data = materialized;
+      _adoptedNative = null;
     }
-    final transferableData = _transferableData;
-    if (transferableData == null) {
-      return null;
-    }
-    return _data = transferableData.materialize().asUint8List();
+    return _data;
+  }
+
+  void clearAdoptedNativeAfterSend() {
+    _adoptedNative = null;
   }
 }
 

@@ -185,29 +185,39 @@ class StreamPollFetchResponse extends WorkerResponse {
     this.success = true,
     Uint8List? data,
     TransferableTypedData? transferableData,
+    AdoptedNativePayload? adoptedNative,
     this.hasMore = false,
     this.error,
   })  : _data = data,
-        _transferableData = transferableData;
+        _transferableData = transferableData,
+        _adoptedNative = adoptedNative;
 
   /// Native async poll status (`pending` / `ready` / `done` / error codes).
   final int status;
   final bool success;
   Uint8List? _data;
   final TransferableTypedData? _transferableData;
+  AdoptedNativePayload? _adoptedNative;
   final bool hasMore;
   final String? error;
 
+  AdoptedNativePayload? get adoptedNative => _adoptedNative;
+
   Uint8List? get data {
-    final data = _data;
-    if (data != null) {
-      return data;
+    final materialized = _materializeWorkerBytes(
+      data: _data,
+      transferableData: _transferableData,
+      adoptedNative: _adoptedNative,
+    );
+    if (materialized != null) {
+      _data = materialized;
+      _adoptedNative = null;
     }
-    final transferableData = _transferableData;
-    if (transferableData == null) {
-      return null;
-    }
-    return _data = transferableData.materialize().asUint8List();
+    return _data;
+  }
+
+  void clearAdoptedNativeAfterSend() {
+    _adoptedNative = null;
   }
 }
 
@@ -245,25 +255,35 @@ class StreamFetchResponse extends WorkerResponse {
     required this.success,
     Uint8List? data,
     TransferableTypedData? transferableData,
+    AdoptedNativePayload? adoptedNative,
     this.hasMore = false,
     this.error,
   })  : _data = data,
-        _transferableData = transferableData;
+        _transferableData = transferableData,
+        _adoptedNative = adoptedNative;
   final bool success;
   Uint8List? _data;
   final TransferableTypedData? _transferableData;
+  AdoptedNativePayload? _adoptedNative;
   final bool hasMore;
   final String? error;
 
+  AdoptedNativePayload? get adoptedNative => _adoptedNative;
+
   Uint8List? get data {
-    final data = _data;
-    if (data != null) {
-      return data;
+    final materialized = _materializeWorkerBytes(
+      data: _data,
+      transferableData: _transferableData,
+      adoptedNative: _adoptedNative,
+    );
+    if (materialized != null) {
+      _data = materialized;
+      _adoptedNative = null;
     }
-    final transferableData = _transferableData;
-    if (transferableData == null) {
-      return null;
-    }
-    return _data = transferableData.materialize().asUint8List();
+    return _data;
+  }
+
+  void clearAdoptedNativeAfterSend() {
+    _adoptedNative = null;
   }
 }

@@ -1,7 +1,10 @@
+import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/domain/entities/result_encoding.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/ffi_buffer_helper.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/ffi_copy_budget.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:test/test.dart';
 
@@ -175,6 +178,27 @@ void main() {
 
       expect(response.data, bytes);
       expect(identical(response.data, response.data), isTrue);
+    });
+
+    test('QueryResponse adopts native zero-copy payload without fromList', () {
+      resetFfiCopyBudgetForTest();
+      const n = zeroCopyResultThresholdBytes;
+      final bytes = callWithBuffer(
+        (buf, _, outWritten) {
+          buf.asTypedList(n).fillRange(0, n, 3);
+          outWritten.value = n;
+          return 0;
+        },
+        initialSize: n,
+        maxSize: n,
+      );
+      expect(bytes, isNotNull);
+      resetFfiCopyBudgetForTest();
+      final response = isolateQueryDataResponse(1, bytes!);
+      expect(response.data, bytes);
+      final snap = ffiCopyBudgetSnapshot();
+      expect(snap.isolateAdoptedBytes, n);
+      expect(snap.isolateTransferCopiedBytes, 0);
     });
 
     test('QueryResponse lazily materializes transferable byte payload', () {

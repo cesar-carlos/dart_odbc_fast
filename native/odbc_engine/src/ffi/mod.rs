@@ -7,6 +7,8 @@ pub mod guard;
 pub mod release_buffer;
 pub mod state;
 
+mod capped_writer;
+
 mod bulk;
 mod capabilities;
 mod catalog;

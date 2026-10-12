@@ -167,6 +167,17 @@ impl ExecutionEngine {
         cached: &mut CachedConnection,
         sql: &str,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.execute_query_cached_into(cached, sql, &mut output)?;
+        Ok(output)
+    }
+
+    pub fn execute_query_cached_into<W: std::io::Write>(
+        &self,
+        cached: &mut CachedConnection,
+        sql: &str,
+        writer: &mut W,
+    ) -> Result<()> {
         use std::time::Instant;
 
         let start_time = Instant::now();
@@ -177,7 +188,12 @@ impl ExecutionEngine {
 
         self.prepared_cache.get_or_insert(&optimized_sql);
 
-        let result = cached.execute_query_no_params(&optimized_sql);
+        let result = cached.execute_with_encoding_into(
+            &optimized_sql,
+            crate::engine::query::ResultEncoding::RowMajor,
+            None,
+            writer,
+        );
 
         let latency = start_time.elapsed();
         self.metrics.record_query(latency);
@@ -207,13 +223,40 @@ impl ExecutionEngine {
         timeout_sec: Option<usize>,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.execute_query_with_params_and_timeout_into(
+            conn,
+            sql,
+            params,
+            timeout_sec,
+            fetch_size,
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    pub fn execute_query_with_params_and_timeout_into<W: std::io::Write>(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+        timeout_sec: Option<usize>,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()> {
         use std::time::Instant;
 
         let start_time = Instant::now();
         let _span = self.log_query_start(sql);
 
-        let result =
-            self.execute_query_with_params_inner(conn, sql, params, timeout_sec, fetch_size);
+        let result = self.execute_query_with_params_inner_into(
+            conn,
+            sql,
+            params,
+            timeout_sec,
+            fetch_size,
+            writer,
+        );
 
         self.metrics.record_query(start_time.elapsed());
 
@@ -359,27 +402,38 @@ impl ExecutionEngine {
         result
     }
 
-    fn execute_query_with_params_inner(
+    fn execute_query_with_params_inner_into<W: std::io::Write>(
         &self,
         conn: &Connection<'static>,
         sql: &str,
         params: &[ParamValue],
         timeout_sec: Option<usize>,
         fetch_size: Option<u32>,
-    ) -> Result<Vec<u8>> {
+        writer: &mut W,
+    ) -> Result<()> {
         let plugin = self.current_plugin();
         match plan_query_input(params)? {
             QueryInputPlan::DirectNoParams => {
                 let cursor = conn
                     .execute(sql, (), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
+                self.encode_optional_cursor_with_fetch_size_into(
+                    cursor,
+                    plugin.as_deref(),
+                    fetch_size,
+                    writer,
+                )
             }
             QueryInputPlan::Inferred(parameters) => {
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
+                self.encode_optional_cursor_with_fetch_size_into(
+                    cursor,
+                    plugin.as_deref(),
+                    fetch_size,
+                    writer,
+                )
             }
             QueryInputPlan::PreparedNullAware => {
                 let mut stmt = conn.prepare(sql).map_err(OdbcError::from)?;
@@ -397,18 +451,26 @@ impl ExecutionEngine {
                 let cursor = stmt
                     .execute(parameters.as_slice())
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
+                self.encode_optional_cursor_with_fetch_size_into(
+                    cursor,
+                    plugin.as_deref(),
+                    fetch_size,
+                    writer,
+                )
             }
             QueryInputPlan::PreparedStandard => {
                 let parameters = param_values_to_input_params(params)?;
                 let cursor = conn
                     .execute(sql, parameters.as_slice(), timeout_sec)
                     .map_err(OdbcError::from)?;
-                self.encode_optional_cursor_with_fetch_size(cursor, plugin.as_deref(), fetch_size)
+                self.encode_optional_cursor_with_fetch_size_into(
+                    cursor,
+                    plugin.as_deref(),
+                    fetch_size,
+                    writer,
+                )
             }
         }
-
-        // FOR JSON normalisation â€” see execute_query_inner above (closes #2).
     }
 
     pub fn execute_multi_result(&self, conn: &Connection<'static>, sql: &str) -> Result<Vec<u8>> {

@@ -2,6 +2,7 @@ import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:odbc_fast/infrastructure/native/bindings/ffi_copy_budget.dart';
 import 'package:odbc_fast/infrastructure/native/bindings/native_byte_view.dart';
 
 /// Initial buffer size for FFI buffer allocations (256 KB).
@@ -45,6 +46,17 @@ final ffi.NativeFinalizer _zeroCopyFinalizer =
     ffi.NativeFinalizer(malloc.nativeFree);
 
 final class _ZeroCopyFfiOwner implements ffi.Finalizable {}
+
+/// Process-local malloc address sent between isolates instead of copying bytes.
+final class AdoptedNativePayload {
+  const AdoptedNativePayload({
+    required this.address,
+    required this.length,
+  });
+
+  final int address;
+  final int length;
+}
 
 /// True because result buffers are owned by Dart-side `malloc`.
 bool get isZeroCopyResultBufferAvailable => true;
@@ -106,7 +118,7 @@ StreamBufferFetchResult? _streamCallWithTransientBuffer(
   final hasMore = _streamStatusHasMore;
   var size = initialSize <= limit ? initialSize : limit;
   while (size <= limit) {
-    final buf = malloc<ffi.Uint8>(size);
+    final buf = _transientPool.acquire(size);
     outWritten.value = 0;
     hasMore.value = 0;
     try {
@@ -114,26 +126,30 @@ StreamBufferFetchResult? _streamCallWithTransientBuffer(
       if (code == 0) {
         final n = outWritten.value;
         final more = hasMore.value != 0;
-        final data = n > 0
-            ? materializeFfiBytes(
-                buf,
-                n,
-                transferOwnership: true,
-                allowZeroCopy: allowZeroCopy,
-              )
-            : null;
+        final Uint8List? data;
+        if (n > 0) {
+          data = _materializePooledBytes(
+            buf,
+            size,
+            n,
+            allowZeroCopy: allowZeroCopy,
+          );
+        } else {
+          _transientPool.release(buf, size);
+          data = null;
+        }
         return StreamBufferFetchResult(data: data, hasMore: more);
       }
       if (code == -2) {
         final requested = outWritten.value;
-        malloc.free(buf);
+        _transientPool.release(buf, size);
         size = requested > size ? requested : size * 2;
         continue;
       }
-      malloc.free(buf);
+      _transientPool.release(buf, size);
       return null;
     } on Object {
-      malloc.free(buf);
+      _transientPool.release(buf, size);
       rethrow;
     }
   }
@@ -229,33 +245,57 @@ Uint8List? _callWithTransientBuffer(
   var size = initialSize <= limit ? initialSize : limit;
   final outWritten = _transientOutWritten;
   while (size <= limit) {
-    final buf = malloc<ffi.Uint8>(size);
+    final buf = _transientPool.acquire(size);
     outWritten.value = 0;
     try {
       final code = fn(buf, size, outWritten);
       if (code == 0) {
         final n = outWritten.value;
-        return _materializeFfiBytes(
+        return _materializePooledBytes(
           buf,
+          size,
           n,
-          transferOwnership: true,
           allowZeroCopy: allowZeroCopy,
         );
       }
       if (code == -2) {
         final requested = outWritten.value;
-        malloc.free(buf);
+        _transientPool.release(buf, size);
         size = requested > size ? requested : size * 2;
         continue;
       }
-      malloc.free(buf);
+      _transientPool.release(buf, size);
       return null;
     } on Object {
-      malloc.free(buf);
+      _transientPool.release(buf, size);
       rethrow;
     }
   }
   return null;
+}
+
+Uint8List _materializePooledBytes(
+  ffi.Pointer<ffi.Uint8> buf,
+  int pooledSize,
+  int length, {
+  required bool allowZeroCopy,
+}) {
+  if (length == 0) {
+    _transientPool.release(buf, pooledSize);
+    return Uint8List(0);
+  }
+  if (allowZeroCopy && length >= zeroCopyResultThresholdBytes) {
+    return _materializeFfiBytes(
+      buf,
+      length,
+      transferOwnership: true,
+      allowZeroCopy: true,
+    );
+  }
+  recordFfiResultCopy(length);
+  final copy = Uint8List.fromList(buf.asTypedList(length));
+  _transientPool.release(buf, pooledSize);
+  return copy;
 }
 
 Uint8List _materializeFfiBytes(
@@ -282,8 +322,10 @@ Uint8List _materializeFfiBytes(
       externalSize: length,
     );
     registerNativeByteBacking(view, buf, owner);
+    recordFfiZeroCopyView();
     return view;
   }
+  recordFfiResultCopy(length);
   try {
     return Uint8List.fromList(buf.asTypedList(length));
   } finally {
@@ -291,6 +333,40 @@ Uint8List _materializeFfiBytes(
       malloc.free(buf);
     }
   }
+}
+
+/// Detaches a zero-copy malloc so another isolate can adopt it.
+///
+/// Returns null when [bytes] is below the zero-copy floor or has no native
+/// backing. The caller must either [attachAdoptedNativePayload] or
+/// [releaseAdoptedNativePayload].
+AdoptedNativePayload? detachZeroCopyPayload(Uint8List bytes) {
+  if (bytes.length < zeroCopyResultThresholdBytes) {
+    return null;
+  }
+  final owner = nativeFinalizerOwner(bytes);
+  final pointer = nativeBackingPointer(bytes);
+  if (owner == null || pointer == null) {
+    return null;
+  }
+  _zeroCopyFinalizer.detach(owner);
+  return AdoptedNativePayload(address: pointer.address, length: bytes.length);
+}
+
+/// Rebuilds a zero-copy view for a payload adopted from another isolate.
+Uint8List attachAdoptedNativePayload(AdoptedNativePayload payload) {
+  final buf = ffi.Pointer<ffi.Uint8>.fromAddress(payload.address);
+  return _materializeFfiBytes(
+    buf,
+    payload.length,
+    transferOwnership: true,
+    allowZeroCopy: true,
+  );
+}
+
+/// Frees an adopted payload that was never attached on the receiving isolate.
+void releaseAdoptedNativePayload(AdoptedNativePayload payload) {
+  malloc.free(ffi.Pointer<ffi.Uint8>.fromAddress(payload.address));
 }
 
 final _ReusableFfiScratchPool _sharedScratchPool =
@@ -341,16 +417,10 @@ final class _ReusableFfiScratch {
         if (n == 0) {
           return Uint8List(0);
         }
-        if (allowZeroCopy && n >= zeroCopyResultThresholdBytes) {
-          final owned = malloc<ffi.Uint8>(n);
-          owned.asTypedList(n).setAll(0, _buffer.asTypedList(n));
-          return _materializeFfiBytes(
-            owned,
-            n,
-            transferOwnership: true,
-            allowZeroCopy: true,
-          );
-        }
+        // Scratch memory is reused on the next call, so a NativeFinalizer
+        // view would be unsound. Copy into the Dart heap even when n is
+        // at or above the zero-copy floor.
+        recordFfiResultScratchCopy(n);
         return Uint8List.fromList(_buffer.asTypedList(n));
       }
       if (code == -2) {
@@ -385,11 +455,58 @@ final class _ReusableFfiScratch {
     if (_buffer != ffi.nullptr) {
       malloc.free(_buffer);
     }
+    recordFfiResultMalloc();
     _buffer = malloc<ffi.Uint8>(size);
     _capacity = size;
   }
 }
 
+/// Recycles transient result buffers whose payload stayed below the zero-copy
+/// floor so small queries reuse the 64 KiB / 256 KiB seed instead of malloc.
+final class _TransientFfiBufferPool {
+  static const int _maxPooledBlocks = 8;
+
+  final List<({ffi.Pointer<ffi.Uint8> buf, int size})> _free =
+      <({ffi.Pointer<ffi.Uint8> buf, int size})>[];
+
+  ffi.Pointer<ffi.Uint8> acquire(int size) {
+    for (var i = 0; i < _free.length; i++) {
+      if (_free[i].size == size) {
+        final slot = _free.removeAt(i);
+        return slot.buf;
+      }
+    }
+    recordFfiResultMalloc();
+    return malloc<ffi.Uint8>(size);
+  }
+
+  void release(ffi.Pointer<ffi.Uint8> buf, int size) {
+    if (_free.length >= _maxPooledBlocks) {
+      malloc.free(buf);
+      return;
+    }
+    _free.add((buf: buf, size: size));
+  }
+
+  void clearForTest() {
+    for (final slot in _free) {
+      malloc.free(slot.buf);
+    }
+    _free.clear();
+  }
+}
+
+final _TransientFfiBufferPool _transientPool = _TransientFfiBufferPool();
+
 /// Retained for source-compatible tests. Zero-copy availability is no longer
 /// tied to a dynamically resolved native symbol.
-void resetZeroCopyResultBufferBindingForTest() {}
+void resetZeroCopyResultBufferBindingForTest() {
+  resetFfiCopyBudgetForTest();
+  resetTransientFfiBufferPoolForTest();
+}
+
+/// Frees pooled transient result buffers. Tests call this via
+/// [resetZeroCopyResultBufferBindingForTest].
+void resetTransientFfiBufferPoolForTest() {
+  _transientPool.clearForTest();
+}

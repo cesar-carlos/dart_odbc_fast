@@ -71,14 +71,20 @@ fn exec_query_multi_ffi(
 
         let metrics = state::ffi_metrics();
         let start = Instant::now();
-        let pending_key = state::PendingResultKey::ExecQueryMulti {
-            conn_id,
-            sql_hash: state::hash_bytes(sql_str.as_bytes()),
+        let pending_key = if state::pending_buffers_is_empty() {
+            None
+        } else {
+            Some(state::PendingResultKey::ExecQueryMulti {
+                conn_id,
+                sql_hash: state::hash_bytes(sql_str.as_bytes()),
+            })
         };
-        if let Some(code) =
-            state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
-        {
-            return code;
+        if let Some(key) = pending_key.as_ref() {
+            if let Some(code) =
+                state::try_write_pending_result(key, out_buffer, buffer_len, out_written)
+            {
+                return code;
+            }
         }
 
         let Some(mut state) = try_lock_global_state() else {
@@ -126,19 +132,23 @@ fn exec_query_multi_ffi(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let status = write_connection_output_buffer(
+                let status = deliver_capped_outcome(
                     conn_id,
-                    &data,
-                    out_buffer,
-                    buffer_len,
+                    capped_outcome_from_vec(data, out_buffer, buffer_len as usize),
                     out_written,
+                    || {
+                        pending_key.unwrap_or_else(|| state::PendingResultKey::ExecQueryMulti {
+                            conn_id,
+                            sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                        })
+                    },
                 );
                 if status == FFI_OK {
                     metrics.record_query(elapsed);
                 } else {
                     metrics.record_error();
                 }
-                state::stash_if_buffer_too_small(status, pending_key, data)
+                status
             }
             Err(e) => {
                 metrics.record_error();
@@ -289,14 +299,20 @@ fn exec_query_multi_params_ffi(
 
         let metrics = state::ffi_metrics();
         let start = Instant::now();
-        let pending_key = state::PendingResultKey::ExecQueryMulti {
-            conn_id,
-            sql_hash: state::hash_bytes(sql_str.as_bytes()),
+        let pending_key = if state::pending_buffers_is_empty() {
+            None
+        } else {
+            Some(state::PendingResultKey::ExecQueryMulti {
+                conn_id,
+                sql_hash: state::hash_bytes(sql_str.as_bytes()),
+            })
         };
-        if let Some(code) =
-            state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
-        {
-            return code;
+        if let Some(key) = pending_key.as_ref() {
+            if let Some(code) =
+                state::try_write_pending_result(key, out_buffer, buffer_len, out_written)
+            {
+                return code;
+            }
         }
 
         let Some(mut state) = try_lock_global_state() else {
@@ -344,19 +360,23 @@ fn exec_query_multi_params_ffi(
         match result {
             Ok(data) => {
                 let elapsed = start.elapsed();
-                let status = write_connection_output_buffer(
+                let status = deliver_capped_outcome(
                     conn_id,
-                    &data,
-                    out_buffer,
-                    buffer_len,
+                    capped_outcome_from_vec(data, out_buffer, buffer_len as usize),
                     out_written,
+                    || {
+                        pending_key.unwrap_or_else(|| state::PendingResultKey::ExecQueryMulti {
+                            conn_id,
+                            sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                        })
+                    },
                 );
                 if status == FFI_OK {
                     metrics.record_query(elapsed);
                 } else {
                     metrics.record_error();
                 }
-                state::stash_if_buffer_too_small(status, pending_key, data)
+                status
             }
             Err(e) => {
                 metrics.record_error();

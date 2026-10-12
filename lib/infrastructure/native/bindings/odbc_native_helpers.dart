@@ -41,6 +41,7 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
   ffi.Pointer<ffi.Uint8> _allocUint8List(Uint8List list) {
     final p = malloc<ffi.Uint8>(list.length);
     p.asTypedList(list.length).setAll(0, list);
+    recordFfiParamCopy(list.length);
     return p;
   }
 
@@ -64,12 +65,21 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
   }
 
   /// Copies [bytes] into a reusable scratch (≤256 KiB) or a transient malloc.
+  ///
+  /// Native-backed views skip the copy and pass the existing pointer. The
+  /// [NativeByteView] local keeps the finalizer owner alive for the call.
   T? _withByteBuffer<T>(
     Uint8List bytes,
     T? Function(ffi.Pointer<ffi.Uint8> ptr) f,
   ) {
     if (bytes.isEmpty) {
       return f(ffi.nullptr);
+    }
+    final nativeView = NativeByteView.fromBytes(bytes);
+    final nativePtr =
+        nativeView.hasNativeBacking ? nativeView.pointerAt(0) : null;
+    if (nativePtr != null) {
+      return f(nativePtr);
     }
     if (bytes.length <= _byteScratchCapacity && !_byteScratchBusy) {
       if (_byteScratch == ffi.nullptr) {
@@ -78,6 +88,7 @@ mixin _OdbcNativeHelpers on _OdbcNativeState {
       _byteScratchBusy = true;
       try {
         _byteScratch.asTypedList(bytes.length).setAll(0, bytes);
+        recordFfiParamCopy(bytes.length);
         return f(_byteScratch);
       } finally {
         _byteScratchBusy = false;

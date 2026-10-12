@@ -13,7 +13,7 @@
 //! This approach uses a trait object to execute statements without exposing
 //! the underlying borrow lifetime.
 
-use crate::engine::core::execution::result_encoding::encode_optional_cursor_with_encoding;
+use crate::engine::core::execution::result_encoding::encode_optional_cursor_with_encoding_into;
 use crate::engine::query::ResultEncoding;
 use crate::error::{OdbcError, Result};
 #[cfg(feature = "statement-handle-reuse")]
@@ -25,6 +25,7 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use std::io::Write;
 use std::ops::Deref;
 
 use crate::protocol::{
@@ -286,16 +287,28 @@ impl CachedConnection {
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.execute_with_encoding_into(sql, encoding, fetch_size, &mut output)?;
+        Ok(output)
+    }
+
+    pub fn execute_with_encoding_into<W: Write>(
+        &mut self,
+        sql: &str,
+        encoding: ResultEncoding,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()> {
         self.ensure_usable()?;
         #[cfg(feature = "statement-handle-reuse")]
         {
-            self.execute_query_with_reuse(sql, encoding, fetch_size)
+            self.execute_query_with_reuse_into(sql, encoding, fetch_size, writer)
         }
 
         #[cfg(not(feature = "statement-handle-reuse"))]
         {
             let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-            execute_stmt_to_buffer_with_encoding(&mut stmt, encoding, fetch_size)
+            execute_stmt_into_writer(&mut stmt, encoding, fetch_size, writer)
         }
     }
 
@@ -331,16 +344,29 @@ impl CachedConnection {
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.execute_with_params_and_encoding_into(sql, params, encoding, fetch_size, &mut output)?;
+        Ok(output)
+    }
+
+    pub fn execute_with_params_and_encoding_into<W: Write>(
+        &mut self,
+        sql: &str,
+        params: &[ParamValue],
+        encoding: ResultEncoding,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()> {
         self.ensure_usable()?;
         #[cfg(feature = "statement-handle-reuse")]
         {
-            self.execute_query_with_params_reuse(sql, params, encoding, fetch_size)
+            self.execute_query_with_params_reuse_into(sql, params, encoding, fetch_size, writer)
         }
 
         #[cfg(not(feature = "statement-handle-reuse"))]
         {
             let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-            execute_stmt_with_params_and_encoding(&mut stmt, params, encoding, fetch_size)
+            execute_stmt_with_params_into_writer(&mut stmt, params, encoding, fetch_size, writer)
         }
     }
 
@@ -355,61 +381,86 @@ impl CachedConnection {
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.try_execute_param_buffer_with_encoding_into(
+            sql,
+            param_bytes,
+            encoding,
+            fetch_size,
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    pub fn try_execute_param_buffer_with_encoding_into<W: Write>(
+        &mut self,
+        sql: &str,
+        param_bytes: &[u8],
+        encoding: ResultEncoding,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()> {
         self.ensure_usable()?;
         let list = deserialize_param_buffer(param_bytes)?;
         if let ParamList::Legacy(params) = &list {
             if params.is_empty() {
-                return self.execute_with_encoding(sql, encoding, fetch_size);
+                return self.execute_with_encoding_into(sql, encoding, fetch_size, writer);
             }
             if let Some(prepared_params) = prepared_params_for_cache(params)? {
-                return self.execute_with_prepared_params(
+                return self.execute_with_prepared_params_into(
                     sql,
                     &prepared_params,
                     encoding,
                     fetch_size,
+                    writer,
                 );
             }
         }
-        crate::engine::query::execute_query_with_parsed_params_encoding(
+        let encoded = crate::engine::query::execute_query_with_parsed_params_encoding(
             self.connection(),
             sql,
             list,
             encoding,
             fetch_size,
-        )
+        )?;
+        writer.write_all(&encoded).map_err(|err| {
+            OdbcError::InternalError(format!("param buffer encode write failed: {err}"))
+        })
     }
 
-    fn execute_with_prepared_params(
+    fn execute_with_prepared_params_into<W: Write>(
         &mut self,
         sql: &str,
         params: &[Box<dyn InputParameter>],
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
-    ) -> Result<Vec<u8>> {
+        writer: &mut W,
+    ) -> Result<()> {
         #[cfg(feature = "statement-handle-reuse")]
         {
             self.with_prepared_mut(sql, |stmt| {
-                execute_prepared_params(stmt, params, encoding, fetch_size)
+                execute_prepared_params_into(stmt, params, encoding, fetch_size, writer)
             })
         }
         #[cfg(not(feature = "statement-handle-reuse"))]
         {
             let mut stmt = self.conn.prepare(sql).map_err(OdbcError::from)?;
-            execute_prepared_params(&mut stmt, params, encoding, fetch_size)
+            execute_prepared_params_into(&mut stmt, params, encoding, fetch_size, writer)
         }
     }
 
     #[cfg(feature = "statement-handle-reuse")]
-    fn execute_query_with_reuse(
+    fn execute_query_with_reuse_into<W: Write>(
         &mut self,
         sql: &str,
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
-    ) -> Result<Vec<u8>> {
+        writer: &mut W,
+    ) -> Result<()> {
         if let Some(cached) = self.stmt_cache.get_mut(sql) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             return cached
-                .with_mut(|stmt| execute_stmt_to_buffer_with_encoding(stmt, encoding, fetch_size));
+                .with_mut(|stmt| execute_stmt_into_writer(stmt, encoding, fetch_size, writer));
         }
 
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
@@ -425,8 +476,7 @@ impl CachedConnection {
         // transmute that fakes `'static` is therefore confined to this
         // single line of construction inside the wrapper.
         let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
-        let result = owned
-            .with_mut(|stmt| execute_stmt_to_buffer_with_encoding(stmt, encoding, fetch_size))?;
+        owned.with_mut(|stmt| execute_stmt_into_writer(stmt, encoding, fetch_size, writer))?;
 
         self.stmt_cache.put(sql.to_string(), owned);
 
@@ -434,24 +484,25 @@ impl CachedConnection {
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok(result)
+        Ok(())
     }
 
     #[cfg(feature = "statement-handle-reuse")]
-    fn execute_query_with_params_reuse(
+    fn execute_query_with_params_reuse_into<W: Write>(
         &mut self,
         sql: &str,
         params: &[ParamValue],
         encoding: ResultEncoding,
         fetch_size: Option<u32>,
-    ) -> Result<Vec<u8>> {
+        writer: &mut W,
+    ) -> Result<()> {
         if let Some(cached) = self.stmt_cache.get_mut(sql) {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             // Re-bind every execute: parameter values typically change
             // between calls even when the SQL is identical, and ODBC
             // allows re-binding on a cached prepared statement.
             return cached.with_mut(|stmt| {
-                execute_stmt_with_params_and_encoding(stmt, params, encoding, fetch_size)
+                execute_stmt_with_params_into_writer(stmt, params, encoding, fetch_size, writer)
             });
         }
 
@@ -466,8 +517,8 @@ impl CachedConnection {
         // `execute_query_with_reuse` SAFETY note above — same invariant
         // (cache drops before connection, single point of unsafe).
         let mut owned = unsafe { OwnedPreparedStatement::from_borrowed(prepared) };
-        let result = owned.with_mut(|stmt| {
-            execute_stmt_with_params_and_encoding(stmt, params, encoding, fetch_size)
+        owned.with_mut(|stmt| {
+            execute_stmt_with_params_into_writer(stmt, params, encoding, fetch_size, writer)
         })?;
 
         self.stmt_cache.put(sql.to_string(), owned);
@@ -476,7 +527,7 @@ impl CachedConnection {
             self.cache_evictions.fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok(result)
+        Ok(())
     }
 
     /// True when params can rebind on a cached prepared handle (no NULLs, or
@@ -617,24 +668,26 @@ impl Drop for CachedConnection {
     }
 }
 
-fn execute_stmt_to_buffer_with_encoding<S>(
+fn execute_stmt_into_writer<S, W: Write>(
     stmt: &mut Prepared<S>,
     encoding: ResultEncoding,
     fetch_size: Option<u32>,
-) -> Result<Vec<u8>>
+    writer: &mut W,
+) -> Result<()>
 where
     S: odbc_api::handles::AsStatementRef,
 {
     let cursor = stmt.execute(()).map_err(OdbcError::from)?;
-    encode_optional_cursor_with_encoding(cursor, encoding, None, fetch_size)
+    encode_optional_cursor_with_encoding_into(cursor, encoding, None, fetch_size, writer)
 }
 
-fn execute_stmt_with_params_and_encoding<S>(
+fn execute_stmt_with_params_into_writer<S, W: Write>(
     stmt: &mut Prepared<S>,
     params: &[ParamValue],
     encoding: ResultEncoding,
     fetch_size: Option<u32>,
-) -> Result<Vec<u8>>
+    writer: &mut W,
+) -> Result<()>
 where
     S: odbc_api::handles::AsStatementRef,
 {
@@ -649,20 +702,21 @@ where
     } else {
         param_values_to_input_params(params)?
     };
-    execute_prepared_params(stmt, &parameters, encoding, fetch_size)
+    execute_prepared_params_into(stmt, &parameters, encoding, fetch_size, writer)
 }
 
-fn execute_prepared_params<S>(
+fn execute_prepared_params_into<S, W: Write>(
     stmt: &mut Prepared<S>,
     parameters: &[Box<dyn InputParameter>],
     encoding: ResultEncoding,
     fetch_size: Option<u32>,
-) -> Result<Vec<u8>>
+    writer: &mut W,
+) -> Result<()>
 where
     S: odbc_api::handles::AsStatementRef,
 {
     let cursor = stmt.execute(parameters).map_err(OdbcError::from)?;
-    encode_optional_cursor_with_encoding(cursor, encoding, None, fetch_size)
+    encode_optional_cursor_with_encoding_into(cursor, encoding, None, fetch_size, writer)
 }
 
 pub(crate) fn prepared_params_for_cache(

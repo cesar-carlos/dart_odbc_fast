@@ -42,9 +42,10 @@ pub use identifier::{
 };
 pub use query::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
-    execute_query_with_cached_connection_params, execute_query_with_connection,
-    execute_query_with_param_buffer, execute_query_with_param_buffer_and_timeout,
-    execute_query_with_param_buffer_encoding, execute_query_with_params,
+    execute_query_with_cached_connection_into, execute_query_with_cached_connection_params,
+    execute_query_with_connection, execute_query_with_param_buffer,
+    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
+    execute_query_with_param_buffer_timeout_encoding_into, execute_query_with_params,
     execute_query_with_params_and_timeout, get_global_metrics, ResultEncoding,
 };
 pub use sqlserver_json::{

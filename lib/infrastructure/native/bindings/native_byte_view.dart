@@ -41,6 +41,9 @@ final class NativeByteView {
     if (backing == null) return null;
     return backing.pointer + _offset + offset;
   }
+
+  /// Owner token for the [ffi.NativeFinalizer] attached to this backing.
+  ffi.Finalizable? get finalizerOwner => _backing?.owner;
 }
 
 final class _NativeByteBacking {
@@ -71,4 +74,20 @@ void registerNativeByteBacking(
   final backing = _NativeByteBacking(pointer, owner, bytes.offsetInBytes);
   _nativeByteBackings[bytes] = backing;
   _nativeBufferBackings[bytes.buffer] = backing;
+}
+
+/// Looks up the native pointer for [bytes] when they still have provenance.
+ffi.Pointer<ffi.Uint8>? nativeBackingPointer(Uint8List bytes) {
+  final backing =
+      _nativeByteBackings[bytes] ?? _nativeBufferBackings[bytes.buffer];
+  if (backing == null) return null;
+  final offset = bytes.offsetInBytes - backing.rootOffset;
+  return backing.pointer + offset;
+}
+
+/// Looks up the finalizer owner for [bytes] when they still have provenance.
+ffi.Finalizable? nativeFinalizerOwner(Uint8List bytes) {
+  final backing =
+      _nativeByteBackings[bytes] ?? _nativeBufferBackings[bytes.buffer];
+  return backing?.owner;
 }

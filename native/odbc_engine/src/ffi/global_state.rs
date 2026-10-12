@@ -7,8 +7,40 @@ use crate::plugins::PluginRegistry;
 #[cfg(feature = "sqlserver-bcp")]
 use std::collections::HashMap;
 use std::os::raw::{c_int, c_uint};
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::cell::Cell;
+
+// Test-only copy accounting. Thread-local so parallel cargo test tasks do not
+// add their copies into another test's assertion.
+#[cfg(test)]
+thread_local! {
+    static FFI_MEMCPY_BYTES: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(not(test))]
+static FFI_MEMCPY_BYTES: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn record_ffi_memcpy_bytes(len: usize) {
+    #[cfg(test)]
+    FFI_MEMCPY_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(len as u64)));
+    #[cfg(not(test))]
+    FFI_MEMCPY_BYTES.fetch_add(len as u64, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn ffi_memcpy_bytes() -> u64 {
+    FFI_MEMCPY_BYTES.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_ffi_memcpy_bytes() {
+    FFI_MEMCPY_BYTES.with(|bytes| bytes.set(0));
+}
 
 use super::state;
 
@@ -127,6 +159,7 @@ pub(crate) fn write_ffi_output_buffer(
 
     // SAFETY: null pointers were rejected above, `data.len() <= buffer_len`,
     // and `u8` has no alignment requirement.
+    record_ffi_memcpy_bytes(data.len());
     unsafe {
         std::ptr::copy_nonoverlapping(data.as_ptr(), out_buffer, data.len());
         *out_written = data.len() as c_uint;

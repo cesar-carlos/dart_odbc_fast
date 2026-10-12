@@ -72,8 +72,20 @@ impl QueryPipeline {
         cached: &mut CachedConnection,
         sql: &str,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.execute_direct_cached_into(cached, sql, &mut output)?;
+        Ok(output)
+    }
+
+    pub fn execute_direct_cached_into<W: std::io::Write>(
+        &self,
+        cached: &mut CachedConnection,
+        sql: &str,
+        writer: &mut W,
+    ) -> Result<()> {
         validate_sql_not_empty(sql)?;
-        self.execution_engine.execute_query_cached(cached, sql)
+        self.execution_engine
+            .execute_query_cached_into(cached, sql, writer)
     }
 
     pub fn execute_with_params(
@@ -95,14 +107,37 @@ impl QueryPipeline {
         timeout_sec: Option<usize>,
         fetch_size: Option<u32>,
     ) -> Result<Vec<u8>> {
-        validate_sql_not_empty(sql)?;
-        self.execution_engine.execute_query_with_params_and_timeout(
+        let mut output = Vec::new();
+        self.execute_with_params_and_timeout_into(
             conn,
             sql,
             params,
             timeout_sec,
             fetch_size,
-        )
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    pub fn execute_with_params_and_timeout_into<W: std::io::Write>(
+        &self,
+        conn: &Connection<'static>,
+        sql: &str,
+        params: &[ParamValue],
+        timeout_sec: Option<usize>,
+        fetch_size: Option<u32>,
+        writer: &mut W,
+    ) -> Result<()> {
+        validate_sql_not_empty(sql)?;
+        self.execution_engine
+            .execute_query_with_params_and_timeout_into(
+                conn,
+                sql,
+                params,
+                timeout_sec,
+                fetch_size,
+                writer,
+            )
     }
 
     pub fn execute_with_bound_params_and_timeout(

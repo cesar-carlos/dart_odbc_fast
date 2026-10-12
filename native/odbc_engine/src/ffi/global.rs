@@ -295,7 +295,27 @@ pub(crate) fn try_cached_params_with_encoding(
     encoding: ResultEncoding,
     fetch_size: Option<u32>,
 ) -> Result<Vec<u8>> {
+    if encoding == ResultEncoding::RowMajor && fetch_size.is_none() {
+        return try_cached_legacy_params(cached, sql, params_slice);
+    }
     cached.try_execute_param_buffer_with_encoding(sql, params_slice, encoding, fetch_size)
+}
+
+pub(crate) fn try_cached_params_with_encoding_into<W: std::io::Write>(
+    cached: &mut crate::handles::CachedConnection,
+    sql: &str,
+    params_slice: &[u8],
+    encoding: ResultEncoding,
+    fetch_size: Option<u32>,
+    writer: &mut W,
+) -> Result<()> {
+    cached.try_execute_param_buffer_with_encoding_into(
+        sql,
+        params_slice,
+        encoding,
+        fetch_size,
+        writer,
+    )
 }
 
 /// Build a cache key of the form `"<conn_id>:<table>"` in a single

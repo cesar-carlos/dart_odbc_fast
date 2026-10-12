@@ -40,10 +40,31 @@ pub(crate) fn get_last_error() -> String {
 }
 
 pub(crate) fn trigger_structured_cancel_unsupported_error() {
-    let stmt_id = next_test_invalid_id();
-    state::insert_statement(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
-    let _ = odbc_cancel(stmt_id);
-    let _ = state::remove_statement(stmt_id);
+    // Statement map first. Callers that also hold the structured-error lock
+    // must already own it, so this does not invert that order.
+    with_statement_map_test_isolation(|| {
+        let stmt_id = next_test_invalid_id();
+        state::insert_statement(stmt_id, StatementHandle::new(1, "SELECT 1".to_string(), 0));
+        let _ = odbc_cancel(stmt_id);
+        let _ = state::remove_statement(stmt_id);
+    });
+}
+
+fn statement_map_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Hold the process-wide statement map for one test body.
+///
+/// `odbc_clear_all_statements` removes every handle. Tests that insert or
+/// prepare a statement take this lock so a parallel clear cannot observe or
+/// delete their handle.
+pub(crate) fn with_statement_map_test_isolation<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = statement_map_test_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
 }
 
 pub(crate) fn structured_error_test_lock() -> &'static Mutex<()> {

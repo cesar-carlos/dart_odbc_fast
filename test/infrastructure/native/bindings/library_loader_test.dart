@@ -60,6 +60,7 @@ void main() {
             '$root${sep}native${sep}target${sep}release$sep$name';
         if (!File(releasePath).existsSync()) {
           markTestSkipped('No dev build at $releasePath');
+          return;
         }
         final lib = tryLoadOdbcEngineFromProjectRoot(root!);
         expect(lib, isNotNull);
@@ -203,6 +204,7 @@ void main() {
         );
         if (local == null) {
           markTestSkipped('No local release build available');
+          return;
         }
         // Contract: when a local release exists, loadOdbcLibrary must succeed
         // without depending solely on package: Native Assets / PATH.

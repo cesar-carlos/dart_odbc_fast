@@ -151,23 +151,29 @@ fn execute_prepared_ffi(
             }
         };
 
-        let params_hash = if params_buffer.is_null() || params_len == 0 {
-            0
+        let pending_key = if state::pending_buffers_is_empty() {
+            None
         } else {
-            // SAFETY: FFI caller keeps `params_buffer` readable for this call.
-            let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
-            state::hash_bytes(raw)
+            let params_hash = if params_buffer.is_null() || params_len == 0 {
+                0
+            } else {
+                // SAFETY: FFI caller keeps `params_buffer` readable for this call.
+                let raw = unsafe { std::slice::from_raw_parts(params_buffer, params_len as usize) };
+                state::hash_bytes(raw)
+            };
+            Some(state::PendingResultKey::Execute {
+                stmt_id,
+                params_hash,
+                timeout_override_ms,
+                fetch_size,
+            })
         };
-        let pending_key = state::PendingResultKey::Execute {
-            stmt_id,
-            params_hash,
-            timeout_override_ms,
-            fetch_size,
-        };
-        if let Some(code) =
-            state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
-        {
-            return code;
+        if let Some(key) = pending_key.as_ref() {
+            if let Some(code) =
+                state::try_write_pending_result(key, out_buffer, buffer_len, out_written)
+            {
+                return code;
+            }
         }
 
         let timeout_sec = if timeout_override_ms > 0 {
@@ -201,6 +207,8 @@ fn execute_prepared_ffi(
             let mut target_guard = RunnableTargetGuard::new(conn_id, target);
             drop(state);
 
+            // SAFETY: `out_buffer` is the Dart-owned output buffer for this FFI call.
+            let mut writer = unsafe { CappedFfiWriter::new(out_buffer, buffer_len as usize) };
             let result = match target_guard.target_mut() {
                 RunnableConnection::Regular(conn_arc) => {
                     let conn_guard = match conn_arc.lock() {
@@ -220,25 +228,27 @@ fn execute_prepared_ffi(
                         }
                     };
                     conn_guard.checked_connection().and_then(|conn| {
-                        execute_query_with_param_buffer_timeout_encoding(
+                        execute_query_with_param_buffer_timeout_encoding_into(
                             conn,
                             &sql_str,
                             params_slice,
                             timeout_sec,
                             fetch_size_opt,
                             encoding,
+                            &mut writer,
                         )
                     })
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
                     Ok(conn_guard) => conn_guard.checked_connection().and_then(|conn| {
-                        execute_query_with_param_buffer_timeout_encoding(
+                        execute_query_with_param_buffer_timeout_encoding_into(
                             conn,
                             &sql_str,
                             params_slice,
                             timeout_sec,
                             fetch_size_opt,
                             encoding,
+                            &mut writer,
                         )
                     }),
                     Err(_) => Err(OdbcError::InternalError(
@@ -254,21 +264,30 @@ fn execute_prepared_ffi(
             restore_pooled_connection(&mut state, conn_id, target_guard.take_target());
 
             match result {
-                Ok(data) => {
+                Ok(()) => {
                     let elapsed = start.elapsed();
-                    let status = write_connection_output_buffer(
-                        conn_id,
-                        &data,
-                        out_buffer,
-                        buffer_len,
-                        out_written,
-                    );
+                    let status =
+                        deliver_capped_outcome(conn_id, writer.finish(), out_written, || {
+                            pending_key.clone().unwrap_or_else(|| {
+                                let params_hash = if params_slice.is_empty() {
+                                    0
+                                } else {
+                                    state::hash_bytes(params_slice)
+                                };
+                                state::PendingResultKey::Execute {
+                                    stmt_id,
+                                    params_hash,
+                                    timeout_override_ms,
+                                    fetch_size,
+                                }
+                            })
+                        });
                     if status == FFI_OK {
                         metrics.record_query(elapsed);
                     } else {
                         metrics.record_error();
                     }
-                    state::stash_if_buffer_too_small(status, pending_key.clone(), data)
+                    status
                 }
                 Err(e) => {
                     metrics.record_error();

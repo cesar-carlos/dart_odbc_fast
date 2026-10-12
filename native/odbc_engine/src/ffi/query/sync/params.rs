@@ -39,15 +39,21 @@ pub extern "C" fn odbc_exec_query_params(
         };
 
         let execute_with_params = |params_slice: &[u8]| {
-            let pending_key = state::PendingResultKey::ExecQueryParams {
-                conn_id,
-                sql_hash: state::hash_bytes(sql_str.as_bytes()),
-                params_hash: state::hash_bytes(params_slice),
+            let pending_key = if state::pending_buffers_is_empty() {
+                None
+            } else {
+                Some(state::PendingResultKey::ExecQueryParams {
+                    conn_id,
+                    sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                    params_hash: state::hash_bytes(params_slice),
+                })
             };
-            if let Some(code) =
-                state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
-            {
-                return code;
+            if let Some(key) = pending_key.as_ref() {
+                if let Some(code) =
+                    state::try_write_pending_result(key, out_buffer, buffer_len, out_written)
+                {
+                    return code;
+                }
             }
 
             let Some(mut state) = try_lock_global_state() else {
@@ -68,6 +74,8 @@ pub extern "C" fn odbc_exec_query_params(
             let mut target_guard = RunnableTargetGuard::new(conn_id, target);
             drop(state);
 
+            // SAFETY: `out_buffer` is the Dart-owned output buffer for this FFI call.
+            let mut writer = unsafe { CappedFfiWriter::new(out_buffer, buffer_len as usize) };
             let result = match target_guard.target_mut() {
                 RunnableConnection::Regular(conn_arc) => {
                     let mut conn_guard = match conn_arc.lock() {
@@ -81,17 +89,39 @@ pub extern "C" fn odbc_exec_query_params(
                         }
                     };
                     if params_slice.is_empty() {
-                        execute_query_with_cached_connection(&mut conn_guard, sql_str)
+                        execute_query_with_cached_connection_into(
+                            &mut conn_guard,
+                            sql_str,
+                            &mut writer,
+                        )
                     } else {
-                        try_cached_legacy_params(&mut conn_guard, sql_str, params_slice)
+                        try_cached_params_with_encoding_into(
+                            &mut conn_guard,
+                            sql_str,
+                            params_slice,
+                            ResultEncoding::RowMajor,
+                            None,
+                            &mut writer,
+                        )
                     }
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
                     Ok(mut conn_guard) => {
                         if params_slice.is_empty() {
-                            execute_query_with_cached_connection(conn_guard.cached_mut(), sql_str)
+                            execute_query_with_cached_connection_into(
+                                conn_guard.cached_mut(),
+                                sql_str,
+                                &mut writer,
+                            )
                         } else {
-                            try_cached_legacy_params(conn_guard.cached_mut(), sql_str, params_slice)
+                            try_cached_params_with_encoding_into(
+                                conn_guard.cached_mut(),
+                                sql_str,
+                                params_slice,
+                                ResultEncoding::RowMajor,
+                                None,
+                                &mut writer,
+                            )
                         }
                     }
                     Err(_) => Err(OdbcError::InternalError(
@@ -101,21 +131,24 @@ pub extern "C" fn odbc_exec_query_params(
             };
 
             match result {
-                Ok(data) => {
+                Ok(()) => {
                     let elapsed = start.elapsed();
-                    let status = write_connection_output_buffer(
-                        conn_id,
-                        &data,
-                        out_buffer,
-                        buffer_len,
-                        out_written,
-                    );
+                    let status =
+                        deliver_capped_outcome(conn_id, writer.finish(), out_written, || {
+                            pending_key.unwrap_or_else(|| {
+                                state::PendingResultKey::ExecQueryParams {
+                                    conn_id,
+                                    sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                                    params_hash: state::hash_bytes(params_slice),
+                                }
+                            })
+                        });
                     if status == FFI_OK {
                         metrics.record_query(elapsed);
                     } else {
                         metrics.record_error();
                     }
-                    state::stash_if_buffer_too_small(status, pending_key, data)
+                    status
                 }
                 Err(e) => {
                     metrics.record_error();
@@ -230,15 +263,21 @@ fn exec_query_params_encoded(
         };
 
         let execute_with_params = |params_slice: &[u8]| {
-            let pending_key = state::PendingResultKey::ExecQueryParams {
-                conn_id,
-                sql_hash: state::hash_bytes(sql_str.as_bytes()),
-                params_hash: state::hash_bytes(params_slice),
+            let pending_key = if state::pending_buffers_is_empty() {
+                None
+            } else {
+                Some(state::PendingResultKey::ExecQueryParams {
+                    conn_id,
+                    sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                    params_hash: state::hash_bytes(params_slice),
+                })
             };
-            if let Some(code) =
-                state::try_write_pending_result(&pending_key, out_buffer, buffer_len, out_written)
-            {
-                return code;
+            if let Some(key) = pending_key.as_ref() {
+                if let Some(code) =
+                    state::try_write_pending_result(key, out_buffer, buffer_len, out_written)
+                {
+                    return code;
+                }
             }
 
             let Some(mut state) = try_lock_global_state() else {
@@ -259,6 +298,8 @@ fn exec_query_params_encoded(
             let mut target_guard = RunnableTargetGuard::new(conn_id, target);
             drop(state);
 
+            // SAFETY: `out_buffer` is the Dart-owned output buffer for this FFI call.
+            let mut writer = unsafe { CappedFfiWriter::new(out_buffer, buffer_len as usize) };
             let result = match target_guard.target_mut() {
                 RunnableConnection::Regular(conn_arc) => {
                     let mut conn_guard = match conn_arc.lock() {
@@ -272,30 +313,40 @@ fn exec_query_params_encoded(
                         }
                     };
                     if params_slice.is_empty() {
-                        conn_guard.execute_with_encoding(sql_str, encoding, fetch_size)
+                        conn_guard.execute_with_encoding_into(
+                            sql_str,
+                            encoding,
+                            fetch_size,
+                            &mut writer,
+                        )
                     } else {
-                        try_cached_params_with_encoding(
+                        try_cached_params_with_encoding_into(
                             &mut conn_guard,
                             sql_str,
                             params_slice,
                             encoding,
                             fetch_size,
+                            &mut writer,
                         )
                     }
                 }
                 RunnableConnection::Pooled { pooled, .. } => match pooled.lock() {
                     Ok(mut conn_guard) => {
                         if params_slice.is_empty() {
-                            conn_guard
-                                .cached_mut()
-                                .execute_with_encoding(sql_str, encoding, fetch_size)
+                            conn_guard.cached_mut().execute_with_encoding_into(
+                                sql_str,
+                                encoding,
+                                fetch_size,
+                                &mut writer,
+                            )
                         } else {
-                            try_cached_params_with_encoding(
+                            try_cached_params_with_encoding_into(
                                 conn_guard.cached_mut(),
                                 sql_str,
                                 params_slice,
                                 encoding,
                                 fetch_size,
+                                &mut writer,
                             )
                         }
                     }
@@ -306,21 +357,24 @@ fn exec_query_params_encoded(
             };
 
             match result {
-                Ok(data) => {
+                Ok(()) => {
                     let elapsed = start.elapsed();
-                    let status = write_connection_output_buffer(
-                        conn_id,
-                        &data,
-                        out_buffer,
-                        buffer_len,
-                        out_written,
-                    );
+                    let status =
+                        deliver_capped_outcome(conn_id, writer.finish(), out_written, || {
+                            pending_key.unwrap_or_else(|| {
+                                state::PendingResultKey::ExecQueryParams {
+                                    conn_id,
+                                    sql_hash: state::hash_bytes(sql_str.as_bytes()),
+                                    params_hash: state::hash_bytes(params_slice),
+                                }
+                            })
+                        });
                     if status == FFI_OK {
                         metrics.record_query(elapsed);
                     } else {
                         metrics.record_error();
                     }
-                    state::stash_if_buffer_too_small(status, pending_key, data)
+                    status
                 }
                 Err(e) => {
                     metrics.record_error();

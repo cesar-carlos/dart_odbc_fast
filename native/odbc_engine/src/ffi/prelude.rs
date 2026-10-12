@@ -12,9 +12,14 @@
     reason = "FFI prelude glob: per-submodule explicit imports are not mechanical across fourteen consumers and feature gates."
 )]
 
+pub(crate) use super::capped_writer::{
+    capped_outcome_from_bytes, capped_outcome_from_vec, deliver_capped_outcome,
+    deliver_capped_outcome_without_stash, CappedFfiWriter,
+};
 pub use crate::engine::query::{
     execute_multi_result_with_fetch, execute_multi_result_with_params_and_fetch,
     execute_query_with_param_buffer_timeout_encoding,
+    execute_query_with_param_buffer_timeout_encoding_into,
 };
 #[cfg(not(feature = "sqlserver-bcp"))]
 pub use crate::engine::ArrayBinding;
@@ -22,16 +27,17 @@ pub use crate::engine::ArrayBinding;
 pub use crate::engine::BulkCopyExecutor;
 pub use crate::engine::{
     execute_multi_result, execute_multi_result_with_params, execute_query_with_cached_connection,
-    execute_query_with_cached_connection_params, execute_query_with_connection,
-    execute_query_with_param_buffer, execute_query_with_param_buffer_and_timeout,
-    execute_query_with_param_buffer_encoding, get_global_metrics, get_type_info, list_columns,
-    list_columns_cached, list_foreign_keys, list_foreign_keys_cached, list_indexes,
-    list_indexes_cached, list_primary_keys, list_primary_keys_cached, list_tables,
-    list_tables_cached, recover_prepared_xids, resume_prepared, AsyncStreamStatus,
-    AsyncStreamingState, BatchedStreamingState, DriverCapabilities, IsolationLevel, LockTimeout,
-    MetadataCache, OdbcConnection, OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding,
-    SavepointDialect, SharedHandleManager, StatementHandle, StreamCopyResult, StreamState,
-    StreamingExecutor, Transaction, TransactionAccessMode, XaTransaction, Xid,
+    execute_query_with_cached_connection_into, execute_query_with_cached_connection_params,
+    execute_query_with_connection, execute_query_with_param_buffer,
+    execute_query_with_param_buffer_and_timeout, execute_query_with_param_buffer_encoding,
+    get_global_metrics, get_type_info, list_columns, list_columns_cached, list_foreign_keys,
+    list_foreign_keys_cached, list_indexes, list_indexes_cached, list_primary_keys,
+    list_primary_keys_cached, list_tables, list_tables_cached, recover_prepared_xids,
+    resume_prepared, AsyncStreamStatus, AsyncStreamingState, BatchedStreamingState,
+    DriverCapabilities, IsolationLevel, LockTimeout, MetadataCache, OdbcConnection,
+    OdbcEnvironment, PreparedXa, PreparingXa, ResultEncoding, SavepointDialect,
+    SharedHandleManager, StatementHandle, StreamCopyResult, StreamState, StreamingExecutor,
+    Transaction, TransactionAccessMode, XaTransaction, Xid,
 };
 pub use crate::error::{OdbcError, Result, StructuredError};
 pub use crate::pool::{ConnectionPool, SharedPooledConnection};

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **FFI result copies** — small results (`< 32 KiB`) reuse a per-isolate transient buffer pool instead of malloc on every query with a 64 KiB/256 KiB seed. Successful encode writes into the Dart-owned FFI buffer; `-2` still stashes the complete payload so SQL is not re-executed. Pending SQL/parameter hashing runs only while a stash exists. Native-backed parameter views pass their pointer without `setAll`. Worker payloads at or above 32 KiB adopt the malloc between isolates instead of `TransferableTypedData.fromList`. Public exports, ABI 1.1, wire format, and the 32 KiB / 64 KiB / 256 KiB seeds are unchanged. Copy/malloc budgets are locked by `test/performance/ffi_copy_budget_test.dart`.
+
 ## [5.0.1] - 2026-10-05
 
 ### Fixed

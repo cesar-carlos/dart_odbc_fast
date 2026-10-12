@@ -66,7 +66,8 @@ mod xa;
 pub use connections::contains_connection;
 pub(crate) use connections::{connection_handles, insert_connection, remove_connection};
 pub(crate) use pending::{
-    hash_bytes, stash_if_buffer_too_small, try_write_pending_result, PendingResultKey,
+    hash_bytes, pending_buffers_is_empty, stash_if_buffer_too_small, try_write_pending_result,
+    PendingResultKey,
 };
 #[cfg(test)]
 pub(crate) use pools::with_pooled_connection_mut_for_test;
@@ -75,12 +76,12 @@ pub(crate) use pools::{
     get_pooled_connection, insert_pool, recycle_pooled_connection_id, reserve_pooled_runnable,
     with_pool_maps_mut,
 };
+#[cfg(test)]
+pub(crate) use statements::statements_empty_for_test;
 pub(crate) use statements::{
     allocate_statement_id, clear_all_statements, contains_statement, get_statement_snapshot,
     insert_statement, remove_statement, retain_statements_not_for_connection,
 };
-#[cfg(test)]
-pub(crate) use statements::{statement_count_for_test, statements_empty_for_test};
 pub(crate) use streams::{
     allocate_stream_id, cancel_streams_for_connection, close_stream, insert_stream,
     reinsert_stream, remove_stream, request_stream_cancel, stream_connection_id, with_stream_mut,

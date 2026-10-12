@@ -269,12 +269,14 @@ void _sendWorkerResponse(
   final resources = _workerResources[conn] ??= _WorkerResources();
   if (!failed || response.failure != null) {
     _recordWorkerResources(request, response, resources);
-    sendPort.send(
+    _sendAdoptedResponse(
+      sendPort,
       WorkerReply(
         response,
         response.failure,
         executionStage: NativeCallContext.current?.executionStage,
       ),
+      response,
     );
     return;
   }
@@ -379,37 +381,61 @@ void _sendWorkerResponse(
   _recordWorkerResources(request, response, resources);
   switch (response) {
     case QueryResponse():
-      sendPort.send(response.withFailure(snapshot));
+      _sendAdoptedResponse(sendPort, response.withFailure(snapshot), response);
     case IntResponse(:final value):
-      sendPort.send(IntResponse(response.requestId, value, failure: snapshot));
+      _sendAdoptedResponse(
+        sendPort,
+        IntResponse(response.requestId, value, failure: snapshot),
+        response,
+      );
     case BoolResponse(:final value, :final completionStatus):
-      sendPort.send(
+      _sendAdoptedResponse(
+        sendPort,
         BoolResponse(
           response.requestId,
           value: value,
           completionStatus: completionStatus,
           failure: snapshot,
         ),
+        response,
       );
     case ConnectResponse(:final connectionId, :final error):
-      sendPort.send(
+      _sendAdoptedResponse(
+        sendPort,
         ConnectResponse(
           response.requestId,
           connectionId,
           error: error,
           failure: snapshot,
         ),
+        response,
       );
     case InitializeResponse(:final success):
-      sendPort.send(
+      _sendAdoptedResponse(
+        sendPort,
         InitializeResponse(
           response.requestId,
           success: success,
           failure: snapshot,
         ),
+        response,
       );
     default:
-      sendPort.send(WorkerReply(response, snapshot));
+      _sendAdoptedResponse(sendPort, WorkerReply(response, snapshot), response);
+  }
+}
+
+void _sendAdoptedResponse(
+  SendPort sendPort,
+  Object message,
+  WorkerResponse response,
+) {
+  try {
+    sendPort.send(message);
+    markAdoptedNativePayloadTransferred(response);
+  } on Object {
+    releaseUnsentAdoptedNativePayloads(response);
+    rethrow;
   }
 }
 

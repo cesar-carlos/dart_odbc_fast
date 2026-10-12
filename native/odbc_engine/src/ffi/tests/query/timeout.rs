@@ -4,7 +4,9 @@ use crate::ffi::*;
 use std::ffi::CString;
 use std::os::raw::c_uint;
 
-use super::super::support::{ffi_test_dsn, ffi_test_dsn_is_sql_server};
+use super::super::support::{
+    ffi_test_dsn, ffi_test_dsn_is_sql_server, with_statement_map_test_isolation,
+};
 
 #[test]
 fn test_ffi_timeout_override_short_fails() {
@@ -17,34 +19,36 @@ fn test_ffi_timeout_override_short_fails() {
         return;
     }
 
-    odbc_init();
-    let conn_cstr = CString::new(dsn.as_str()).unwrap();
-    let conn_id = odbc_connect(conn_cstr.as_ptr());
-    assert!(conn_id > 0);
+    with_statement_map_test_isolation(|| {
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
 
-    let sql = CString::new("WAITFOR DELAY '00:00:03'").unwrap();
-    let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 30000);
-    assert!(stmt_id > 0);
+        let sql = CString::new("WAITFOR DELAY '00:00:03'").unwrap();
+        let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 30000);
+        assert!(stmt_id > 0);
 
-    let mut buffer = vec![0u8; 2048];
-    let mut written: c_uint = 0;
-    let result = odbc_execute(
-        stmt_id,
-        std::ptr::null(),
-        0,
-        1000,
-        0,
-        buffer.as_mut_ptr(),
-        buffer.len() as c_uint,
-        &mut written,
-    );
-    assert_ne!(
-        result, 0,
-        "Execute with 1s timeout should fail for 3s query"
-    );
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            1000,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_ne!(
+            result, 0,
+            "Execute with 1s timeout should fail for 3s query"
+        );
 
-    let _ = odbc_close_statement(stmt_id);
-    let _ = odbc_disconnect(conn_id);
+        let _ = odbc_close_statement(stmt_id);
+        let _ = odbc_disconnect(conn_id);
+    });
 }
 
 #[test]
@@ -58,32 +62,34 @@ fn test_ffi_timeout_override_sufficient_succeeds() {
         return;
     }
 
-    odbc_init();
-    let conn_cstr = CString::new(dsn.as_str()).unwrap();
-    let conn_id = odbc_connect(conn_cstr.as_ptr());
-    assert!(conn_id > 0);
+    with_statement_map_test_isolation(|| {
+        odbc_init();
+        let conn_cstr = CString::new(dsn.as_str()).unwrap();
+        let conn_id = odbc_connect(conn_cstr.as_ptr());
+        assert!(conn_id > 0);
 
-    let sql = CString::new("WAITFOR DELAY '00:00:01'").unwrap();
-    let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 0);
-    assert!(stmt_id > 0);
+        let sql = CString::new("WAITFOR DELAY '00:00:01'").unwrap();
+        let stmt_id = odbc_prepare(conn_id, sql.as_ptr(), 0);
+        assert!(stmt_id > 0);
 
-    let mut buffer = vec![0u8; 2048];
-    let mut written: c_uint = 0;
-    let result = odbc_execute(
-        stmt_id,
-        std::ptr::null(),
-        0,
-        5000,
-        0,
-        buffer.as_mut_ptr(),
-        buffer.len() as c_uint,
-        &mut written,
-    );
-    assert_eq!(
-        result, 0,
-        "Execute with 5s timeout should succeed for 1s query"
-    );
+        let mut buffer = vec![0u8; 2048];
+        let mut written: c_uint = 0;
+        let result = odbc_execute(
+            stmt_id,
+            std::ptr::null(),
+            0,
+            5000,
+            0,
+            buffer.as_mut_ptr(),
+            buffer.len() as c_uint,
+            &mut written,
+        );
+        assert_eq!(
+            result, 0,
+            "Execute with 5s timeout should succeed for 1s query"
+        );
 
-    let _ = odbc_close_statement(stmt_id);
-    let _ = odbc_disconnect(conn_id);
+        let _ = odbc_close_statement(stmt_id);
+        let _ = odbc_disconnect(conn_id);
+    });
 }

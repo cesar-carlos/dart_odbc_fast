@@ -8,9 +8,10 @@ pub(crate) use std::time::Instant;
 
 use super::global::try_cached_params_with_encoding;
 
+use super::capped_writer::{capped_outcome_from_vec, deliver_capped_outcome_without_stash};
 use super::global_state::{
-    set_connection_structured_error, set_out_written_zero, try_lock_global_state,
-    write_connection_output_buffer, GlobalState, StreamKind, FFI_OK,
+    set_connection_structured_error, set_out_written_zero, try_lock_global_state, GlobalState,
+    StreamKind, FFI_OK,
 };
 use super::state;
 
@@ -248,8 +249,11 @@ where
 
     match result {
         Ok(data) => {
-            let status =
-                write_connection_output_buffer(conn_id, &data, out_buffer, buffer_len, out_written);
+            let status = deliver_capped_outcome_without_stash(
+                conn_id,
+                capped_outcome_from_vec(data, out_buffer, buffer_len as usize),
+                out_written,
+            );
             if status == FFI_OK {
                 metrics.record_query(start.elapsed());
             } else {

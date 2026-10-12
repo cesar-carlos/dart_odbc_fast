@@ -121,11 +121,9 @@ pub extern "C" fn odbc_catalog_columns(
                 if let Some(cache) = state::metadata_cache_read() {
                     cache.cache_payload(&cache_key, &data);
                 }
-                let status = write_connection_output_buffer(
+                let status = deliver_capped_outcome_without_stash(
                     conn_id,
-                    &data,
-                    out_buffer,
-                    buffer_len,
+                    capped_outcome_from_vec(data, out_buffer, buffer_len as usize),
                     out_written,
                 );
                 if status == FFI_OK {
