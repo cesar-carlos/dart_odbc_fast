@@ -69,3 +69,4 @@ alwaysApply: true
 - [ ] Comments explain why, not what.
 - [ ] Structural cleanup was kept separate from behavior changes when needed.
 - [ ] No unnecessary suppressions were introduced.
+- [ ] A confirmed bug has a regression test, as defined in `testing.mdc`.

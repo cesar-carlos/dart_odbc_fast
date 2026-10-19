@@ -33,8 +33,9 @@ alwaysApply: true
   feature-gated code, and driver abstractions.
 - ABI/FFI: exported symbols, layouts, panic boundaries, handle lifecycles,
   allocation/release pairs, and Dart-facing contracts.
-- Regression: confirmed native bugs, malformed payloads, concurrency races,
-  protocol compatibility, and driver-specific behavior.
+- Regression: confirmed native bugs. Follow `testing.mdc`. Cover malformed
+  payloads, concurrency races, protocol compatibility, and driver-specific
+  behavior.
 - Live E2E: real database or driver behavior with explicit environment gates.
 
 ## Test Quality
@@ -44,5 +45,6 @@ alwaysApply: true
   prerequisite.
 - Follow `error_handling.mdc` for runtime `unwrap` and `expect` policy; tests
   may use them for setup and assertions when the failure message is useful.
-- Add regression tests for every confirmed native bug, especially panic-safety,
-  ABI compatibility, wire decoding, concurrency, and driver-specific behavior.
+- Follow `testing.mdc` for every confirmed bug. Native regression tests cover
+  panic-safety, ABI compatibility, wire decoding, concurrency, and
+  driver-specific behavior.

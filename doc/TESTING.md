@@ -8,7 +8,18 @@
 > docs/example smoke scopes). Canonical opt-in flags and suite ownership live
 > below; build/prereq details live in [`BUILD.md`](BUILD.md).
 
-This document describes the test strategy, how to run each scope, and CI boundaries. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
+This document describes the test strategy, how to run each scope, CI boundaries, and the regression contract for a confirmed bug. Coverage snapshots are marked with their measurement date and are not authoritative for the current release — re-run `cargo tarpaulin` to get current numbers.
+
+## Bug fixes
+
+Every confirmed bug is fixed together with a regression test. The canonical rule is [`.cursor/rules/testing.mdc`](../.cursor/rules/testing.mdc).
+
+- The test reproduces the observed failure and passes after the fix.
+- The test stays in the suite so a returning failure is detected.
+- Name it after the broken behavior: `should_<behavior>_when_<condition>`.
+- Use the simplest level that reproduces the bug: unit, integration, or E2E.
+
+Dart tests live under `test/` and mirror the production path. Native tests follow [`.cursor/rules/rust_testing.mdc`](../.cursor/rules/rust_testing.mdc).
 
 ---
 

@@ -44,7 +44,15 @@ alwaysApply: true
 - Prioritize critical paths and error handling.
 - Cover boundary conditions and null or empty inputs.
 - Validate expected failure behavior, not just that "an error happened."
-- Add regression tests for every confirmed bug.
+
+## Confirmed Bug Regression
+
+- Add a regression test in the same change as the fix for every confirmed bug.
+- The test reproduces the observed failure and passes after the fix.
+- Keep the test in the suite so a returning failure is detected.
+- Name the test after the broken behavior:
+  `should_<behavior>_when_<condition>`.
+- Use the simplest level that reproduces the bug: unit, integration, or E2E.
 
 ## Environment-Dependent Tests
 
@@ -61,3 +69,4 @@ alwaysApply: true
 - [ ] Critical and error paths are covered.
 - [ ] The simplest test level that proves the behavior was chosen.
 - [ ] Environment-dependent tests fail or skip clearly.
+- [ ] Every confirmed bug fixed in the change has a regression test.

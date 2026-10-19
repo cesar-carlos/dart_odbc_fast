@@ -36,7 +36,8 @@ the rule set. Read it first.
 - `coding_style.mdc`: Dart language, naming, imports, collections, modern
   features, logging, and tooling.
 - `null_safety.mdc`: nullable contracts and safe Dart modeling patterns.
-- `testing.mdc`: unit, service, integration, and E2E testing expectations.
+- `testing.mdc`: unit, service, integration, and E2E testing expectations,
+  including the regression test required for every confirmed bug.
 - `rust_style.mdc`: Rust style, ownership, module design, and API shape.
 - `rust_ffi.mdc`: Rust unsafe code, ABI layout, resource ownership, and FFI
   boundary safety.

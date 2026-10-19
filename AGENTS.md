@@ -20,7 +20,8 @@ This file is an index only. Do not duplicate detailed coding rules here.
 - `.cursor/rules/coding_style.mdc`: Dart style, naming, imports, formatting,
   logging, and language features.
 - `.cursor/rules/null_safety.mdc`: nullable contracts and safe null handling.
-- `.cursor/rules/testing.mdc`: unit, integration, and E2E test expectations.
+- `.cursor/rules/testing.mdc`: unit, integration, and E2E test expectations,
+  including the regression test required for every confirmed bug.
 - `.cursor/rules/rust_style.mdc`: Rust native style, ownership, and API design.
 - `.cursor/rules/rust_ffi.mdc`: Rust unsafe, ABI, and FFI boundary safety.
 - `.cursor/rules/rust_cargo.mdc`: Rust Cargo manifests, dependencies, and

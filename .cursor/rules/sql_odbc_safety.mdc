@@ -46,8 +46,8 @@ decisions in `project_specifics.mdc`.
   information from multi-result flows.
 - Keep wire-format and protocol decoders defensive against malformed, truncated,
   oversized, or version-mismatched payloads.
-- Add regression tests for every confirmed dialect, driver, transaction, or
-  multi-result bug.
+- Follow `testing.mdc` for every confirmed bug. Dialect, driver, transaction,
+  and multi-result failures need that regression test.
 
 ## Live Database Tests
 

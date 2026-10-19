@@ -1,6 +1,6 @@
 ---
 name: dart-add-unit-test
-description: Write and organize unit tests for functions, methods, and classes using `package:test`. Use when creating new logic or fixing bugs to ensure code remains correct and regression-free.
+description: Write and organize unit tests for functions, methods, and classes using `package:test`. Use when creating new logic or fixing a confirmed bug. A bug fix starts with a regression test that reproduces the failure, passes after the fix, and stays in the suite.
 metadata:
   model: models/gemini-3.1-pro-preview
   last_modified: Mon, 03 Aug 2026 21:51:24 GMT
@@ -12,6 +12,7 @@ metadata:
 - [Writing Tests](#writing-tests)
 - [Executing Tests](#executing-tests)
 - [Test Implementation Workflow](#test-implementation-workflow)
+- [Fixing a Confirmed Bug](#fixing-a-confirmed-bug)
 - [Examples](#examples)
 
 ## Structuring Test Files
@@ -51,6 +52,17 @@ Follow this sequential workflow when implementing new test suites. Copy the chec
 - [ ] 5. Write `test()` cases grouped by functionality using `group()`.
 - [ ] 6. Execute the test suite using the appropriate CLI command.
 - [ ] 7. **Feedback Loop**: Run test -> Review stack trace for failures -> Fix implementation or assertions -> Re-run until passing.
+
+## Fixing a Confirmed Bug
+
+When the change fixes a confirmed bug, start with the regression test.
+
+- Write the test that reproduces the observed failure before changing production code.
+- Run it and confirm it fails for that failure.
+- Apply the fix and confirm the same test passes.
+- Keep the test in the suite so a returning failure is detected.
+- Name it after the broken behavior: `should_<behavior>_when_<condition>`.
+- Use the simplest test level that reproduces the bug.
 
 ## Examples
 

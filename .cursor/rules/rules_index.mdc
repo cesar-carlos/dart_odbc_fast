@@ -27,8 +27,8 @@ alwaysApply: true
   logging, and modern language features.
 - `null_safety.mdc`: nullable contracts, external-data normalization, and safe
   null handling.
-- `testing.mdc`: test naming, structure, and behavior expectations across unit,
-  integration, and E2E levels.
+- `testing.mdc`: test naming, structure, behavior expectations, and the
+  regression test required for every confirmed bug.
 - `rust_style.mdc`: Rust style, ownership, and module/API design.
 - `rust_ffi.mdc`: Rust unsafe, ABI, and FFI boundary safety.
 - `rust_cargo.mdc`: Rust Cargo manifests, dependencies, and feature gates.
@@ -47,6 +47,7 @@ alwaysApply: true
 - Put generic principles in `general_rules.mdc`.
 - Put architecture-only guidance in `clean_architecture.mdc`.
 - Put Dart-only language rules in `coding_style.mdc` and `null_safety.mdc`.
+- Put test structure and the confirmed-bug regression policy in `testing.mdc`.
 - Put Rust style, ownership, and API guidance in `rust_style.mdc`.
 - Put Rust `unsafe`, ABI, and FFI boundary rules in `rust_ffi.mdc`.
 - Put Rust manifests, dependencies, and feature gates in `rust_cargo.mdc`.
@@ -68,6 +69,8 @@ alwaysApply: true
   read `sql_odbc_safety.mdc`.
 - Touching `test/**/*.dart`: read `testing.mdc` and any rule for the production
   area under test.
+- Fixing a confirmed bug in any layer: read `testing.mdc` and add the
+  regression test in the same change.
 - Touching `native/**/*.rs`: read `rust_style.mdc`, `rust_testing.mdc`, and
   `error_handling.mdc`.
 - Touching native FFI, exported symbols, handles, buffers, cbindgen, or ABI:

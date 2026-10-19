@@ -85,6 +85,7 @@ Keep generic guidance in:
 - Protect the public barrel API with focused export tests.
 - Add regression tests when changing wire formats, multi-result parsing,
   transaction helpers, or driver capability behavior.
+- Follow `testing.mdc` when the change fixes a confirmed bug.
 - For E2E or live-driver tests, rely on centralized env helpers and clear skip
   behavior when prerequisites are absent.
 - When changing FFI contracts or native assets behavior, add the smallest test
