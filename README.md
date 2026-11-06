@@ -14,7 +14,7 @@ If this project helps you, consider supporting the maintainer via Pix:
 
 ## What's New in 5.0
 
-Current package version: **5.0.1**. This major release hardens error handling,
+Current package version: **5.0.2**. The 5.x release line hardens error handling,
 transaction completion, worker lifecycle and protocol buffer ownership.
 Public Dart signatures and the native ABI remain supported, but recovery
 behavior and non-ASCII XID encoding require migration from 4.x.
@@ -424,7 +424,7 @@ configured health-check query stay intact after resize.
 
 ```yaml
 dependencies:
-  odbc_fast: ^5.0.1
+  odbc_fast: ^5.0.2
 ```
 
 Then:

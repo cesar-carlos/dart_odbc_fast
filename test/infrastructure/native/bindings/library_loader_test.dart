@@ -210,7 +210,7 @@ void main() {
         // without depending solely on package: Native Assets / PATH.
         expect(loadOdbcLibrary, returnsNormally);
         expect(
-          File(local!).existsSync(),
+          File(local).existsSync(),
           isTrue,
           reason: 'local candidate used by loadOdbcLibrary step 1',
         );

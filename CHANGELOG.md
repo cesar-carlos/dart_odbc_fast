@@ -7,6 +7,8 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ## [Unreleased]
 
+## [5.0.2] - 2026-11-06
+
 ### Fixed
 
 - Decode Dart parameter values from the correct offset when the input is a `Uint8List` view into a larger buffer.
@@ -27,6 +29,7 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 - Consolidate project engineering rules and build, testing, Docker and release documentation; remove redundant guidance and correct stale references.
 - Exclude tooling caches and generated build directories from documentation-link checks while continuing to validate project documentation.
+- Record Rust review coverage by source file, with explicit review scopes, evidence and reproducible inventory checks.
 
 ## [5.0.1] - 2026-10-05
 

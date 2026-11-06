@@ -15,11 +15,13 @@ void main() {
     }
 
     test('should_preserve_unicode_and_ignored_segments_between_parameters', () {
-      const sql = r'''SELECT :a, 'it''s @ignored 😀', "x"":ignored",
+      const sql = r'''
+SELECT :a, 'it''s @ignored 😀', "x"":ignored",
         [x]]@ignored], `x``:ignored`, $tag$:ignored$tag$, @b
         /* outer :ignored /* @nested */ done */ -- :ignored
         WHERE café = :a''';
-      const expected = r'''SELECT ?, 'it''s @ignored 😀', "x"":ignored",
+      const expected = r'''
+SELECT ?, 'it''s @ignored 😀', "x"":ignored",
         [x]]@ignored], `x``:ignored`, $tag$:ignored$tag$, ?
         /* outer :ignored /* @nested */ done */ -- :ignored
         WHERE café = ?''';
@@ -33,7 +35,7 @@ void main() {
       '[unfinished @hidden',
       '`unfinished :hidden',
       r'$tag$unfinished @hidden',
-      '/* :hidden'
+      '/* :hidden',
     ]) {
       test('should_preserve_unterminated_segment_when_tail_is_$tail', () {
         final result = NamedParameterParser.extract('SELECT :visible, $tail');
