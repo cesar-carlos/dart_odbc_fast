@@ -63,6 +63,12 @@ alwaysApply: true
 
 ## Decision Checklist
 
+- Read `general_rules.mdc` and `error_handling.mdc` for every engineering task.
+- Read relevant files explicitly when the editor does not auto-attach rules.
+- For rule changes, follow `README.md` and verify consistency with source,
+  manifests, and CI.
+- Touching any Dart file, including examples, tools, hooks, and benchmarks:
+  read `coding_style.mdc` and `null_safety.mdc`.
 - Touching `lib/**/*.dart`: read `coding_style.mdc`, `null_safety.mdc`,
   `clean_architecture.mdc`, `project_specifics.mdc`, and `error_handling.mdc`.
 - Touching Dart SQL, transactions, query execution, or driver behavior: also

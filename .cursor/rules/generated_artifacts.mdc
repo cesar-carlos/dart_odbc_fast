@@ -1,22 +1,32 @@
 ---
 description: Generated binding, header, artifact, and build-output rules
-globs: ["**/*.g.dart", "**/*.freezed.dart", "lib/**/*.dart", "native/**/*.rs", "native/**/*.h", "native/**/*.def", "native/**/cbindgen.toml"]
-alwaysApply: true
+globs: ["**/*.g.dart", "**/*.freezed.dart", "lib/**/*.dart", "native/**/*.rs", "native/**/*.h", "native/**/*.def", "native/**/cbindgen.toml", "tool/ffigen.dart", "tool/generate_bindings.dart", "tool/check_ffi_exports.dart", "ffigen.yaml", "hook/**/*.dart"]
+alwaysApply: false
 ---
 
 # Generated Artifacts
 
 ## Source of Truth
 
-- Do not manually edit generated bindings, headers, or generated artifacts
-  unless the generation source itself is being changed and regeneration is part
-  of the task.
+- Do not manually patch generated output. Change the source of truth and
+  regenerate; if generation is unavailable, report the blocker instead of
+  presenting handwritten output as regenerated.
 - Update the generator input, schema, Rust export, build script, or binding
   source first; then regenerate the derived artifact.
 - Keep generated Dart bindings, cbindgen headers, exported symbols, and Rust FFI
   signatures aligned.
 - Review generated diffs for ABI, layout, naming, and nullability changes before
   accepting them.
+
+## Repository Checks
+
+- The engine build script generates `native/odbc_engine/include/odbc_engine.h`
+  from Rust exports and `native/odbc_engine/cbindgen.toml`.
+- `tool/ffigen.dart` generates columnar decompression Dart bindings; check the
+  affected artifact header for its generator rather than assuming one command
+  regenerates every binding.
+- Run `dart tool/check_ffi_exports.dart` after export changes and review any
+  generated header changes caused by native builds.
 
 ## Suppressions
 

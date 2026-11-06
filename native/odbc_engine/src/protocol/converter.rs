@@ -92,6 +92,7 @@ pub(crate) fn transpose_row_buffer_into(
         match &mut column.data {
             ColumnData::Integer(values) => {
                 values.clear();
+                values.reserve(buffer.rows.len());
                 for (row_idx, row) in buffer.rows.iter().enumerate() {
                     let cell = row.get(col_idx).and_then(|o| o.as_ref());
                     values.push(decode_integer_cell(&col_meta.name, row_idx, cell)?);
@@ -99,6 +100,7 @@ pub(crate) fn transpose_row_buffer_into(
             }
             ColumnData::BigInt(values) => {
                 values.clear();
+                values.reserve(buffer.rows.len());
                 for (row_idx, row) in buffer.rows.iter().enumerate() {
                     let cell = row.get(col_idx).and_then(|o| o.as_ref());
                     values.push(decode_bigint_cell(&col_meta.name, row_idx, cell)?);
@@ -106,6 +108,7 @@ pub(crate) fn transpose_row_buffer_into(
             }
             ColumnData::Binary(values) | ColumnData::Varchar(values) => {
                 values.clear();
+                values.reserve(buffer.rows.len());
                 for row in &mut buffer.rows {
                     values.push(
                         row.get_mut(col_idx)
@@ -122,6 +125,60 @@ pub(crate) fn transpose_row_buffer_into(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn should_preserve_columnar_bytes_when_batches_grow_and_shrink() {
+        use super::*;
+        use crate::protocol::ColumnarEncoder;
+
+        let mut rows = RowBuffer::new();
+        for (name, odbc_type) in [
+            ("id", OdbcType::Integer),
+            ("big", OdbcType::BigInt),
+            ("text", OdbcType::Varchar),
+            ("binary", OdbcType::Binary),
+        ] {
+            rows.add_column(name.to_string(), odbc_type);
+        }
+        let mut reused = empty_columnar_for_row_buffer(&rows);
+        for count in [0i32, 1, 17, 4097, 3, 0, 501] {
+            rows.rows.clear();
+            let mut integers = Vec::new();
+            let mut bigints = Vec::new();
+            let mut strings = Vec::new();
+            let mut binaries = Vec::new();
+            for index in 0..count {
+                let integer = (index % 5 != 0).then_some(index - 2000);
+                let bigint = (index % 3 != 0).then_some(i64::from(index) * 1_000_000_000);
+                let string = (index % 7 != 0).then(|| format!("ação-{index}").into_bytes());
+                let binary = (index % 11 != 0).then(|| vec![index as u8; index as usize % 129]);
+                rows.add_row_vecs(vec![
+                    integer.map(|n| n.to_le_bytes().to_vec()),
+                    bigint.map(|n| n.to_le_bytes().to_vec()),
+                    string.clone(),
+                    binary.clone(),
+                ]);
+                integers.push(integer);
+                bigints.push(bigint);
+                strings.push(string);
+                binaries.push(binary);
+            }
+            let mut expected = empty_columnar_for_row_buffer(&rows);
+            expected.columns[0].data = ColumnData::Integer(integers);
+            expected.columns[1].data = ColumnData::BigInt(bigints);
+            expected.columns[2].data = ColumnData::Varchar(strings);
+            expected.columns[3].data = ColumnData::Binary(binaries);
+            expected.set_row_count(count as usize);
+            transpose_row_buffer_into(&mut rows, &mut reused).expect("valid batch");
+            for compressed in [false, true] {
+                assert_eq!(
+                    ColumnarEncoder::encode(&reused, compressed).expect("actual bytes"),
+                    ColumnarEncoder::encode(&expected, compressed).expect("expected bytes"),
+                    "batch size {count}, compressed {compressed}",
+                );
+            }
+        }
+    }
+
     #[test]
     fn transpose_reuses_column_vectors_and_matches_standalone_bytes() {
         use super::*;

@@ -16,7 +16,7 @@ class NamedParameterParser {
 
   static const int _cacheMaxSize = 256;
 
-  // Insertion-order map used as a simple LRU: when full, evict the oldest key
+  // Bounded insertion-order cache: when full, evict the oldest key
   // (keys.first). Keyed by raw SQL; values use unmodifiable param lists so
   // callers cannot corrupt cached state through the returned reference.
   static final Map<String, ({String cleanedSql, List<String> paramNames})>
@@ -32,56 +32,71 @@ class NamedParameterParser {
   static ({String cleanedSql, List<String> paramNames}) extract(String sql) {
     final cached = _cache[sql];
     if (cached != null) return cached;
+    return _extractUncached(sql);
+  }
 
+  static ({String cleanedSql, List<String> paramNames}) _extractUncached(
+    String sql,
+  ) {
     final paramNames = <String>[];
     final cleanedSql = StringBuffer();
     var index = 0;
+    var unchangedStart = 0;
 
     while (index < sql.length) {
-      final char = sql[index];
+      final codeUnit = sql.codeUnitAt(index);
 
-      if (char == "'" || char == '"' || char == '[' || char == '`') {
-        final end = _consumeQuotedSegment(sql, start: index, delimiter: char);
-        cleanedSql.write(sql.substring(index, end));
+      if (codeUnit == 0x27 ||
+          codeUnit == 0x22 ||
+          codeUnit == 0x5B ||
+          codeUnit == 0x60) {
+        final end =
+            _consumeQuotedSegment(sql, start: index, delimiter: sql[index]);
         index = end;
         continue;
       }
 
-      final dollarQuotedEnd = _consumeDollarQuotedSegment(sql, start: index);
+      final dollarQuotedEnd = codeUnit == 0x24
+          ? _consumeDollarQuotedSegment(sql, start: index)
+          : null;
       if (dollarQuotedEnd != null) {
-        cleanedSql.write(sql.substring(index, dollarQuotedEnd));
         index = dollarQuotedEnd;
         continue;
       }
 
-      if (char == '-' && _peek(sql, index + 1) == '-') {
+      if (codeUnit == 0x2D && _peek(sql, index + 1) == '-') {
         final end = _consumeLineComment(sql, start: index);
-        cleanedSql.write(sql.substring(index, end));
         index = end;
         continue;
       }
 
-      if (char == '/' && _peek(sql, index + 1) == '*') {
+      if (codeUnit == 0x2F && _peek(sql, index + 1) == '*') {
         final end = _consumeBlockComment(sql, start: index);
-        cleanedSql.write(sql.substring(index, end));
         index = end;
         continue;
       }
 
-      final placeholderName = _tryReadPlaceholder(sql, index);
+      final placeholderName = codeUnit == 0x40 || codeUnit == 0x3A
+          ? _tryReadPlaceholder(sql, index)
+          : null;
       if (placeholderName != null) {
         paramNames.add(placeholderName.name);
-        cleanedSql.write('?');
+        cleanedSql
+          ..write(sql.substring(unchangedStart, index))
+          ..write('?');
         index = placeholderName.end;
+        unchangedStart = index;
         continue;
       }
 
-      cleanedSql.write(char);
       index++;
     }
 
+    if (paramNames.isNotEmpty) {
+      cleanedSql.write(sql.substring(unchangedStart));
+    }
     final result = (
-      cleanedSql: cleanedSql.toString(),
+      cleanedSql: paramNames.isEmpty ? sql : cleanedSql.toString(),
       paramNames: List<String>.unmodifiable(paramNames),
     );
     if (_cache.length >= _cacheMaxSize) {
@@ -189,8 +204,7 @@ int _consumeQuotedSegment(
 
   while (index < sql.length) {
     if (sql[index] == closingDelimiter) {
-      if ((delimiter == "'" || delimiter == '"') &&
-          _peek(sql, index + 1) == closingDelimiter) {
+      if (_peek(sql, index + 1) == closingDelimiter) {
         index += 2;
         continue;
       }

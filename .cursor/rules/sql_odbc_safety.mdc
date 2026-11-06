@@ -1,7 +1,7 @@
 ---
 description: SQL, ODBC, driver, and database-safety rules
 globs: ["lib/**/*.dart", "test/**/*.dart", "native/**/*.rs"]
-alwaysApply: true
+alwaysApply: false
 ---
 
 # SQL and ODBC Safety
@@ -54,5 +54,9 @@ decisions in `project_specifics.mdc`.
 - Gate live database tests behind clear environment prerequisites.
 - Prefer centralized helpers for DSNs, credentials, docker profiles, and skip
   messages.
+- Use dedicated test databases and uniquely named objects. Credentials or a
+  reachable DSN alone do not establish that a database is safe for destructive
+  tests; verify the intended test target before enabling live writes.
+- Limit cleanup to resources created by the test; never drop unrelated objects.
 - Keep tests deterministic by cleaning up database objects, handles,
   transactions, and prepared state they create.

@@ -1,7 +1,7 @@
 ---
 description: Dart language, naming, import, and formatting conventions
-globs: ["lib/**/*.dart", "test/**/*.dart"]
-alwaysApply: true
+globs: ["**/*.dart"]
+alwaysApply: false
 ---
 
 # Dart Coding Style
@@ -32,7 +32,8 @@ alwaysApply: true
 - Order imports as `dart:`, then `package:`, then relative imports.
 - Sort imports alphabetically within each group.
 - Place `export` directives after imports.
-- Avoid the legacy `library` directive unless the file intentionally needs it.
+- Use a `library` directive when library documentation or annotations require it;
+  do not remove it solely as a style cleanup.
 - Use `show` only when it materially improves clarity.
 
 ## Functions and Parameters
@@ -47,7 +48,8 @@ alwaysApply: true
 ## Strings and Collections
 
 - Prefer string interpolation over concatenation.
-- Prefer typed collection literals such as `List<T>`, `Map<K, V>`, and `Set<T>`.
+- Prefer typed collection literals such as `<T>[]`, `<K, V>{}`, and `<T>{}`
+  when inference does not make element types clear.
 - Avoid raw `List`, `Map`, and `Set` in application code.
 - Prefer `isEmpty` and `isNotEmpty` over comparing `.length`.
 - Prefer declarative collection APIs when they improve clarity.
@@ -83,7 +85,8 @@ alwaysApply: true
 ## Formatting and Tooling
 
 - Format touched code with `dart format`.
-- Prefer `dart fix --apply` for safe automated cleanups when appropriate.
+- Preview automated fixes with `dart fix --dry-run`; apply only fixes relevant
+  to the task and inspect the resulting diff.
 - Run `dart analyze` after meaningful changes, or the project-equivalent
   analyzer command when needed.
 - Respect the project's configured lint baseline instead of introducing a second

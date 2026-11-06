@@ -225,7 +225,8 @@ the next pooled user on SQL Server, SQLite and DB2.
 
 Shared helpers: [`OdbcFfiDispatch`](../lib/infrastructure/repositories/runners/odbc_ffi_dispatch.dart),
 [`OdbcResultParser`](../lib/infrastructure/repositories/runners/odbc_result_parser.dart).
-See `native/doc/repository_split_plan.md` for the long-term plan.
+The split is complete. See the [historical migration summary](../native/doc/repository_split_plan.md)
+for its sequence; this section owns the current runner architecture.
 
 ## Event bus pipeline
 

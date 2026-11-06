@@ -21,8 +21,9 @@ Only these cases are allowed:
 
 1. Generated files such as `*.g.dart`, `*.freezed.dart`, or committed generated
    native bindings.
-2. Negative-path tests under `test/**` that intentionally exercise analyzer or
-   Clippy edge behavior.
+2. Negative-path tests under `test/**`, `native/**/tests/**`, or Rust
+   `#[cfg(test)]` modules that intentionally exercise a diagnostic. Scope the
+   suppression to that test; a test location alone is not an exemption.
 3. Temporary third-party or tooling false positives when all of the following
    exist:
    - linked issue or ticket ID
@@ -99,13 +100,13 @@ Anything else is forbidden.
 ### Dart suppression template
 
 ```dart
+// Reason: false positive with package_x vY; ISSUE-123; remove by version Z.
 // ignore: some_lint
-// Reason: false positive with package_x vY, tracked in ISSUE-123, remove by
-// 2026-06-30.
+final value = expressionTriggeringLint;
 ```
 
 ### Rust suppression template
 
 ```rust
-#[allow(clippy::some_lint, reason = "False positive with crate_x 1.2; ISSUE-123; remove by 2026-06-30")]
+#[allow(clippy::some_lint, reason = "False positive with crate_x 1.2; ISSUE-123; remove by version Z")]
 ```

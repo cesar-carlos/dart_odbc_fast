@@ -19,6 +19,18 @@ fn test_decode_empty_buffer() {
 }
 
 #[test]
+fn should_preserve_rows_without_columns_when_payload_is_valid() {
+    let mut buffer = RowBuffer::new();
+    for _ in 0..10 {
+        buffer.add_row_vecs(vec![]);
+    }
+    let encoded = RowBufferEncoder::encode(&buffer).expect("valid empty rows");
+    let decoded = BinaryProtocolDecoder::parse(&encoded).expect("valid empty rows decode");
+    assert_eq!(decoded.row_count, 10);
+    assert_eq!(decoded.rows, vec![Vec::<Option<Vec<u8>>>::new(); 10]);
+}
+
+#[test]
 fn test_decode_single_column_single_row() {
     let mut buffer = RowBuffer::new();
     buffer.add_column("value".to_string(), OdbcType::Integer);
@@ -161,7 +173,7 @@ fn test_decode_buffer_too_small_for_column_metadata() {
     buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
     buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
     buffer[8..12].copy_from_slice(&0u32.to_le_bytes());
-    buffer[12..16].copy_from_slice(&0u32.to_le_bytes());
+    buffer[12..16].copy_from_slice(&1u32.to_le_bytes());
     buffer[16] = 0;
 
     let result = BinaryProtocolDecoder::parse(&buffer);
@@ -176,7 +188,7 @@ fn test_decode_buffer_too_small_for_column_name() {
     buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
     buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
     buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
-    buffer[12..16].copy_from_slice(&10u32.to_le_bytes());
+    buffer[12..16].copy_from_slice(&5u32.to_le_bytes());
     buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
     buffer[18..20].copy_from_slice(&10u16.to_le_bytes());
     buffer[20] = b'a';
@@ -193,7 +205,7 @@ fn test_decode_invalid_utf8_in_column_name() {
     buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
     buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
     buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
-    buffer[12..16].copy_from_slice(&2u32.to_le_bytes());
+    buffer[12..16].copy_from_slice(&7u32.to_le_bytes());
     buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
     buffer[18..20].copy_from_slice(&2u16.to_le_bytes());
     buffer[20] = 0xFF;
@@ -211,7 +223,7 @@ fn test_decode_buffer_too_small_for_data_length() {
     buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
     buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
     buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
-    buffer[12..16].copy_from_slice(&100u32.to_le_bytes());
+    buffer[12..16].copy_from_slice(&6u32.to_le_bytes());
     buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
     buffer[18..20].copy_from_slice(&1u16.to_le_bytes());
     buffer[20] = b'a';
@@ -248,7 +260,7 @@ fn test_decode_buffer_too_small_for_row_data() {
     buffer[4..6].copy_from_slice(&1u16.to_le_bytes());
     buffer[6..8].copy_from_slice(&1u16.to_le_bytes());
     buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
-    buffer[12..16].copy_from_slice(&1u32.to_le_bytes());
+    buffer[12..16].copy_from_slice(&5u32.to_le_bytes());
     buffer[16..18].copy_from_slice(&1u16.to_le_bytes());
     buffer[18..20].copy_from_slice(&1u16.to_le_bytes());
     buffer[20] = b'a';

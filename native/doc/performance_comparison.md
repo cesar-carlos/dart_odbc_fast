@@ -325,7 +325,7 @@ scenarios on hot connections; the synthetic
 cargo test test_statement_reuse_repetitive_benchmark --no-default-features --features test-helpers,observability -- --ignored --nocapture
 
 # Default build (statement-handle-reuse + block-cursor-fetch ON)
-cargo test test_statement_reuse_repetitive_benchmark -- --ignored --nocapture
+cargo test test_statement_reuse_repetitive_benchmark --features test-helpers -- --ignored --nocapture
 ```
 
 **Requirements:**

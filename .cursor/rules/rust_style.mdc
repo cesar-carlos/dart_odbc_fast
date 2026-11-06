@@ -1,7 +1,7 @@
 ---
 description: Rust style, API, ownership, and module design rules
 globs: ["native/**/*.rs", "native/**/Cargo.toml"]
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Rust Style and Quality

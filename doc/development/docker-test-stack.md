@@ -1,18 +1,17 @@
 # Docker test stack
 
 `dart_odbc_fast` ships a complete Docker stack for running the engine's
-E2E suite against every supported database **without installing any ODBC
-driver on the host**. This document explains what is in the stack, how
+E2E suite against the configured database services **without installing ODBC
+drivers on the host**. This document explains what is in the stack, how
 to start it, and how to drive the existing test matrix from it.
 
-> **Status:** added in v3.4.0 follow-up. Replaces the previous
-> "install drivers manually + tweak `.env`" workflow. Optional —
-> the existing host-driven setup keeps working unchanged.
+Use dedicated test databases; E2E tests create and drop objects. Container
+runners supply drivers inside the image. Host-driven tests need host drivers.
 
 ## What's in the box
 
-`docker-compose.yml` declares 6 database services and 1 Linux test
-runner:
+`docker-compose.yml` declares six database services, an optional SQLite helper,
+and Linux test runners:
 
 | Service       | Image                                          | Port (host) | Notes                                              |
 | ------------- | ---------------------------------------------- | ----------- | -------------------------------------------------- |
@@ -27,7 +26,7 @@ runner:
 
 The `test-runner` image bakes in:
 
-- Rust stable (currently `1.86`).
+- Rust selected by `RUST_VERSION` in `Dockerfile.test-runner` (currently `1.93`).
 - `unixodbc` + dev headers.
 - ODBC drivers for **PostgreSQL**, **MySQL/MariaDB** (via `odbc-mariadb`),
   **Microsoft SQL Server 18** (`msodbcsql18`), and **IBM Db2** (ODBC/CLI
@@ -86,26 +85,31 @@ This is the path that requires **zero** ODBC drivers on the Windows
 host:
 
 ```powershell
-# Default: PostgreSQL, full --include-ignored E2E suite
-pwsh scripts/docker_e2e.ps1
+# PostgreSQL CI filter; enable integration targets that require test-helpers
+pwsh scripts/docker_e2e.ps1 -Features "test-helpers,ffi-tests"
 
 # Pick a different engine
-pwsh scripts/docker_e2e.ps1 -Engine mysql
-pwsh scripts/docker_e2e.ps1 -Engine mariadb
-pwsh scripts/docker_e2e.ps1 -Engine mssql
+pwsh scripts/docker_e2e.ps1 -Engine mysql -Features "test-helpers,ffi-tests"
+pwsh scripts/docker_e2e.ps1 -Engine mariadb -Features "test-helpers,ffi-tests"
+pwsh scripts/docker_e2e.ps1 -Engine mssql -Features "test-helpers,ffi-tests"
 
 # Restrict to one test or family
-pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_pg_
+pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_pg_ -Features "test-helpers,ffi-tests"
 
 # Smoke-only (lib transaction tests, fast)
 pwsh scripts/docker_e2e.ps1 -SmokeOnly
 ```
 
 ```bash
-scripts/docker_e2e.sh --engine postgres
-scripts/docker_e2e.sh --engine mysql --filter xa_mysql_
+scripts/docker_e2e.sh --engine postgres --features test-helpers,ffi-tests
+scripts/docker_e2e.sh --engine mysql --filter xa_mysql_ --features test-helpers,ffi-tests
 scripts/docker_e2e.sh --smoke
 ```
+
+The PowerShell default uses an engine-specific CI filter; `-Full` includes
+ignored tests and runs the full suite serially. The Bash runner includes ignored
+tests by default; use `--quick` to exclude them. Both default to `ffi-tests`,
+so pass `test-helpers,ffi-tests` for integration targets gated by `test-helpers`.
 
 What the script does:
 
@@ -125,23 +129,11 @@ ENABLE_E2E_TESTS=1
 ODBC_TEST_DSN=Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;Database=master;UID=sa;PWD=OdbcTest123!;TrustServerCertificate=yes;
 ```
 
-### SQL Server DSN from environment variables (Rust E2E helpers)
+### Host DSNs
 
-`native/odbc_engine/tests/helpers/env.rs` builds a connection string when
-`ODBC_TEST_DSN` is unset:
-
-| Variable | Default (if unset) | Purpose |
-| -------- | ------------------ | ------- |
-| `SQLSERVER_TEST_SERVER` | `LOCALHOST` | Hostname or `host,port` |
-| `SQLSERVER_TEST_DATABASE` | `Estacao` | Database name |
-| `SQLSERVER_TEST_USER` | `sa` | Login |
-| `SQLSERVER_TEST_PASSWORD` | `123abc.` | Password |
-| `SQLSERVER_TEST_PORT` | (none) | Optional port (number only) |
-
-Prefer `ODBC_TEST_DSN` when you need full control (driver name, encryption, etc.). If
-pool or connection tests “hang” for tens of seconds, the server is usually slow to
-accept logins; E2E pool tests use a 5 s pool acquire timeout so the run fails fast
-with a clear `PoolError` instead of the default 30 s per checkout.
+Use [Cross-database connection strings](../../native/doc/cross_database.md#connection-strings)
+for environment variables and driver-specific DSNs. Driver names must match
+those installed on the host. Explicit test DSNs avoid relying on helper defaults.
 
 ### Dart `pool_integration_test` (T-SQL)
 
@@ -151,23 +143,21 @@ expects a **Microsoft SQL Server** backend: it uses T-SQL (`IF OBJECT_ID`, `IDEN
 `dart test test/integration/pool_integration_test.dart`. It is not compatible with
 PostgreSQL or other engines without changing the SQL in the test.
 
-## Running the v3.4.0 XA / 2PC suite
+## Running the XA / 2PC suite
 
-Sprint 4.3 in v3.4.0 added 9 `#[ignore]` E2E tests for distributed
-transactions on PostgreSQL / MySQL / MariaDB / DB2. The runner image
-covers PG / MySQL / MariaDB out of the box; for DB2 you also need to
-add the Db2 driver tarball to the image (commented snippet at the
-bottom of `Dockerfile.test-runner`).
+The default image includes PostgreSQL, MySQL/MariaDB and Db2 drivers.
+For Db2, start the `db2` profile as described above. Enable `test-helpers`
+for the integration targets; include ignored tests when the selected case needs it.
 
 ```powershell
 # PostgreSQL: most complete XA grammar coverage
-pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_
+pwsh scripts/docker_e2e.ps1 -Engine postgres -TestFilter xa_ -Features "test-helpers,ffi-tests"
 
 # MySQL 8 (XA START / END / PREPARE / COMMIT / RECOVER)
-pwsh scripts/docker_e2e.ps1 -Engine mysql    -TestFilter xa_
+pwsh scripts/docker_e2e.ps1 -Engine mysql    -TestFilter xa_ -Features "test-helpers,ffi-tests"
 
 # MariaDB 11 (same XA grammar as MySQL but slightly different RECOVER)
-pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_
+pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_ -Features "test-helpers,ffi-tests"
 ```
 
 ## What about MSDTC (4.3b) and OCI (4.3c)?
@@ -179,11 +169,10 @@ pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_
   works with MSDTC enrolment from a Windows client). Step-by-step `cargo
   test`, `ENABLE_E2E_TESTS`, and DSN variables are in
   [`msdtc-recovery.md`](msdtc-recovery.md) (section *Local runbook*).
-- **OCI XA** needs Oracle Instant Client + the OCI XA shared library.
-  Easiest path inside Docker: extend `Dockerfile.test-runner` with a
-  `COPY instantclient_*.zip /opt/` step (the Oracle Free download EULA
-  forbids redistribution so the file has to come from your local
-  download). Then set the `XA_OPEN` entry on the `oracle` container.
+- **Oracle driver setup:** the `test-runner-oracle` service builds with
+  `INCLUDE_ORACLE=true`. Driver availability does not establish OCI XA shim
+  readiness. Current XA product support and shim limitations are tracked in
+  [pending work](../Features/PENDING_IMPLEMENTATIONS.md).
 
 ## Optional: *golden* columnar, compressed v2, PostgreSQL `OUT`
 
@@ -212,11 +201,10 @@ pwsh scripts/docker_e2e.ps1 -Engine mariadb  -TestFilter xa_
 
 ## CI / GitHub Actions
 
-The same `docker-compose.yml` + scripts work in CI. A starter workflow
-that exercises PG/MySQL/MariaDB/MSSQL in parallel jobs is sketched in
-`.github/workflows/e2e_docker_stack.yml`. The matrix takes
-~6 minutes on `ubuntu-latest` runners; Db2 adds another ~3 min so it
-typically lives behind a manual workflow trigger.
+The configured matrix is in
+[E2E Docker workflow](../../.github/workflows/e2e_docker_stack.yml).
+Inspect the run logs for tested engines, enabled features and skipped tests;
+startup and execution times vary with the runner and database image.
 
 ## Troubleshooting
 

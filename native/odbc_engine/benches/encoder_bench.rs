@@ -266,6 +266,46 @@ fn bench_streaming_columnar_compressed(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_numeric_columnar(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encoder/numeric_columnar");
+    for (name, null_every) in [("dense", 0), ("mixed", 5), ("null", 1)] {
+        let rows = 100_000;
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(rows);
+        buffer.add_column(
+            ColumnMetadata {
+                name: "id".to_string(),
+                odbc_type: OdbcType::Integer,
+            },
+            ColumnData::Integer(
+                (0..rows)
+                    .map(|i| (null_every == 0 || !i.is_multiple_of(null_every)).then_some(i as i32))
+                    .collect(),
+            ),
+        );
+        buffer.add_column(
+            ColumnMetadata {
+                name: "big".to_string(),
+                odbc_type: OdbcType::BigInt,
+            },
+            ColumnData::BigInt(
+                (0..rows)
+                    .map(|i| {
+                        (null_every == 0 || !i.is_multiple_of(null_every))
+                            .then_some(i as i64 * 1_000_000_000)
+                    })
+                    .collect(),
+            ),
+        );
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(ColumnarEncoder::encode(black_box(&buffer), false).expect("encode"))
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_row_major_encode,
@@ -276,5 +316,6 @@ criterion_group!(
     bench_direct_columnar_vs_via_row_major,
     bench_streaming_columnar_batch_encode,
     bench_streaming_columnar_compressed,
+    bench_numeric_columnar,
 );
 criterion_main!(benches);

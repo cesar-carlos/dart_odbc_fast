@@ -1,16 +1,21 @@
 ---
 description: Rust native tooling, tests, features, and regression standards
-globs: ["native/**/*.rs", "native/**/Cargo.toml"]
-alwaysApply: true
+globs: ["native/**/*.rs", "native/**/Cargo.toml", "native/**/Cargo.lock"]
+alwaysApply: false
 ---
 
 # Rust Native Tooling and Tests
 
 ## Tooling
 
-- Run `cargo fmt` after touching Rust code.
-- Run `cargo clippy --all-targets --all-features` for touched native crates
-  when practical.
+- Run Cargo commands from `native/`, or pass the workspace manifest.
+- Format touched Rust code, then verify with `cargo fmt --all -- --check`.
+- Match CI: `cargo clippy --workspace --all-targets -- -D warnings`.
+- Test relevant optional features explicitly; `--all-features` does not replace
+  default or `--no-default-features` coverage. Respect platform requirements
+  and `required-features` on test targets.
+- Keep Loom runs isolated to `loom_models`, following `.github/workflows/ci.yml`;
+  do not apply its `--cfg loom` flag to the engine or the whole workspace.
 - Run the narrowest relevant `cargo test` command first, then broaden coverage
   for cross-module, feature, ABI, or FFI changes.
 - Follow `rust_cargo.mdc` for dependency and feature-gate policy.

@@ -3,6 +3,45 @@ import 'package:test/test.dart';
 
 void main() {
   group('NamedParameterParser.extract', () {
+    for (final quoted in [
+      '[@first]]:hidden]',
+      '`@first``:hidden`',
+    ]) {
+      test('should_preserve_escaped_identifier_when_parsing_$quoted', () {
+        final result = NamedParameterParser.extract('SELECT $quoted, :visible');
+        expect(result.cleanedSql, 'SELECT $quoted, ?');
+        expect(result.paramNames, ['visible']);
+      });
+    }
+
+    test('should_preserve_unicode_and_ignored_segments_between_parameters', () {
+      const sql = r'''SELECT :a, 'it''s @ignored 😀', "x"":ignored",
+        [x]]@ignored], `x``:ignored`, $tag$:ignored$tag$, @b
+        /* outer :ignored /* @nested */ done */ -- :ignored
+        WHERE café = :a''';
+      const expected = r'''SELECT ?, 'it''s @ignored 😀', "x"":ignored",
+        [x]]@ignored], `x``:ignored`, $tag$:ignored$tag$, ?
+        /* outer :ignored /* @nested */ done */ -- :ignored
+        WHERE café = ?''';
+      final result = NamedParameterParser.extract(sql);
+      expect(result.cleanedSql, expected);
+      expect(result.paramNames, ['a', 'b', 'a']);
+    });
+
+    for (final tail in [
+      "'unfinished :hidden",
+      '[unfinished @hidden',
+      '`unfinished :hidden',
+      r'$tag$unfinished @hidden',
+      '/* :hidden'
+    ]) {
+      test('should_preserve_unterminated_segment_when_tail_is_$tail', () {
+        final result = NamedParameterParser.extract('SELECT :visible, $tail');
+        expect(result.cleanedSql, 'SELECT ?, $tail');
+        expect(result.paramNames, ['visible']);
+      });
+    }
+
     test('should return SQL with ? placeholders and param names in order', () {
       const sql = 'SELECT * FROM t WHERE id = @id AND name = :name';
       final result = NamedParameterParser.extract(sql);

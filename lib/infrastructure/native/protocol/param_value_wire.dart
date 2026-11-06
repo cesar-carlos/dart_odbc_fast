@@ -42,8 +42,7 @@ Uint8List serializeParams(List<ParamValue> params) {
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
-              b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] = b;
           totalBytes += 5 + b.length;
         }
       case ParamValueInt32():
@@ -55,8 +54,7 @@ Uint8List serializeParams(List<ParamValue> params) {
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
-              b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] = b;
           totalBytes += 5 + b.length;
         }
       case ParamValueBinary(:final value):
@@ -165,8 +163,7 @@ Uint8List serializeDirectedParamList(
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
-              b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] = b;
           totalBytes += 5 + b.length;
         }
       case ParamValueInt32():
@@ -178,8 +175,7 @@ Uint8List serializeDirectedParamList(
           totalBytes += 5 + value.length;
         } else {
           final b = utf8.encode(value);
-          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] =
-              b;
+          (encodedText ??= List<List<int>?>.filled(params.length, null))[i] = b;
           totalBytes += 5 + b.length;
         }
       case ParamValueBinary(:final value):
@@ -263,45 +259,58 @@ Uint8List serializeDirectedParamList(
 ({ParamValue value, int consumed}) deserializeParamValue(
   Uint8List data, {
   int offset = 0,
-}) {
+}) =>
+    _deserializeParamValue(data, ByteData.sublistView(data), offset);
+
+({ParamValue value, int consumed}) _deserializeParamValue(
+  Uint8List data,
+  ByteData bytes,
+  int offset,
+) {
   if (data.length < offset + 5) {
     throw const FormatException('ParamValue buffer too short');
   }
   final tag = data[offset];
-  final len = data.buffer.asByteData().getUint32(offset + 1, _littleEndian);
+  final len = bytes.getUint32(offset + 1, _littleEndian);
   final consumed = 5 + len;
   if (data.length < offset + consumed) {
     throw const FormatException('ParamValue buffer truncated');
   }
   final start = offset + 5;
-  // sublistView avoids copying the payload; the view stays valid as long as
-  // the original protocol buffer is alive (held by the enclosing QueryResult).
-  final payload = Uint8List.sublistView(data, start, start + len);
-
   final ParamValue v;
   switch (tag) {
     case _tagNull:
       v = const ParamValueNull();
     case _tagString:
-      v = ParamValueString(utf8.decode(payload, allowMalformed: true));
+      v = ParamValueString(
+        utf8.decode(
+          Uint8List.sublistView(data, start, start + len),
+          allowMalformed: true,
+        ),
+      );
     case _tagInteger:
       if (len != 4) {
         throw const FormatException('ParamValue::Integer expected 4 bytes');
       }
       v = ParamValueInt32(
-        ByteData.sublistView(data, start, start + 4).getInt32(0, _littleEndian),
+        bytes.getInt32(start, _littleEndian),
       );
     case _tagBigInt:
       if (len != 8) {
         throw const FormatException('ParamValue::BigInt expected 8 bytes');
       }
       v = ParamValueInt64(
-        ByteData.sublistView(data, start, start + 8).getInt64(0, _littleEndian),
+        bytes.getInt64(start, _littleEndian),
       );
     case _tagDecimal:
-      v = ParamValueDecimal(utf8.decode(payload, allowMalformed: true));
+      v = ParamValueDecimal(
+        utf8.decode(
+          Uint8List.sublistView(data, start, start + len),
+          allowMalformed: true,
+        ),
+      );
     case _tagBinary:
-      v = ParamValueBinary(payload);
+      v = ParamValueBinary(Uint8List.sublistView(data, start, start + len));
     case _tagRefCursorOut:
       if (len != 0) {
         throw const FormatException(
@@ -319,9 +328,10 @@ Uint8List serializeDirectedParamList(
 /// encodings, no DRT1 header).
 List<ParamValue> deserializeParamValues(Uint8List data) {
   final out = <ParamValue>[];
+  final bytes = ByteData.sublistView(data);
   var o = 0;
   while (o < data.length) {
-    final r = deserializeParamValue(data, offset: o);
+    final r = _deserializeParamValue(data, bytes, o);
     out.add(r.value);
     o += r.consumed;
   }

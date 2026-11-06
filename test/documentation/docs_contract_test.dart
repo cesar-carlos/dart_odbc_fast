@@ -21,8 +21,48 @@ Iterable<String> _localMarkdownLinkTargets(String content) sync* {
   }
 }
 
+Iterable<File> _repositoryMarkdownFiles(Directory root) sync* {
+  for (final entity in root.listSync(followLinks: false)) {
+    final name = entity.uri.pathSegments.where((part) => part.isNotEmpty).last;
+    if (entity is Directory) {
+      // Tooling caches and build outputs are not project documentation.
+      if (name.startsWith('.') || name == 'build' || name == 'target') continue;
+      yield* _repositoryMarkdownFiles(entity);
+    } else if (entity is File && name.endsWith('.md')) {
+      yield entity;
+    }
+  }
+}
+
 void main() {
   group('documentation contract', () {
+    test('should_ignore_generated_docs_when_scanning_repository', () {
+      final root = Directory.systemTemp.createTempSync('odbc-docs-');
+      addTearDown(() => root.deleteSync(recursive: true));
+      for (final relative in [
+        'README.md',
+        'doc/guide.md',
+        'native/doc/guide.md',
+        '.dart_tool/skills/example.md',
+        '.tmp/example.md',
+        'native/target/generated.md',
+        'build/generated.md',
+      ]) {
+        final file = File.fromUri(root.uri.resolve(relative));
+        file.parent.createSync(recursive: true);
+        file.writeAsStringSync('[missing](missing.md)');
+      }
+
+      expect(
+        _repositoryMarkdownFiles(root).map((file) => file.uri),
+        unorderedEquals([
+          root.uri.resolve('README.md'),
+          root.uri.resolve('doc/guide.md'),
+          root.uri.resolve('native/doc/guide.md'),
+        ]),
+      );
+    });
+
     test('should_keep_capability_docs_aligned_with_current_surface', () {
       final capabilities = _readRepoFile('doc/CAPABILITIES_v3.md');
       final typeMapping = _readRepoFile('doc/notes/TYPE_MAPPING.md');
@@ -107,12 +147,7 @@ void main() {
     });
 
     test('should_keep_local_markdown_links_resolvable', () {
-      final markdownFiles =
-          Directory.current.listSync(recursive: true).whereType<File>().where(
-                (file) =>
-                    file.path.endsWith('.md') &&
-                    !file.path.split(Platform.pathSeparator).contains('target'),
-              );
+      final markdownFiles = _repositoryMarkdownFiles(Directory.current);
 
       for (final markdownFile in markdownFiles) {
         final sourceDirectory = markdownFile.parent.path;

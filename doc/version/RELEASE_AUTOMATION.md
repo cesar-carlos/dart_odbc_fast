@@ -106,7 +106,7 @@ Linux note on Windows host:
 ```bash
 # commit
 # Include the reviewed implementation and tests as well as release metadata.
-git add -A
+git add <reviewed-files>
 git commit -m "chore: release X.Y.Z"
 git push origin main
 
@@ -161,13 +161,9 @@ permissions:
   contents: write
 ```
 
-## Rollback
+## Correcting a published release
 
-If an incorrect tag was published:
-
-```bash
-git tag -d vX.Y.Z
-git push origin :refs/tags/vX.Y.Z
-```
-
-Then publish a corrected version.
+Keep published version tags immutable. If a release is incorrect, prepare a
+fix under a new version, document the migration or impact in the changelog, and
+run the release checklist again. Do not delete or move a published tag to
+replace artifacts under the same version.

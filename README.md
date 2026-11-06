@@ -53,14 +53,9 @@ Details: [5.0.0 migration notes](CHANGELOG.md#500---2026-10-03) and
 
 ### XA / 2PC engines
 
-| Engine | Status |
-| ------ | ------ |
-| PostgreSQL | ✅ `PREPARE TRANSACTION` + `pg_prepared_xacts` |
-| MySQL / MariaDB | ✅ `XA START / END / PREPARE / COMMIT / RECOVER` |
-| DB2 | ✅ same SQL grammar as MySQL |
-| Oracle | ✅ `SYS.DBMS_XA` + `DBA_PENDING_TRANSACTIONS` |
-| SQL Server (MSDTC) | ✅ Windows + `--features xa-dtc` (advanced Reenlist still open — PENDING §2.1) |
-| SQLite / Snowflake | ❌ `UnsupportedFeature` |
+See the [capability matrix](doc/CAPABILITIES_v3.md) for per-engine XA support
+and [pending work](doc/Features/PENDING_IMPLEMENTATIONS.md) for recovery limits
+and live-driver certification.
 
 XA works on sync and async service paths (`ServiceLocator.syncService` /
 isolate backend / `runInXaTransaction`). See

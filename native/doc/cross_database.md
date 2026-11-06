@@ -4,16 +4,11 @@ The ODBC engine supports multiple databases via ODBC drivers. This document desc
 
 ---
 
-## Supported Databases
+## Supported databases and capabilities
 
-| Database | CI Status | Driver | Notes |
-|----------|------------|--------|-------|
-| SQL Server | ✅ | ODBC Driver 17 / Native Client 11.0 | Full support, native BCP available |
-| PostgreSQL | ✅ | PostgreSQL Unicode | Full support |
-| MySQL | ⚠️ | MySQL ODBC 8.0 Driver | `continue-on-error` in CI (driver setup) |
-| SQLite | ✅ | SQLite3 (libsqliteodbc) | File-based, no server; full support |
-| Oracle | ✅ | Oracle Instant Client ODBC | CI job active |
-| Sybase SQL Anywhere | 🧪 | SQL Anywhere | Optional, manual validation only |
+The [capability matrix](../../doc/CAPABILITIES_v3.md) owns per-engine support.
+A configured CI job is not proof of a successful live-driver run; inspect the
+specific run and its prerequisites before claiming certification.
 
 ---
 
@@ -99,57 +94,22 @@ Use `sql_drop_table_if_exists(table, db_type)` in tests (see `helpers/e2e.rs`).
 
 ---
 
-## Feature Support by Database
+## Test environments
 
-| Feature | SQL Server | PostgreSQL | MySQL | SQLite | Oracle | Sybase |
-|---------|------------|------------|-------|--------|--------|--------|
-| Connect, query, disconnect | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Prepared statements | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Transactions, savepoints | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Bulk insert (ArrayBinding) | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Parallel bulk insert | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
-| Native BCP | ✅ (`sqlncli11.dll`) | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Driver capabilities JSON | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+- [Docker test stack](../../doc/development/docker-test-stack.md): services,
+  profiles, container runners and host execution.
+- [Test policy](../../doc/TESTING.md): test scopes and canonical opt-in flags.
+- [Multi-database workflow](../../.github/workflows/e2e_multidb.yml) and
+  [Docker workflow](../../.github/workflows/e2e_docker_stack.yml): configured CI jobs.
 
----
-
-## CI/CD Matrix
-
-The `e2e_multidb.yml` workflow runs E2E tests against:
-
-1. **SQLite** (libsqliteodbc, file-based `/tmp/odbc_test.db`)
-2. **PostgreSQL** (postgres:16-alpine, odbc-postgresql)
-3. **MySQL** (mysql:8.0, mysql-connector-odbc) — `continue-on-error: true`
-4. **SQL Server** (mcr.microsoft.com/mssql/server:2022, msodbcsql17)
-5. **Oracle** (gvenzl/oracle-xe + Oracle Instant Client ODBC)
-
-## Local Docker Matrix
-
-Local `docker-compose.yml` provides server containers for:
-
-1. **PostgreSQL** (`postgres:16-alpine`)
-2. **MySQL** (`mysql:8.0`)
-3. **SQL Server** (`mcr.microsoft.com/mssql/server:2022-latest`)
-4. **Oracle** (`gvenzl/oracle-xe:21-slim-faststart`)
-
-**SQLite** is file-based and does not require a container.
-An optional `sqlite-tools` container is available for local SQLite file
-inspection only (profile `sqlite`).
-
-Start local services:
+From the repository root, after configuring a dedicated test DSN:
 
 ```bash
-docker compose up -d
+cd native
+ENABLE_E2E_TESTS=1 cargo test -p odbc_engine --features test-helpers --test e2e_multi_db_basic_test -- --nocapture --test-threads=1
 ```
 
-Then run E2E tests with `ENABLE_E2E_TESTS=1` and DSN/env vars configured.
-
-Run locally:
-
-```bash
-ENABLE_E2E_TESTS=1 ODBC_TEST_DSN="Driver={...};..." cargo test e2e_multi_db -- --nocapture
-```
+SQLite needs no server container; see the [SQLite setup](../../docker/README.md#sqlite).
 
 ---
 
@@ -175,7 +135,7 @@ Limitations: DSN-only strings (`DSN=mydsn;UID=x;PWD=y`) yield `unknown`;
 custom drivers (Devart, DataDirect, ...) are not recognised; MariaDB is
 distinguished from MySQL only when the driver string contains `mariadb`.
 
-### 2. Live introspection — `odbc_get_connection_dbms_info(conn_id, buffer, len, out)` *(NEW in v2.1)*
+### 2. Live introspection — `odbc_get_connection_dbms_info(conn_id, buffer, len, out)`
 
 Calls `SQLGetInfo(SQL_DBMS_NAME)` against the live connection. JSON fields:
 

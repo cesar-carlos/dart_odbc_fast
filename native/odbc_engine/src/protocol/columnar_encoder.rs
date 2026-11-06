@@ -2,15 +2,13 @@ use crate::error::{OdbcError, Result};
 use crate::protocol::columnar::{ColumnBlock, ColumnData, CompressionType, RowBufferV2};
 use crate::protocol::converter::row_buffer_to_columnar;
 use crate::protocol::row_buffer::RowBuffer;
-use std::io::Write;
 
 const MAGIC: u32 = 0x4F444243;
 const VERSION_V2: u16 = 2;
 const HEADER_SIZE: usize = 19;
 
-/// Avoid reserving an entire raw payload before attempting compression. The
-/// output vector grows normally when the compressed payload needs more space,
-/// while compressible result sets no longer retain raw-sized capacity.
+/// Bounded initial reserve for compressed output and raw scratch. Both grow
+/// when necessary; compressed output does not retain raw-payload-sized capacity.
 const COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES: usize = 8 * 1024;
 
 /// Minimum raw column payload size in bytes required to attempt zstd compression.
@@ -119,6 +117,13 @@ impl ColumnarEncoder {
             checked_u16(column.metadata.name.len(), "column name length")?;
         }
         output.reserve(HEADER_SIZE + COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES);
+        // Seed scratch once for nonempty frames, avoiding repeated small growth
+        // allocations. Existing streaming workspaces retain their allocation.
+        if workspace.raw.capacity() == 0 && row_count != 0 && column_count != 0 {
+            workspace
+                .raw
+                .reserve(COMPRESSED_INITIAL_PAYLOAD_RESERVE_BYTES);
+        }
         let (payload_size_pos, payload_start) =
             Self::write_header(output, buffer.flags, column_count, row_count, true);
         for col_block in &buffer.columns {
@@ -229,55 +234,51 @@ impl ColumnarEncoder {
         Ok(())
     }
 
-    fn encode_column_payload<W: Write>(output: &mut W, col_block: &ColumnBlock) -> Result<()> {
+    fn encode_column_payload(output: &mut Vec<u8>, col_block: &ColumnBlock) -> Result<()> {
         match &col_block.data {
             ColumnData::Varchar(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        output.write_all(&[0]).map_err(io_to_odbc)?;
-                        output
-                            .write_all(
-                                &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
-                            )
-                            .map_err(io_to_odbc)?;
-                        output.write_all(bytes).map_err(io_to_odbc)?;
+                        output.push(0);
+                        output.extend_from_slice(
+                            &checked_u32(bytes.len(), "varchar cell length")?.to_le_bytes(),
+                        );
+                        output.extend_from_slice(bytes);
                     } else {
-                        output.write_all(&[1]).map_err(io_to_odbc)?;
+                        output.push(1);
                     }
                 }
             }
             ColumnData::Integer(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        output.write_all(&[0]).map_err(io_to_odbc)?;
-                        output.write_all(&value.to_le_bytes()).map_err(io_to_odbc)?;
+                        output.push(0);
+                        output.extend_from_slice(&value.to_le_bytes());
                     } else {
-                        output.write_all(&[1]).map_err(io_to_odbc)?;
+                        output.push(1);
                     }
                 }
             }
             ColumnData::BigInt(data) => {
                 for cell in data {
                     if let Some(value) = cell {
-                        output.write_all(&[0]).map_err(io_to_odbc)?;
-                        output.write_all(&value.to_le_bytes()).map_err(io_to_odbc)?;
+                        output.push(0);
+                        output.extend_from_slice(&value.to_le_bytes());
                     } else {
-                        output.write_all(&[1]).map_err(io_to_odbc)?;
+                        output.push(1);
                     }
                 }
             }
             ColumnData::Binary(data) => {
                 for cell in data {
                     if let Some(bytes) = cell {
-                        output.write_all(&[0]).map_err(io_to_odbc)?;
-                        output
-                            .write_all(
-                                &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
-                            )
-                            .map_err(io_to_odbc)?;
-                        output.write_all(bytes).map_err(io_to_odbc)?;
+                        output.push(0);
+                        output.extend_from_slice(
+                            &checked_u32(bytes.len(), "binary cell length")?.to_le_bytes(),
+                        );
+                        output.extend_from_slice(bytes);
                     } else {
-                        output.write_all(&[1]).map_err(io_to_odbc)?;
+                        output.push(1);
                     }
                 }
             }
@@ -329,20 +330,10 @@ impl ColumnarEncoder {
                 }
             }
             ColumnData::Integer(data) => {
-                for cell in data {
-                    size = checked_add(size, 1, "cell null flag")?;
-                    if cell.is_some() {
-                        size = checked_add(size, 4, "integer cell")?;
-                    }
-                }
+                size = numeric_payload_size(data, "integer cell")?;
             }
             ColumnData::BigInt(data) => {
-                for cell in data {
-                    size = checked_add(size, 1, "cell null flag")?;
-                    if cell.is_some() {
-                        size = checked_add(size, 8, "bigint cell")?;
-                    }
-                }
+                size = numeric_payload_size(data, "bigint cell")?;
             }
         }
         Ok(size)
@@ -356,8 +347,18 @@ impl ColumnarEncoder {
     }
 }
 
-fn io_to_odbc(err: std::io::Error) -> OdbcError {
-    OdbcError::InternalError(format!("columnar encode write failed: {err}"))
+fn numeric_payload_size<T>(data: &[Option<T>], context: &'static str) -> Result<usize> {
+    let non_null = data.iter().filter(|cell| cell.is_some()).count();
+    // Each row has a null flag; only present values occupy fixed-width data.
+    non_null
+        .checked_mul(std::mem::size_of::<T>())
+        .and_then(|bytes| bytes.checked_add(data.len()))
+        .ok_or_else(|| {
+            OdbcError::ResourceLimitReached(format!(
+                "Columnar payload size overflow while adding {}",
+                context
+            ))
+        })
 }
 
 fn checked_u16(value: usize, field: &'static str) -> Result<u16> {
@@ -386,6 +387,208 @@ mod tests {
     use super::*;
     use crate::protocol::columnar::{ColumnMetadata, RowBufferV2};
     use crate::protocol::types::OdbcType;
+
+    #[test]
+    fn should_leave_compression_scratch_unallocated_for_empty_frames() {
+        for (rows, columns) in [(0, 0), (0, 1), (1, 0)] {
+            let mut buffer = RowBufferV2::new();
+            buffer.set_row_count(rows);
+            if columns != 0 {
+                buffer.add_column(
+                    ColumnMetadata {
+                        name: "n".to_string(),
+                        odbc_type: OdbcType::Integer,
+                    },
+                    ColumnData::Integer(vec![]),
+                );
+            }
+            let mut workspace = ColumnarCompressionWorkspace::new();
+            let mut output = Vec::new();
+            ColumnarEncoder::encode_into_with_workspace(&mut output, &buffer, true, &mut workspace)
+                .expect("empty frame");
+            assert_eq!(workspace.raw.capacity(), 0);
+            assert_eq!(workspace.compressed.capacity(), 0);
+            assert!(workspace.compressor.is_none());
+        }
+    }
+
+    #[test]
+    fn should_preserve_small_numeric_compressed_frames() {
+        let mut buffer = RowBufferV2::new();
+        buffer.set_row_count(100);
+        buffer.add_column(
+            ColumnMetadata {
+                name: "i".to_string(),
+                odbc_type: OdbcType::Integer,
+            },
+            ColumnData::Integer(vec![Some(i32::MIN); 100]),
+        );
+        buffer.add_column(
+            ColumnMetadata {
+                name: "b".to_string(),
+                odbc_type: OdbcType::BigInt,
+            },
+            ColumnData::BigInt(vec![Some(i64::MAX); 100]),
+        );
+        let mut expected = ColumnarEncoder::encode(&buffer, false).expect("raw reference");
+        expected[14] = 1;
+        let mut workspace = ColumnarCompressionWorkspace::new();
+        let mut actual = Vec::new();
+        ColumnarEncoder::encode_into_with_workspace(&mut actual, &buffer, true, &mut workspace)
+            .expect("small columns");
+        assert_eq!(actual, expected);
+        assert_eq!(workspace.compressed.capacity(), 0);
+        assert!(workspace.compressor.is_none());
+    }
+
+    #[test]
+    fn should_preserve_compression_frames_at_numeric_size_boundaries() {
+        let mut workspace = ColumnarCompressionWorkspace::new();
+        for rows in [1025usize, 0, 1, 113, 114, 204, 205, 1024, 17] {
+            for null_every in [0, 1, 5] {
+                let present = |i: usize| null_every == 0 || !i.is_multiple_of(null_every);
+                for (data, odbc_type) in [
+                    (
+                        ColumnData::Integer(
+                            (0..rows).map(|i| present(i).then_some(i as i32)).collect(),
+                        ),
+                        OdbcType::Integer,
+                    ),
+                    (
+                        ColumnData::BigInt(
+                            (0..rows).map(|i| present(i).then_some(i as i64)).collect(),
+                        ),
+                        OdbcType::BigInt,
+                    ),
+                ] {
+                    let mut buffer = RowBufferV2::new();
+                    buffer.set_row_count(rows);
+                    buffer.add_column(
+                        ColumnMetadata {
+                            name: "n".to_string(),
+                            odbc_type,
+                        },
+                        data,
+                    );
+                    let raw_frame = ColumnarEncoder::encode(&buffer, false).expect("raw frame");
+                    let raw = &raw_frame[29..];
+                    let compressed = zstd::bulk::compress(raw, 3).expect("reference compression");
+                    let mut expected = raw_frame[..24].to_vec();
+                    expected[14] = 1;
+                    if raw.len() > COMPRESSION_THRESHOLD_BYTES && compressed.len() < raw.len() {
+                        expected.extend_from_slice(&[1, CompressionType::Zstd as u8]);
+                        expected.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+                        expected.extend_from_slice(&compressed);
+                    } else {
+                        expected.push(0);
+                        expected.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+                        expected.extend_from_slice(raw);
+                    }
+                    let payload_len = (expected.len() - HEADER_SIZE) as u32;
+                    expected[15..19].copy_from_slice(&payload_len.to_le_bytes());
+                    let mut actual = vec![7, 8, 9];
+                    ColumnarEncoder::encode_into_with_workspace(
+                        &mut actual,
+                        &buffer,
+                        true,
+                        &mut workspace,
+                    )
+                    .expect("compressed frame");
+                    assert_eq!(&actual[..3], &[7, 8, 9]);
+                    assert_eq!(
+                        &actual[3..],
+                        expected.as_slice(),
+                        "rows={rows}, null_every={null_every}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn should_preserve_variable_width_payload_bytes() {
+        let cells = vec![
+            None,
+            Some(vec![]),
+            Some(vec![0, 255, 127]),
+            Some("ação".as_bytes().to_vec()),
+        ];
+        let expected = [
+            1, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 255, 127, 0, 6, 0, 0, 0, b'a', 195, 167, 195, 163,
+            b'o',
+        ];
+        for (data, odbc_type) in [
+            (ColumnData::Varchar(cells.clone()), OdbcType::Varchar),
+            (ColumnData::Binary(cells), OdbcType::Binary),
+        ] {
+            let mut buffer = RowBufferV2::new();
+            buffer.set_row_count(4);
+            buffer.add_column(
+                ColumnMetadata {
+                    name: "n".to_string(),
+                    odbc_type,
+                },
+                data,
+            );
+            for compressed in [false, true] {
+                let encoded = ColumnarEncoder::encode(&buffer, compressed).expect("encode");
+                assert_eq!(&encoded[29..], &expected);
+            }
+        }
+    }
+
+    #[test]
+    fn should_match_numeric_payload_lengths_for_null_distributions() {
+        for rows in [0usize, 1, 7, 8, 17, 1024] {
+            for null_every in [0, 1, 5] {
+                let present = |i: usize| null_every == 0 || !i.is_multiple_of(null_every);
+                let integers = (0..rows)
+                    .map(|i| present(i).then_some(if i % 2 == 0 { i32::MIN } else { i32::MAX }))
+                    .collect();
+                let bigints = (0..rows)
+                    .map(|i| present(i).then_some(if i % 2 == 0 { i64::MIN } else { i64::MAX }))
+                    .collect();
+                for (data, width, odbc_type) in [
+                    (ColumnData::Integer(integers), 4, OdbcType::Integer),
+                    (ColumnData::BigInt(bigints), 8, OdbcType::BigInt),
+                ] {
+                    let mut expected = Vec::new();
+                    for i in 0..rows {
+                        if present(i) {
+                            expected.push(0);
+                            let mut value = vec![if i % 2 == 0 { 0 } else { 255 }; width];
+                            value[width - 1] = if i % 2 == 0 { 128 } else { 127 };
+                            expected.extend_from_slice(&value);
+                        } else {
+                            expected.push(1);
+                        }
+                    }
+                    let mut buffer = RowBufferV2::new();
+                    buffer.set_row_count(rows);
+                    buffer.add_column(
+                        ColumnMetadata {
+                            name: "n".to_string(),
+                            odbc_type,
+                        },
+                        data,
+                    );
+                    let column = &buffer.columns[0];
+                    assert_eq!(
+                        ColumnarEncoder::estimate_column_payload_size(column).expect("size"),
+                        expected.len()
+                    );
+                    let encoded = ColumnarEncoder::encode(&buffer, false).expect("encode");
+                    // Header (19), type/name metadata (5), compression flag (1), length (4).
+                    assert_eq!(&encoded[29..], expected.as_slice());
+                    assert_eq!(
+                        u32::from_le_bytes(encoded[25..29].try_into().expect("length bytes"))
+                            as usize,
+                        expected.len()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_encode_empty_buffer() {

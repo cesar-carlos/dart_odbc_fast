@@ -1,7 +1,7 @@
 ---
 description: Clean architecture and dependency rules for Dart application code
 globs: ["lib/**/*.dart"]
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Clean Architecture
@@ -18,8 +18,11 @@ alwaysApply: true
 
 ## Dependency Direction
 
-- `domain` may depend only on `domain` and `core/shared`.
-- `application` may depend on `domain` and `core/shared`.
+- `domain` may depend only on domain code and layer-independent shared utilities.
+- `application` may depend on domain code and layer-independent shared utilities.
+- A `core` path is not automatically layer-independent: `lib/core/di` contains
+  composition code that can import outer implementations. Domain and application
+  code must not use the service locator to resolve dependencies.
 - `infrastructure` may depend on `domain`, `application` contracts, and
   `core/shared` when implementing outer concerns.
 - No inner layer may import an outer layer.

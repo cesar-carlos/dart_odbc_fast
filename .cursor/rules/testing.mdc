@@ -1,14 +1,15 @@
 ---
 description: Testing conventions and quality standards
-globs: ["test/**/*.dart"]
-alwaysApply: true
+globs: ["test/**/*.dart", "native/**/*.rs"]
+alwaysApply: false
 ---
 
 # Testing Standards
 
 ## Structure
 
-- Mirror production folder structure in `test/`.
+- Mirror Dart production folders in `test/`; use Rust inline unit tests and
+  crate integration tests as described in `rust_testing.mdc`.
 - Group tests by observable behavior, not by private implementation details.
 - Keep test file names predictable and easy to map back to source files.
 
@@ -48,7 +49,8 @@ alwaysApply: true
 ## Confirmed Bug Regression
 
 - Add a regression test in the same change as the fix for every confirmed bug.
-- The test reproduces the observed failure and passes after the fix.
+- Run the regression against the broken behavior first when feasible, then
+  verify it passes with the fix. Report when the failing baseline cannot be run.
 - Keep the test in the suite so a returning failure is detected.
 - Name the test after the broken behavior:
   `should_<behavior>_when_<condition>`.
@@ -57,8 +59,10 @@ alwaysApply: true
 ## Environment-Dependent Tests
 
 - Gate live or environment-dependent tests clearly.
-- Skip environment-driven tests with explicit messages when prerequisites are
-  missing.
+- Skip optional environment-driven tests with explicit messages when
+  prerequisites are missing. If a run explicitly requires that environment,
+  report missing prerequisites as failed or blocked validation, not success.
+- Do not convert assertion failures into skips or weaken assertions to pass.
 - Keep helpers for env loading and test setup centralized.
 
 ## Review Checklist

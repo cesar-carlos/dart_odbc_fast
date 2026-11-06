@@ -86,6 +86,16 @@ impl BinaryProtocolDecoder {
 
         validate_shape(column_count, row_count, payload_size)?;
 
+        // Reject inconsistent framing before allocating metadata or rows.
+        // The minimum header length was checked above, so subtraction is safe.
+        if payload_size != buffer.len() - HEADER_SIZE {
+            return Err(OdbcError::ValidationError(format!(
+                "Payload size mismatch: header declares {}, buffer has {} payload bytes",
+                payload_size,
+                buffer.len().saturating_sub(HEADER_SIZE)
+            )));
+        }
+
         // Parse column metadata
         let mut columns = Vec::with_capacity(column_count);
         for _ in 0..column_count {
@@ -177,16 +187,6 @@ impl BinaryProtocolDecoder {
             rows.push(row);
         }
 
-        let expected_len = HEADER_SIZE
-            .checked_add(payload_size)
-            .ok_or_else(|| OdbcError::ValidationError("Payload size overflow".to_string()))?;
-        if expected_len != buffer.len() {
-            return Err(OdbcError::ValidationError(format!(
-                "Payload size mismatch: header declares {}, buffer has {} payload bytes",
-                payload_size,
-                buffer.len().saturating_sub(HEADER_SIZE)
-            )));
-        }
         if offset != buffer.len() {
             return Err(OdbcError::ValidationError(
                 "Buffer has trailing bytes".to_string(),

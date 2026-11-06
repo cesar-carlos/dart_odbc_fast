@@ -1,31 +1,40 @@
 # Scripts Python Cross-Platform
 
-Todos os scripts PowerShell e Bash foram convertidos para Python para suporte cross-platform (Windows, Linux, macOS).
+Os scripts Python cobrem build, testes, validacao e releases. Os runners Docker
+continuam em PowerShell e Bash; consulte o
+[guia da stack Docker](../doc/development/docker-test-stack.md). A portabilidade
+dos scripts nao amplia o suporte do pacote, declarado em `pubspec.yaml`.
 
 ## Requisitos
 
-- Python 3.7 ou superior
+- Python 3.10 ou superior (os scripts usam anotacoes como `str | None`)
 - Rust/Cargo (para scripts que compilam código nativo)
 - Dart SDK (para scripts que executam testes Dart)
 
 ## Scripts Disponíveis
 
-### 🔨 Build
+### Inventário de revisão Rust
 
 ```bash
-# Build completo (Rust + FFI bindings)
-python scripts/build.py
+python scripts/inventory_rust_review.py
+python scripts/inventory_rust_review.py --check
+```
 
-# Pular build do Rust (apenas bindings)
-python scripts/build.py --skip-rust
+Gera e verifica o [inventário de revisão](../doc/development/RUST_REVIEW_INVENTORY.md).
+As classificações vêm de um registro explícito com hashes; executar testes ou
+regenerar o inventário não promove arquivos a revisados.
 
-# Pular geração de bindings (apenas Rust)
+### Build
+
+Use o [guia de build](../doc/BUILD.md) para compilar o motor e regenerar apenas
+os bindings afetados. Para compilar sem sobrescrever os bindings mantidos:
+
+```bash
 python scripts/build.py --skip-bindings
 ```
 
-**Substitui**: `build.ps1`, `build.sh`
-
----
+A geracao legada do script usa `ffigen.yaml`; ela nao deve ser aplicada
+indiscriminadamente sobre `odbc_bindings.dart`.
 
 ### 🧪 Testes
 
@@ -190,14 +199,6 @@ Se o terminal não suportar cores, elas são automaticamente desabilitadas.
 | `.\scripts\create_release.ps1` | `python scripts/create_release.py` |
 | `.\scripts\copy_odbc_dll.ps1` | `python scripts/copy_odbc_dll.py` |
 
-## Vantagens dos Scripts Python
-
-1. **Cross-platform**: Um único script funciona em Windows, Linux e macOS
-2. **Manutenibilidade**: Código mais simples e unificado
-3. **Menor duplicação**: Não precisa manter versões .ps1 e .sh separadas
-4. **Bibliotecas padrão**: Usa apenas bibliotecas Python padrão (sem dependências externas)
-5. **Tipagem**: Usa type hints para melhor documentação do código
-
 ## Troubleshooting
 
 ### Python não encontrado
@@ -247,7 +248,7 @@ Todos os scripts seguem a mesma estrutura:
 
 Ao adicionar novos scripts:
 
-1. Use Python 3.7+ (para suporte amplo)
+1. Use Python 3.10+ para compatibilidade com os scripts existentes
 2. Use apenas bibliotecas padrão quando possível
 3. Adicione docstring no topo do arquivo
 4. Use type hints para parâmetros e retornos

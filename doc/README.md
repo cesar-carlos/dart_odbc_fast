@@ -12,7 +12,7 @@ topic; avoid duplicating matrices across files.
 | [CAPABILITIES_v3.md](CAPABILITIES_v3.md) | Engine × capability matrix (XA, BCP, upsert, …) |
 | [BUILD.md](BUILD.md) | Build prerequisites, scripts, related-doc links |
 | [TESTING.md](TESTING.md) | Test scopes and canonical opt-in env flags |
-| [PERFORMANCE.md](PERFORMANCE.md) | Defaults, concurrency, BCP notes, bench how-to (typical numbers: README) |
+| [PERFORMANCE.md](PERFORMANCE.md) | Defaults, concurrency, benchmark instructions and dated Dart measurements |
 
 ## Features & backlog
 
@@ -20,7 +20,7 @@ topic; avoid duplicating matrices across files.
 | -------- | ---- |
 | [Features/README.md](Features/README.md) | Feature-doc index + release checklist |
 | [Features/PENDING_IMPLEMENTATIONS.md](Features/PENDING_IMPLEMENTATIONS.md) | **SoT** for open / deferred product work |
-| [notes/ROADMAP_PENDENTES.md](notes/ROADMAP_PENDENTES.md) | Short priority pointer → PENDING only |
+| [notes/ROADMAP_PENDENTES.md](notes/ROADMAP_PENDENTES.md) | Compatibility entrypoint to the canonical backlog |
 
 ## Notes (contracts & deep dives)
 
@@ -36,6 +36,7 @@ topic; avoid duplicating matrices across files.
 | Document | Owns |
 | -------- | ---- |
 | [development/docker-test-stack.md](development/docker-test-stack.md) | Docker compose / multi-engine test stack |
+| [development/RUST_REVIEW_INVENTORY.md](development/RUST_REVIEW_INVENTORY.md) | Rust module inventory, review evidence, status and defensible review percentages |
 | [development/msdtc-recovery.md](development/msdtc-recovery.md) | MSDTC recovery runbook |
 | [version/](version/) | Versioning strategy, quick reference, release automation |
 

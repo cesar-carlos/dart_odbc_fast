@@ -32,6 +32,9 @@ behavior and operational guidance.
 
 ### Planning and process
 
+- [repository_split_plan.md](repository_split_plan.md): historical migration summary;
+  current Dart runner architecture is maintained in `doc/ARCHITECTURE.md`.
+
 - [plan_checklist_template.md](./plan_checklist_template.md): reusable
   completion checklist for future plans.
 - [zero_copy_ffi_evaluation.md](./zero_copy_ffi_evaluation.md): shipped
@@ -63,4 +66,3 @@ Docker test environment:
 
 - `docker/README.md`
 - `docker-compose.yml`
-

@@ -28,7 +28,8 @@ alwaysApply: true
 
 ## Comments and Documentation
 
-- Do not create documentation files unless explicitly requested.
+- Follow `rules_index.mdc` for documentation creation and Git guardrails.
+- Update existing documentation when the requested change makes it inaccurate.
 - Add comments only for intent, trade-offs, invariants, constraints, or
   non-obvious behavior.
 - Do not add comments that only restate the line below them.
@@ -37,15 +38,15 @@ alwaysApply: true
 
 ## Duplication and Reuse
 
-- Extract an abstraction when the same pattern appears a second time with the
-  same intent.
+- Extract shared logic when duplicated behavior has the same contract and is
+  likely to evolve together; do not couple unrelated code to remove repetition.
 - Prefer small, stable helpers and shared abstractions over vague "utility"
   buckets.
 - Remove dead code, commented-out code, and stale comments.
 
 ## Refactoring
 
-- Apply the scout rule: when touching a file, leave it a bit better.
+- Keep cleanup related to the requested change; avoid unrelated rewrites.
 - Refactor in small steps when the current structure blocks safe change.
 - Separate structural cleanup from behavior changes whenever practical.
 - Preserve or characterize observable behavior before refactoring risky areas.
@@ -56,10 +57,13 @@ alwaysApply: true
 - Follow `error_handling.mdc` for error propagation and diagnostic suppression.
 - Run the relevant analyzer and tests after meaningful structural changes.
 
-## Git Workflow
+## Workspace Hygiene
 
-- Do not create or switch to a new Git branch unless the user explicitly asks
-  for branch creation; keep work on the current branch by default.
+- Inspect the working tree before editing and preserve unrelated user changes.
+- Do not revert, delete, or overwrite work outside the requested scope.
+- Review the final diff and report checks run, failures, and checks not run.
+- For rule-only or documentation-only changes, validate references and diff
+  hygiene; run runtime tests when executable behavior is affected.
 
 ## Review Checklist
 

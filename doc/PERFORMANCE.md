@@ -1,22 +1,284 @@
 # Performance & Reliability Notes
 
-> **Last updated for:** v4.5.1 (Dart FFI `asFunction` trampoline cache;
-> shared protocol `ByteData` views; param serialize / DateTime parse
-> allocation cuts; direct-prefix MULT framing; compressed columnar single-pass
-> planning and fetch-buffer reuse; Dart-owned zero-copy no longer requires an
-> optional native release symbol; prior v4.5.0 binary float/bool wire + Dart dual-decode;
-> prepared cache with inferable NULLs; stream prepared reuse; pool
-> `sessionResetOnCheckout` opt-out + single checkout reset; FFI mid-size
-> transient from 32 KiB; additive `streamChunkSizeBytes` /
-> `blockFetchBatchSize`; server presets 1 MiB chunk + `lazyStrings`;
-> prior v4.4.0 async XA + multi-stream knobs; prior v4.1.0 server profile
-> columnar recommendation, CRUD columnar bulk benchmark baseline, harness
-> `--crud` lane; service surface, pool/transaction hardening, native engine
-> perf follow-ups with `block-cursor-fetch` and `statement-handle-reuse`
-> default ON, FFI `GlobalState` sharded, `OwnedPreparedStatement` RAII
-> for the prepared cache, release/bench profiles tightened).
+## Compression scratch reserve follow-up (2026-11-06)
 
-This document records architectural decisions with a measurable performance or reliability impact. It is not a benchmark report — run the benches locally to get numbers for your workload. Consumer-facing typical numbers live in the README **Performance quick reference**; native Criterion snapshots live in [`native/doc/performance_comparison.md`](../native/doc/performance_comparison.md).
+The small compressed-batch regression reported in the previous section below
+is addressed by reserving a bounded 8 KiB raw scratch buffer on the first
+nonempty compressed frame. Existing workspaces reuse their capacity; empty
+frames do not allocate scratch. Uncompressed sizing and payload serialization,
+zstd level, compression threshold, fallback decisions, wire bytes and ABI are
+unchanged. This trades a larger initial scratch capacity for fewer reallocations:
+small payloads may retain 8 KiB instead of a smaller buffer until the workspace
+is dropped. Large payloads still grow normally.
+
+`columnar_compression_allocation_test` failed before the change with eight
+allocation/reallocation calls and passes afterward with a budget of at most two
+(output and scratch). Byte-exact tests cover NULL distributions, threshold
+boundaries, workspace reuse, reserved output prefixes and empty frames.
+
+Separate sequential Criterion processes on Windows x64 / Rust 1.93.0 used
+logical processor 2 (affinity mask 4), AboveNormal priority, the release-equivalent
+bench profile, 1-second warmup, 3-second measurement and 40 samples. The original
+encoder, the preceding columnar optimization and this follow-up used the same
+`encoder/streaming_columnar_compressed/16x100x8` fixture:
+
+| Version | Forward time (us) | Reverse-order time (us) |
+| --- | ---: | ---: |
+| Original encoder | 597.60 | 589.12 |
+| Previous columnar optimization | 579.76 | 591.87 |
+| Scratch reserve follow-up | 556.95 | 547.58 |
+
+The follow-up is about 7% faster than the original in both orders, removing
+the observed small-batch regression. Its 95% intervals are 553.20-560.14 and
+544.53-550.39 us, versus 587.44-608.41 and 580.29-599.72 us for the original.
+Long separate-process control runs showed substantial drift, so those controls
+were also checked with a paired experiment rather than treated as precise deltas.
+
+`native/odbc_engine/examples/compression_paired_bench.rs` alternates the reference
+and production encoders within each pair in one process. The reference reproduces
+the pre-reserve orchestration using the same production framing, payload and zstd
+helpers; it isolates the scratch allocation change, rather than comparing two
+entire DLLs. Every fixture's bytes are compared before timing. Twenty warmup
+pairs precede 101 measured pairs, with alternating order. Setup is outside timing;
+encoding, allocation and result disposal are inside it. A deterministic bootstrap
+(10,000 paired resamples, seed 20261106) estimates the median speed ratio.
+
+The standalone release example was run twice with the same affinity and priority.
+Ratios above 1 favor the follow-up; intervals are local 95% bootstrap intervals:
+
+| Scenario | First paired speed ratio [95% interval] | Repeat [95% interval] |
+| --- | ---: | ---: |
+| Compressed, 100 rows x 8 columns | 1.02725 [1.02483, 1.02972] | 1.03190 [1.02752, 1.03388] |
+| Compressed, 1,000 rows x 8 columns | 1.00760 [0.98785, 1.03725] | 0.99209 [0.97950, 1.02983] |
+| Uncompressed numeric, dense | 0.99414 [0.97728, 0.99911] | 0.99157 [0.96919, 1.01170] |
+| Uncompressed numeric, partial NULLs | 0.99696 [0.98055, 1.00856] | 1.01122 [0.98480, 1.02451] |
+| Uncompressed numeric, all NULLs | 1.00171 [0.99841, 1.00582] | 1.00278 [0.99784, 1.00582] |
+| Uncompressed mixed, 1,000 rows x 10 columns | 0.99893 [0.99752, 1.00231] | 0.99978 [0.99644, 1.00467] |
+
+The small compressed case improves consistently by about 3%. No speedup is
+claimed for larger compressed batches or uncompressed controls. The dense
+control had a small 0.6-0.8% central slowdown; its first interval excluded 1,
+but the repeat did not. There is no consistently significant control regression
+across both runs, and the earlier uncompressed optimizations remain unchanged.
+These component measurements do not imply database-throughput gains.
+
+```powershell
+cargo run --manifest-path native/Cargo.toml --release --locked --offline --example compression_paired_bench
+```
+
+## Rust columnar payload encoding (valid data, 2026-11-06)
+
+Numeric payload sizing counts non-NULL cells, then checks the multiplication
+and total length once, instead of performing checked additions for each cell.
+The private payload writer now uses `Vec<u8>` directly: both its production
+callers already provide vectors. Variable-width length checks and serialization
+order remain unchanged. No public signatures, FFI symbols or layouts changed.
+
+New tests compare complete numeric payloads and declared lengths against
+independent expected bytes for empty, dense, partially NULL and all-NULL columns,
+including integer extrema and several sizes around small vector boundaries.
+A separate byte-exact test covers varchar/binary NULLs, empty values, arbitrary
+bytes and Unicode, with compression enabled and disabled. Existing compressed
+and golden-file tests remain in the suite.
+
+The added `encoder/numeric_columnar` benchmark encodes two columns (Integer and
+BigInt), each with 100,000 rows. Partial-NULL fixtures have one NULL per five
+rows. Fixtures are constructed outside the timer; encoding, result allocation
+and result disposal are measured. Existing mixed-type and compressed benchmarks
+provide controls. The encoder baseline is from revision
+`322fc1418bee76da8d28bab4bb5f02ac357f0b71`; the same benchmark harness was compiled
+against the original and revised encoder.
+
+Windows x64, Rust 1.93.0, repository bench profile (fat LTO, one codegen unit,
+optimization level 3). Each scenario ran in a separate process, sequentially,
+with no concurrent builds/tests: 1-second warmup, 3-second measurement and 40
+samples, followed by the reverse execution order. Criterion central estimates:
+
+| Scenario | Before / after (us) | Reverse-order before / after (us) |
+| --- | ---: | ---: |
+| Numeric, no NULLs | 538.06 / 464.64 | 584.96 / 554.44 |
+| Numeric, 20% NULLs | 472.54 / 423.38 | 563.71 / 482.26 |
+| Numeric, all NULLs | 203.98 / 148.54 | 206.27 / 151.40 |
+| Mixed types, 1,000 rows x 10 columns | 26.684 / 24.548 | 27.369 / 23.621 |
+| Compressed, 16 batches x 100 rows x 8 columns | 357.47 / 364.31 | 356.39 / 358.62 |
+
+Uncompressed gains repeated in both orders: about 5-14% less time for dense
+numeric data, 10-14% for partial NULLs, 27% for all NULLs and 8-14% for mixed
+types. Reverse-order 95% intervals (before / after, us): dense 566.71-598.87 /
+551.88-557.03; partial NULLs 558.33-569.70 / 479.91-485.46; all NULLs
+205.22-207.34 / 150.25-152.59; mixed types 27.176-27.594 / 23.520-23.723.
+
+The compressed control was 0.6-1.9% slower; its reverse-order intervals overlap
+(354.83-357.99 / 357.52-359.85 us). No compression speedup is claimed. These
+results measure encoding only, not database query throughput.
+
+```powershell
+cargo bench --manifest-path native/Cargo.toml --locked --offline --bench encoder_bench -- 'encoder/numeric_columnar/dense$' --warm-up-time 1 --measurement-time 3 --sample-size 40 --noplot
+```
+
+## Rust row-to-column conversion (valid data, 2026-11-06)
+
+The converter now reserves space for the known row count after clearing each
+destination column. This avoids incremental vector growth on fresh or growing
+batches while retaining existing allocations for subsequent smaller batches.
+The change applies to integer, bigint, varchar and binary columns in the
+fallback streaming converter and bulk columnar encoding. It does not change
+public signatures, ABI, wire bytes, NULL handling or numeric validation.
+
+The added byte-equivalence test builds expected columns independently and checks
+compressed and uncompressed output across batch sizes 0, 1, 17, 4097, 3, 0 and
+501, including NULLs, Unicode, empty binary values and heap-backed binary cells.
+It passed both before and after the optimization.
+
+The `transpose_capacity` group in `fallback_transpose_bench` uses Criterion
+`iter_batched`: input cloning occurs outside the timed routine; conversion and
+destruction of the consumed row buffer occur inside it. Output destruction is
+outside the timed routine. Mixed fixtures contain integer and 128-byte binary
+columns; numeric fixtures contain integer and bigint columns. Both include
+NULLs. No database is involved.
+
+Windows x64, Rust 1.93.0, repository bench profile (fat LTO, one codegen unit,
+optimization level 3), 1-second warmup, 2-second measurement, 30 samples. The
+baseline converter is from revision
+`322fc1418bee76da8d28bab4bb5f02ac357f0b71`. Binaries using the same benchmark
+harness before/after the source change ran sequentially, then in reverse order with
+each scenario in its own process. Criterion central time estimates:
+
+| Scenario | Before / after | Reverse-order before / after |
+| --- | ---: | ---: |
+| Mixed, 1,000 rows | 29.322 / 20.562 us | 27.460 / 22.012 us |
+| Mixed, 10,000 rows | 303.32 / 209.82 us | 292.05 / 291.24 us |
+| Numeric, 10,000 rows | 268.97 / 216.24 us | 283.89 / 241.37 us |
+
+The 1,000-row mixed case reduced time by 20-30%; the numeric case by 15-20%.
+Reverse-order 95% intervals were 25.311-29.809 / 21.281-22.682 us (mixed 1,000)
+and 265.56-310.33 / 232.66-250.16 us (numeric 10,000). The larger mixed case did
+**not** show a repeatable improvement and is not counted as a confirmed gain.
+The existing reused-buffer benchmark (16 batches of 1,000 rows, including input
+cloning and encoding) measured 1.4163 / 1.3931 ms, with no indicated regression.
+These are component measurements, not a claim about database throughput.
+
+```powershell
+cargo bench --manifest-path native/Cargo.toml --locked --offline --bench fallback_transpose_bench -- transpose_capacity --warm-up-time 1 --measurement-time 2 --sample-size 30 --noplot
+```
+
+## Rust decoder framing validation (local measurement, 2026-11-06)
+
+`BinaryProtocolDecoder::parse` now checks the declared payload length before
+allocating metadata or rows. Previously, a 16-byte header declaring one million
+zero-column rows and one missing payload byte allocated 24,000,000 bytes before
+returning `ValidationError`. The allocation regression test fails on the old
+implementation and requires every allocation during rejection to stay below
+1 KiB. Valid zero-column rows remain supported.
+
+Public signatures, wire layout, FFI exports and accepted valid inputs are
+unchanged. For inputs with multiple defects, a payload-size mismatch now takes
+precedence over malformed metadata or cells. Tests for those deeper errors use
+correct framing so that they still exercise their intended validation.
+
+`native/odbc_engine/benches/decoder_validation_bench.rs` measures this invalid
+header, a valid empty result and 1,000 valid NULL rows. Run each scenario in a
+separate process using its name as a Criterion filter; a preceding allocation
+stress case can affect the allocator state of later scenarios. Fixtures are
+built and their success/error outcomes checked outside the timed loop.
+
+The baseline decoder is from revision
+`322fc1418bee76da8d28bab4bb5f02ac357f0b71`; the benchmark is identical in both
+builds. Measurements use Windows x64, Rust 1.93.0 and the repository's release
+equivalent bench profile (fat LTO, one codegen unit, optimization level 3).
+These measurements concern a Rust decoder component, not database throughput.
+
+Separate sequential processes used 1 second of warmup, 2 seconds of measurement
+and 30 samples per scenario, then repeated in reverse order. Criterion time
+estimates (central estimates, not end-to-end latency):
+
+| Scenario | Before / after | Reverse-order before / after |
+| --- | ---: | ---: |
+| Invalid header, 1,000,000 declared rows | 9.3452 ms / 70.049 ns | 9.4474 ms / 66.737 ns |
+| Valid empty result | 13.966 ns / 14.404 ns | 21.987 ns / 13.949 ns |
+| Valid 1,000 NULL rows | 38.339 us / 36.762 us | 37.070 us / 36.069 us |
+
+For the invalid header, forward 95% intervals were 9.2817-9.4115 ms before and
+67.461-73.111 ns after; reverse intervals were 9.3657-9.5329 ms and
+66.122-67.346 ns. The improvement is specific to avoiding allocation and traversal
+before rejecting invalid framing. Valid-input timings do not establish a
+general throughput improvement: the empty-result case changed direction between
+runs, including a small slowdown in the forward run.
+
+Reproduce each scenario independently, for example:
+
+```powershell
+cargo bench --manifest-path native/Cargo.toml --locked --offline --bench decoder_validation_bench -- invalid_million_rows --warm-up-time 1 --measurement-time 2 --sample-size 30 --noplot
+```
+
+## Named parameter parsing (local measurement, 2026-11-06)
+
+The parser copies unchanged SQL spans instead of rebuilding them character by
+character, dispatches special tokens by code unit, and keeps cache hits in a
+small entry method. Cache capacity, insertion-order eviction, immutable name
+lists, placeholder order, signatures and exception contracts are unchanged.
+
+Bracket-escaped identifiers also remain intact: `SELECT [x]]:hidden], :visible`
+now produces `SELECT [x]]:hidden], ?`, with only `visible` as a parameter.
+The previous implementation incorrectly replaced `:hidden`. This follows
+[SQL Server identifier escaping](https://learn.microsoft.com/en-us/sql/relational-databases/databases/database-identifiers).
+Regression tests failed before the fix and now cover escaped identifiers,
+Unicode, nested comments, dollar quoting and unterminated segments.
+
+`benchmarks/named_parameter_benchmark.dart` builds SQL outside the timed loop,
+uses eight warmups and 21 measured samples, and validates parameter counts.
+Cold scenarios cycle through 512 distinct queries, exceeding the 256-entry
+cache; the warm scenario cycles through 128. Separate sequential JIT processes
+compared the original source with the final implementation, then reversed the
+order. Output checksums matched. Environment: Windows x64, Dart 3.13.5.
+The original parser was taken from revision
+`322fc1418bee76da8d28bab4bb5f02ac357f0b71`.
+
+| Scenario | Calls per sample | Before / after median (ms) | Reverse-order before / after (ms) |
+| --- | ---: | ---: | ---: |
+| Cold, 96 columns, no parameters | 4,096 | 71.516 / 13.769 | 73.561 / 13.432 |
+| Cold, 96 columns, two parameters | 4,096 | 77.853 / 15.927 | 75.321 / 15.780 |
+| Cold, 96 parameters | 4,096 | 40.182 / 30.808 | 38.744 / 31.343 |
+| Warm cache, one parameter | 524,288 | 7.740 / 5.748 | 7.046 / 5.668 |
+
+Independent bootstrap resampling of the medians (5,000 resamples, initial seed
+20261106) gave reverse-order 95% speedup intervals of 5.12-5.72, 4.65-4.86,
+1.22-1.27 and 1.17-1.27 respectively. Both execution orders favored the revision
+in all four scenarios; these intervals describe this local sampling only.
+
+These are parser microbenchmarks, not database throughput measurements. Keep
+timings separate from correctness assertions to avoid machine-dependent tests.
+
+## Parameter decoding (local measurement, 2026-11-06)
+
+`deserializeParamValue` now reads lengths relative to the supplied byte view,
+including nonzero `offsetInBytes`. Batch decoding shares one `ByteData` view
+and scalar decoding no longer allocates unused payload views. Public signatures,
+wire tags, returned values and binary payload sharing remain unchanged.
+
+Run `benchmarks/param_decode_benchmark.dart` with the project package config.
+The harness builds inputs outside the timer, performs eight warmups and records
+21 samples per scenario, retaining a checksum of decoded output. The comparison
+used the original decoder and the revised decoder in separate sequential JIT
+processes, then repeated with their order reversed. Windows x64, Dart 3.13.5.
+
+| Scenario | Calls per sample | Before / after median (ms) | Reverse-order before / after (ms) |
+| --- | ---: | ---: | ---: |
+| One integer | 100,000 | 4.303 / 3.545 | 4.319 / 2.788 |
+| 256 integers | 2,000 | 23.362 / 7.831 | 19.939 / 7.175 |
+| 256 mixed integer/text/null/decimal values | 2,000 | 25.697 / 19.008 | 22.364 / 16.306 |
+
+The integer batches were 2.78-2.98 times faster and mixed batches 1.35-1.37
+times faster in these runs. These are decoder microbenchmarks, not end-to-end
+database throughput claims. Timing is reported separately from correctness
+tests to avoid a machine-dependent pass/fail threshold.
+
+Regression coverage is in `param_value_decode_view_test.dart`: all wire tags,
+offsets, truncated views whose backing buffer still contains the missing bytes,
+and binary payload sharing. Eight offset cases failed on the original decoder
+with `FormatException` before the fix.
+
+This document records architectural decisions with a measurable performance or reliability impact. Dated measurements below are historical snapshots; run the benches locally for your workload. Consumer-facing typical numbers live in the README **Performance quick reference**; native Criterion snapshots live in [`native/doc/performance_comparison.md`](../native/doc/performance_comparison.md).
 
 ---
 
@@ -414,12 +676,8 @@ See also `example/recommended_performance_patterns_demo.dart`.
 
 ### Test categories and flags
 
-| Category     | Flag                                                 | Purpose                                                               |
-| ------------ | ---------------------------------------------------- | --------------------------------------------------------------------- |
-| Unit/default | none                                                 | Deterministic tests that should run in normal `dart test` and CI.     |
-| Live DB      | `RUN_LIVE_TESTS=1`                                   | Tests that need `ODBC_TEST_DSN` and may vary by local data volume.    |
-| Stress       | `RUN_STRESS_TESTS=1` or legacy `RUN_SKIPPED_TESTS=1` | High-concurrency, timeout, or long-running stress validation.         |
-| Performance  | `RUN_PERF_TESTS=1`                                   | Benchmark-style tests or scripts with runtime-sensitive expectations. |
+Use [Test policy: canonical opt-in environment variables](TESTING.md#canonical-opt-in-environment-variables)
+for suite gates. Benchmark-specific options are documented below.
 
 Real-DSN async worker pool stress tests are deliberately gated separately from
 normal skipped tests because driver scheduling varies. Run them only when you
@@ -709,3 +967,151 @@ Feature-level open work is tracked in
 - **Live E2E / driver certification** - MSDTC, Oracle ref cursor and directed
   `OUT` coverage remain host-side opt-in because they depend on local drivers,
   DSNs and database privileges.
+
+## Dart hot-path comparison
+
+Run `dart run benchmarks/dart_hot_paths.dart` for cursor consumption and indexed
+column access and complete fragmented framing; `--linear` retains the old
+column helper for comparison. Output
+contains 15 measured samples after six warmups, in microseconds. Each sample
+uses eight rounds, except the single full frame which uses 64 rounds to reduce
+timer noise. Complete framing uses one round per sample. Compare the same SDK,
+machine and workload. Frames cover small
+coalesced inputs, large/full-capacity inputs, fragmentation and retained lazy
+text. When comparing revisions, copy the original accumulator into an ignored
+working directory for accumulator-only comparisons. For end-to-end framing,
+archive the baseline `lib/` tree and use a separate package configuration that
+maps `package:odbc_fast` to that tree, keeping dependency and SDK paths fixed.
+Copy the same benchmark to that directory; instrument only backing allocation
+and pending-byte copy counters, without changing baseline algorithms. No DSN
+or native ABI change is involved. Check distributions and repeat in reverse
+execution order to assess noisy cases.
+
+### Measured comparison (2026-09-30)
+
+Windows x64, Dart 3.13.4 stable, one process at a time without concurrent test
+suites. Baseline accumulator:
+`7fe2b37f91d1338d19753c44d567387ead5bda80`; column baseline uses the retained
+`result.cell` helper. Numbers below are medians per sample, not per operation.
+The ratio interval resamples baseline and revised samples independently 10,000
+times with seed 7, comparing their medians. A ratio below 1 favors the revision.
+
+| Scenario | Baseline (ms) | Revised (ms) | Speedup | Revised/baseline 95% bootstrap interval |
+| --- | ---: | ---: | ---: | --- |
+| 500 frames, 32 bytes | 16.040 | 0.072 | 222.78x | 0.004–0.009 |
+| 2,000 frames, 32 bytes | 84.362 | 0.222 | 380.01x | 0.002–0.003 |
+| 8,000 frames, 32 bytes | 482.535 | 3.161 | 152.65x | 0.006–0.007 |
+| 16 frames, 65,536 bytes | 26.831 | 3.152 | 8.51x | 0.109–0.120 |
+| Single frame, 65,536 bytes (64 rounds) | 0.992 | 0.664 | 1.49x | 0.107–1.116 |
+| 13-byte input fragments | 42.103 | 38.419 | 1.10x | 0.863–0.963 |
+| Retained lazy text | 778.188 | 1.077 | 722.55x | 0.001–0.001 |
+| Repeated column lookup | 598.942 | 5.972 | 100.29x | 0.010–0.010 |
+
+Consumption no longer copies the remainder after each frame. For one pass over
+8,000 32-byte frames, this removes 1,023,872,000 bytes of remainder copying;
+cursor advancement copies none. Adding new bytes after delivering shared views
+still detaches the backing and copies pending bytes once to preserve ownership.
+The full-frame interval includes 1: this run establishes no significant change
+in that noisy scenario. All other intervals favor the revision. These are local
+JIT measurements, not a cross-platform performance guarantee.
+
+The implementation regression run uses the canonical CI flags (`CI=true`,
+`ENABLE_E2E_TESTS=0`, `RUN_SKIPPED_TESTS=0`, `RUN_LIVE_TESTS=0`). Additional checks
+cover public exports, documentation, examples, and the CI protocol performance
+tests. Local integration cases run without a DSN; live-driver cases explicitly
+skip when their prerequisites are unavailable. No live database result is
+claimed by this comparison.
+
+Validation recorded for the earlier cursor/reader revision: `dart analyze`
+reports no issues; the CI unit
+command passes 1,607 tests with three explicit skips. The complementary core,
+exports, documentation and examples suite passes 85 tests, and the CI protocol
+performance suite passes 10. Local integration passes 16 cases with 25 explicit
+live-driver skips. The CI slow-test check also passes its 1,500 ms threshold.
+
+### Buffer and lifecycle safety comparison (2026-10-03)
+
+Baseline `522dc45`, Windows x64, Dart 3.13.4 stable, sequential JIT processes
+with no concurrent test suites. Each process uses six warmups and 15 measured
+samples. The repeated run reverses process order. The following medians are
+from that repeated run; bootstrap intervals resample the two median
+distributions independently 2,000 times with seed 42. Ratios above 1 favor
+the revision. They describe this machine, rather than a portable guarantee.
+
+| Scenario | Baseline (microseconds) | Revised (microseconds) | Baseline/revised 95% interval |
+| --- | ---: | ---: | --- |
+| 500 frames, 32 bytes | 105 | 95 | 0.46–1.96 |
+| 2,000 frames, 32 bytes | 236 | 239 | 0.71–1.23 |
+| 8,000 frames, 32 bytes | 3,094 | 2,887 | 0.81–1.17 |
+| 16 frames, 65,536 bytes | 3,251 | 3,277 | 0.86–1.15 |
+| Single 65,536-byte frame, 64 rounds | 682 | 450 | 1.15–3.45 |
+| 13-byte fragments | 35,645 | 18,060 | 1.91–2.03 |
+| Complete 128 KiB frame, 1 KiB fragments | 6,104 | 200 | 15.12–43.25 |
+| Complete 256 KiB frame, 1 KiB fragments | 19,283 | 193 | 56.80–110.98 |
+| Complete 512 KiB frame, 1 KiB fragments | 58,963 | 222 | 110.28–363.22 |
+| Complete 1 MiB frame, 1 KiB fragments | 191,704 | 366 | 400.32–626.79 |
+| Retained lazy text | 1,095 | 882 | 1.18–1.37 |
+| Indexed column lookup | 6,074 | 5,616 | 1.04–1.19 |
+
+The small-frame/full-frame intervals include 1 for four retained scenarios;
+the repeated run provides no statistically significant regression there.
+The initial 500-frame sample looked slower, but that change did not persist
+when execution order was reversed. Complete 1 MiB framing improved about
+524 times in this local run.
+
+| Complete framing size | Baseline pending bytes copied | Revised pending bytes copied |
+| --- | ---: | ---: |
+| 128 KiB | 8,323,072 | 65,536 |
+| 256 KiB | 33,423,360 | 65,536 |
+| 512 KiB | 133,955,584 | 65,536 |
+| 1 MiB | 536,346,624 | 65,536 |
+
+Owned header prefixes no longer expose backing on every fragment, and the
+validated length is cached until completion. Pending bytes are copied once
+when capacity grows from 64 KiB to 1 MiB in these cases. Further growth doubles
+capacity, so assembly copies grow linearly rather than quadratically.
+Backing allocation counters include all warmup and measured rounds, not live
+heap size or every Dart object. For complete 1 MiB framing they fell from
+21,227,372,544 to 22,020,096 bytes across 21 rounds.
+
+The safety policy also has a measurable cost: after forced GC with only a
+derived byte view, `ByteData` or lazy string retained, the old finalizer could
+reuse the backing and corrupt the consumer's data. The separate allocation
+probe reported zero new backing bytes and invalid retained data for `522dc45`;
+the revision allocated 65,536 new backing bytes and preserved every view.
+Automatic recycling of exposed backing is therefore removed. Only unexposed
+abandoned buffers and explicit exclusive-ownership offers may enter the pool.
+
+Run the ownership check separately from the fast unit budget:
+
+```sh
+dart test test/integration/protocol_frame_ownership_gc_test.dart
+```
+
+It launches a child Dart VM with a local service, requests GC through the VM
+service, checks independent derived views after their original frames become
+unreachable, and always kills the child on exit or its 30-second deadline.
+The CI runs this as a separate step. It requires no DSN or native library.
+
+Deterministic fakes cover concurrent initialization, interrupted spawn/handshake,
+worker exit, partial failure, generation changes, completion evidence and late
+resources. Native evidence is per invocation: missing status does not imply
+consumption. A timeout completes the caller once while unresolved work retains
+capacity; maintenance runs on its owning worker and checks every cleanup result.
+Prepared XA resumption is adopted explicitly by immutable XID key. Unknown
+transaction outcomes prohibit conflicting work and automatic transaction
+decisions, including phases attempted inside a helper's callback. Dispose or
+worker death reports unconfirmed cleanup, because a blocked FFI call cannot be
+guaranteed to cancel from Dart. UTF-8 XID tests cover byte limits and invalid
+surrogates; recovery of old non-ASCII branches requires their original bytes.
+
+Validation of this safety revision: `dart analyze` reports no issues. The CI
+unit command passes 1,668 tests with three explicit skips; core, public exports,
+documentation and examples pass 85. FFI export verification confirms 111 symbols.
+The protocol performance guard passes 10 tests and the standalone GC process
+passes its ownership check. Local integration passes 17 cases with 25 explicit
+live-driver skips. The slow-test budget passes its 1,500 ms threshold (the
+slowest reported case was 1,023 ms); GC runs outside that unit budget. No live
+database result is claimed. Late successful pool release/close and async free
+also remove repository metadata, while the previously returned timeout remains
+a failure with its original operation and request identifiers.

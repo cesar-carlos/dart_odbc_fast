@@ -1,7 +1,7 @@
 ---
 description: Null safety best practices for Dart
-globs: ["lib/**/*.dart", "test/**/*.dart"]
-alwaysApply: true
+globs: ["**/*.dart"]
+alwaysApply: false
 ---
 
 # Null Safety
@@ -22,7 +22,8 @@ alwaysApply: true
 
 ## API Design
 
-- Use required named parameters for mandatory values.
+- Use required named parameters for mandatory inputs whose position is unclear;
+  follow `coding_style.mdc` and preserve existing public signatures.
 - Return nullable values only when callers can safely model absence.
 - Make public nullability contracts obvious in naming, types, and docs.
 

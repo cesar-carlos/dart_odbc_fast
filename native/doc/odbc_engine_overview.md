@@ -15,19 +15,11 @@ It is built around:
 - **Connection pooling** via `r2d2`
 - **Transactions** with isolation levels + RAII auto-rollback and SQL savepoints
 
-## High-level module map
+## Architecture
 
-- `src/ffi/mod.rs`: C ABI entrypoints (`odbc_*`), `GlobalState`, error mapping, metrics.
-- `src/engine/*`: environment/connection lifecycle, execution, streaming, transactions, and engine core helpers.
-- `src/pool/mod.rs`: `ConnectionPool` using `r2d2` and an internal global `Environment`.
-- `src/protocol/*`: binary encoding/decoding (row and columnar), compression, buffer arenas.
-- `src/plugins/*`: driver-aware behavior (plugin registry + per-driver plugins).
-- `src/observability/*`: metrics/logging/tracing helpers.
-- `src/error/mod.rs`: `OdbcError` and structured errors (serializable).
-- `src/handles/mod.rs`: handle manager for `Environment` + `Connection<'static>` storage.
-- `src/async_bridge/mod.rs`: tokio runtime singleton (used by FFI init) and a blocking async runner.
-- `src/security/*`: secure buffers, secrets, audit logger.
-- `src/versioning/*`: ABI/API/protocol version types.
+The authoritative module map and design decisions are in
+[Engine architecture](../odbc_engine/ARCHITECTURE.md). Execution and buffer
+flows are described in [Data paths](data_paths.md).
 
 ## Key Rust entrypoints
 
@@ -65,8 +57,6 @@ This is also the primary format used across the FFI boundary.
 ## Where to look next
 
 - For the complete FFI entrypoints and their semantics, see `src/ffi/mod.rs` and
-  the curated doc: `native/doc/ffi_api.md`.
+  the curated [FFI reference](ffi_api.md).
 - For throughput-oriented APIs (streaming/pool/array binding/transactions), see:
-  `native/doc/data_paths.md`.
-
-
+  [Data paths](data_paths.md).

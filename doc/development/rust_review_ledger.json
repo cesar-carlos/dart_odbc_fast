@@ -1,0 +1,152 @@
+{
+  "review_date": "2026-11-06",
+  "basis": "Evidência da revisão focal registrada nesta conversa, sobre a árvore de trabalho atual. Não representa o histórico completo de revisão do repositório. Leitura feita apenas para inventariar não promove estados.",
+  "context_only": {
+    "native/odbc_engine/src/protocol/columnar.rs": "Definições consultadas como contexto dos encoders; sem revisão crítica registrada do módulo inteiro ou de um caminho específico.",
+    "native/odbc_engine/src/protocol/row_buffer.rs": "Estruturas, helpers e Clone consultados como contexto do conversor; sem validação focal própria nesta campanha.",
+    "native/odbc_engine/src/protocol/types.rs": "Representação CellBytes consultada por busca pontual; não constitui revisão do módulo.",
+    "native/odbc_engine/src/protocol/mod.rs": "Exportações consultadas para navegação; inventário de símbolos não constitui revisão funcional.",
+    "native/odbc_engine/src/lib.rs": "Entradas e declarações de módulos consultadas para inventário; sem crédito de revisão funcional."
+  },
+  "reviews": {
+    "native/odbc_engine/src/protocol/decoder/mod.rs": {
+      "status": "parcial",
+      "level": "targeted_validation",
+      "scope": "Revisão focal da validação do tamanho do payload antes das alocações. Regressão de cabeçalho inválido reproduzida, limite de alocação verificado e entradas válidas comparadas. Não houve auditoria integral de todos os discriminantes, flags, entradas malformadas e contratos do decoder.",
+      "evidence": [
+        "native/odbc_engine/tests/decoder_allocation_test.rs",
+        "native/odbc_engine/benches/decoder_validation_bench.rs",
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "1bad2a922c56c880fd1ce32c4e4cf954671a42594ea05a79ff65f5d2f5e48a9e"
+    },
+    "native/odbc_engine/src/protocol/converter.rs": {
+      "status": "parcial",
+      "level": "targeted_validation",
+      "scope": "Reserva e reutilização dos vetores em transpose_row_buffer_into, com equivalência de bytes para crescimento/redução de lotes, NULLs, strings e binários. Não houve auditoria completa do mapeamento de todos os tipos ODBC ou de todas as combinações de entrada.",
+      "evidence": [
+        "native/odbc_engine/src/protocol/converter.rs",
+        "native/odbc_engine/benches/fallback_transpose_bench.rs",
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "6e54f4cadc2393e8cbc6a6372aa9643f6b91255c938a12b3c403d7c5c5a43335"
+    },
+    "native/odbc_engine/src/protocol/columnar_encoder.rs": {
+      "status": "parcial",
+      "level": "targeted_validation",
+      "scope": "Planejamento do tamanho numérico, escrita de payload em Vec, reserva/reutilização do scratch e decisões de compressão nos caminhos medidos. Testes de bytes, fronteiras, prefixos, frames vazios e orçamento de alocações. A avaliação foi focal em correção e desempenho; não equivale a auditoria integral de todos os limites, falhas de recurso e combinações de flags.",
+      "evidence": [
+        "native/odbc_engine/tests/columnar_compression_allocation_test.rs",
+        "native/odbc_engine/benches/encoder_bench.rs",
+        "native/odbc_engine/examples/compression_paired_bench.rs",
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "230fe57e33e989e36833552f363e68bb6f2b7ef389c6da682fc6d8d9a7e260ae"
+    },
+    "native/odbc_engine/src/protocol/bound_param.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Triagem da decodificação DRT1/legada, limites de contagem e conversão para parâmetros de entrada. Sem alteração ou nova validação específica deste módulo; outras direções, binding e todos os casos malformados não foram auditados.",
+      "evidence": [],
+      "sha256_lf": "522e9225bf0772822fc783de5c9d2355ede512366875ac6d278db57ef6921e2b"
+    },
+    "native/odbc_engine/src/protocol/param_value/mod.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Triagem da serialização/deserialização inicial, limites de payload/contagem e conversão para strings. A parte restante de binding ODBC, inferência e descrições de parâmetros não foi revisada integralmente.",
+      "evidence": [],
+      "sha256_lf": "69bb0f4b580308a5f36607d5a1c269f9c42221a730eb282751f99a5b44de7dfa"
+    },
+    "native/odbc_engine/src/protocol/encoder/mod.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Triagem dos caminhos Vec/Write e do footer OUT1 em busca de alocações. Sem correção aplicada neste módulo; medição de shape, demais footers e limites não receberam revisão integral.",
+      "evidence": [],
+      "sha256_lf": "7822ee1f52fe321811a7b0d45be5aeb7142cb565f288fbdd46b33d6180188cdd"
+    },
+    "native/odbc_engine/src/engine/core/metadata_cache.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Triagem de buscas/inserções, compartilhamento por Arc, TTL e remoção de payloads. Sem auditoria sistemática de concorrência, envenenamento de mutex, invalidação ou política completa de cache.",
+      "evidence": [],
+      "sha256_lf": "9af55dfa6fce55689c8230df337b446e3e9a10d5efc9806b6aff4caa032d6418"
+    },
+    "native/odbc_engine/src/engine/core/prepared_cache.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Triagem de get_or_insert e dos contadores record_hit, record_prepare e record_execution. Sem revisão integral das métricas, limpeza, invalidação ou concorrência.",
+      "evidence": [],
+      "sha256_lf": "5b5022b1de577eb0f032d6dd6391f56b8fb2da94485856d15c63414051d1520c"
+    },
+    "native/odbc_engine/src/engine/streaming/columns.rs": {
+      "status": "parcial",
+      "level": "preliminary_inspection",
+      "scope": "Inspeção de FallbackColumnarEncoder::new/encode_into para localizar o uso do conversor e do workspace de compressão. A descoberta de metadados do driver e todos os caminhos de streaming não foram auditados.",
+      "evidence": [],
+      "sha256_lf": "986ae9f44a8c5bb303131fa556de25eaebbf6a71e9d79c5297a83dc592fd9991"
+    },
+    "native/odbc_engine/src/protocol/decoder/tests.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Casos editados de framing e preservação de linhas sem colunas. Não há registro de revisão integral de todos os testes do arquivo.",
+      "evidence": [
+        "native/odbc_engine/src/protocol/decoder/mod.rs"
+      ],
+      "sha256_lf": "80a2be32af496c526c11a963d90a1ed1ab136d948a00930aa62e20f4586d07b5"
+    },
+    "native/odbc_engine/tests/decoder_allocation_test.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Regressão de alocação para cabeçalho inválido, criada e executada antes/depois. Validação focal de apoio; não é revisão integral do subsistema de memória.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "5b7cebc3027b264de88527bb9b02a7fbc0fa7ab9e266410b1fea52a90079f461"
+    },
+    "native/odbc_engine/tests/columnar_compression_allocation_test.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Regressão do orçamento de alocações/realocações de lote comprimido pequeno, criada e executada antes/depois.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "ca1f257f41e0c886a7385f0d1c3426a7312576fdb24030f3d589906ef5268394"
+    },
+    "native/odbc_engine/benches/decoder_validation_bench.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Fixtures de framing inválido e controles válidos utilizadas nas medições registradas. Não atribui revisão aos demais caminhos do motor.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "f975ef9dc31ede29a98756f87652a1dd63df12337a2498bacf01ab7f94b4706c"
+    },
+    "native/odbc_engine/benches/fallback_transpose_bench.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Grupo transpose_capacity e controles de reutilização usados para avaliar a reserva dos vetores.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "d1a73cb67fa44a6737ec136ab0415b0994899280c7c1e6a24ae38e82cff15ea2"
+    },
+    "native/odbc_engine/benches/encoder_bench.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Grupo numeric_columnar e controles selecionados de tipos mistos e compressão. Não houve revisão integral de todos os grupos de benchmark.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "55bede39830d86432f11613b5a1e477565af0f1960f0573641fd11640166e73c"
+    },
+    "native/odbc_engine/examples/compression_paired_bench.rs": {
+      "status": "parcial",
+      "level": "support_validation",
+      "scope": "Referência sem reserva inicial, comparação de bytes, alternância pareada e cálculo das medições usados na validação focal. Não equivale a auditoria estatística independente ou a revisão integral do código incluído.",
+      "evidence": [
+        "doc/PERFORMANCE.md"
+      ],
+      "sha256_lf": "c0ac4041d61bcfb6d8853e48845bc5b8c0ee05be39230bdef28218c5c36c818b"
+    }
+  }
+}

@@ -287,5 +287,9 @@ harness = false
 name = "prepared_cache_bench"
 harness = false
 
+[[bench]]
+name = "decoder_validation_bench"
+harness = false
+
 [build-dependencies]
 cbindgen = "0.29.2"

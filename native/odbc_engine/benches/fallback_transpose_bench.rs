@@ -1,6 +1,6 @@
 //! Compare the production one-shot and reusable row-to-column transposition.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use odbc_engine::protocol::{ColumnarEncoder, OdbcType, RowBuffer};
 
 mod error {
@@ -58,5 +58,38 @@ fn bench_fallback_transpose(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_fallback_transpose);
+fn bench_transpose_capacity(c: &mut Criterion) {
+    let mut group = c.benchmark_group("transpose_capacity");
+    for (name, source) in [
+        ("mixed_1000", fixture(1000)),
+        ("mixed_10000", fixture(10000)),
+        ("numeric_10000", {
+            let mut source = RowBuffer::new();
+            source.add_column("id".to_string(), OdbcType::Integer);
+            source.add_column("big".to_string(), OdbcType::BigInt);
+            for index in 0..10000i32 {
+                source.add_row_vecs(vec![
+                    Some(index.to_le_bytes().to_vec()),
+                    (index % 5 != 0).then(|| i64::from(index).to_le_bytes().to_vec()),
+                ]);
+            }
+            source
+        }),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                || source.clone(),
+                |batch| {
+                    black_box(
+                        converter::row_buffer_to_columnar(black_box(batch)).expect("transpose"),
+                    )
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_fallback_transpose, bench_transpose_capacity);
 criterion_main!(benches);

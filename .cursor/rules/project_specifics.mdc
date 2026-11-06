@@ -1,7 +1,7 @@
 ---
 description: Project-specific rules for the odbc_fast package
-globs: ["lib/**/*.dart", "test/**/*.dart", "pubspec.yaml", "analysis_options.yaml"]
-alwaysApply: true
+globs: ["**/*.dart", "pubspec.yaml", "analysis_options.yaml", "native/**/Cargo.toml"]
+alwaysApply: false
 ---
 
 # odbc_fast - Project Specifics
@@ -96,8 +96,6 @@ Keep generic guidance in:
 - Respect the existing analyzer baseline from `very_good_analysis` plus the
   project overrides in `analysis_options.yaml`.
 - Use `dart analyze` as the primary Dart analyzer command.
-- Keep generated bindings or generated artifacts out of manual editing unless
-  the generation source itself is being changed; follow
-  `generated_artifacts.mdc`.
+- Follow `generated_artifacts.mdc` for generator inputs and regeneration.
 - Keep manifest release history in changelogs or docs instead of expanding
   `pubspec.yaml` or `Cargo.toml` with long historical notes.

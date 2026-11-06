@@ -67,11 +67,23 @@ the rule set. Read it first.
 
 - Rules are defined in `.cursor/rules/*.mdc`.
 - File scope is controlled via frontmatter `globs`.
-- `alwaysApply: true` should be used only when the rule is intentionally broad.
+- Only the index, general engineering rules, and error policy are always-on.
+- Specialized rules use `alwaysApply: false` and matching `globs`; setting
+  `alwaysApply: true` makes a rule global regardless of its globs.
+- `README.md` is maintenance guidance, not an auto-attached MDC rule.
+- Agents outside Cursor must read the index and relevant rule files explicitly.
+
+## Validation After Rule Changes
+
+- Check MDC frontmatter, file references, and coverage of affected file types.
+- Compare repository paths and commands with source, manifests, and CI.
+- Check contradictions and duplicate policies; retain one authoritative owner.
+- Run `git diff --check` and review the diff. Rule-only edits do not require
+  rebuilding Dart or Rust. Behavioral bug fixes still require regression tests.
 
 ## References
 
-- https://docs.cursor.com/context/rules
+- https://cursor.com/docs/rules
 - https://dart.dev/effective-dart
 - https://dart.dev/language
 - https://doc.rust-lang.org/style-guide/

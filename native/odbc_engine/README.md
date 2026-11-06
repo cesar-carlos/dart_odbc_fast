@@ -4,7 +4,8 @@ Rust-native ODBC engine consumed by `dart_odbc_fast` over a stable C ABI.
 
 ## Overview
 
-- C ABI surface: `src/ffi/mod.rs` (88 `odbc_*` exports).
+- C ABI surface: `src/ffi/mod.rs`; verify exported symbols with
+  `dart tool/check_ffi_exports.dart` from the repository root.
 - Engine internals: `src/engine`, `src/protocol`, `src/pool`, `src/handles`,
   `src/observability`, `src/security`.
 
@@ -33,11 +34,13 @@ Crate-local docs:
 
 ## Build / test
 
+From the repository root:
+
 ```bash
 cd native
-cargo fmt --all
-cargo clippy --all-targets --all-features -D warnings
-cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace -- --test-threads=1
 ```
 
 E2E tests against a live database require `ENABLE_E2E_TESTS=1` and a

@@ -1,7 +1,7 @@
 ---
 description: Rust unsafe, ABI, and FFI boundary rules for the native engine
-globs: ["native/**/*.rs", "native/**/cbindgen.toml", "native/**/*.def"]
-alwaysApply: true
+globs: ["native/**/*.rs", "native/**/cbindgen.toml", "native/**/*.def", "native/**/*.h"]
+alwaysApply: false
 ---
 
 # Rust FFI and Unsafe Boundaries
@@ -27,8 +27,13 @@ Rust style in `rust_style.mdc` and cross-language error policy in
 
 ## FFI Entry Points
 
-- Validate pointers, lengths, alignment, nullability, and ownership before
-  constructing references, slices, or strings.
+- Validate checkable pointer properties, lengths, alignment, and nullability
+  before constructing references, slices, or strings. Null/alignment checks
+  cannot prove allocation validity, lifetime, or aliasing; document those caller
+  obligations and enforce owned-handle lifetimes internally.
+- Handle null plus zero length explicitly: Rust references and slices require
+  non-null aligned pointers even when empty. Check byte-length arithmetic and
+  bounds before constructing slices.
 - Treat all data from Dart, C ABI callers, ODBC drivers, environment variables,
   and dynamically loaded libraries as untrusted.
 - Ensure panics never cross non-unwinding FFI boundaries. Catch and translate
@@ -40,7 +45,9 @@ Rust style in `rust_style.mdc` and cross-language error policy in
 
 ## ABI and Layout
 
-- Use `#[repr(C)]` for FFI-facing structs and enums exposed across the boundary.
+- Use `#[repr(C)]` for FFI-facing structs. For untrusted enum tags, accept an
+  ABI-defined integer and validate it before conversion to a Rust enum;
+  `repr(C)` alone does not make invalid enum discriminants safe.
 - Use ABI-stable primitive types, pointers, and explicit lengths at the boundary.
 - Do not expose Rust-specific layout types such as `String`, `Vec<T>`,
   `Result<T, E>`, trait objects, or non-`repr(C)` enums across FFI.

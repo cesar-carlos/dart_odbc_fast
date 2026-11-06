@@ -17,14 +17,6 @@ For `x.y.z`:
 - Backward-compatible feature: bump **MINOR** (`1.1.0` -> `1.2.0`)
 - Bug fix/performance/docs/internal refactor: bump **PATCH** (`1.1.0` -> `1.1.1`)
 
-## Legacy rule (pre-1.0.0)
-
-For `0.x.y`:
-
-- Breaking change: **MINOR**
-- Backward-compatible feature: **PATCH**
-- Bug fix/performance/docs: **PATCH**
-
 ## What counts as breaking
 
 1. Removing public method/class/enum
@@ -62,14 +54,7 @@ Format:
 2. Update `pubspec.yaml`
 3. Update `CHANGELOG.md` with `## [X.Y.Z] - YYYY-MM-DD`
 4. Validate tests/build
-5. Create and push tag
-
-Operational note:
-
-- Release workflow automatically validates:
-  - tag format
-  - tag consistency with `pubspec.yaml`
-  - matching section in `CHANGELOG.md`
+5. Follow [Release automation](RELEASE_AUTOMATION.md) to create and publish the tag
 
 ## Related documents
 

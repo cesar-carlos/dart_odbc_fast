@@ -1,7 +1,7 @@
 ---
 description: Rust Cargo manifest, dependency, and feature-gate rules
 globs: ["native/**/Cargo.toml", "native/**/Cargo.lock", "native/**/*.rs"]
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Rust Cargo and Feature Rules

@@ -10,15 +10,15 @@ cd dart_odbc_fast/native
 
 # Rust checks
 cargo fmt --all
-cargo clippy --all-targets --all-features -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 ```
 
 Optional E2E (database required):
 
 ```bash
-cd native
-ENABLE_E2E_TESTS=1 cargo test e2e_multi_db -- --nocapture
+# Still in native/; configure a dedicated test DSN first.
+ENABLE_E2E_TESTS=1 cargo test -p odbc_engine --features test-helpers --test e2e_multi_db_basic_test -- --nocapture --test-threads=1
 ```
 
 Use `native/doc/cross_database.md` for DSN and per-database setup.
@@ -32,7 +32,7 @@ Use `native/doc/cross_database.md` for DSN and per-database setup.
 3. Add/adjust tests in `native/odbc_engine/tests`.
 4. Run quality gates:
    - `cargo fmt --all`
-   - `cargo clippy --all-targets --all-features -D warnings`
+   - `cargo clippy --workspace --all-targets -- -D warnings`
    - targeted tests + affected E2E.
 5. Update docs affected by behavior changes.
 
