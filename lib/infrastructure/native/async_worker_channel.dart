@@ -176,10 +176,45 @@ class _WorkerChannel {
   }
 
   static int _percentile(Iterable<int> samples, int percentile) {
-    final sorted = samples.toList(growable: false)..sort();
-    if (sorted.isEmpty) return 0;
-    final index = ((sorted.length - 1) * percentile / 100).ceil();
-    return sorted[index];
+    final values = samples.toList(growable: false);
+    if (values.isEmpty) return 0;
+    final index = ((values.length - 1) * percentile / 100).ceil();
+    var low = 0;
+    var high = values.length - 1;
+    // Bound partition work; adversarial input falls back to sorting.
+    var budget = 2 * values.length.bitLength;
+    while (low < high) {
+      if (budget-- == 0) {
+        values.sort();
+        break;
+      }
+      final pivot = values[(low + high) ~/ 2];
+      var left = low;
+      var right = high;
+      while (left <= right) {
+        while (values[left] < pivot) {
+          left++;
+        }
+        while (values[right] > pivot) {
+          right--;
+        }
+        if (left <= right) {
+          final value = values[left];
+          values[left] = values[right];
+          values[right] = value;
+          left++;
+          right--;
+        }
+      }
+      if (index <= right) {
+        high = right;
+      } else if (index >= left) {
+        low = left;
+      } else {
+        break;
+      }
+    }
+    return values[index];
   }
 
   void failAll(AsyncError error) {

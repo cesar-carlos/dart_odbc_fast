@@ -37,7 +37,7 @@ pub(super) fn parse_bulk_insert_payload_body(
     o: &mut usize,
     wire: BulkPayloadWire,
 ) -> Result<BulkInsertPayload> {
-    let wire_backing: Arc<[u8]> = Arc::from(data.to_vec());
+    let wire_backing: Arc<[u8]> = Arc::from(data);
     let data = wire_backing.as_ref();
     let table_len = read_u32_le(data, o)? as usize;
     let table_bytes = read_bytes(data, o, table_len)?;

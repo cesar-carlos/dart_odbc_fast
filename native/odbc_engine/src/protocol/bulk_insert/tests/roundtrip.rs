@@ -4,6 +4,39 @@ use super::{
 };
 
 #[test]
+fn should_retain_variable_cells_after_input_is_overwritten_and_dropped() {
+    let payload = BulkInsertPayload {
+        table: "owned".into(),
+        columns: vec![BulkColumnSpec {
+            name: "text".into(),
+            col_type: BulkColumnType::Text,
+            nullable: false,
+            max_len: 16,
+        }],
+        row_count: 2,
+        column_data: vec![BulkColumnData::Text {
+            rows: bulk_rows_from_vecs(vec![b"first".to_vec(), "caf\u{e9}".as_bytes().to_vec()]),
+            max_len: 16,
+            null_bitmap: None,
+        }],
+    };
+    for mut wire in [
+        serialize_bulk_insert_payload(&payload).expect("legacy"),
+        super::serialize_bulk_insert_payload_v2(&payload).expect("v2"),
+    ] {
+        let parsed = parse_bulk_insert_payload(&wire).expect("parse");
+        wire.fill(0);
+        drop(wire);
+        let BulkColumnData::Text { rows, .. } = &parsed.column_data[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(rows[0].as_slice(), b"first");
+        assert_eq!(rows[1].as_slice(), "caf\u{e9}".as_bytes());
+        assert_eq!(parsed.table, "owned");
+    }
+}
+
+#[test]
 fn test_bulk_insert_parse_roundtrip_i32() {
     let payload = BulkInsertPayload {
         table: "t".to_string(),

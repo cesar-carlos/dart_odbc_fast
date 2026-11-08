@@ -39,20 +39,29 @@ QueryResult fromTypedColumnar(TypedColumnarResult result) {
 
   for (var c = 0; c < result.columns.length; c++) {
     final col = result.columns[c];
-    for (var r = 0; r < n; r++) {
-      if (col.isNullAt(r)) {
-        rows[r][c] = null;
-        continue;
-      }
-      rows[r][c] = switch (col) {
-        TypedColumnInt32(:final values) => values[r],
-        TypedColumnInt64(:final values) => values[r],
-        TypedColumnFloat64(:final values) => values[r],
-        TypedColumnObject(:final kind, :final values) => switch (kind) {
-            TypedColumnKind.string => _unwrapStringLike(values[r]),
-            _ => values[r],
-          },
-      };
+    switch (col) {
+      case TypedColumnInt32(:final values):
+        for (var r = 0; r < n; r++) {
+          if (!col.isNullAt(r)) rows[r][c] = values[r];
+        }
+      case TypedColumnInt64(:final values):
+        for (var r = 0; r < n; r++) {
+          if (!col.isNullAt(r)) rows[r][c] = values[r];
+        }
+      case TypedColumnFloat64(:final values):
+        for (var r = 0; r < n; r++) {
+          if (!col.isNullAt(r)) rows[r][c] = values[r];
+        }
+      case TypedColumnObject(:final kind, :final values):
+        if (kind == TypedColumnKind.string) {
+          for (var r = 0; r < n; r++) {
+            rows[r][c] = _unwrapStringLike(values[r]);
+          }
+        } else {
+          for (var r = 0; r < n; r++) {
+            rows[r][c] = values[r];
+          }
+        }
     }
   }
 

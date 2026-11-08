@@ -7,6 +7,32 @@ import 'package:odbc_fast/infrastructure/native/isolate/message_protocol.dart';
 import 'package:odbc_fast/infrastructure/native/isolate/worker_failure_snapshot.dart';
 import 'package:odbc_fast/infrastructure/native/protocol/param_value.dart';
 
+/// Workers acknowledge connect arrival and wait for explicit test release.
+void Function(SendPort) poolBarrierWorker(SendPort arrivals) =>
+    (mainSendPort) {
+      final receivePort = ReceivePort();
+      final pending = <ConnectRequest>[];
+      mainSendPort.send(receivePort.sendPort);
+      receivePort.listen((message) {
+        if (message == 'shutdown') {
+          receivePort.close();
+        } else if (message is InitializeRequest) {
+          mainSendPort
+              .send(InitializeResponse(message.requestId, success: true));
+        } else if (message is ConnectRequest) {
+          pending.add(message);
+          arrivals.send(receivePort.sendPort);
+        } else if (message == 'release_connects') {
+          for (final request in pending) {
+            mainSendPort.send(
+              ConnectResponse(request.requestId, 100000 + request.requestId),
+            );
+          }
+          pending.clear();
+        }
+      });
+    };
+
 /// Fake worker: initialize handshake fails (success=false).
 void fakeWorkerInitFailure(SendPort mainSendPort) {
   final receivePort = ReceivePort();

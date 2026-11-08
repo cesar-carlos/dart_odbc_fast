@@ -1,6 +1,10 @@
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
+import 'package:odbc_fast/core/utils/logger.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
+import 'package:odbc_fast/infrastructure/native/errors/native_cleanup.dart';
+import 'package:odbc_fast/infrastructure/native/errors/odbc_error_translator.dart';
 import 'package:odbc_fast/infrastructure/native/odbc_connection_backend.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_completion_status.dart';
 
@@ -60,12 +64,16 @@ class TransactionHandle implements ffi.Finalizable {
     if (_state != _State.active) {
       return false;
     }
+    // A thrown backend call does not prove whether completion took effect.
+    _state = _State.uncertain;
     final Object provider = _backend;
     final status = provider is TransactionCompletionStatus
         ? provider.commitTransactionStatus(_txnId)
         : (_backend.commitTransaction(_txnId) ? 0 : 1);
     final ok = status == 0;
-    if (status != 2) {
+    if (status == 2) {
+      _state = _State.active;
+    } else {
       _state = ok ? _State.committed : _State.failed;
       _detachFinalizer();
     }
@@ -80,12 +88,15 @@ class TransactionHandle implements ffi.Finalizable {
     if (_state != _State.active) {
       return false;
     }
+    _state = _State.uncertain;
     final Object provider = _backend;
     final status = provider is TransactionCompletionStatus
         ? provider.rollbackTransactionStatus(_txnId)
         : (_backend.rollbackTransaction(_txnId) ? 0 : 1);
     final ok = status == 0;
-    if (status != 2) {
+    if (status == 2) {
+      _state = _State.active;
+    } else {
       _state = ok ? _State.rolledBack : _State.failed;
       _detachFinalizer();
     }
@@ -145,16 +156,13 @@ class TransactionHandle implements ffi.Finalizable {
         );
       }
       return result;
-    } on Object {
-      if (!rollbackToSavepoint(name)) {
-        // Rollback to savepoint failed; the transaction may be in an
-        // inconsistent state. The caller will rethrow the original cause
-        // and should decide whether to rollback the entire transaction.
-        throw StateError(
-          'Failed to rollback to savepoint "$name" on txn $_txnId '
-          '(original error is suppressed — check structured error channel)',
-        );
-      }
+    } on Object catch (error, stack) {
+      await _cleanupAfterFailure(
+        () => rollbackToSavepoint(name),
+        'rollbackToSavepoint',
+        error,
+        stack,
+      );
       // We do not auto-release after rollback: SQL-92 keeps the savepoint
       // alive after ROLLBACK TO, and SQL Server has no RELEASE at all.
       rethrow;
@@ -184,12 +192,43 @@ class TransactionHandle implements ffi.Finalizable {
         throw StateError('Failed to commit transaction ${txn.txnId}');
       }
       return result;
-    } on Object {
+    } on Object catch (error, stack) {
       if (txn.isActive) {
-        txn.rollback();
+        await _cleanupAfterFailure(
+          txn.rollback,
+          'rollbackTransaction',
+          error,
+          stack,
+        );
       }
       rethrow;
     }
+  }
+
+  static Future<void> _cleanupAfterFailure(
+    bool Function() rollback,
+    String operation,
+    Object original,
+    StackTrace originalStack,
+  ) async {
+    // Keep rollback diagnostics separate from the failed operation's context.
+    final cleanup = await NativeCallContext.capture(
+      () => cleanupNativeResources([
+        (operation: operation, action: () async => rollback()),
+      ]),
+    );
+    if (cleanup == null) return;
+    final primary = translateOdbcError(
+      original,
+      operation: 'transactionAction',
+      stackTrace: originalStack,
+    );
+    NativeCallContext.record(primary.withSecondary(cleanup));
+    AppLogger.warning(
+      'Transaction cleanup failed; preserving the original operation error',
+      cleanup,
+      cleanup.details.stackTrace,
+    );
   }
 
   // -- Native finalizer (best-effort token reclaim on GC) ----------------
@@ -228,4 +267,4 @@ class TransactionHandle implements ffi.Finalizable {
   }
 }
 
-enum _State { active, committed, rolledBack, failed }
+enum _State { active, committed, rolledBack, failed, uncertain }

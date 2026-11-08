@@ -293,3 +293,15 @@ harness = false
 
 [build-dependencies]
 cbindgen = "0.29.2"
+
+[[bench]]
+name = "bulk_parse_bench"
+harness = false
+
+[[bench]]
+name = "identifier_quoting_bench"
+harness = false
+
+[[bench]]
+name = "pool_busy_count_bench"
+harness = false

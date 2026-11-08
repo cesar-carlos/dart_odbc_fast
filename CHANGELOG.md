@@ -7,6 +7,66 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Return `PoolError` instead of panicking for zero native pool capacity or
+  connection/idle/lifetime timeouts; cover all four cases with regression tests.
+- Reject non-pooled connections on pool return before invoking the backend or
+  invalidating their lifetime and metadata; add a regression test.
+- Block local transaction handle reuse when commit or rollback throws, avoiding
+  automatic rollback after an unconfirmed commit. Preserve the original exception
+  and stack; native busy status still allows retry. Add five regression cases.
+- Retain backend SQLSTATE, native code, and transaction context when XA cleanup
+  end or rollback returns failure, preserving the original action as the primary
+  error. Cover active and prepared cleanup in both transaction helpers.
+- Preserve the original exception and stack in `TransactionHandle.withSavepoint`
+  and `runWithBegin` when rollback throws or returns false. Keep cleanup
+  diagnostics separate from the primary operation and report secondary failures
+  through the native call context and logging.
+- Invalidate aggregate worker P95 caches when disposing the pool. Recreated
+  workers can have the same sample counts as the previous generation; their
+  snapshots no longer return stale latency, queue-wait, or execution percentiles.
+
+### Performance
+
+- Remove temporary statement-ID lists during connection metadata cleanup. Paired
+  AOT benchmarks show 50–78% lower median cleanup time; see
+  `benchmarks/results/pool_review_2026_11_08.json`. Pool/DB throughput is unmeasured.
+- Build qualified SQL identifiers directly into one output string after
+  validating every segment, avoiding intermediate vectors and per-segment
+  strings in the native bulk-insert and SQL-generation paths.
+- Build the indexed Dart reader's case-insensitive map only on first use and
+  avoid per-column closures when constructing indexes. Keep the exact index
+  eager, first-duplicate semantics, immutable column snapshots, and live rows.
+- Convert non-ASCII Rust text cells of up to two UTF-16 code units directly into
+  inline storage, avoiding an intermediate `String` allocation while preserving
+  Unicode and replacement-character semantics.
+- Remove the temporary `Vec` when constructing the Rust bulk-insert parser's
+  shared input buffer; legacy and V2 payload ownership remains unchanged.
+- Select worker metric percentiles without fully sorting each sample window,
+  with a bounded partition budget and sorting fallback. Preserve exact P95
+  rounding, sample order, and version-based caching.
+- Aggregate worker snapshot counters, totals, and maxima in one traversal,
+  preserving weighted averages and fixed-length snapshot lists.
+- Dispatch typed-column materialization once per column instead of per cell,
+  preserving null bitmaps, lazy strings, numeric values, and row ownership.
+
+### Tests
+
+- Benchmark native pool busy-count updates. Mixed results rejected the candidate;
+  production is unchanged. Evidence: `benchmarks/results/native_pool_review_2026_11_08.json`.
+- Replace the pool-routing test's wall-clock threshold with a worker barrier:
+  both requests must reach different workers before either response is released.
+- Test transaction/savepoint cleanup errors, original stacks and secondary
+  diagnostics; verify and benchmark qualified-identifier compatibility.
+- Cover worker-generation percentile invalidation and delayed case-insensitive
+  lookup after source-column mutation. Check all single UTF-16 code units and
+  surrogate boundary pairs against Rust's lossy conversion, with valid-data
+  benchmarks for short Unicode cells and indexed Dart readers.
+- Add bulk-payload lifetime tests, percentile equivalence and rollover checks,
+  worker aggregate tests, and typed-column materialization coverage. Add
+  reproducible bulk parsing, worker metrics, and paired columnar benchmarks.
+
 ## [5.0.2] - 2026-11-06
 
 ### Fixed

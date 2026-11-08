@@ -2,13 +2,8 @@
 /// [XaTransactionHandle.runWithStartOnePhase] — the
 /// exception-safety contract.
 ///
-/// We don't touch the FFI layer here; instead we drive the helpers
-/// through a `_FakeXa` subclass that overrides every state-mutating
-/// method with a deterministic counter. The base
-/// [XaTransactionHandle] constructor still needs a
-/// `NativeOdbcConnection` (the field is non-nullable), so we pass
-/// the no-op `NativeOdbcConnection()` — the override ensures we
-/// never reach into its FFI surface.
+/// Injected backends exercise real state transitions and diagnostics without
+/// FFI. A handle subclass isolates orchestration-only scenarios.
 library;
 
 import 'dart:typed_data';
@@ -24,6 +19,64 @@ void main() {
         gtrid: Uint8List.fromList(label.codeUnits),
         bqual: Uint8List.fromList('b'.codeUnits),
       );
+
+  for (final onePhase in [false, true]) {
+    for (final operation in [
+      'xaEnd',
+      'xaRollbackActive',
+      'xaRollbackPrepared',
+    ]) {
+      test('preserves $operation cleanup diagnostics (onePhase=$onePhase)',
+          () async {
+        final backend = _DiagnosticXaBackend(operation);
+        final xa = XaTransactionHandle.withBackend(
+          xaId: 9,
+          xid: mkXid('cleanup-diagnostic'),
+          backend: backend,
+          initialState: operation == 'xaRollbackPrepared'
+              ? XaState.prepared
+              : XaState.active,
+        );
+        final cause = StateError('action failed');
+        final stack = StackTrace.fromString('original action stack');
+        Future<void> action(XaTransactionHandle _) async =>
+            Error.throwWithStackTrace(cause, stack);
+
+        final result = onePhase
+            ? XaTransactionHandle.runWithStartOnePhase(() => xa, action)
+            : XaTransactionHandle.runWithStart(() => xa, action);
+        await expectLater(
+          result,
+          throwsA(
+            isA<OdbcError>()
+                .having((e) => e.details.cause, 'original cause', same(cause))
+                .having(
+                  (e) => e.details.stackTrace.toString(),
+                  'original stack',
+                  stack.toString(),
+                )
+                .having(
+                  (e) => e.details.secondaryErrors.single,
+                  'cleanup diagnostic',
+                  isA<QueryError>()
+                      .having((e) => e.sqlState, 'SQLSTATE', 'HY000')
+                      .having((e) => e.nativeCode, 'native code', 42)
+                      .having(
+                        (e) => e.details.operation,
+                        'operation',
+                        operation,
+                      )
+                      .having(
+                        (e) => e.details.transactionId,
+                        'transaction',
+                        xa.xid.toString(),
+                      ),
+                ),
+          ),
+        );
+      });
+    }
+  }
 
   group('XaTransactionHandle.runWithStart', () {
     test('commit failure does not roll back an uncertain branch', () async {
@@ -499,4 +552,38 @@ class _RecordingXaBackend implements XaTransactionBackend {
     calls.add('rollbackActive:$xaId');
     return result;
   }
+}
+
+class _DiagnosticXaBackend extends _RecordingXaBackend
+    implements XaDiagnosticBackend {
+  _DiagnosticXaBackend(this.failureOperation);
+
+  final String failureOperation;
+
+  @override
+  OdbcError? lastError;
+
+  @override
+  void clearDiagnostic() => lastError = null;
+
+  int _result(String operation) {
+    clearDiagnostic();
+    if (operation != failureOperation) return 0;
+    lastError = const QueryError(
+      message: 'Driver cleanup failed',
+      sqlState: 'HY000',
+      nativeCode: 42,
+    );
+    return 1;
+  }
+
+  @override
+  Future<int> xaEnd(int xaId) async => _result('xaEnd');
+
+  @override
+  Future<int> xaRollbackActive(int xaId) async => _result('xaRollbackActive');
+
+  @override
+  Future<int> xaRollbackPrepared(int xaId) async =>
+      _result('xaRollbackPrepared');
 }

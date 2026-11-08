@@ -351,13 +351,14 @@ class XaTransactionHandle {
       try {
         if (!await xa.end()) {
           secondary(
-            const QueryError(
-              message: 'XA end failed during cleanup',
-              details: OdbcErrorDetails(
-                code: OdbcErrorCode.cleanup,
-                operation: 'xaEnd',
-              ),
-            ),
+            xa.lastError ??
+                const QueryError(
+                  message: 'XA end failed during cleanup',
+                  details: OdbcErrorDetails(
+                    code: OdbcErrorCode.cleanup,
+                    operation: 'xaEnd',
+                  ),
+                ),
           );
         }
       } on Object catch (failure, trace) {
@@ -372,9 +373,10 @@ class XaTransactionHandle {
           : await xa.rollback();
       if (!ok) {
         secondary(
-          const RollbackFailedError(
-            message: 'XA rollback failed during cleanup',
-          ),
+          xa.lastError ??
+              const RollbackFailedError(
+                message: 'XA rollback failed during cleanup',
+              ),
         );
       }
     } on Object catch (failure, trace) {

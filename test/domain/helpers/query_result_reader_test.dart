@@ -2,6 +2,27 @@ import 'package:odbc_fast/odbc_fast.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('should_use_snapshot_on_first_folded_lookup_after_exact_reads', () {
+    final names = ['Alpha', 'ALPHA', 'café', 'CAFÉ'];
+    final result = QueryResult(
+      columns: names,
+      rows: [
+        [1, 2, 3, 4],
+      ],
+      rowCount: 1,
+    );
+    final reader = result.reader();
+    expect(reader.columnIndex('ALPHA'), 1);
+    names
+      ..clear()
+      ..add('changed');
+    expect(reader.columnIndex('alpha', ignoreCase: true), 0);
+    expect(reader.columnIndex('CAFÉ', ignoreCase: true), 2);
+    expect(reader.columnIndex('missing', ignoreCase: true), isNull);
+    expect(reader.columnIndex('ALPHA'), 1);
+    expect(reader.columnIndex('CAFÉ', ignoreCase: true), 2);
+  });
+
   test('should_preserve_first_occurrence_and_snapshot_names', () {
     final names = ['Name', 'Name', 'NAME', 'age'];
     final rows = <List<dynamic>>[

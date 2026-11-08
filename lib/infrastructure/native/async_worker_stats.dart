@@ -6,74 +6,76 @@ mixin _AsyncWorkerStats on _AsyncOdbcState, _AsyncWorkerDispatch {
 
   /// Returns a Dart-side snapshot of worker pool routing and health counters.
   AsyncWorkerPoolStats getWorkerPoolStats() {
-    final workers = _workers.map(_statsForWorker).toList(growable: false);
+    var activeRequests = 0;
+    var pendingRequests = 0;
+    var totalRouted = 0;
+    var completedRequests = 0;
+    var failedRequests = 0;
+    var timeouts = 0;
+    var fallbacksToBlocking = 0;
+    var cancelAttempts = 0;
+    var cancelSucceeded = 0;
+    var cancelUnsupported = 0;
+    var latencyTotalMicros = 0;
+    var latencyMaxMicros = 0;
+    var queueWaitTotalMicros = 0;
+    var queueWaitMaxMicros = 0;
+    var executionTotalMicros = 0;
+    var executionMaxMicros = 0;
+    final workers = List<AsyncWorkerStats>.generate(
+      _workers.length,
+      (index) {
+        final worker = _workers[index];
+        activeRequests += worker.activeRequests;
+        pendingRequests += worker.pendingRequests.length;
+        totalRouted += worker.totalRouted;
+        completedRequests += worker.completedRequests;
+        failedRequests += worker.failedRequests;
+        timeouts += worker.timeouts;
+        fallbacksToBlocking += worker.fallbacksToBlocking;
+        cancelAttempts += worker.cancelAttempts;
+        cancelSucceeded += worker.cancelSucceeded;
+        cancelUnsupported += worker.cancelUnsupported;
+        latencyTotalMicros += worker.latencyTotalMicros;
+        if (worker.latencyMaxMicros > latencyMaxMicros) {
+          latencyMaxMicros = worker.latencyMaxMicros;
+        }
+        queueWaitTotalMicros += worker.queueWaitTotalMicros;
+        if (worker.queueWaitMaxMicros > queueWaitMaxMicros) {
+          queueWaitMaxMicros = worker.queueWaitMaxMicros;
+        }
+        executionTotalMicros += worker.executionTotalMicros;
+        if (worker.executionMaxMicros > executionMaxMicros) {
+          executionMaxMicros = worker.executionMaxMicros;
+        }
+        return _statsForWorker(worker);
+      },
+      growable: false,
+    );
+    final completed = completedRequests + failedRequests;
     return AsyncWorkerPoolStats(
       workerCount: workerCount,
-      activeRequests: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.activeRequests,
-      ),
-      pendingRequests: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.pendingRequests,
-      ),
-      totalRouted: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.totalRouted,
-      ),
-      completedRequests: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.completedRequests,
-      ),
-      failedRequests: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.failedRequests,
-      ),
-      timeouts: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.timeouts,
-      ),
-      fallbacksToBlocking: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.fallbacksToBlocking,
-      ),
-      cancelAttempts: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.cancelAttempts,
-      ),
-      cancelSucceeded: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.cancelSucceeded,
-      ),
-      cancelUnsupported: workers.fold<int>(
-        0,
-        (total, worker) => total + worker.cancelUnsupported,
-      ),
-      latencyAvgMicros: _weightedAverageLatency(),
+      activeRequests: activeRequests,
+      pendingRequests: pendingRequests,
+      totalRouted: totalRouted,
+      completedRequests: completedRequests,
+      failedRequests: failedRequests,
+      timeouts: timeouts,
+      fallbacksToBlocking: fallbacksToBlocking,
+      cancelAttempts: cancelAttempts,
+      cancelSucceeded: cancelSucceeded,
+      cancelUnsupported: cancelUnsupported,
+      latencyAvgMicros: completed == 0 ? 0 : latencyTotalMicros ~/ completed,
       latencyP95Micros: _aggregateP95(_WorkerMetricSample.latency),
-      latencyMaxMicros: workers.fold<int>(
-        0,
-        (max, worker) =>
-            worker.latencyMaxMicros > max ? worker.latencyMaxMicros : max,
-      ),
-      queueWaitAvgMicros: _weightedAverage(
-        (worker) => worker.queueWaitTotalMicros,
-      ),
+      latencyMaxMicros: latencyMaxMicros,
+      queueWaitAvgMicros:
+          completed == 0 ? 0 : queueWaitTotalMicros ~/ completed,
       queueWaitP95Micros: _aggregateP95(_WorkerMetricSample.queueWait),
-      queueWaitMaxMicros: workers.fold<int>(
-        0,
-        (max, worker) =>
-            worker.queueWaitMaxMicros > max ? worker.queueWaitMaxMicros : max,
-      ),
-      executionAvgMicros: _weightedAverage(
-        (worker) => worker.executionTotalMicros,
-      ),
+      queueWaitMaxMicros: queueWaitMaxMicros,
+      executionAvgMicros:
+          completed == 0 ? 0 : executionTotalMicros ~/ completed,
       executionP95Micros: _aggregateP95(_WorkerMetricSample.execution),
-      executionMaxMicros: workers.fold<int>(
-        0,
-        (max, worker) =>
-            worker.executionMaxMicros > max ? worker.executionMaxMicros : max,
-      ),
+      executionMaxMicros: executionMaxMicros,
       workers: workers,
     );
   }
@@ -105,21 +107,6 @@ mixin _AsyncWorkerStats on _AsyncOdbcState, _AsyncWorkerDispatch {
       executionP95Micros: worker.percentileP95(_WorkerMetricSample.execution),
       executionMaxMicros: worker.executionMaxMicros,
     );
-  }
-
-  int _weightedAverageLatency() {
-    return _weightedAverage((worker) => worker.latencyTotalMicros);
-  }
-
-  int _weightedAverage(int Function(_WorkerChannel worker) totalForWorker) {
-    var totalMicros = 0;
-    var totalRequests = 0;
-    for (final worker in _workers) {
-      totalMicros += totalForWorker(worker);
-      totalRequests += worker.completedRequests + worker.failedRequests;
-    }
-    if (totalRequests == 0) return 0;
-    return totalMicros ~/ totalRequests;
   }
 
   int _aggregateP95(_WorkerMetricSample sample) {

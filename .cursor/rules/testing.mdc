@@ -1,10 +1,54 @@
 ---
-description: Testing conventions and quality standards
+description: Evidence for reviews, improvements, performance, and bug regression
 globs: ["test/**/*.dart", "native/**/*.rs"]
 alwaysApply: false
 ---
 
 # Testing Standards
+
+## Evidence for Reviews and Improvements
+
+- Apply this policy to reviews and improvements in every executable layer,
+  including Dart, Rust, FFI, hooks, scripts, and build or release automation.
+- Identify the affected behavior, invariant, or contract and the checks that
+  demonstrate it before changing code. Preserve public contracts and ABI unless
+  the task explicitly authorizes changing them.
+- Every behavioral or structural improvement must have relevant automated
+  tests demonstrating correctness or preserved behavior. Run existing tests
+  when they already prove the claim; add or extend tests for uncovered cases.
+  Do not add tests that only mirror implementation details.
+- A review without code changes must report its scope, evidence, findings, and
+  gaps. Reading code alone is not proof of correctness, full review coverage,
+  or a performance gain; do not invent tests for a review with no new behavior.
+- For rule-only or documentation-only edits, validate references, consistency,
+  and diff hygiene. Run behavioral tests if executable behavior is affected.
+- Report exact commands, tested revision or diff, results, and skipped or
+  blocked checks. Keep unvalidated claims explicitly pending; compilation,
+  static analysis, and a passing unrelated suite do not replace targeted tests.
+
+## Performance Evidence
+
+- Every claimed performance improvement requires correctness tests and a
+  reproducible before/after benchmark of the affected path. Keep the benchmark
+  in the repository so the comparison can be repeated.
+- Compare an identified baseline and candidate with identical benchmark code,
+  inputs, build profile, features, toolchain, and environment. Measure optimized
+  builds; disclose any unavoidable differences that limit comparability.
+- Exercise representative valid inputs, including small and large workloads
+  and relevant variants such as compression. Check affected neighboring paths
+  and previously optimized cases for regressions, not only the best case.
+- Validate outputs outside timed sections and prevent unused work from being
+  optimized away. Use warm-up and repeated samples; do not run competing
+  benchmarks concurrently on the same machine.
+- Report the metric and units, baseline and candidate values, relative change,
+  sample count, variability or confidence interval, and reproduction commands.
+  Do not claim a gain from a single timing or a difference within measurement
+  noise; mark inconclusive measurements as inconclusive.
+- Investigate measured regressions and resolve them or disclose the trade-off
+  before declaring the improvement complete. Benchmarks do not replace tests,
+  and correctness tests alone do not prove speed or memory improvements.
+- Keep timing-sensitive measurements separate from deterministic correctness
+  tests; use the repository's performance guards where appropriate.
 
 ## Structure
 
@@ -49,9 +93,15 @@ alwaysApply: false
 ## Confirmed Bug Regression
 
 - Add a regression test in the same change as the fix for every confirmed bug.
+- Cover the actual failing input or sequence and assert the expected behavior,
+  not merely absence of an exception. Include valid-path and boundary cases
+  needed to show that the fix preserves existing contracts.
 - Run the regression against the broken behavior first when feasible, then
   verify it passes with the fix. Report when the failing baseline cannot be run.
 - Keep the test in the suite so a returning failure is detected.
+- Do not mark a bug fixed without its regression test passing. If prerequisites
+  block execution, report the fix as pending validation; inability to run the
+  failing baseline does not waive the regression-test requirement.
 - Name the test after the broken behavior:
   `should_<behavior>_when_<condition>`.
 - Use the simplest level that reproduces the bug: unit, integration, or E2E.
@@ -74,3 +124,6 @@ alwaysApply: false
 - [ ] The simplest test level that proves the behavior was chosen.
 - [ ] Environment-dependent tests fail or skip clearly.
 - [ ] Every confirmed bug fixed in the change has a regression test.
+- [ ] Each improvement has targeted correctness or behavior-preservation evidence.
+- [ ] Performance claims have reproducible before/after benchmark evidence.
+- [ ] Review scope, results, and validation gaps are reported accurately.

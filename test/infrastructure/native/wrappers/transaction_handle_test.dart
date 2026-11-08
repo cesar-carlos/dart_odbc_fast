@@ -1,6 +1,7 @@
 /// Unit tests for [TransactionHandle] wrapper.
 library;
 
+import 'package:odbc_fast/infrastructure/native/errors/native_call_context.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_completion_status.dart';
 import 'package:odbc_fast/infrastructure/native/wrappers/transaction_handle.dart';
 import 'package:test/test.dart';
@@ -8,6 +9,95 @@ import 'package:test/test.dart';
 import '../../../helpers/fake_odbc_backend.dart';
 
 void main() {
+  for (final commit in [false, true]) {
+    for (final withStatus in [false, true]) {
+      test('should_block_reuse_after_completion_throws_${commit}_$withStatus',
+          () {
+        final backend = withStatus
+            ? _ThrowingStatusBackend()
+            : _ThrowingCompletionBackend();
+        final txn = TransactionHandle(backend, 92);
+        Object? caught;
+        StackTrace? caughtStack;
+        try {
+          if (commit) {
+            txn.commit();
+          } else {
+            txn.rollback();
+          }
+        } on Object catch (error, stack) {
+          caught = error;
+          caughtStack = stack;
+        }
+        expect(caught, same(backend.error));
+        expect(caughtStack.toString(), backend.stack.toString());
+        expect(txn.isActive, isFalse);
+        expect(txn.commit(), isFalse);
+        expect(txn.rollback(), isFalse);
+        expect(txn.createSavepoint('sp'), isFalse);
+        expect(txn.rollbackToSavepoint('sp'), isFalse);
+        expect(txn.releaseSavepoint('sp'), isFalse);
+        expect(backend.completions, 1);
+      });
+    }
+  }
+
+  test('should_not_rollback_automatically_after_commit_throws', () async {
+    final backend = _ThrowingCompletionBackend();
+    final txn = TransactionHandle(backend, 93);
+    await expectLater(
+      TransactionHandle.runWithBegin(() => txn, (_) async => 42),
+      throwsA(same(backend.error)),
+    );
+    expect(backend.completions, 1);
+    expect(txn.isActive, isFalse);
+  });
+
+  for (final savepoint in [false, true]) {
+    for (final throwing in [false, true]) {
+      test(
+          'should_preserve_primary_error_when_cleanup_fails_'
+          '${savepoint}_$throwing', () async {
+        final backend = _FailingCleanupBackend(throwing: throwing);
+        final txn = TransactionHandle(backend, 91);
+        final original = StateError('operation failed');
+        final originalStack = StackTrace.fromString('original operation stack');
+        await NativeCallContext.capture(() async {
+          Object? caught;
+          StackTrace? caughtStack;
+          try {
+            if (savepoint) {
+              await txn.withSavepoint<void>('sp', () async {
+                Error.throwWithStackTrace(original, originalStack);
+              });
+            } else {
+              await TransactionHandle.runWithBegin<void>(() => txn, (_) async {
+                Error.throwWithStackTrace(original, originalStack);
+              });
+            }
+          } on Object catch (error, stack) {
+            caught = error;
+            caughtStack = stack;
+          }
+          expect(caught, same(original));
+          expect(caughtStack.toString(), originalStack.toString());
+          final diagnostic = NativeCallContext.takeFailure();
+          expect(diagnostic, isNotNull);
+          expect(diagnostic!.details.cause, same(original));
+          expect(diagnostic.details.secondaryErrors, hasLength(1));
+          if (throwing) {
+            expect(
+              diagnostic.details.secondaryErrors.single.details.cause,
+              same(backend.cleanupError),
+            );
+          }
+        });
+        backend.fail = false;
+        if (txn.isActive) txn.rollback();
+      });
+    }
+  }
+
   group('TransactionHandle', () {
     late FakeOdbcConnectionBackend backend;
     late TransactionHandle handle;
@@ -219,6 +309,51 @@ void main() {
       );
     });
   });
+}
+
+class _ThrowingCompletionBackend extends FakeOdbcConnectionBackend {
+  final error = StateError('completion outcome unknown');
+  final stack = StackTrace.fromString('backend completion stack');
+  int completions = 0;
+
+  Never complete() {
+    completions++;
+    Error.throwWithStackTrace(error, stack);
+  }
+
+  @override
+  bool commitTransaction(int txnId) => complete();
+
+  @override
+  bool rollbackTransaction(int txnId) => complete();
+}
+
+class _ThrowingStatusBackend extends _ThrowingCompletionBackend
+    implements TransactionCompletionStatus {
+  @override
+  int commitTransactionStatus(int txnId) => complete();
+
+  @override
+  int rollbackTransactionStatus(int txnId) => complete();
+}
+
+class _FailingCleanupBackend extends FakeOdbcConnectionBackend {
+  _FailingCleanupBackend({required this.throwing});
+  final bool throwing;
+  final cleanupError = StateError('cleanup failed');
+  bool fail = true;
+
+  bool cleanup() {
+    if (!fail) return true;
+    if (throwing) throw cleanupError;
+    return false;
+  }
+
+  @override
+  bool rollbackTransaction(int txnId) => cleanup();
+
+  @override
+  bool rollbackToSavepoint(int txnId, String name) => cleanup();
 }
 
 class _StatusBackend extends FakeOdbcConnectionBackend

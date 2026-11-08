@@ -18,6 +18,30 @@ use odbc_engine::protocol::{OdbcType, RowBuffer, RowBufferEncoder};
 
 const ROW_COUNTS: &[usize] = &[100, 1_000, 10_000];
 
+fn bench_short_wide_cells(c: &mut Criterion) {
+    use odbc_engine::engine::wide_text::wide_text_to_utf8_bytes;
+    let mut group = c.benchmark_group("cell_reader/short_wide");
+    for (name, wide) in [
+        ("empty", vec![]),
+        ("ascii", vec![65, 66]),
+        ("latin", vec![0x00e9]),
+        ("cjk", vec![0x4f60, 0x597d]),
+        ("emoji", vec![0xd83d, 0xde00]),
+        ("unpaired", vec![0xd800, 0x0041]),
+        ("three_units", vec![0x4f60, 0x597d, 0x4f60]),
+        ("long_unicode", vec![0x4f60; 256]),
+    ] {
+        assert_eq!(
+            wide_text_to_utf8_bytes(&wide).as_slice(),
+            String::from_utf16_lossy(&wide).as_bytes()
+        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &wide, |b, wide| {
+            b.iter(|| black_box(wide_text_to_utf8_bytes(black_box(wide))));
+        });
+    }
+    group.finish();
+}
+
 fn build_int_buffer(rows: usize) -> RowBuffer {
     let mut buf = RowBuffer::new();
     buf.add_column("id".to_string(), OdbcType::Integer);
@@ -354,6 +378,7 @@ criterion_group!(
     bench_encode_varchar_short,
     bench_encode_binary_small,
     bench_wide_text_to_utf8,
+    bench_short_wide_cells,
     bench_encode_date_only,
     bench_encode_timestamp_only,
     bench_temporal_format_materialise,

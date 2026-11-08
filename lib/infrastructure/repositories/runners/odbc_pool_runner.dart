@@ -183,6 +183,11 @@ class OdbcPoolRunner {
       );
     }
     final poolId = state.connectionPoolId[connectionId];
+    if (poolId == null) {
+      return const Failure<Unit, OdbcError>(
+        ValidationError(message: 'Connection does not belong to a pool'),
+      );
+    }
     final checkouts = state.poolCheckouts[poolId];
     state.connectionLifetimes.remove(connectionId);
     NativeCallContext.current?.onReconciled = (status) {

@@ -7,6 +7,34 @@ import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final size in [0, 8, 256, 4096]) {
+    for (final stride in [0, 1, 4]) {
+      test('should_clear_only_owned_metadata_${size}_$stride', () {
+        final state = OdbcRepositoryState();
+        final expectedOwners = <int, String>{};
+        final expectedNames = <int, List<String>>{};
+        for (var i = 0; i < size; i++) {
+          final owned = stride != 0 && i % stride == 0;
+          state.statementConnectionByStmtId[i] = owned ? 'target' : 'other';
+          if (!owned) expectedOwners[i] = 'other';
+          if (i.isEven) {
+            state.namedParamOrderByStmtId[i] = ['p$i'];
+            if (!owned) expectedNames[i] = ['p$i'];
+          }
+        }
+        // An entry without an owner is not this connection's metadata.
+        state.namedParamOrderByStmtId[-1] = ['orphan'];
+        expectedNames[-1] = ['orphan'];
+        state.clearStatementMetadataForConnection('target');
+        expect(state.statementConnectionByStmtId, expectedOwners);
+        expect(state.namedParamOrderByStmtId, expectedNames);
+        state.clearStatementMetadataForConnection('target');
+        expect(state.statementConnectionByStmtId, expectedOwners);
+        expect(state.namedParamOrderByStmtId, expectedNames);
+      });
+    }
+  }
+
   group('OdbcRepositoryState', () {
     late OdbcRepositoryState state;
 

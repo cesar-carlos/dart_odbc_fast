@@ -37,7 +37,8 @@ the rule set. Read it first.
   features, logging, and tooling.
 - `null_safety.mdc`: nullable contracts and safe Dart modeling patterns.
 - `testing.mdc`: unit, service, integration, and E2E testing expectations,
-  including the regression test required for every confirmed bug.
+  review and improvement evidence, performance benchmark methodology, and
+  regression tests for confirmed bugs.
 - `rust_style.mdc`: Rust style, ownership, module design, and API shape.
 - `rust_ffi.mdc`: Rust unsafe code, ABI layout, resource ownership, and FFI
   boundary safety.

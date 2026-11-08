@@ -6,6 +6,10 @@ alwaysApply: false
 
 # Rust Native Tooling and Tests
 
+Follow `testing.mdc` for review and improvement evidence, before/after benchmark
+methodology, and confirmed-bug regression requirements. This file owns only
+Rust-specific tooling and test selection.
+
 ## Tooling
 
 - Run Cargo commands from `native/`, or pass the workspace manifest.
@@ -50,6 +54,3 @@ alwaysApply: false
   prerequisite.
 - Follow `error_handling.mdc` for runtime `unwrap` and `expect` policy; tests
   may use them for setup and assertions when the failure message is useful.
-- Follow `testing.mdc` for every confirmed bug. Native regression tests cover
-  panic-safety, ABI compatibility, wire decoding, concurrency, and
-  driver-specific behavior.

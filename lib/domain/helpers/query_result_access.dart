@@ -125,15 +125,23 @@ class QueryResultReader {
       : _result = result,
         columns = List<String>.unmodifiable(result.columns) {
     for (var i = 0; i < columns.length; i++) {
-      _exact.putIfAbsent(columns[i], () => i);
-      _folded.putIfAbsent(columns[i].toLowerCase(), () => i);
+      _exact[columns[i]] ??= i;
     }
   }
 
   final QueryResult _result;
   final List<String> columns;
   final Map<String, int> _exact = {};
-  final Map<String, int> _folded = {};
+  late final Map<String, int> _folded = _buildFoldedIndex();
+
+  Map<String, int> _buildFoldedIndex() {
+    final index = <String, int>{};
+    for (var i = 0; i < columns.length; i++) {
+      index[columns[i].toLowerCase()] ??= i;
+    }
+    return index;
+  }
+
   List<List<dynamic>> get rows => _result.rows;
   bool get isEmpty => _result.isEmpty;
 

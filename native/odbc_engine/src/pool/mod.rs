@@ -47,6 +47,23 @@ impl ConnectionPool {
     }
 
     fn from_runtime_config(config: PoolRuntimeConfig, max_size: u32) -> Result<Self> {
+        // r2d2's builder panics for these values instead of returning an error.
+        if max_size == 0 {
+            return Err(OdbcError::PoolError(
+                "Pool max_size must be positive".into(),
+            ));
+        }
+        for (name, value) in [
+            ("connection_timeout", config.options.connection_timeout),
+            ("idle_timeout", config.options.idle_timeout),
+            ("max_lifetime", config.options.max_lifetime),
+        ] {
+            if value.is_some_and(|duration| duration.is_zero()) {
+                return Err(OdbcError::PoolError(format!(
+                    "Pool {name} must be positive"
+                )));
+            }
+        }
         let manager =
             OdbcConnectionManager::new(&config.connection_string, &config.health_check_query)?;
         let connection_timeout = config
@@ -221,6 +238,59 @@ pub struct PoolState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_reject_zero_pool_size_without_panicking() {
+        assert!(matches!(
+            ConnectionPool::new("", 0),
+            Err(OdbcError::PoolError(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_zero_connection_timeout_without_panicking() {
+        assert!(matches!(
+            ConnectionPool::new_with_options(
+                "",
+                1,
+                PoolOptions {
+                    connection_timeout: Some(Duration::ZERO),
+                    ..PoolOptions::default()
+                }
+            ),
+            Err(OdbcError::PoolError(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_zero_idle_timeout_without_panicking() {
+        assert!(matches!(
+            ConnectionPool::new_with_options(
+                "",
+                1,
+                PoolOptions {
+                    idle_timeout: Some(Duration::ZERO),
+                    ..PoolOptions::default()
+                }
+            ),
+            Err(OdbcError::PoolError(_))
+        ));
+    }
+
+    #[test]
+    fn should_reject_zero_max_lifetime_without_panicking() {
+        assert!(matches!(
+            ConnectionPool::new_with_options(
+                "",
+                1,
+                PoolOptions {
+                    max_lifetime: Some(Duration::ZERO),
+                    ..PoolOptions::default()
+                }
+            ),
+            Err(OdbcError::PoolError(_))
+        ));
+    }
 
     #[test]
     fn test_extract_pool_components() {

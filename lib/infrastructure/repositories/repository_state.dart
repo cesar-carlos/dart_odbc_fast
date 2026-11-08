@@ -123,14 +123,11 @@ class OdbcRepositoryState {
   /// Called from `disconnect()` and `_onUnderlyingWorkerRecovered`.
   void clearStatementMetadataForConnection(String connectionId) {
     uncertainConnections.remove(connectionId);
-    final stmtIdsToRemove = statementConnectionByStmtId.entries
-        .where((entry) => entry.value == connectionId)
-        .map((entry) => entry.key)
-        .toList(growable: false);
-    for (final stmtId in stmtIdsToRemove) {
-      statementConnectionByStmtId.remove(stmtId);
+    statementConnectionByStmtId.removeWhere((stmtId, owner) {
+      if (owner != connectionId) return false;
       namedParamOrderByStmtId.remove(stmtId);
-    }
+      return true;
+    });
     transactionStates
         .removeWhere((txnId, _) => transactionOwners[txnId] == connectionId);
     transactionOwners.removeWhere((_, id) => id == connectionId);

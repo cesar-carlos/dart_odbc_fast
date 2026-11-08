@@ -25,12 +25,23 @@ pub fn wide_text_to_utf8_vec(wide: &[u16]) -> Vec<u8> {
 }
 
 /// Same as [`wide_text_to_utf8_vec`] but returns [`CellBytes`] so short
-/// ASCII values (≤ 8 bytes) stay inline in `SmallVec<[u8; 8]>`.
+/// ASCII values (≤ 8 bytes) stay inline in `SmallVec<[u8; 8]>`. Non-ASCII
+/// inputs of up to two code units also avoid an intermediate allocation.
 #[inline]
 pub fn wide_text_to_utf8_bytes(wide: &[u16]) -> CellBytes {
     if is_ascii_wide(wide) {
         let mut cell = CellBytes::with_capacity(wide.len());
         cell.extend(wide.iter().map(|&u| u as u8));
+        cell
+    } else if wide.len() <= 2 {
+        // Two UTF-16 units need at most six UTF-8 bytes, even when both
+        // become replacement characters, so the result always fits inline.
+        let mut cell = CellBytes::new();
+        let mut encoded = [0; 4];
+        for decoded in char::decode_utf16(wide.iter().copied()) {
+            let character = decoded.unwrap_or(char::REPLACEMENT_CHARACTER);
+            cell.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+        }
         cell
     } else {
         String::from_utf16_lossy(wide).into_bytes().into()
@@ -88,5 +99,35 @@ mod tests {
         // U+00E9 LATIN SMALL LETTER E WITH ACUTE — not ASCII fast-path.
         let wide = [0x00E9u16];
         assert_eq!(wide_text_to_utf8_vec(&wide), "é".as_bytes());
+    }
+
+    #[test]
+    fn should_match_lossy_conversion_for_every_single_utf16_unit() {
+        for unit in 0..=u16::MAX {
+            let wide = [unit];
+            let expected = String::from_utf16_lossy(&wide);
+            let actual = wide_text_to_utf8_bytes(&wide);
+            assert_eq!(actual.as_slice(), expected.as_bytes(), "unit {unit:#x}");
+            assert!(!actual.spilled(), "single-unit text fits inline");
+        }
+    }
+
+    #[test]
+    fn should_preserve_utf16_pair_boundaries_and_replacement_semantics() {
+        let units = [
+            0, 0x41, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000,
+            0xffff,
+        ];
+        for first in units {
+            for second in units {
+                let wide = [first, second];
+                let actual = wide_text_to_utf8_bytes(&wide);
+                assert_eq!(
+                    actual.as_slice(),
+                    String::from_utf16_lossy(&wide).as_bytes()
+                );
+                assert!(!actual.spilled(), "two UTF-16 units use at most six bytes");
+            }
+        }
     }
 }

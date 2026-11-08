@@ -1,3 +1,4 @@
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:odbc_fast/odbc_fast.dart';
@@ -12,25 +13,30 @@ void main() {
   group('AsyncNativeOdbcConnection worker pool', () {
     test('distributes independent connection requests across workers',
         () async {
+      final arrivals = ReceivePort();
+      addTearDown(arrivals.close);
+      final started = arrivals.cast<SendPort>().take(2).toList();
       final async = AsyncNativeOdbcConnection(
         workerCount: 2,
-        isolateEntry: fakeWorkerPoolRoutingSupport,
+        isolateEntry: poolBarrierWorker(arrivals.sendPort),
       );
+      addTearDown(async.dispose);
       await async.initialize();
 
-      final stopwatch = Stopwatch()..start();
-      await Future.wait([
+      final connections = Future.wait([
         async.connect('DSN=fast_a'),
         async.connect('DSN=fast_b'),
       ]);
-      stopwatch.stop();
-
-      expect(
-        stopwatch.elapsedMilliseconds,
-        lessThan(220),
-        reason: 'Two 120ms connect requests should run in parallel',
-      );
-      async.dispose();
+      // Neither request may complete before both workers have received work.
+      final workers = await started.timeout(const Duration(seconds: 10));
+      expect(workers.toSet(), hasLength(2));
+      final stats = async.getWorkerPoolStats();
+      expect(stats.activeRequests, 2);
+      expect(stats.pendingRequests, 2);
+      for (final worker in workers) {
+        worker.send('release_connects');
+      }
+      expect(await connections, hasLength(2));
     });
 
     test('spreads sequential connection affinities across workers', () async {

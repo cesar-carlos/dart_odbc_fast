@@ -100,22 +100,64 @@ pub fn quote_identifier_default(name: &str) -> Result<String> {
 /// Each segment is validated independently; the result is `"schema"."table"`.
 /// Useful for INSERT/SELECT against schema-qualified tables.
 pub fn quote_qualified_default(qualified: &str) -> Result<String> {
-    let parts: Vec<&str> = qualified.split('.').collect();
-    if parts.is_empty() {
-        return Err(OdbcError::ValidationError(
-            "Qualified identifier must not be empty".to_string(),
-        ));
+    // Reject malformed or oversized segments before reserving output storage.
+    for part in qualified.split('.') {
+        validate_identifier(part)?;
     }
-    let mut quoted_parts = Vec::with_capacity(parts.len());
-    for p in parts {
-        quoted_parts.push(quote_identifier_default(p)?);
+    // Most names have at most catalog.schema.table: reserve six quote bytes.
+    let mut quoted = String::with_capacity(qualified.len().saturating_add(6));
+    for part in qualified.split('.') {
+        if !quoted.is_empty() {
+            quoted.push('.');
+        }
+        quoted.push('"');
+        quoted.push_str(part);
+        quoted.push('"');
     }
-    Ok(quoted_parts.join("."))
+    Ok(quoted)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_preserve_qualified_identifier_output_and_first_validation_error() {
+        fn reference(input: &str) -> Result<String> {
+            input
+                .split('.')
+                .map(quote_identifier_default)
+                .collect::<Result<Vec<_>>>()
+                .map(|parts| parts.join("."))
+        }
+        for input in [
+            "users",
+            "public.users",
+            "catalog.public.users",
+            "_a.b2.C",
+            "",
+            ".users",
+            "users.",
+            "a..b",
+            "a.1invalid",
+            "a.naïve",
+            "a.x;DROP TABLE y",
+            "a.\"quoted\"",
+            "a.[bracketed]",
+            "a.b c",
+        ] {
+            let actual = quote_qualified_default(input).map_err(|e| e.to_string());
+            let expected = reference(input).map_err(|e| e.to_string());
+            assert_eq!(actual, expected, "input {input:?}");
+        }
+        for length in [127, 128, 129] {
+            let input = format!("{}.tail", "a".repeat(length));
+            assert_eq!(
+                quote_qualified_default(&input).map_err(|e| e.to_string()),
+                reference(&input).map_err(|e| e.to_string())
+            );
+        }
+    }
 
     #[test]
     fn validate_identifier_accepts_simple_names() {

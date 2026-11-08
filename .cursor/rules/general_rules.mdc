@@ -55,6 +55,8 @@ alwaysApply: true
 ## Diagnostics and Hygiene
 
 - Follow `error_handling.mdc` for error propagation and diagnostic suppression.
+- Follow `testing.mdc` for review evidence, improvement validation, performance
+  benchmarks, and confirmed-bug regression tests.
 - Run the relevant analyzer and tests after meaningful structural changes.
 
 ## Workspace Hygiene
@@ -62,8 +64,6 @@ alwaysApply: true
 - Inspect the working tree before editing and preserve unrelated user changes.
 - Do not revert, delete, or overwrite work outside the requested scope.
 - Review the final diff and report checks run, failures, and checks not run.
-- For rule-only or documentation-only changes, validate references and diff
-  hygiene; run runtime tests when executable behavior is affected.
 
 ## Review Checklist
 
@@ -73,4 +73,5 @@ alwaysApply: true
 - [ ] Comments explain why, not what.
 - [ ] Structural cleanup was kept separate from behavior changes when needed.
 - [ ] No unnecessary suppressions were introduced.
-- [ ] A confirmed bug has a regression test, as defined in `testing.mdc`.
+- [ ] Review and improvement evidence meets `testing.mdc`, including regression
+  tests for confirmed bugs and benchmarks for performance claims.

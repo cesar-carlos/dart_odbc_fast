@@ -376,6 +376,11 @@ mixin _AsyncWorkerLifecycle
     _resumedXa.clear();
     _pendingXaResume.clear();
     _workers.clear();
+    // Fresh workers restart sample versions at zero. Cached percentiles must
+    // not survive a generation change even if the new sample counts match.
+    _cachedAggregateLatencyP95Version = -1;
+    _cachedAggregateQueueWaitP95Version = -1;
+    _cachedAggregateExecutionP95Version = -1;
     _namedParamOrderByStmtId.clear();
     _connectionWorkerById.clear();
     _nativeConnectionLifetimes.clear();

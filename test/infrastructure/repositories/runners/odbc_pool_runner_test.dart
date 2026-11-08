@@ -79,6 +79,26 @@ void main() {
 
     tearDown(() => native.dispose());
 
+    test('should_reject_non_pool_release_without_mutating_connection',
+        () async {
+      final lifetime = Object();
+      state.connectionIds['direct'] = 77;
+      state.connectionLifetimes['direct'] = lifetime;
+      state.connectionStrings['direct'] = 'DSN=direct';
+      state.statementConnectionByStmtId[9] = 'direct';
+      var releases = 0;
+      native.onRelease = () => releases++;
+
+      final result = await runner.poolReleaseConnection('direct');
+
+      expect(result.exceptionOrNull(), isA<ValidationError>());
+      expect(releases, 0);
+      expect(state.connectionIds['direct'], 77);
+      expect(state.connectionLifetimes['direct'], same(lifetime));
+      expect(state.connectionStrings['direct'], 'DSN=direct');
+      expect(state.statementConnectionByStmtId[9], 'direct');
+    });
+
     test('should_reject_empty_connection_string_on_poolCreate', () async {
       final result = await runner.poolCreate('', 4);
       expect(result.isError(), isTrue);
