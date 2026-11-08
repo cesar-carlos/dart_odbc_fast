@@ -7,6 +7,8 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ## [Unreleased]
 
+## [5.0.3] - 2026-11-08
+
 ### Fixed
 
 - Return `PoolError` instead of panicking for zero native pool capacity or
