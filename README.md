@@ -6,7 +6,7 @@
 
 `odbc_fast` is an ODBC data access package for Dart backed by an in-repo Rust engine over `dart:ffi`.
 
-Current package version: **5.0.4**. See the [changelog](CHANGELOG.md) for release history and [4.x migration notes](CHANGELOG.md#500---2026-10-03).
+Current package version: **5.0.5**. See the [changelog](CHANGELOG.md) for release history and [4.x migration notes](CHANGELOG.md#500---2026-10-03).
 
 ## Installation
 
@@ -14,7 +14,7 @@ Use Dart 3.6 or later in the 3.x line. Install the ODBC driver for your database
 
 ```yaml
 dependencies:
-  odbc_fast: ^5.0.4
+  odbc_fast: ^5.0.5
 ```
 
 Run `dart pub get`. Application code imports `package:odbc_fast/odbc_fast.dart`. For direct FFI access, use `package:odbc_fast/odbc_fast_native.dart`.

@@ -5,7 +5,7 @@ Versions: [SemVer](https://semver.org/spec/v2.0.0.html).
 
 Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
-## [Unreleased]
+## [5.0.5] - 2026-11-20
 
 ### Fixed
 
@@ -13,8 +13,8 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ### Changed
 
-- Skip empty transaction checks and unused SQL Server MERGE allocations.
-- Speed up long ASCII scans (Dart/Rust) and decode distinct and repeated timestamps faster in Dart.
+- Skip empty transaction checks and unused MERGE allocations.
+- Optimize ASCII scans and timestamp decoding; simplify usage documentation.
 
 ## [5.0.4] - 2026-11-08
 
