@@ -103,11 +103,11 @@ mod tests {
     }
 
     #[test]
-    fn should_plan_homogeneous_nullable_integer_batch_for_inference() {
+    fn should_describe_nullable_marker_in_integer_batch() {
         let params = vec![ParamValue::Integer(1), ParamValue::Null];
         assert_eq!(
-            plan_batch_param_binding(&params).expect("nullable integer inference"),
-            BatchParamBindingPlan::InferenceDirect
+            plan_batch_param_binding(&params).expect("nullable marker description"),
+            BatchParamBindingPlan::PreparedNullAware
         );
     }
 

@@ -755,11 +755,16 @@ mod param_plan_tests {
             2
         );
         assert_eq!(
-            prepared_params_for_cache(&[ParamValue::Null, ParamValue::Integer(5)])
+            prepared_params_for_cache(&[ParamValue::Null, ParamValue::String("text".into())])
                 .expect("inferable")
                 .expect("cacheable")
                 .len(),
             2
+        );
+        assert!(
+            prepared_params_for_cache(&[ParamValue::Integer(5), ParamValue::Null])
+                .expect("descriptor-dependent")
+                .is_none()
         );
         assert!(
             prepared_params_for_cache(&[ParamValue::Null, ParamValue::Null])

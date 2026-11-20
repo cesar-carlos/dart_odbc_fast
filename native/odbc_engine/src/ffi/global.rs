@@ -24,6 +24,11 @@ pub(crate) const ASYNC_STATUS_READY: c_int = 1;
 pub(crate) const ASYNC_STATUS_ERROR: c_int = -1;
 pub(crate) const ASYNC_STATUS_CANCELLED: c_int = -2;
 
+pub(crate) enum AsyncPollOutcome {
+    Status(c_int),
+    Failed(u32, crate::error::StructuredError),
+}
+
 pub(crate) enum AsyncRequestOutcome {
     Pending,
     Ready(Result<Vec<u8>>),
@@ -54,17 +59,20 @@ impl AsyncRequestSlot {
         }
     }
 
-    fn poll_status(&self) -> c_int {
+    fn poll_status(&self) -> AsyncPollOutcome {
         let Ok(outcome) = self.outcome.lock() else {
-            return ASYNC_STATUS_ERROR;
+            return AsyncPollOutcome::Status(ASYNC_STATUS_ERROR);
         };
-        match &*outcome {
+        let status = match &*outcome {
             AsyncRequestOutcome::Pending => ASYNC_STATUS_PENDING,
             AsyncRequestOutcome::Ready(Ok(_)) => ASYNC_STATUS_READY,
-            AsyncRequestOutcome::Ready(Err(_)) => ASYNC_STATUS_ERROR,
+            AsyncRequestOutcome::Ready(Err(error)) => {
+                return AsyncPollOutcome::Failed(self.conn_id, error.to_structured());
+            }
             AsyncRequestOutcome::Cancelled => ASYNC_STATUS_CANCELLED,
             AsyncRequestOutcome::Consumed => ASYNC_STATUS_ERROR,
-        }
+        };
+        AsyncPollOutcome::Status(status)
     }
 }
 
@@ -143,7 +151,7 @@ impl AsyncRequestManager {
         Some(request_id)
     }
 
-    pub(crate) fn poll(&self, request_id: u32) -> Option<c_int> {
+    pub(crate) fn poll(&self, request_id: u32) -> Option<AsyncPollOutcome> {
         self.requests
             .get(&request_id)
             .map(|slot| slot.poll_status())

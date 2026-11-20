@@ -485,7 +485,17 @@ fn infer_shared_non_null_kind(params: &[ParamValue]) -> Option<InferredNullKind>
         }
     }
 
-    inferred
+    // An integer in another position does not establish that a NULL is numeric.
+    // Let the prepared path describe each marker (e.g. supplier ID and date).
+    if matches!(
+        inferred,
+        Some(InferredNullKind::Integer | InferredNullKind::BigInt)
+    ) && has_null_param(params)
+    {
+        None
+    } else {
+        inferred
+    }
 }
 
 fn null_input_parameter_for_inferred_kind(

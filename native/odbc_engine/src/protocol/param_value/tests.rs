@@ -383,20 +383,15 @@ fn test_param_values_to_input_params_with_descriptions_rejects_non_nullable_null
 
 #[test]
 fn test_param_values_to_input_params_with_inference_promotes_integer_family_to_bigint() {
-    let params = [
-        ParamValue::Integer(7),
-        ParamValue::Null,
-        ParamValue::BigInt(9),
-    ];
+    let params = [ParamValue::Integer(7), ParamValue::BigInt(9)];
 
     let bound = param_values_to_input_params_with_inference(&params)
         .expect("inference should succeed")
         .expect("mixed integer family should infer");
 
-    assert_eq!(bound.len(), 3);
+    assert_eq!(bound.len(), 2);
     assert_eq!(bound[0].data_type(), DataType::BigInt);
     assert_eq!(bound[1].data_type(), DataType::BigInt);
-    assert_eq!(bound[2].data_type(), DataType::BigInt);
 }
 
 #[test]
@@ -649,18 +644,20 @@ fn should_bind_null_with_binary_family_description() {
 }
 
 #[test]
-fn should_infer_integer_family_without_bigint_values() {
-    let params = [
-        ParamValue::Integer(1),
-        ParamValue::Null,
-        ParamValue::Integer(2),
-    ];
-    let bound = param_values_to_input_params_with_inference(&params)
-        .expect("infer")
-        .expect("integer family");
-    assert_eq!(bound.len(), 3);
-    assert_eq!(bound[0].data_type(), DataType::Integer);
-    assert_eq!(bound[1].data_type(), DataType::Integer);
+fn nullable_date_uses_its_own_descriptor_next_to_an_integer() {
+    for id in [ParamValue::Integer(7), ParamValue::BigInt(7)] {
+        let params = [id, ParamValue::Null];
+        assert!(param_values_to_input_params_with_inference(&params)
+            .unwrap()
+            .is_none());
+        let descriptions =
+            [DataType::BigInt, DataType::Date].map(|data_type| ParameterDescription {
+                data_type,
+                nullability: Nullability::Nullable,
+            });
+        let bound = param_values_to_input_params_with_descriptions(&params, &descriptions).unwrap();
+        assert_eq!(bound[1].data_type(), DataType::Date);
+    }
 }
 
 #[test]

@@ -494,17 +494,17 @@ fn should_plan_standard_query_for_non_null_params() {
 }
 
 #[test]
-fn should_plan_inference_query_for_homogeneous_nullable_integers() {
+fn should_describe_nullable_marker_next_to_integer() {
     let params = vec![ParamValue::Integer(1), ParamValue::Null];
     assert_eq!(
         plan_query_param_binding(&params).expect("inference query plan"),
-        QueryParamBindingPlan::InferenceExecute
+        QueryParamBindingPlan::PreparedNullAware
     );
 }
 
 #[test]
 fn production_query_plan_retains_inferred_bindings() {
-    let params = vec![ParamValue::Null, ParamValue::Integer(7)];
+    let params = vec![ParamValue::Null, ParamValue::String("text".into())];
     match plan_query_input(&params).expect("query plan") {
         QueryInputPlan::Inferred(inputs) => assert_eq!(inputs.len(), 2),
         _ => panic!("expected cached inferred inputs"),
@@ -698,11 +698,11 @@ fn should_plan_query_standard_for_bigint_and_string_without_null() {
 }
 
 #[test]
-fn should_plan_multi_result_inference_for_nullable_bigint_params() {
+fn should_describe_nullable_bigint_multi_params() {
     let params = vec![ParamValue::BigInt(9), ParamValue::Null];
     assert_eq!(
         plan_multi_result_param_binding(&params).expect("nullable bigint multi"),
-        MultiResultParamBindingPlan::InferencePrealloc
+        MultiResultParamBindingPlan::PreparedNullAware
     );
 }
 
@@ -725,11 +725,11 @@ fn should_plan_multi_result_inference_for_string_and_null_same_family() {
 }
 
 #[test]
-fn should_plan_query_inference_for_nullable_bigint_params() {
+fn should_describe_nullable_bigint_query_params() {
     let params = vec![ParamValue::BigInt(9), ParamValue::Null];
     assert_eq!(
         plan_query_param_binding(&params).expect("nullable bigint query"),
-        QueryParamBindingPlan::InferenceExecute
+        QueryParamBindingPlan::PreparedNullAware
     );
 }
 
@@ -783,8 +783,8 @@ fn should_apply_postgres_limit_optimization_when_plugin_provided() {
 }
 
 #[test]
-fn should_require_inference_input_params_for_nullable_integer_family() {
-    let params = vec![ParamValue::Integer(1), ParamValue::Null];
+fn should_require_inference_input_params_for_nullable_text_family() {
+    let params = vec![ParamValue::String("text".into()), ParamValue::Null];
     assert_eq!(
         plan_query_param_binding(&params).expect("plan"),
         QueryParamBindingPlan::InferenceExecute

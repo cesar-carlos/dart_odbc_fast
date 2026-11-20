@@ -237,16 +237,20 @@ pub extern "C" fn odbc_async_poll(request_id: c_uint, out_status: *mut c_int) ->
             return -1;
         };
 
-        match async_mgr.poll(request_id) {
-            Some(status) => {
-                // SAFETY: `out_status` is non-null (checked above).
-                unsafe {
-                    *out_status = status;
-                }
-                0
+        let outcome = async_mgr.poll(request_id);
+        drop(async_mgr);
+        let status = match outcome {
+            Some(AsyncPollOutcome::Status(status)) => status,
+            Some(AsyncPollOutcome::Failed(conn_id, error)) => {
+                state::set_connection_structured_error(conn_id, error.clone());
+                state::set_legacy_global_structured_error(error);
+                ASYNC_STATUS_ERROR
             }
-            None => -1,
-        }
+            None => return -1,
+        };
+        // SAFETY: out_status was checked above.
+        unsafe { *out_status = status };
+        0
     })
 }
 
