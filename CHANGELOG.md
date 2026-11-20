@@ -3,7 +3,14 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versions: [SemVer](https://semver.org/spec/v2.0.0.html).
 
-Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
+Earlier releases: [history through 1.0.0](CHANGELOG_ARCHIVE.md).
+
+## [5.0.6] - 2026-11-20
+
+### Fixed
+
+- Preserve native SQLSTATE and error code when polling a failed asynchronous query.
+- Bind nullable SQL parameters using their described types in prepared queries.
 
 ## [5.0.5] - 2026-11-20
 
@@ -2376,24 +2383,6 @@ have breaking adjustments.
 
 - _None_
 
-## [1.0.0] - 2026-02-15
-
-### Added
-
-- **Async API request timeout**: `AsyncNativeOdbcConnection(requestTimeout: Duration?)` — optional timeout per request; default 30s; `Duration.zero` or `null` disables
-- **AsyncError** new codes: `requestTimeout` (worker did not respond in time), `workerTerminated` (disposed or crashed)
-- **Parallel bulk insert (pool-based) end-to-end**: Rust FFI `odbc_bulk_insert_parallel` now implemented and exposed in Dart sync/async service/repository stack
-- **Bulk insert comparative benchmark**: new ignored Rust E2E benchmark test `e2e_bulk_compare_benchmark_test` for `ArrayBinding` vs `ParallelBulkInsert`
-
-### Changed
-
-- **Async dispose**: Pending requests now complete with `AsyncError` (workerTerminated) instead of hanging when `dispose()` is called
-- **Worker crash handling**: When the worker isolate dies, pending requests complete with error instead of hanging
-- **BinaryProtocolParser**: Truncated buffers now throw `FormatException('Buffer too small for payload')` instead of `RangeError`
-
-### Fixed
-
-- **Array binding tail chunk panic**: fixed `copy_from_slice` length mismatch when the final bulk-insert chunk is smaller than configured batch size
 
 [Unreleased]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.1...HEAD
 [5.0.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v5.0.0...v5.0.1
@@ -2427,4 +2416,3 @@ have breaking adjustments.
 [1.0.3]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/cesar-carlos/dart_odbc_fast/compare/v0.3.1...v1.0.0
