@@ -30,6 +30,10 @@ pub fn wide_text_to_utf8_vec(wide: &[u16]) -> Vec<u8> {
 #[inline]
 pub fn wide_text_to_utf8_bytes(wide: &[u16]) -> CellBytes {
     if is_ascii_wide(wide) {
+        if wide.len() >= 64 {
+            let bytes: Vec<u8> = wide.iter().map(|&unit| unit as u8).collect();
+            return CellBytes::from_vec(bytes);
+        }
         let mut cell = CellBytes::with_capacity(wide.len());
         cell.extend(wide.iter().map(|&u| u as u8));
         cell
@@ -50,6 +54,17 @@ pub fn wide_text_to_utf8_bytes(wide: &[u16]) -> CellBytes {
 
 #[inline]
 fn is_ascii_wide(wide: &[u16]) -> bool {
+    if wide.len() >= 64 {
+        if wide[0] >= 128 {
+            return false;
+        }
+        let mut blocks = wide.chunks_exact(32);
+        // OR preserves every high bit and lets LLVM vectorize each block.
+        if blocks.any(|block| block.iter().fold(0u16, |mask, unit| mask | unit) >= 128) {
+            return false;
+        }
+        return blocks.remainder().iter().all(|&unit| unit < 128);
+    }
     wide.iter().all(|&u| u < 0x80)
 }
 
@@ -92,6 +107,35 @@ mod tests {
     fn empty_slice_is_empty_utf8() {
         assert!(wide_text_to_utf8_vec(&[]).is_empty());
         assert!(wide_text_to_utf8_bytes(&[]).is_empty());
+    }
+
+    #[test]
+    fn large_text_preserves_every_byte_across_the_heap_path_boundary() {
+        for len in [63, 64, 65, 512, 4096] {
+            let mut wide: Vec<u16> = (0..len).map(|i| (i % 128) as u16).collect();
+            for last in [0x7f, 0x80, 0x4f60, 0xd800] {
+                wide[len - 1] = last;
+                assert_eq!(
+                    wide_text_to_utf8_bytes(&wide).as_slice(),
+                    String::from_utf16_lossy(&wide).as_bytes()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_ascii_in_any_lane_uses_lossy_utf16_decoding() {
+        let mut wide = [65; 99];
+        for i in 0..wide.len() {
+            wide[i] = 0xd800;
+            let expected = String::from_utf16_lossy(&wide);
+            assert_eq!(wide_text_to_utf8_vec(&wide), expected.as_bytes());
+            assert_eq!(
+                wide_text_to_utf8_bytes(&wide).as_slice(),
+                expected.as_bytes()
+            );
+            wide[i] = 65;
+        }
     }
 
     #[test]

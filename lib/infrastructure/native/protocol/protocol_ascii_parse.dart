@@ -3,10 +3,23 @@ import 'dart:typed_data';
 
 /// Returns true when every byte is ASCII (≤ 0x7F).
 bool isAsciiBytes(Uint8List data) {
+  if (data.length >= 64) return data[0] < 128 && _isAsciiBlock(data);
   for (var i = 0; i < data.length; i++) {
     if (data[i] > 0x7F) {
       return false;
     }
+  }
+  return true;
+}
+
+bool _isAsciiBlock(Uint8List data) {
+  final words = ByteData.sublistView(data);
+  var i = 0;
+  for (; i <= data.length - 4; i += 4) {
+    if ((words.getUint32(i, Endian.host) & 0x80808080) != 0) return false;
+  }
+  for (; i < data.length; i++) {
+    if (data[i] > 127) return false;
   }
   return true;
 }
@@ -172,6 +185,41 @@ int? tryParseAsciiInt(Uint8List data) {
 /// trailing `Z`. Returns null when the pattern does not match (caller falls
 /// back to [DateTime.tryParse]).
 DateTime? tryParseAsciiDateTime(Uint8List data) {
+  // The block cursor emits this exact shape for SQL_TIMESTAMP. Parse its
+  // digits directly; other driver representations retain the ISO parser.
+  if (data.length == 26 &&
+      data[4] == 0x2d &&
+      data[7] == 0x2d &&
+      data[10] == 0x20 &&
+      data[13] == 0x3a &&
+      data[16] == 0x3a &&
+      data[19] == 0x2e) {
+    final year = _readAsciiDigits(data, 0, 4);
+    final month = _readAsciiDigits(data, 5, 2);
+    final day = _readAsciiDigits(data, 8, 2);
+    final hour = _readAsciiDigits(data, 11, 2);
+    final minute = _readAsciiDigits(data, 14, 2);
+    final second = _readAsciiDigits(data, 17, 2);
+    final fraction = _readAsciiDigits(data, 20, 6);
+    if (year != null &&
+        month != null &&
+        day != null &&
+        hour != null &&
+        minute != null &&
+        second != null &&
+        fraction != null) {
+      return DateTime(
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        fraction ~/ 1000,
+        fraction % 1000,
+      );
+    }
+  }
   if (data.isEmpty || !isAsciiBytes(data)) {
     return null;
   }

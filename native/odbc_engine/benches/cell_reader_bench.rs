@@ -152,6 +152,23 @@ fn bench_wide_text_to_utf8(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("original_ascii_cell", len),
+            &ascii_wide,
+            |b, wide| {
+                b.iter(|| {
+                    let wide = black_box(wide.as_slice());
+                    let cell: odbc_engine::protocol::CellBytes = if wide.iter().all(|&u| u < 128) {
+                        let mut cell = odbc_engine::protocol::CellBytes::with_capacity(wide.len());
+                        cell.extend(wide.iter().map(|&u| u as u8));
+                        cell
+                    } else {
+                        String::from_utf16_lossy(wide).into_bytes().into()
+                    };
+                    black_box(cell)
+                })
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("ascii_fast_cell", len),
             &ascii_wide,
             |b, wide| {

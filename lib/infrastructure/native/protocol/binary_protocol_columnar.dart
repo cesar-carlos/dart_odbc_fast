@@ -28,16 +28,10 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(
   if (data.length < BinaryProtocolConstants.headerSizeColumnarV2 + paySize) {
     throw const FormatException('Columnar v2: truncated payload');
   }
-  if (colCount > data.length || rowCount > data.length) {
+  if (colCount > data.length || (colCount == 0 && rowCount > data.length)) {
     throw FormatException(
       'Columnar v2 header oversized: rows=$rowCount, cols=$colCount, '
       'buffer=${data.length}',
-    );
-  }
-  if (colCount > 0 && rowCount > paySize) {
-    throw FormatException(
-      'Columnar v2 header inconsistent: rows=$rowCount cannot fit in '
-      'payload=$paySize',
     );
   }
   if (colCount == 0) {
@@ -51,7 +45,10 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(
   var off = BinaryProtocolConstants.headerSizeColumnarV2;
   final end = BinaryProtocolConstants.headerSizeColumnarV2 + paySize;
   final columnMetas = <ColumnMetadata>[];
-  final rows = List<List<dynamic>>.generate(
+  // A compressed payload can occupy less than one byte per cell. Validate
+  // each expanded column before allocating the rectangular result in that case.
+  final deferred = rowCount > paySize ~/ colCount ? <Uint8List>[] : null;
+  late final rows = List<List<dynamic>>.generate(
     rowCount,
     (_) => List<dynamic>.filled(colCount, null),
   );
@@ -87,6 +84,14 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(
       isCompressed: isCompressed,
     );
     off = raw.nextOffset;
+    // Each cell starts with a null marker, including variable-width values.
+    if (rowCount > raw.bytes.length) {
+      throw const FormatException('Columnar v2: row cells truncated');
+    }
+    if (deferred != null) {
+      deferred.add(raw.bytes);
+      continue;
+    }
     fillColumnarRowsIntoRowBuffer(
       odbcType: odbcType,
       raw: raw.bytes,
@@ -96,6 +101,16 @@ ParsedRowBuffer parseColumnarV2ToRowBuffer(
   }
   if (off != end) {
     throw const FormatException('Columnar v2: extra bytes in column payload');
+  }
+  if (deferred != null) {
+    for (var c = 0; c < deferred.length; c++) {
+      fillColumnarRowsIntoRowBuffer(
+        odbcType: columnMetas[c].odbcType,
+        raw: deferred[c],
+        columnIndex: c,
+        rows: rows,
+      );
+    }
   }
   return ParsedRowBuffer(
     columns: columnMetas,
@@ -134,16 +149,10 @@ TypedColumnarResult parseColumnarV2ToTyped(
   if (data.length < end) {
     throw const FormatException('Columnar v2: truncated payload');
   }
-  if (colCount > data.length || rowCount > data.length) {
+  if (colCount > data.length || (colCount == 0 && rowCount > data.length)) {
     throw FormatException(
       'Columnar v2 header oversized: rows=$rowCount, cols=$colCount, '
       'buffer=${data.length}',
-    );
-  }
-  if (colCount > 0 && rowCount > paySize) {
-    throw FormatException(
-      'Columnar v2 header inconsistent: rows=$rowCount cannot fit in '
-      'payload=$paySize',
     );
   }
   if (colCount == 0) {
@@ -183,6 +192,10 @@ TypedColumnarResult parseColumnarV2ToTyped(
       isCompressed: isCompressed,
     );
     off = raw.nextOffset;
+    // Each cell starts with a null marker, including variable-width values.
+    if (rowCount > raw.bytes.length) {
+      throw const FormatException('Columnar v2: row cells truncated');
+    }
     typedColumns.add(
       _buildTypedColumn(
         name: name,
@@ -410,7 +423,7 @@ TypedColumn _decodeObjectColumn({
   final bd = ByteData.sublistView(raw);
   var p = 0;
 
-  Object? readCell() {
+  Uint8List? readCellBytes() {
     if (p >= raw.length) {
       throw const FormatException('Columnar v2: object column truncated');
     }
@@ -441,6 +454,12 @@ TypedColumn _decodeObjectColumn({
     }
     final bytes = Uint8List.sublistView(raw, p, p + bl);
     p += bl;
+    return bytes;
+  }
+
+  Object? readCell() {
+    final bytes = readCellBytes();
+    if (bytes == null || odbcType == OdbcType.binary) return bytes;
     return decodeProtocolCell(bytes, odbcType.discriminant);
   }
 
@@ -525,8 +544,26 @@ TypedColumn _decodeObjectColumn({
       );
     case TypedColumnKind.dateTime:
       final values = List<DateTime?>.filled(rowCount, null);
+      Uint8List? previousBytes;
+      DateTime? previousValue;
       for (var i = 0; i < rowCount; i++) {
-        values[i] = _coerceDateTimeCell(readCell());
+        final bytes = readCellBytes();
+        if (bytes == null) continue;
+        if (previousValue != null &&
+            previousBytes != null &&
+            _sameTemporalBytes(bytes, previousBytes)) {
+          values[i] = DateTime.fromMicrosecondsSinceEpoch(
+            previousValue.microsecondsSinceEpoch,
+            isUtc: previousValue.isUtc,
+          );
+        } else {
+          final value = _coerceDateTimeCell(
+            decodeProtocolCell(bytes, odbcType.discriminant),
+          );
+          values[i] = value;
+          previousValue = value;
+          previousBytes = bytes;
+        }
       }
       if (p != raw.length) {
         throw const FormatException(
@@ -552,6 +589,16 @@ TypedColumn _decodeObjectColumn({
         return values;
       });
   }
+}
+
+// Compare only short wire values. A miss must not scan a large text cell
+// twice, and no view of this frame is retained after its column is decoded.
+bool _sameTemporalBytes(Uint8List a, Uint8List b) {
+  if (a.length != b.length || a.length > 32) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 TypedColumn _typedObjectColumnForKind(

@@ -1,7 +1,7 @@
 # Documentation (`doc/`)
 
-Index for package documentation. Prefer the linked source of truth for each
-topic; avoid duplicating matrices across files.
+Start with the [package quick start](../README.md#quick-start-high-level-service)
+for a first query or choose a [runnable example](../example/README.md) by workload.
 
 ## Core
 
@@ -12,7 +12,7 @@ topic; avoid duplicating matrices across files.
 | [CAPABILITIES_v3.md](CAPABILITIES_v3.md) | Engine × capability matrix (XA, BCP, upsert, …) |
 | [BUILD.md](BUILD.md) | Build prerequisites, scripts, related-doc links |
 | [TESTING.md](TESTING.md) | Test scopes and canonical opt-in env flags |
-| [PERFORMANCE.md](PERFORMANCE.md) | Defaults, concurrency, benchmark instructions and dated Dart measurements |
+| [PERFORMANCE.md](PERFORMANCE.md) | Row and columnar reads, usage profiles, concurrency and reproducible benchmarks |
 
 ## Features & backlog
 
@@ -20,7 +20,6 @@ topic; avoid duplicating matrices across files.
 | -------- | ---- |
 | [Features/README.md](Features/README.md) | Feature-doc index + release checklist |
 | [Features/PENDING_IMPLEMENTATIONS.md](Features/PENDING_IMPLEMENTATIONS.md) | **SoT** for open / deferred product work |
-| [notes/ROADMAP_PENDENTES.md](notes/ROADMAP_PENDENTES.md) | Compatibility entrypoint to the canonical backlog |
 
 ## Notes (contracts & deep dives)
 
@@ -42,7 +41,5 @@ topic; avoid duplicating matrices across files.
 
 ## Also see
 
-- Consumer overview: [`README.md`](../README.md)
-- Examples: [`example/README.md`](../example/README.md)
 - Native engine docs: [`native/doc/README.md`](../native/doc/README.md)
 - Release history: [`CHANGELOG.md`](../CHANGELOG.md)

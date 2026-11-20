@@ -7,6 +7,15 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Decode columnar results with more rows than compressed bytes.
+
+### Changed
+
+- Skip empty transaction checks and unused SQL Server MERGE allocations.
+- Speed up long ASCII scans (Dart/Rust) and decode distinct and repeated timestamps faster in Dart.
+
 ## [5.0.4] - 2026-11-08
 
 ### Fixed
@@ -17,12 +26,12 @@ Earlier releases: [pre-1.0 history](CHANGELOG_ARCHIVE.md).
 
 ### Fixed
 
-- Return `PoolError` instead of panicking for zero native pool capacity or connection/idle/lifetime timeouts; cover all four cases with regression tests.
-- Reject non-pooled connections on pool return before invoking the backend or invalidating their lifetime and metadata; add a regression test.
-- Block local transaction handle reuse when commit or rollback throws, avoiding automatic rollback after an unconfirmed commit. Preserve the original exception and stack; native busy status still allows retry. Add five regression cases.
-- Retain backend SQLSTATE, native code, and transaction context when XA cleanup end or rollback returns failure, preserving the original action as the primary error. Cover active and prepared cleanup in both transaction helpers.
+- Zero native pool capacity or connection/idle/lifetime timeouts now return `PoolError`. Regression tests cover all four panics.
+- Pool return rejects non-pooled connections before backend calls or lifetime/metadata invalidation. Includes a regression test.
+- Five regressions cover throwing commit/rollback: block handle reuse and automatic rollback after uncertain commit, preserve exception/stack, and allow retry on native busy.
+- XA cleanup preserves SQLSTATE, native code, transaction context and the primary error on end/rollback failure. Tests cover active and prepared cleanup in both helpers.
 - Preserve the original exception and stack in `TransactionHandle.withSavepoint` and `runWithBegin` when rollback throws or returns false. Keep cleanup diagnostics separate from the primary operation and report secondary failures through the native call context and logging.
-- Invalidate aggregate worker P95 caches when disposing the pool. Recreated workers can have the same sample counts as the previous generation; their snapshots no longer return stale latency, queue-wait, or execution percentiles.
+- Pool disposal clears worker P95 caches so reused sample counts cannot return stale latency, queue-wait, or execution percentiles.
 
 ### Performance
 

@@ -4,7 +4,7 @@ use crate::engine::identifier::{quote_identifier, IdentifierQuoting};
 use crate::error::Result;
 
 use super::super::capabilities::upsert::{
-    effective_update_columns, placeholder_list, validate_upsert_inputs, Upsertable,
+    effective_update_columns, validate_upsert_inputs, Upsertable,
 };
 
 impl Upsertable for SqlServerPlugin {
@@ -18,7 +18,6 @@ impl Upsertable for SqlServerPlugin {
         validate_upsert_inputs(table, columns, conflict_columns, update_columns)?;
         let qtable = quote_table_brackets(table)?;
         let qcols = quote_cols_brackets(columns)?;
-        let placeholders = placeholder_list(columns.len());
 
         // Source aliases: build "?" placeholders + column aliases
         let alias_list = columns
@@ -29,7 +28,6 @@ impl Upsertable for SqlServerPlugin {
             })
             .collect::<Result<Vec<_>>>()?
             .join(", ");
-        let _ = placeholders; // alias_list replaces the standard placeholder list
 
         let on_clause = conflict_columns
             .iter()
@@ -54,7 +52,6 @@ impl Upsertable for SqlServerPlugin {
                 .join(", ")
         };
 
-        let insert_cols = qcols.clone();
         let insert_vals = columns
             .iter()
             .map(|c| -> Result<String> {
@@ -76,7 +73,7 @@ impl Upsertable for SqlServerPlugin {
              USING (SELECT {alias_list}) AS s \
              ON {on_clause}\
              {when_matched} \
-             WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals});"
+             WHEN NOT MATCHED THEN INSERT ({qcols}) VALUES ({insert_vals});"
         ))
     }
 }

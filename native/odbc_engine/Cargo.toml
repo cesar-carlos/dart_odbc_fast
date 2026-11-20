@@ -305,3 +305,7 @@ harness = false
 [[bench]]
 name = "pool_busy_count_bench"
 harness = false
+
+[[bench]]
+name = "sqlserver_merge_bench"
+harness = false

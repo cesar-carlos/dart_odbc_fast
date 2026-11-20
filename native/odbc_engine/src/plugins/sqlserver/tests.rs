@@ -113,9 +113,21 @@ fn should_build_merge_upsert_sql() {
     let sql = plugin
         .build_upsert_sql("dbo.users", &["id", "name"], &["id"], None)
         .expect("valid merge upsert");
-    assert!(sql.starts_with("MERGE INTO"));
-    assert!(sql.contains("WHEN NOT MATCHED"));
-    assert!(sql.ends_with(';'));
+    assert_eq!(
+        sql,
+        "MERGE INTO [dbo].[users] AS t USING (SELECT ? AS [id], ? AS [name]) AS s \
+         ON t.[id] = s.[id] WHEN MATCHED THEN UPDATE SET t.[name] = s.[name] \
+         WHEN NOT MATCHED THEN INSERT ([id], [name]) VALUES (s.[id], s.[name]);"
+    );
+}
+
+#[test]
+fn merge_rejects_invalid_conflict_column() {
+    let result = SqlServerPlugin::new().build_upsert_sql("dbo.users", &["id"], &["other"], None);
+    assert!(
+        matches!(result, Err(crate::error::OdbcError::ValidationError(message))
+        if message == "Conflict column \"other\" must also appear in `columns`")
+    );
 }
 
 #[test]
@@ -160,9 +172,11 @@ fn upsert_should_omit_when_matched_block_when_only_conflict_columns() {
     let sql = plugin
         .build_upsert_sql("dbo.users", &["id"], &["id"], None)
         .expect("valid merge upsert");
-    assert!(sql.starts_with("MERGE INTO"));
-    assert!(!sql.contains("WHEN MATCHED THEN UPDATE"));
-    assert!(sql.contains("WHEN NOT MATCHED THEN INSERT"));
+    assert_eq!(
+        sql,
+        "MERGE INTO [dbo].[users] AS t USING (SELECT ? AS [id]) AS s ON t.[id] = s.[id] \
+         WHEN NOT MATCHED THEN INSERT ([id]) VALUES (s.[id]);"
+    );
 }
 
 #[test]

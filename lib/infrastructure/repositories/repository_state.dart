@@ -35,6 +35,11 @@ class OdbcRepositoryState {
   final Set<String> uncertainConnections = {};
 
   OdbcError? transactionBlock(String connectionId) {
+    if (transactionOwners.isEmpty &&
+        xaTransactions.isEmpty &&
+        uncertainConnections.isEmpty) {
+      return null;
+    }
     final blocked = transactionOwners.entries.any(
       (entry) =>
           entry.value == connectionId &&

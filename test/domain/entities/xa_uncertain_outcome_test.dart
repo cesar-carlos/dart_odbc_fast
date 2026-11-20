@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:odbc_fast/domain/entities/xa_transaction_handle.dart';
 import 'package:odbc_fast/domain/entities/xid.dart';
 import 'package:odbc_fast/domain/errors/odbc_error.dart';
+import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:test/test.dart';
 
 class _Backend implements XaTransactionBackend {
@@ -48,6 +49,23 @@ class _Backend implements XaTransactionBackend {
 }
 
 void main() {
+  test('should_block_an_uncertain_xa_branch_without_a_local_transaction',
+      () async {
+    final state = OdbcRepositoryState();
+    final xa = XaTransactionHandle.withBackend(
+      xaId: 1,
+      xid: Xid.fromStrings(gtrid: 'xa-only'),
+      backend: _Backend(),
+      initialState: XaState.prepared,
+    );
+    state.registerXa('target', xa);
+    expect(state.transactionBlock('target'), isNull);
+    await expectLater(xa.commitPrepared(), throwsA(isA<TimeoutException>()));
+    final error = state.transactionBlock('target');
+    expect(error?.details.connectionId, 'target');
+    expect(error?.details.outcomeUnknown, isTrue);
+    expect(state.transactionBlock('other'), isNull);
+  });
   test('should_reject_concurrent_phases_before_a_second_backend_call',
       () async {
     final gate = Completer<int>();

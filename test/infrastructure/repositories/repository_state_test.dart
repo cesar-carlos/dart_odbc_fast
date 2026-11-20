@@ -7,6 +7,34 @@ import 'package:odbc_fast/infrastructure/repositories/repository_state.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('should_block_only_the_connection_with_unresolved_local_state', () {
+    final state = OdbcRepositoryState();
+    void check(bool blocked) {
+      final error = state.transactionBlock('target');
+      if (blocked) {
+        expect(error, isA<QueryError>());
+        expect(error?.details.connectionId, 'target');
+        expect(error?.details.outcomeUnknown, isTrue);
+      } else {
+        expect(error, isNull);
+      }
+      expect(state.transactionBlock('other'), isNull);
+    }
+
+    check(false);
+    state.uncertainConnections.add('target');
+    check(true);
+    state.uncertainConnections.clear();
+    state.transactionOwners[1] = 'target';
+    state.transactionStates[1] = LocalTransactionState.active;
+    check(false);
+    state.transactionStates[1] = LocalTransactionState.finishing;
+    check(true);
+    state.transactionStates[1] = LocalTransactionState.unknown;
+    check(true);
+    state.clearAll();
+    check(false);
+  });
   for (final size in [0, 8, 256, 4096]) {
     for (final stride in [0, 1, 4]) {
       test('should_clear_only_owned_metadata_${size}_$stride', () {

@@ -314,6 +314,52 @@ void main() {
       expect(day.values[1], DateTime.parse('2020-01-01'));
     });
 
+    test('should_preserve_precision_zone_and_nulls_in_repeated_timestamps', () {
+      const local = '2024-11-03 01:30:00.000123';
+      const utc = '2024-11-03T01:30:00.000123Z';
+      const inputs = [
+        local,
+        null,
+        local,
+        utc,
+        utc,
+        '2024-11-03T01:30:00.000124Z',
+        local,
+      ];
+      final data = _createColumnarV2Buffer(
+        columns: const [(name: 'ts', type: 6)],
+        rows: [
+          for (final input in inputs) [input],
+        ],
+      );
+      final values = BinaryProtocolParser.parseColumnarToTyped(data)
+          .column<TypedColumnObject<DateTime>>('ts')
+          .values;
+      expect(values, [
+        for (final input in inputs)
+          if (input == null) null else DateTime.parse(input),
+      ]);
+      expect(values[2]!.isUtc, isFalse);
+      expect(values[4]!.isUtc, isTrue);
+      expect(identical(values[0], values[2]), isFalse);
+    });
+
+    test('should_reject_invalid_timestamp_after_repeated_valid_values', () {
+      const valid = '2024-05-06 12:13:14.123456';
+      final data = _createColumnarV2Buffer(
+        columns: const [(name: 'ts', type: 6)],
+        rows: const [
+          [valid],
+          [valid],
+          ['2024-05-06 12:13:14.12345x'],
+        ],
+      );
+      expect(
+        () => BinaryProtocolParser.parseColumnarToTyped(data),
+        throwsFormatException,
+      );
+    });
+
     test('parseColumnarToTyped skips row-major intermediate for int column',
         () {
       final data = _createColumnarV2Buffer(
